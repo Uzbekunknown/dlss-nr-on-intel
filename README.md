@@ -1,4 +1,4 @@
-# DLSS 5 Neural Rendering on an Intel Xe2 iGPU
+# DLSS 5 Neural Rendering on macOS
 
 NVIDIA's DLSS 5 Neural Rendering pass — the one-step pixel-space diffusion model that
 re-renders a frame's detail — running on an **Intel Arc 140V (Lunar Lake, Xe2)**
