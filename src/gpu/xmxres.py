@@ -25,10 +25,13 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+import sys
 
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
 TM, TN, TK = 8, 16, 16
 
 (E4M3, GATE, HALF, TO_HALF, SCALE, RESIDUAL, FROM_HALF, PARTITION, REVERSE, ADD_BIAS,
@@ -125,14 +128,21 @@ def _load():
     lib.xmx_profile_count.argtypes = [ctypes.c_uint]
     lib.xmx_profile_count.restype = ctypes.c_uint
     # The shader paths take an environment override so a variant can be measured
-    # against the shipped one without editing the tree.
-    spv = [os.environ.get(name) or str(ROOT / "work" / default)
-           for name, default in (("XMX_GEMM_SPV", "gemm_resident.spv"),
+    # against the shipped one without editing the tree. The GEMM kernels follow the
+    # device: without VK_KHR_cooperative_matrix (or with XMX_PORTABLE=1) the portable
+    # multiply-add builds take the same dispatches, and the staged kernel — which has no
+    # portable twin — is never selected by the runtime, so its slot gets the plain one.
+    portable = bool(lib.xmx_portable())
+    gemm, tiled, staged = (("gemm_portable.spv", "gemm_portable_tiled.spv", "gemm_portable.spv")
+                           if portable else
+                           ("gemm_resident.spv", "gemm_tiled.spv", "gemm_staged.spv"))
+    spv = [os.environ.get(name) or nr_build.shader_arg(lib, default)
+           for name, default in (("XMX_GEMM_SPV", gemm),
                                  ("XMX_UNARY_SPV", "resident.spv"),
                                  ("XMX_ROW_SPV", "attention.spv"),
                                  ("XMX_HISTORY_SPV", "history.spv"),
-                                 ("XMX_TILED_SPV", "gemm_tiled.spv"),
-                                 ("XMX_STAGED_SPV", "gemm_staged.spv"))]
+                                 ("XMX_TILED_SPV", tiled),
+                                 ("XMX_STAGED_SPV", staged))]
     if lib.xmx_res_init(*[p.encode() for p in spv]) != 0:
         raise failure(lib, "xmx_res_init")
     _lib = lib

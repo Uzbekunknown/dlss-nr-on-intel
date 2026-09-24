@@ -1,12 +1,15 @@
-# DLSS 5 Neural Rendering on macOS
+# DLSS 5 Neural Rendering on Vulkan, Metal and Direct3D12
 
 NVIDIA's DLSS 5 Neural Rendering pass — the one-step pixel-space diffusion model that
-re-renders a frame's detail — running on an **Intel Arc 140V (Lunar Lake, Xe2)**
-integrated GPU under Linux, in a real game, through a Vulkan layer.
+re-renders a frame's detail — running on **Any Vulkan enabled card**
+integrated GPU under macOS, Android, Linux and Windows in a real game, through a Vulkan layer.
 
 No NVIDIA hardware, no NGX, no CUDA. The graph runs on Intel's XMX matrix units through
 `VK_KHR_cooperative_matrix`, and the pass is injected at `vkQueuePresentKHR`, so it
 attaches to anything that presents with Vulkan — including a Windows game under Proton.
+Where there is no cooperative matrix at all — an Apple M3 through MoltenVK is the case
+that was built and tested — the same graph runs on a plain multiply-add GEMM, slower and
+with the same numbers.
 
 **This is a research port, not a product.**  
 Read "What to expect" before deciding it is broken.
@@ -125,9 +128,20 @@ already have. See [Build](#build).
   it for everything else — but it is no longer the difference between working and crawling.
   This is written from one owner's report and tested by forcing the same path on the
   integrated GPU; it has not been measured on a discrete card.
-- Linux. Python 3 with NumPy. A C compiler, `glslangValidator`, the Vulkan loader.
+- **Without cooperative matrix** the runtime falls back to a portable multiply-add GEMM
+  behind the same dispatches, with every epilogue and store the matrix kernel has. Tested
+  on an **Apple M3 under macOS through MoltenVK 1.4.2**: `make test` is green there and the
+  GEMM runs at 480-570 GFLOP/s against the Xe2 matrix kernel's 1348-3828 — no frame has
+  been rendered on a Mac yet, only the contract checked (`notes/phase67`). Any Vulkan 1.3
+  device with `shaderFloat16`, `storageBuffer16BitAccess`, `bufferDeviceAddress` and the
+  Vulkan memory model should take the same path; `XMX_PORTABLE=1` forces it anywhere.
+- Linux, or macOS with MoltenVK. Python 3 with NumPy. A C compiler, `glslangValidator`,
+  the Vulkan loader.
 - **ImageMagick** for the still-frame tools, which read and write pictures through
   `magick`. The game path does not touch it.
+- **libpng** for the C command `work/nr_frame`, which reads and writes PNG with it and
+  needs nothing else. `make` finds it through pkg-config, Homebrew, vcpkg or `/usr/local`;
+  `PNG_CFLAGS` / `PNG_LIBS` override.
 - About 2.3 GiB of memory for the device buffers at 720p — it shares system RAM.
 - OpenCV is optional and worth having: it is the fast path for the blur that moving
   `detail_strength` or `colour_strength` needs — 32 ms against 110 at 854x480
@@ -154,12 +168,120 @@ python3 work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py \
         work/mlxw/dlssnr-packed.safetensors work/mlxw/dlssnr-logical.safetensors
 ```
 
+On macOS, skip the Vulkan-Headers clone: `make` finds the headers and libraries under
+vcpkg, `/usr/local` or Homebrew (`make VK_PREFIX=/where/they/are` otherwise), links the
+compute runtime against MoltenVK directly, and writes `work/MoltenVK_icd.json` so the layer
+tests can reach MoltenVK through the loader. Metal's fast math is switched off by the
+runtime before the library loads; leave `MVK_CONFIG_FAST_MATH_ENABLED` alone, because with
+it on every vendor rounding point in the graph moves (`notes/phase67`).
+
+macOS also gets a **second compute runtime on Metal directly**: `work/libmetalmx.dylib`
+(`src/gpu/libmetalmx.m`) implements the same `xmx_*` entry points as libxmx, with the shaders
+rewritten in the Metal Shading Language (`src/gpu/metal/`) and compiled by Apple's `metal`
+into one `nr_shaders.metallib` that is embedded in the library. Its matrix path is
+`simdgroup_matrix` (half operands, float accumulate; exact on the GEMM contract), where
+MoltenVK has none. `NR_GPU_BACKEND=metal` switches every Python tool and the C frame library
+to it; `make test-metal` runs the GPU tests on it. On an M3 a 1280x720 frame takes 735-746 ms
+through it against 938-948 ms through MoltenVK (`notes/phase74`). It is built on Apple only —
+by `make` under Darwin, by CMake under `NR_BUILD_METAL` — and the Vulkan layer stays Vulkan.
+The static archive a host links, `libdlssnr`, is the Metal one on Apple: no Vulkan in it,
+`nr_frame_runtime()` says `"metal"`, and `nr_frame_adopt_vulkan` is refused there.
+
+Windows gets a **third runtime, on Direct3D 12**: `build/libd3dmx.dll` (`src/gpu/libd3dmx.c`)
+implements the same `xmx_*` entry points, with the kernels rewritten in HLSL (`src/gpu/d3d12/`)
+and compiled by `dxc` to nine DXIL modules that are embedded in the library.
+`NR_GPU_BACKEND=d3d12` switches every Python tool and the C frame library to it, and
+`ctest -R d3d12_` runs the GPU tests on it. It has no matrix path — HLSL ships no matrix-matrix
+operation, so every GEMM is the multiply-add kernel — and it takes the operands as root UAVs
+with byte offsets, splits dispatches at Direct3D's 65535 groups per axis, and keeps every half
+store on `f32tof16` so the half buffers hold what `half_round` gives. CMake builds it under
+`NR_BUILD_D3D12` — on by default for every Windows target but 32-bit x86 (x64 and ARM64) when
+`dxc` is found: the Windows SDK's, the Vulkan SDK's or vcpkg's `directx-dxc` — and wherever it
+is built `libdlssnr` is built from it (`NR_DLSSNR_D3D12`, following `NR_BUILD_D3D12`;
+`-DNR_DLSSNR_D3D12=OFF` keeps the Vulkan archive), with `nr_frame_adopt_d3d12` for a host that
+shares its `ID3D12Device`. **It is written and
+cross-built from macOS, and has not run anywhere yet** — `notes/phase75` says how to make the
+first run, and that a `dxc` without `dxil.dll` beside it writes unsigned DXIL the runtime takes
+only in developer mode.
+
 The result is 649 named tensors, **145 755 123 parameters**: the large matrices are
 stored in the DLL as FP8 E4M3, one byte each, and decoded to FP16. The reader checks
 `fully_logical=true` and refuses anything else — the packed file is **not** a substitute,
 and reading it as dense FP16 gives values correlating -0.02 with the truth.
 
-`make` also builds `work/libnr_image.so`: the full-frame passes around the network —
+**Or with CMake**, which is the same build for Linux, macOS and Windows. Everything lands
+in the build directory, flat, under the names `make` gives them in `work/`: the libraries,
+the executables, every `.spv`, the ICD manifest on macOS.
+
+```sh
+cmake -S . -B build && cmake --build build && ctest --test-dir build
+export NR_BUILD_DIR=$PWD/build          # for the Python outside ctest; see below
+```
+
+It finds the Vulkan SDK (or the headers clone above), MoltenVK on macOS, libpng for the
+`nr_frame` command, and registers every test with ctest. The Python — the daemon, the
+tests, the tools — finds either build through `src/nr_build.py`: `NR_BUILD_DIR` in the
+environment wins (ctest sets it for every test, `make test` pins its own `work/`), and
+without it the most recently built of `work/` and `build*/` is used, so switching between
+the two builds does not run last week's binaries from the other one. Only the inputs stay
+in `work/`: your weights under `work/mlxw/` and the headers clone. `-DNR_OUTPUT_DIR=work`
+reproduces the Makefile layout if you want one directory.
+
+**The weights compiled in.** The CMake build compiles `weights/` — the logical safetensors
+as C, one bin2c byte array per 8 MB slice plus a table — into `libnr_frame`, so
+`nr_frame_open(NULL)`, the `nr_frame` command without `--weights` and the VBA-M filter open
+no file at run time. That directory is used as it is; `-DNR_BIN2C_WEIGHTS=ON` (default OFF)
+regenerates it first from `dlssnr-logical.safetensors` in the source root, `work/mlxw/` or
+`-DNR_WEIGHTS_FILE=`, through `slice` and `bin2c`, and is skipped with a message when the
+file is absent. `-DNR_EMBED_WEIGHTS=OFF` builds a library that needs a path. Compiling a
+slice costs the compiler about 0.75 GB; `NR_EMBED_JOBS` (2) is how many run at once.
+
+**The CMake build compiles the weights in.** Given `dlssnr-logical.safetensors` — in the
+source root, under `work/mlxw/`, or named with `-DNR_WEIGHTS_FILE=` — it cuts the file into
+8 MB slices, turns each into a C byte array with `bin2c` (`src/tools/bin2c.c`, Rafael
+Kitover's, the tool the VBA-M GUI embeds its resources with) and links the lot into
+`libnr_frame`, so `nr_frame_open(NULL)`, the `nr_frame` command without `--weights`, the C
+test and `NativeFrame()` need no file at run time. The slicing is not decoration: a compiler
+holds a byte-array initializer one element at a time and clang wants about 90 bytes of memory
+per byte, so one array for the whole file would need ~25 GB; 8 MB slices cost ~0.75 GB each,
+two at a time (`NR_EMBED_CHUNK_MB`, `NR_EMBED_JOBS`), about two minutes on an M3. The
+library grows by the size of the file. `-DNR_EMBED_WEIGHTS=OFF` builds without them, and the
+generated headers stay in `build/weights/` — `*.safetensors` is ignored by git and the
+generated C never leaves the build directory, so the rule that no weights are committed holds.
+
+**The shaders are compiled in the same way.** Every `.spv` glslangValidator writes also goes
+through `bin2c` into `libxmx` and `gemm_runner` (`NR_EMBED_SHADERS`, on by default), and the
+runtime loads a shader by *name*: `gemm_coopmat.spv` is the embedded module, a path with a
+directory in it is a file — so `XMX_GEMM_SPV=/tmp/variant.spv` still measures a variant — and
+a path whose file is missing falls back to the embedded module of that name. The C library
+and the Python (`nr_build.shader_arg`) hand over bare names when the runtime has them, so a
+build directory with no `.spv` in it runs; the files are still written for the benches. On Windows it builds the compute
+runtime, the frame library, the command and the shaders with MSVC or clang-cl and the
+Vulkan SDK; the Vulkan layer and its tests are POSIX and stay off there
+(`-DNR_BUILD_LAYER`). Windows builds and links as a MinGW-w64 cross-compile from macOS (`libxmx.dll`,
+`libnr_frame.dll`, `nr_frame.exe`); nobody has yet *run* it on a Windows machine, and the
+MSVC path is configured, not measured (`notes/phase69`).
+
+**Android** builds with the NDK's own toolchain file and nothing else named:
+
+```sh
+cmake -S . -B build-android \
+      -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=28
+cmake --build build-android
+```
+
+It links the NDK's `libvulkan.so`, builds `bin2c` and `slice` for the machine doing the build
+(a compiler from your `PATH`; `-DNR_HOST_CC=` names one), compiles the weights and shaders in,
+and produces the libraries, `libdlssnr.a` and the executables — `test_dlssnr` runs from
+`/data/local/tmp` over `adb`. The `nr_frame` command needs a libpng for the target (vcpkg's
+`arm64-android` triplet has one); the Vulkan layer stays off, there being no game to hook.
+VBA-M's `tools/android/build-android-qt.sh` links `libdlssnr.a` into its Qt APK the same way.
+Built for arm64-v8a and armeabi-v7a; **not yet run on a device** — a phone has no cooperative
+matrix, so it takes the portable GEMM path, and needs a Vulkan 1.3 driver with `shaderFloat16`,
+`storageBuffer16BitAccess` and `bufferDeviceAddress` (`notes/phase72`).
+
+`make` also builds `work/libnr_image.so` (`.dylib` on macOS, as every library here): the full-frame passes around the network —
 feature assembly, the resizes, the composition, the 8-bit codecs — in C rather than NumPy,
 worth about 2.6x on the host side of a frame. It is built with `-march=native`, so rebuild
 it on the machine that runs it rather than copying it. Everything still works without it;
@@ -168,7 +290,29 @@ it on the machine that runs it rather than copying it. Everything still works wi
 ```sh
 make test                                        # 190-odd checks, fewer without weights
 python3 src/ref/nr_frame.py IN.png OUT.png --resident   # one still, no game
+work/nr_frame IN.png OUT.png                               # the same command, in C, no Python
 ```
+
+### The frame path as a C library
+
+`work/libnr_frame.so` — `.dylib` on macOS — (`src/ref/nr_frame.c`, API in `nr_frame.h`) is `nr_frame.py` in C:
+the weights read from the logical file, the whole graph recorded against `libxmx` exactly as
+the Python records it, the feature assembly and the composition around it. One call updates
+a frame:
+
+```c
+nr_frame *f = nr_frame_open("work/mlxw/dlssnr-logical.safetensors");
+nr_frame_params p; nr_frame_defaults(&p);           /* the `standard` profile */
+nr_frame_update(f, colour, height, width, NULL, NULL, &p, output, NULL);
+```
+
+`colour` and `output` are float32 RGB in [0, 1]; pass the previous output as `history` for
+the temporal path and the previous input as the fourth argument for its floor. The head it
+produces is **bit-identical** to the Python resident path on the same features
+(`src/ref/test_nr_frame_c.py`); the noise channels, the gate's sigmoid and the detail blur's
+kernel use the C library's transcendentals and can differ from NumPy's by a last bit, which
+the test measures. `work/nr_frame` is `nr_frame.py` itself in C — the same flags (`--profile`, `--style-index`, `--local-tone`, `--local-structure`, `--skin-structure`, `--auto-mask`, `--control-mask`, `--intensity`, `--intensity-ladder`, `--detail-strength`, `--colour-strength`, `--detail-radius`, `--frame-index`, `--size`, `--weights`, `-v`), the same printed lines, PNG in and out through **libpng** rather than ImageMagick (any PNG in, 8-bit RGB out, the same byte codec; `--size` is this project's own bilinear resample rather than ImageMagick's filter, so a resized run differs from the Python's in the resampled pixels and nowhere else). `src/ref/nr_frame_native.py` binds the library for NumPy callers, and `work/test_nr_frame` is the frame test in C (`--reference` takes the head the Python test writes, so the byte-for-byte check runs without Python too). On an Apple M3
+through MoltenVK a 1280x720 frame takes 0.90 s (`notes/phase68`).
 
 ## Run it in a game
 

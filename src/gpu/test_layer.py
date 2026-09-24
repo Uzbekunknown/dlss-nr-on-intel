@@ -25,9 +25,11 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "ref"))
-from hnet_model import Model
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
+from hnet_model import Model  # noqa: E402
 
-RUNNER, SPV = ROOT / "work" / "gemm_runner", ROOT / "work" / "gemm_coopmat.spv"
+RUNNER, SPV = nr_build.executable("gemm_runner"), nr_build.shader("gemm_coopmat.spv")
 
 
 def gpu_gemm(A, B):

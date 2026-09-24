@@ -2,10 +2,14 @@
 """Check the FP16 packing replacement, including all finite FP16 logits."""
 import os
 import pathlib
+import sys
+
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-os.environ['XMX_ROW_SPV'] = str(ROOT / 'work' / 'attention_ab.spv')
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
+os.environ['XMX_ROW_SPV'] = str(nr_build.shader('attention_ab.spv'))
 import xmxres
 
 

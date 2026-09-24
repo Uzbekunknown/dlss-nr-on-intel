@@ -13,8 +13,16 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNNER = ROOT / "work" / "gemm_runner"
-SPV = ROOT / "work" / "gemm_coopmat.spv"
+sys.path.insert(0, str(ROOT / "src" / "gpu"))
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
+import xmx  # noqa: E402
+
+RUNNER = nr_build.executable("gemm_runner")
+
+# The shader follows the device: the cooperative-matrix kernel where the extension
+# exists, the portable multiply-add one where it does not (or XMX_PORTABLE=1).
+SPV = nr_build.shader("gemm_portable_desc.spv" if xmx.portable() else "gemm_coopmat.spv")
 
 
 def run(M, N, K, A, B):
@@ -50,7 +58,7 @@ def check(M, N, K, seed=0, scale=1.0):
 
 
 def main():
-    print("=== XMX cooperative matrix GEMM vs numpy ===")
+    print("=== XMX GEMM vs numpy — %s ===" % xmx.path_note())
     print("device line from the runner:")
     _, log = run(8, 16, 16, np.zeros((8, 16), np.float16), np.zeros((16, 16), np.float16))
     for l in log.splitlines():

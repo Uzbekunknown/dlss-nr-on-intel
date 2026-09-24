@@ -13,7 +13,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static float half(float value) { return (float)(_Float16)value; }
+#include "nr_portable.h"
+
+static float half(float value) { return nr_half_round(value); }
 
 static float unit(float value)
 {

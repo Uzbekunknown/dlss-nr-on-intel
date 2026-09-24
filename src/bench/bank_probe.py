@@ -18,7 +18,9 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-os.environ["XMX_UNARY_SPV"] = str(ROOT / "work" / "bank_probe.spv")
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
+os.environ["XMX_UNARY_SPV"] = str(nr_build.shader("bank_probe.spv"))
 sys.path.insert(0, str(ROOT / "src" / "gpu"))
 import xmxres
 

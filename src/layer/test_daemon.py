@@ -2,6 +2,7 @@
 """Exercise request bounds, codecs and the native layer's disconnect behavior."""
 import contextlib
 import ctypes
+import sys
 import io
 import pathlib
 import socket
@@ -14,6 +15,8 @@ import numpy as np
 import nr_daemon as daemon
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
 
 
 class Request:
@@ -179,7 +182,7 @@ def native_exchange_tests():
 
                 thread = threading.Thread(target=serve)
                 thread.start()
-                result = subprocess.run([str(ROOT / 'work' / 'test_exchange'), path,
+                result = subprocess.run([str(nr_build.executable('test_exchange')), path,
                                          mode if mode in ('echo', 'masked') else 'reject'],
                                         capture_output=True, timeout=10)
                 thread.join(timeout=6)
@@ -197,7 +200,7 @@ def device_lost_tests():
     """
     import xmxres
     assert daemon.DeviceLost is xmxres.DeviceLost
-    library = ctypes.CDLL(str(ROOT / 'work' / 'libxmx.so'))
+    library = ctypes.CDLL(str(nr_build.library('xmx')))
     assert library.xmx_device_lost() == 0, "a device nobody has lost is not lost"
     message = lambda: b'resident submit (-4)'
     lost = xmxres.failure(SimpleNamespace(xmx_error=message, xmx_device_lost=lambda: 1),

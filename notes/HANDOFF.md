@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-09-11**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-09-22**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -9,7 +9,229 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
-## Latest: the present has a test, and `NR_LAYER_SYNC=semaphore` (2026-09-19, later)
+## Latest: the runtime on Direct3D 12 — libd3dmx (2026-09-22; one run, the graph did not come back)
+
+**There is a third compute runtime, Windows only, and it has run once.** The run opened the
+device, built the nine pipelines, uploaded the weights, recorded and captured the graph — and
+the graph's list had not signalled its fence after 60 s, with the device *not* removed, so the
+old fixed timeout turned what is most likely a slow adapter (16.6 s of setup where the M3 takes
+one) into an error that named nothing. The wait now has no timeout by default (one-second slices,
+device-removed checked in each, a stderr note from 10 s on; `XMX_D3D12_TIMEOUT=N` for a limit),
+`XMX_D3D12_STEP=1` runs the recording pass by pass with a name and a time on stderr, the debug
+layer's messages are drained to stderr, and a real bug went with it: `cmd_begin` reset the
+recording's resource-state tracking from the transfer list too. A second attempt then failed
+at `D3D12CreateDevice (0x887a0004)` on the first-listed adapter, where VBA-M's D3D12 panel opens
+a device: adapter selection now *probes* every hardware adapter (device + SM 6.2 + 16-bit ops)
+and falls back to WARP, as `panel.cpp` does. `notes/phase75`, "The first run". The next run is the one with `-v`, then `XMX_D3D12_STEP=1 XMX_D3D12_DEBUG=1`.
+
+`src/gpu/libd3dmx.c`
+implements every `xmx_*` entry point of `xmx.h` on Direct3D 12 in C (COM through `lpVtbl`,
+`d3d12.dll` and `dxgi.dll` loaded by name, nothing linked), and carries the kernels rewritten in
+HLSL under `src/gpu/d3d12/` — nine DXIL modules from five sources, compiled by dxc and embedded
+through bin2c, serving the fourteen names every caller uses. **`NR_GPU_BACKEND=d3d12`** makes
+`nr_build.library("xmx")` and `nr_frame.c` load it; CMake builds it under `NR_BUILD_D3D12` (on by
+default for every Windows target but 32-bit x86, when dxc is found) and `NR_DLSSNR_D3D12`, which
+follows it, builds libdlssnr from it — a Windows x64 or ARM64 host gets the Direct3D 12 archive
+unless it passes `-DNR_DLSSNR_D3D12=OFF` — with `nr_frame_adopt_d3d12` for a host that wants to
+share its device (VBA-M's filter skips its Vulkan share when `nr_frame_runtime()` is not
+`vulkan`, and says so in `Device()`). Verified on the M3: the nine
+modules compile without a warning, the disassembly carries the `precise` marks and the
+round-to-even the E4M3 quantiser needs, the DLL cross-compiles with MinGW exporting all 49
+entry points, and the CMake cross build makes the DLL, the archive and its test. **No kernel
+has been seen to finish on a Direct3D 12 device**; `notes/phase75` says how to make the next run
+(`-v` for the adapter's name, `XMX_D3D12_STEP=1 XMX_D3D12_DEBUG=1` for the pass list and the
+validation messages, and `XMX_D3D12_WARP=1` for the software adapter).
+
+Five things a next reader must not undo. **There is no matrix path**: HLSL has no shipped
+matrix-matrix operation (the SM 6.8 WaveMatrix preview was withdrawn, SM 6.9's `linalg` is
+matrix-vector), so every GEMM is the multiply-add kernel and `gemm_resident` / `gemm_tiled` /
+`gemm_coopmat` / `gemm_batched` / `gemm_staged` resolve to it (`kernel_alias`). **An operand is a
+root UAV plus a byte offset in the push block's address slot**, because HLSL cannot dereference
+a pointer; the GLSL's alignment tests on the address hold on the offset since a resource is 64 KB
+aligned. **A dispatch is split at 65535 groups per axis** and the kernels add the push block's
+`spare` word to their group id — the graph's wide passes exceed the limit by 2x, and Vulkan
+never enforced one. **Narrow stores go through `f32tof16`**, so a half buffer holds exactly what
+`half_round` gives, independent of a driver's `fptrunc`. And **specialization does not exist
+there**: the flags come from the push block and `xmx_specialized_count()` is 0. Also: a dxc
+without `dxil.dll` beside it (every Linux and macOS dxc) writes unsigned DXIL, which the runtime
+takes only with developer mode on; libd3dmx asks for the experimental shader models when it
+finds its modules unsigned and says so in the pipeline error.
+
+## Latest: the runtime on Metal — libmetalmx (2026-09-21, later)
+
+**There is a second compute runtime, Apple only.** `src/gpu/libmetalmx.m` implements every
+`xmx_*` entry point of `xmx.h` on Metal directly — no MoltenVK, no SPIRV-Cross — and carries
+the fourteen kernels rewritten in the Metal Shading Language (`src/gpu/metal/`), compiled by
+Apple's `metal` into one `nr_shaders.metallib` that bin2c puts inside the library.
+**`NR_GPU_BACKEND=metal`** makes `nr_build.library("xmx")` and `nr_frame.c` load
+`libmetalmx` instead of `libxmx`; nothing else changes, the shader names included
+(`gemm_coopmat.spv` selects the kernel `gemm_coopmat`). Built by `make` under Darwin and by
+CMake under `NR_BUILD_METAL` (on by default on Apple, a hard error anywhere else); `make
+test-metal` and the `metal_*` ctests run the GPU suite on it. The matrix path is
+`simdgroup_matrix` with half operands into a float accumulator — the GEMM contract is
+**exact** on it, every epilogue and slice at max |d| 0 — and a real 720p frame through the C
+library takes **735-746 ms against 938-948 ms through MoltenVK** on the same M3, the two
+outputs at correlation 0.99987 (mean 0.28 levels, max 5). `notes/phase74`.
+
+Four things the next reader must not undo, three of them learned the hard way in one session:
+the buffer addresses in the push block come from an **`MTLArgumentEncoder`** over one pointer
+argument, not from `[MTLBuffer gpuAddress]` — that property is macOS 13, VBA-M's deployment
+target is 11.0 and warned on it, and the encoder writes the identical value on every buffer
+of both storage modes (400 checked); the Metal compiler runs with **`-fno-fast-math -ffp-contract=off`** (the `phase67` FMA trap,
+now at the compiler rather than in MoltenVK's config); consecutive encoders are ordered by an
+**`MTLFence`**, because the graph's buffers are untracked and without it the skip copies ran
+before the blocks that fed them — every block bit-exact, the whole graph at correlation 0.25;
+and the GEMM epilogue goes **through threadgroup memory, never over `thread_elements()`**,
+which is a 64-wide vector per thread and cost 27x when looped over. **`libdlssnr` on Apple
+is now built from libmetalmx** — no Vulkan symbol in the archive, `-framework Metal` its
+public link interface, `test_dlssnr` bit-identical to the Python path — so a host there
+must not call `nr_frame_adopt_vulkan` (refused: nothing Vulkan to adopt) and can ask
+`nr_frame_runtime()` which runtime it has; `-DNR_BUILD_METAL=OFF` gives the Vulkan archive.
+The Vulkan layer is unchanged and serves a MoltenVK game from either runtime through the
+daemon, untested here. Also fixed: `test_softmax_pack.py` lacked `import sys` and failed on every
+backend.
+
+## Latest: it builds for Android (2026-09-21)
+
+The CMake build goes through the Android NDK — `-DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake
+-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=28` standalone, or inside VBA-M's
+`tools/android/build-android-qt.sh`, which already passes `ENABLE_VULKAN=ON` and now links
+`libdlssnr.a` into the Qt APK. `find_package(Vulkan)` finds the NDK's `libvulkan.so` by itself;
+`bin2c` and `slice` are built for the build machine (VBA-M's `host_compile()`, or this tree's
+own `NR_HOST_CC` fallback, which refuses the cross toolchain's directory); the weights compile
+under the same two-job pool. Built and linked for arm64-v8a and armeabi-v7a; `notes/phase72`. **It has now run on one device**, a
+Mali-G57 MC2 phone, after one fix: the row pass fenced its shared-memory staging with a
+subgroup-scope barrier that Mali's compiler aborts on (and that would fence only half of a
+32-wide workgroup on a 16-lane subgroup); it is a `barrier()` now, all 34 C checks pass on
+the phone, at 6.7 s a pass. `notes/phase73`.
+
+Three things a next reader needs. **The layer defaults off on Android** and its X11 define is
+now `__linux__ && !__ANDROID__` — Android is `__linux__` with no `X11/Xlib.h`, which was the
+one compile failure. **VBA-M's Release build hands `-ffast-math` to every target here**, and
+has since the archive was added: the exact flags come later on the line and win — verified on
+the NDK's clang 21, no `fmadd` and no reassociation — so it is a warning, now silenced, not a
+numerics change. And **a phone takes the portable GEMM path** with no cooperative matrix, on a
+subgroup width nobody has measured (Adreno 64, Mali 16, against the 32 of Xe2 and Apple); the
+device must be Vulkan 1.3 with `shaderFloat16`, `storageBuffer16BitAccess`,
+`bufferDeviceAddress`, the memory model and `scalarBlockLayout`, or `xmx_open` fails and the
+filter drops to none. `nr_temp_dir()` now knows `/data/local/tmp`.
+
+## The weights compiled into libnr_frame (2026-09-20, later)
+
+The CMake build now embeds `dlssnr-logical.safetensors` — found in the source root or
+`work/mlxw/`, or named with `-DNR_WEIGHTS_FILE=` — into `libnr_frame` through **bin2c**
+(`src/tools/bin2c.c`, Rafael Kitover's, unchanged), and `nr_frame_open(NULL)` reads the
+safetensors from the compiled-in bytes. The `nr_frame` command without `--weights`,
+`test_nr_frame`, and `NativeFrame()` with no argument all default to that. **Same head bytes
+as the file** (`bb94971d4937ef64` on a 512x288 random frame, both ways), 34 C checks green,
+the library 294 MB.
+
+**The trap is the compiler, not the file.** A byte-array initializer costs clang ~90 bytes of
+memory per byte: 1.44 GB for a 16 MB slice, ~25 GB for the whole file on an 8 GB machine. So
+`src/tools/slice.c` cuts the file into 8 MB pieces, bin2c writes one header per piece,
+each is its own translation unit under a two-job Ninja pool (`NR_EMBED_CHUNK_MB`,
+`NR_EMBED_JOBS`), and the whole build is 60 s at 0.89 GB peak. Do not "simplify" it back to
+one array. The generated C lives in `build/weights/` and `*.safetensors` is ignored, so
+nothing derived from the DLL is committed. The Makefile embeds nothing and its library
+refuses a NULL path with a message. The Python graph still reads the file. `notes/phase71`.
+
+**The fifteen SPIR-V modules are compiled in too**, into libxmx and gemm_runner, by the same
+bin2c (`NR_EMBED_SHADERS`, on). A shader is now *named*: `xmx_init("gemm_coopmat.spv")` takes
+the embedded module, a path still opens a file (the `XMX_*_SPV` overrides), and a path whose
+file is missing falls back to the embedded one. `nr_frame.c` and `nr_build.shader_arg()`
+hand over bare names when the runtime has them. Verified with every `.spv` moved out of
+`build/`: the C test, the Python GEMM test and the frame all run, same bytes. The files are
+still written for the benches. The build's tool targets are `bin2c_dlss` / `slice_dlss`
+because VBA-M adds this tree as a subdirectory beside its own `bin2c`.
+
+## The CMake build lands in its own directory (2026-09-20)
+
+`cmake -S . -B build && cmake --build build` now puts every library, executable, `.spv` and the
+ICD manifest in **`build/`** — flat, the Makefile's names — and leaves `work/` to the inputs:
+the weights and the headers clone. What made that possible is **`src/nr_build.py`**, the one
+place the Python now asks where a build put things: `NR_BUILD_DIR` in the environment first
+(every ctest gets it; `make test` pins `work/`), else the newest of `work/` and `build*/` by
+`libxmx`'s mtime. Sixteen files spelled `ROOT / "work"` before; none of the *output* users do
+now. The C command finds the weights from `build/` too (`../work/mlxw`). `-DNR_OUTPUT_DIR=work`
+gives the old layout. **The one trap: two builds, no `NR_BUILD_DIR`, and the newest wins** —
+`python3 src/nr_build.py` prints which one that is. Verified on the M3: a full CMake build into
+`build/` with `work/` untouched, and the ctest subset named in the note. `notes/phase70`.
+
+**The embedded weights come from `weights/`, not from bin2c at build time.** The directory holds
+the logical safetensors as C — 35 bin2c slices of 8 MB and their table — and `NR_EMBED_WEIGHTS`
+(ON) compiles it into `libnr_frame`. `NR_BIN2C_WEIGHTS` (**OFF**) regenerates the directory
+first from `dlssnr-logical.safetensors` when the file is found, and says so and skips when it
+is not. Regeneration was checked byte-identical to the checked-in slices and table. The `.bin`
+and `.c.in` intermediates now go to the build tree; the copies left in `weights/` from the
+earlier scheme are dead weight (280 MB) and can go. `notes/phase70`.
+
+## CMake for three platforms, and half precision without `_Float16` (2026-09-19, late)
+
+`CMakeLists.txt` builds what the Makefile builds, into the same `work/` with the same names,
+on Linux and macOS as run here and on Windows as written — MSVC or clang-cl with the Vulkan
+SDK, libpng from vcpkg, the layer off because it is POSIX. `ctest` runs the suite. **The Windows build
+now links** — a MinGW-w64 cross-compile from the M3 (`buildmingw-x64/`, ignored by git along with
+every `build*/`) produces every DLL, exe and shader into `work/`; **nobody has run those
+binaries yet** (no Wine here, no Windows machine). Three things stood in the way and are fixed:
+`-march=native` handed to a cross-compiler (CMake now probes for it), a `dlfcn.h` include and a
+second `clock_gettime` in the command, and a Windows `BIND` in the library that never compiled.
+`src/ref/nr_portable.h` holds the platform seams — `nr_dl_open`, `nr_dl_sym`, `nr_dl_self_dir`,
+`nr_now` — and both C files now go through them instead of carrying their own `#ifdef _WIN32`
+copies; its software half conversion for MSVC is **exhaustively bit-exact** against `_Float16`
+over all 2^32 floats and all 65 536 halves, NaN payloads aside. One MSVC trap stays: the
+`sprintf_s` blocks abort on truncation where `snprintf` clips, and MinGW never takes them.
+`notes/phase69`.
+
+## The frame path is a C library, and a real frame rendered on the M3 (2026-09-19, night)
+
+`src/ref/nr_frame.c` is `nr_frame.py` in C — the safetensors reader, the 71-block graph
+recorded against libxmx **call for call** as `nr_frame_resident.py` and `nr_resident.py`
+record it, the features and the composition on `nr_image.c` — built as
+`work/libnr_frame.so`, with `work/nr_frame` — the `nr_frame.py` command itself in C, every
+flag, PNG through libpng and no ImageMagick — and `nr_frame_native.py` to
+drive the library from NumPy. **The head is bit-identical to
+the Python resident path** on the same features, checked on the real weights by
+`test_nr_frame_c.py` (20 checks, in `make test`). Where C and NumPy part it is by a last
+bit of a transcendental — five noise values in 307 200, the blur kernel's `expf`, the
+gate's — and the note says so. Reproduce the picture with the features held fixed, not
+with the noise regenerated on each side. `notes/phase68`.
+
+**The weights are on the Mac now** (`work/mlxw/`, extracted by the owner during the
+session), so every test that skipped runs there, and a **real 1280x720 frame renders on
+Apple silicon: 0.90 s** through the C library, 888 ms of it the graph on the portable GEMM.
+The `phase67` estimate held.
+
+**`make test` fails at `publish_check`, and the code is not why.** Two commits made on the
+Mac outside the session dropped `/work/` and `/ref/` from `.gitignore` and committed 205
+files under `work/` — the MLX-DLSS clone, manifests, six test binaries, a log. No weights,
+no DLL. The check reads `git ls-files`, so it now fails on the binaries and will fail on
+every build. Restore the ignore and `git rm -r --cached work`, or exempt the build
+directory; the owner decides.
+
+## It builds and passes on an Apple M3 through MoltenVK (2026-09-19, evening)
+
+MoltenVK has **no `VK_KHR_cooperative_matrix`**, and SPIRV-Cross cannot translate the matrix
+opcodes at all, so every GEMM here failed to load on the owner's Mac. Now the runtime asks
+the device: with the extension it runs the kernels it always ran; without it every GEMM
+goes to `src/gpu/gemm_portable.comp` — the same push constants, flags, strides, batch,
+epilogues and store, computed with plain FP32 multiply-adds — behind the same dispatches.
+`XMX_PORTABLE=1` forces that path on Xe2, and `make test` runs `test_portable.py` both ways.
+The staged 64x32 kernel has no portable twin and is never selected without matrix units.
+
+On the M3: **`make test` green, 117 checks**, five skips for the absent weights; the
+portable kernel does **480-570 GFLOP/s** against the matrix kernel's 1348-3828 on Xe2. **No
+frame was rendered** — no DLL on that machine — so the graph on Apple silicon is a claim
+nobody has made yet. Estimate from the kernel rate: about a second a 720p frame.
+
+**Two things a next reader must not undo.** `xmx.py` sets `MVK_CONFIG_FAST_MATH_ENABLED=0`
+before the library loads: Metal's fast math contracts the gate's multiply and add into an
+FMA and skips the half rounding between them, which moved the gate epilogue 3e-03 and every
+E4M3 publish a quantum, and a frame rendered that way would look right and match nothing.
+And on macOS `libxmx.dylib` — every library there carries `.dylib`, the Makefile, the loaders and the layer manifest agreeing — links **MoltenVK directly** while the layer and its tests link the
+**loader** — the two are both called libvulkan on that machine and only one knows what a
+layer is. `notes/phase67`.
+
+## The present has a test, and `NR_LAYER_SYNC=semaphore` (2026-09-19, later)
 
 The layer's two `vkQueueWaitIdle` calls per present are now optional. `NR_LAYER_SYNC=semaphore`
 waits on the semaphores the present brought, signals one of a ring of four, and redirects the

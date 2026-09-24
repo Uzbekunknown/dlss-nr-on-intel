@@ -33,6 +33,11 @@ technique, and they remain their publishers' property.
 Third-party work this depends on
 --------------------------------------------------------------------------------
 
+bin2c — https://github.com/rkitover/bin2c
+  Copyright (c) 2016 Rafael Kitover, BSD 2-Clause License. `src/tools/bin2c.c` is that
+  program, unchanged; the CMake build runs it to compile the owner's weights file into
+  libnr_frame. The weights it embeds are the owner's and are not distributed.
+
 MLX-DLSS — https://github.com/iamwavecut/MLX-DLSS
   Copyright the MLX-DLSS authors, licensed under the Apache License 2.0.
   This project reads its numpy modules at runtime and reproduces its weight

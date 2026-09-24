@@ -1,6 +1,4 @@
 # NVIDIA's property — never committed, never redistributed. See notes/CLAUDE.md "Rules".
-/ref/
-/work/
 *.dll
 *.exe
 *.7z
@@ -31,8 +29,11 @@ __pycache__/
 *.mp4
 *.webm
 
-# Build output and archives, none of which belongs in a source tree.
+# Build output and archives (CMake builds in build/)
+/build*/
+#, none of which belongs in a source tree.
 *.so
+*.dylib
 *.spv
 *.7z
 *.zip

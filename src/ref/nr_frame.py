@@ -53,10 +53,23 @@ def load_mlx_numpy_modules(names=MLX_NUMPY_MODULES):
         key = f"mlxnp.{name}"
         module = sys.modules.get(key)
         if module is None:
-            spec = importlib.util.spec_from_file_location(key, _MLX / f"{name}.py")
+            path = _MLX / f"{name}.py"
+            spec = importlib.util.spec_from_file_location(key, path)
             module = importlib.util.module_from_spec(spec)
             sys.modules[key] = module
-            spec.loader.exec_module(module)
+            if sys.version_info < (3, 10):
+                # `motion_quality.py` writes `np.ndarray | None` in a dataclass body, which
+                # Python evaluates when the class is built and 3.9 cannot (`|` on types
+                # arrived in 3.10). Compiling the source under postponed evaluation turns
+                # every annotation into a string and changes nothing else about the
+                # module. macOS ships 3.9; the temporal path should not need a second
+                # interpreter for one line of type syntax.
+                import __future__
+                code = compile(path.read_text(), str(path), "exec",
+                               flags=__future__.annotations.compiler_flag, dont_inherit=True)
+                exec(code, module.__dict__)
+            else:
+                spec.loader.exec_module(module)
         loaded.append(module)
     return loaded
 

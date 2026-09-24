@@ -20,7 +20,9 @@
  *
  * Build: cc -O2 -shared -fPIC -o libnr_layer.so nr_layer.c -lvulkan
  */
-#define VK_USE_PLATFORM_XLIB_KHR
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(_WIN32)
+#define VK_USE_PLATFORM_XLIB_KHR   /* pulls in X11 headers, which macOS and Android do not have */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +38,10 @@
 
 #define MAX_SWAPCHAINS 8
 #define MAX_IMAGES 8
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /* How the layer knows the game's frame is finished, and the game knows ours is.
  *
@@ -147,7 +153,12 @@ static int exchange(const void *header, size_t header_size, const void *payload,
 		close(fd); return -1;
 	}
 	struct sockaddr_un address = { .sun_family = AF_UNIX };
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(address.sun_path, sizeof address.sun_path, "%s", socket_path);
+#else
 	snprintf(address.sun_path, sizeof address.sun_path, "%s", socket_path);
+#endif
+
 	if (connect(fd, (struct sockaddr *)&address, sizeof address) < 0) {
 		fprintf(stderr, "[nr_layer] no daemon at %s\n", socket_path);
 		close(fd);

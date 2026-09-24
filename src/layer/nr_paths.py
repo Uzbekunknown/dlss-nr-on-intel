@@ -15,6 +15,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+import nr_build  # noqa: E402
+
 SETTINGS = pathlib.Path(os.environ.get("NR_SETTINGS", "/tmp/nr_settings.json"))
 TRIGGER = pathlib.Path(os.environ.get("NR_LAYER_TRIGGER", "/tmp/nr_trigger"))
 SOCKET = pathlib.Path(os.environ.get("NR_LAYER_SOCKET", "/tmp/nr_layer.sock"))
@@ -26,6 +29,28 @@ DAEMON = pathlib.Path(__file__).resolve().parent / "nr_daemon.py"
 # scene is rather than on the number (`notes/phase51`, `phase52`). Only used when there is
 # no settings file at all — anything already chosen wins.
 FIRST_SCALE = 0.55
+
+# On macOS the Vulkan loader finds no driver on its own: MoltenVK is discovered through an
+# ICD manifest, and the build (`make` into work/, CMake into its build directory) writes
+# one beside the libraries pointing at the MoltenVK it linked. The
+# compute runtime does not need this — it links MoltenVK directly — but everything that
+# goes through the loader does: the layer, its tests, and any game the layer attaches to.
+ICD_MANIFEST = nr_build.BUILD_DIR / "MoltenVK_icd.json"
+
+
+def loader_environment(environment=None):
+    """The environment for a process that reaches Vulkan through the loader.
+
+    On macOS, points the loader at MoltenVK when nothing else does, under both the
+    current name (VK_DRIVER_FILES) and the one older loaders read (VK_ICD_FILENAMES).
+    Anything already set wins; elsewhere the environment comes back unchanged.
+    """
+    environment = dict(os.environ if environment is None else environment)
+    if sys.platform == "darwin" and ICD_MANIFEST.exists() \
+            and not (environment.get("VK_DRIVER_FILES") or environment.get("VK_ICD_FILENAMES")):
+        environment["VK_DRIVER_FILES"] = str(ICD_MANIFEST)
+        environment["VK_ICD_FILENAMES"] = str(ICD_MANIFEST)
+    return environment
 
 
 def read():

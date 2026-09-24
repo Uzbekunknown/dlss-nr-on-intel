@@ -17,6 +17,8 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src' / 'ref'))
+sys.path.insert(0, str(ROOT / 'src'))
+import nr_build  # noqa: E402
 
 
 def main():
@@ -28,7 +30,7 @@ def main():
     args = parser.parse_args()
     if args.pairs < 1 or min(args.size) < 1:
         parser.error('size and pairs must be positive')
-    os.environ['XMX_ROW_SPV'] = str(ROOT / 'work' / 'attention_ab.spv')
+    os.environ['XMX_ROW_SPV'] = str(nr_build.shader('attention_ab.spv'))
     import nr_frame
 
     h, w = args.size

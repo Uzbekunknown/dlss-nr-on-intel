@@ -32,9 +32,13 @@ import sys
 import tempfile
 import threading
 
+import nr_paths
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BINARY = ROOT / "work" / "test_present"
-LAYER = ROOT / "work" / "layer-check"
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
+BINARY = nr_build.executable("test_present")
+LAYER = nr_build.BUILD_DIR / "layer-check"      # the manifests, beside the library they name
 REPLY = bytes((17, 34, 51, 255))          # B G R A, nothing a clear in this test produces
 FAILURES = []
 
@@ -80,8 +84,8 @@ def present(mode, rounds=2):
         seen, stop = [], threading.Event()
         thread = threading.Thread(target=stand_in, args=(path, seen, stop), daemon=True)
         thread.start()
-        environment = dict(os.environ, VK_LAYER_PATH=str(LAYER), ENABLE_NR_LAYER="1",
-                           NR_LAYER_SOCKET=path, NR_LAYER_LIVE="1")
+        environment = dict(nr_paths.loader_environment(), VK_LAYER_PATH=str(LAYER),
+                           ENABLE_NR_LAYER="1", NR_LAYER_SOCKET=path, NR_LAYER_LIVE="1")
         environment.pop("NR_LAYER_TRIGGER", None)
         environment.pop("NR_TEST_NO_LAYER", None)
         if mode:
@@ -133,7 +137,8 @@ def main():
         subprocess.run([sys.executable, str(ROOT / "src" / "layer" / "prepare_layer.py"),
                         str(LAYER)], check=True, capture_output=True)
     probe = subprocess.run([str(BINARY), "1"], capture_output=True, text=True,
-                           env=dict(os.environ, NR_TEST_NO_LAYER="1"), timeout=300)
+                           env=dict(nr_paths.loader_environment(), NR_TEST_NO_LAYER="1"),
+                           timeout=300)
     if probe.returncode != 0:
         print("present: skipped (no headless surface here: "
               f"{(probe.stderr.strip().splitlines() or ['?'])[-1][:60]}) — a skip is not a pass")

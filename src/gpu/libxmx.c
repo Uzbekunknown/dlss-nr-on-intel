@@ -7,18 +7,102 @@
  * host-visible buffers, so a dispatch costs a memcpy, a submit and a fence wait.
  *
  * Build: cc -O2 -shared -fPIC -I<vulkan headers> -o libxmx.so libxmx.c -lvulkan
+ * On macOS the same file links against MoltenVK directly (-lMoltenVK): the Vulkan
+ * loader there hides a portability driver until asked, and the compute path needs
+ * no layer between it and the driver. `make` chooses.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "nr_shaders_embedded.h"
+#include "xmx.h"
+#include "../ref/nr_portable.h"
+#if defined(XMX_NO_VULKAN_LINK) && !defined(_WIN32)
+#include <dlfcn.h>
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+/* Every Vulkan entry point this file calls is a pointer resolved through one
+ * vkGetInstanceProcAddr: the linked library's (MoltenVK, or the loader) when libxmx makes
+ * its own instance, and the adopter's when a host hands over its instance and device
+ * (`xmx_adopt`) — so an adopted device is always driven through the very library that
+ * created it, even when the host loaded a different copy than the one linked here. */
+#define XMX_VK_GLOBAL_FUNCS(F) \
+	F(vkCreateInstance) F(vkEnumerateInstanceExtensionProperties)
+#define XMX_VK_INSTANCE_FUNCS(F) \
+	F(vkAllocateCommandBuffers) F(vkAllocateDescriptorSets) F(vkAllocateMemory) \
+	F(vkBeginCommandBuffer) F(vkBindBufferMemory) F(vkCmdBindDescriptorSets) \
+	F(vkCmdBindPipeline) F(vkCmdCopyBuffer) F(vkCmdDispatch) F(vkCmdFillBuffer) \
+	F(vkCmdPipelineBarrier) F(vkCmdPushConstants) F(vkCmdResetQueryPool) \
+	F(vkCmdWriteTimestamp) F(vkCreateBuffer) F(vkCreateCommandPool) \
+	F(vkCreateComputePipelines) F(vkCreateDescriptorPool) F(vkCreateDescriptorSetLayout) \
+	F(vkCreateDevice) F(vkCreateFence) F(vkCreatePipelineLayout) F(vkCreateQueryPool) \
+	F(vkCreateShaderModule) F(vkDestroyBuffer) F(vkDestroyCommandPool) \
+	F(vkDestroyDescriptorPool) F(vkDestroyDescriptorSetLayout) F(vkDestroyDevice) \
+	F(vkDestroyFence) F(vkDestroyInstance) F(vkDestroyPipeline) F(vkDestroyPipelineLayout) \
+	F(vkDestroyQueryPool) F(vkDestroyShaderModule) F(vkDeviceWaitIdle) F(vkEndCommandBuffer) \
+	F(vkEnumerateDeviceExtensionProperties) F(vkEnumeratePhysicalDevices) \
+	F(vkFreeCommandBuffers) F(vkFreeMemory) F(vkGetBufferDeviceAddress) \
+	F(vkGetBufferMemoryRequirements) F(vkGetDeviceQueue) F(vkGetPhysicalDeviceMemoryProperties) \
+	F(vkGetPhysicalDeviceProperties) F(vkGetPhysicalDeviceQueueFamilyProperties) \
+	F(vkGetQueryPoolResults) F(vkMapMemory) F(vkQueueSubmit) F(vkQueueWaitIdle) \
+	F(vkResetCommandBuffer) F(vkResetFences) F(vkUnmapMemory) F(vkUpdateDescriptorSets) \
+	F(vkWaitForFences)
+#define XMX_VK_DECLARE(name) static PFN_##name name;
+XMX_VK_GLOBAL_FUNCS(XMX_VK_DECLARE)
+XMX_VK_INSTANCE_FUNCS(XMX_VK_DECLARE)
+#undef XMX_VK_DECLARE
+static PFN_vkGetInstanceProcAddr xmx_gipa;
+
+#ifdef XMX_NO_VULKAN_LINK
+/* The static build (libdlssnr) links no Vulkan library of its own: the host has one —
+ * linked, or loaded — and an adopted instance brings its own entry point anyway. For a
+ * device libxmx opens itself, look for vkGetInstanceProcAddr in the process first, then
+ * load the loader (or MoltenVK) by name. */
+static PFN_vkGetInstanceProcAddr linked_gipa(void)
+{
+#ifdef _WIN32
+	HMODULE h = GetModuleHandleA("vulkan-1.dll");
+	if (!h) h = LoadLibraryA("vulkan-1.dll");
+	return h ? (PFN_vkGetInstanceProcAddr)(void (*)(void))GetProcAddress(h, "vkGetInstanceProcAddr") : NULL;
+#else
+	void *p = dlsym(RTLD_DEFAULT, "vkGetInstanceProcAddr");
+	if (p) return (PFN_vkGetInstanceProcAddr)p;
+	static const char *const names[] = { "libvulkan.so.1", "libvulkan.so", "libvulkan.1.dylib",
+					      "libvulkan.dylib", "libMoltenVK.dylib" };
+	for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
+		void *h = dlopen(names[i], RTLD_NOW | RTLD_GLOBAL);
+		if (h && (p = dlsym(h, "vkGetInstanceProcAddr"))) return (PFN_vkGetInstanceProcAddr)p;
+	}
+	return NULL;
+#endif
+}
+#else
+/* The linked library's bootstrap symbol; the only one reached by name. */
+extern VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char *name);
+static PFN_vkGetInstanceProcAddr linked_gipa(void) { return vkGetInstanceProcAddr; }
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /* A lost device is recorded as well as described: it is the one failure after which nothing
  * on this device can succeed again, so a caller has to be able to tell it from the rest
  * without reading the message. It stays set. */
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+#define FAIL(msg, r) do { int fail_code = (int)(r); \
+    if (fail_code == VK_ERROR_DEVICE_LOST) g.lost = 1; \
+    sprintf_s(g.err, sizeof g.err, "%s (%d)", msg, fail_code); return -1; } while (0)
+#else
 #define FAIL(msg, r) do { int fail_code = (int)(r); \
 	if (fail_code == VK_ERROR_DEVICE_LOST) g.lost = 1; \
 	snprintf(g.err, sizeof g.err, "%s (%d)", msg, fail_code); return -1; } while (0)
+#endif
 
 struct buf { VkBuffer b; VkDeviceMemory m; void *p; VkDeviceSize cap; };
 
@@ -45,8 +129,28 @@ static struct {
 	VkQueryPool qpool; unsigned prof, prof_n; float ts_period;
 	char name[256]; char err[256]; char memory[256]; char memory_read[256];
 	int ready, lost, discrete, unmapped;
+	/* `coopmat`: the device has VK_KHR_cooperative_matrix. `portable`: the GEMMs run on
+	 * the plain multiply-add kernels instead — because the device has no matrix path
+	 * (MoltenVK on Apple silicon), or because XMX_PORTABLE=1 asked for it here. */
+	int coopmat, portable;
 	struct buf stage;
+	/* An adopted device belongs to the host: never destroyed here, and every submit on
+	 * its queue is bracketed by the host's lock when one was given. */
+	int adopted;
+	void (*lock)(void *); void (*unlock)(void *); void *lock_ctx;
 } g;
+
+/* What `xmx_adopt` was handed, until `xmx_open` takes it. */
+static struct {
+	int set;
+	VkInstance inst; VkPhysicalDevice pd; VkDevice dev; VkQueue q; uint32_t qi;
+	int coopmat;
+	PFN_vkGetInstanceProcAddr gipa;
+	void (*lock)(void *); void (*unlock)(void *); void *ctx;
+} adopt;
+
+static void qlock(void) { if (g.lock) g.lock(g.lock_ctx); }
+static void qunlock(void) { if (g.unlock) g.unlock(g.lock_ctx); }
 
 #define MAX_SPECIALIZED 256
 static struct {
@@ -99,8 +203,15 @@ const char *xmx_memory(void)
 		memtype(~0u, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
 			| VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1);
 	if (!g.memory[0]) return "no host-visible memory type";
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(both, sizeof both, "%s%s%s", g.memory,
+         g.memory_read[0] ? "; " : "", g.memory_read);
+#else
 	snprintf(both, sizeof both, "%s%s%s", g.memory,
 		 g.memory_read[0] ? "; " : "", g.memory_read);
+#endif
+
 	return both;
 }
 const char *xmx_device(void) { return g.name; }
@@ -193,11 +304,20 @@ static void note_memory(const VkPhysicalDeviceMemoryProperties *mp, uint32_t typ
 		: "SYSTEM MEMORY ACROSS PCIE - resizable BAR is off, or its window is under 1 GiB";
 	char *slot = host_read ? g.memory_read : g.memory;
 	size_t room = host_read ? sizeof g.memory_read : sizeof g.memory;
+
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(slot, room, "%s: type %u, heap %.1f GiB,%s%s%s%s", where, type, heap,
+         (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? " DEVICE_LOCAL" : "",
+         (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ? " HOST_VISIBLE" : "",
+         (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ? " HOST_COHERENT" : "",
+         (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ? " HOST_CACHED" : "");
+#else
 	snprintf(slot, room, "%s: type %u, heap %.1f GiB,%s%s%s%s", where, type, heap,
 		 (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? " DEVICE_LOCAL" : "",
 		 (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ? " HOST_VISIBLE" : "",
 		 (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ? " HOST_COHERENT" : "",
 		 (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ? " HOST_CACHED" : "");
+#endif
 }
 static uint32_t memtype(uint32_t bits, VkMemoryPropertyFlags want, int host_read)
 {
@@ -229,20 +349,65 @@ static uint32_t memtype(uint32_t bits, VkMemoryPropertyFlags want, int host_read
 	return UINT32_MAX;
 }
 
+/* The compiled-in module of that name, or NULL. `name` is a bare file name. */
+static const struct nr_embedded_shader *embedded_shader(const char *name)
+{
+#ifdef NR_EMBEDDED_SHADERS
+	for (size_t i = 0; i < nr_embedded_shader_count; i++)
+		if (!strcmp(nr_embedded_shaders[i].name, name)) return &nr_embedded_shaders[i];
+#endif
+	(void)name;
+	return NULL;
+}
+
+size_t xmx_embedded_shader(const char *name)
+{
+	const struct nr_embedded_shader *e = name ? embedded_shader(name) : NULL;
+	return e ? e->size : 0;
+}
+
+/* The SPIR-V for `spv_path`: a bare name is the embedded module (nr_shaders_embedded.h);
+ * a path opens that file; a path whose file is missing falls back to the embedded module
+ * of the same base name. `*owned` is what to free, if anything. */
+static const void *shader_code(const char *spv_path, size_t *len, void **owned)
+{
+	*owned = NULL;
+	const char *base = spv_path;
+	for (const char *q = spv_path; *q; q++)
+		if (*q == '/' || *q == '\\') base = q + 1;
+	const struct nr_embedded_shader *e = embedded_shader(base);
+	if (e && base == spv_path) { *len = e->size; return e->data; }
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+	FILE *f = NULL;
+	fopen_s(&f, spv_path, "rb");
+#else
+	FILE *f = fopen(spv_path, "rb");
+#endif
+	if (!f) {
+		if (e) { *len = e->size; return e->data; }
+		return NULL;
+	}
+	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+	void *code = malloc(n > 0 ? (size_t)n : 1);
+	if (!code || n <= 0 || fread(code, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(code); return NULL; }
+	fclose(f);
+	*owned = code;
+	*len = (size_t)n;
+	return code;
+}
+
 static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, VkPipeline *out,
 			      const VkSpecializationInfo *specialization)
 {
-	FILE *f = fopen(spv_path, "rb");
-	if (!f) FAIL("cannot open spv", 0);
-	fseek(f, 0, SEEK_END); long len = ftell(f); fseek(f, 0, SEEK_SET);
-	void *code = malloc(len);
-	if (fread(code, 1, len, f) != (size_t)len) { fclose(f); free(code); FAIL("short spv read", 0); }
-	fclose(f);
+	size_t len = 0;
+	void *owned = NULL;
+	const void *code = shader_code(spv_path, &len, &owned);
+	if (!code) FAIL("cannot open spv (no such file, and no embedded module of that name)", 0);
 	VkShaderModuleCreateInfo smi = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 					 .codeSize = len, .pCode = code };
 	VkShaderModule sm;
 	VkResult r = vkCreateShaderModule(g.dev, &smi, NULL, &sm);
-	free(code);
+	free(owned);
 	if (r) FAIL("shader module", r);
 	VkComputePipelineCreateInfo cpi = { .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -345,14 +510,129 @@ static int ensure(struct buf *b, VkDeviceSize size, int host_read)
 	return 0;
 }
 
-int xmx_init(const char *spv_path)
+/* Whether an extension is in a list, so the device is asked only for what it has. */
+static int has_extension(const VkExtensionProperties *list, uint32_t count, const char *name)
 {
-	if (g.ready) return 0;
+	for (uint32_t i = 0; i < count; i++)
+		if (!strcmp(list[i].extensionName, name)) return 1;
+	return 0;
+}
+
+/* The instance, the device and the queue — everything that decides which shaders can
+ * run, and nothing that needs a shader. Split from `xmx_init` so a caller can ask
+ * `xmx_coopmat()` before it chooses which SPIR-V to hand over. Idempotent. */
+/* Resolve the entry points through `xmx_gipa`: the global ones before an instance
+ * exists, the rest against it. */
+static int resolve_global(void)
+{
+#define XMX_VK_LOAD(name) name = (PFN_##name)xmx_gipa(NULL, #name); \
+	if (!name) FAIL("Vulkan library has no " #name, 0);
+	XMX_VK_GLOBAL_FUNCS(XMX_VK_LOAD)
+#undef XMX_VK_LOAD
+	return 0;
+}
+
+static int resolve_instance(VkInstance inst)
+{
+#define XMX_VK_LOAD(name) name = (PFN_##name)xmx_gipa(inst, #name); \
+	if (!name) FAIL("Vulkan instance has no " #name " (Vulkan 1.3 is needed)", 0);
+	XMX_VK_INSTANCE_FUNCS(XMX_VK_LOAD)
+#undef XMX_VK_LOAD
+	return 0;
+}
+
+/* Share a host's Vulkan objects instead of creating an instance and a device. Call
+ * before `xmx_open` (or after `xmx_close`); the next `xmx_open` takes them. The handles
+ * are `void *` so a caller that binds this by name needs no Vulkan header.
+ *
+ *   inst, pd, dev   the host's VkInstance, VkPhysicalDevice and VkDevice. The device
+ *                   must have Vulkan 1.3 and these features enabled: storageBuffer16BitAccess,
+ *                   vulkanMemoryModel (+DeviceScope), shaderFloat16, bufferDeviceAddress,
+ *                   scalarBlockLayout; VK_KHR_portability_subset where the device offers it.
+ *   q, qi           a queue of family `qi`, which must support compute. If the host also
+ *                   submits on `q`, it passes `lock`/`unlock` (called around every
+ *                   vkQueueSubmit here, with `ctx`) and takes the same lock around its own
+ *                   submits, presents and device-idle waits.
+ *   coopmat         whether the host enabled VK_KHR_cooperative_matrix on `dev`.
+ *   gipa            the host's vkGetInstanceProcAddr, the library that made `inst`.
+ *
+ * The host owns the objects: `xmx_close` releases everything libxmx made on them and
+ * leaves them alone. The host must `xmx_close` before it destroys the device. */
+int xmx_adopt(void *inst, void *pd, void *dev, void *q, unsigned qi, int coopmat, void *gipa,
+	      void (*lock)(void *), void (*unlock)(void *), void *ctx)
+{
+	if (g.dev) FAIL("xmx_adopt: a device is open; xmx_close first", 0);
+	if (!inst || !pd || !dev || !q || !gipa) FAIL("xmx_adopt: incomplete Vulkan objects", 0);
+	adopt.set = 1;
+	adopt.inst = (VkInstance)inst; adopt.pd = (VkPhysicalDevice)pd; adopt.dev = (VkDevice)dev;
+	adopt.q = (VkQueue)q; adopt.qi = qi; adopt.coopmat = coopmat;
+	adopt.gipa = (PFN_vkGetInstanceProcAddr)gipa;
+	adopt.lock = lock; adopt.unlock = unlock; adopt.ctx = ctx;
+	return 0;
+}
+
+/* 1 while an adopted device is open, 0 for libxmx's own, -1 when nothing is open. */
+int xmx_adopted(void) { return g.dev ? g.adopted : -1; }
+
+static int open_adopted(void)
+{
+	xmx_gipa = adopt.gipa;
+	if (resolve_global() || resolve_instance(adopt.inst)) return -1;
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(adopt.pd, &props);
+	if (props.apiVersion < VK_API_VERSION_1_3)
+		FAIL("adopted device is below Vulkan 1.3", (int)props.apiVersion);
+	uint32_t nq = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(adopt.pd, &nq, NULL);
+	VkQueueFamilyProperties *qf = calloc(nq ? nq : 1, sizeof *qf);
+	vkGetPhysicalDeviceQueueFamilyProperties(adopt.pd, &nq, qf);
+	int compute = adopt.qi < nq && (qf[adopt.qi].queueFlags & VK_QUEUE_COMPUTE_BIT);
+	free(qf);
+	if (!compute) FAIL("adopted queue family has no compute", (int)adopt.qi);
+
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+	sprintf_s(g.name, sizeof g.name, "%s (shared)", props.deviceName);
+#else
+	snprintf(g.name, sizeof g.name, "%s (shared)", props.deviceName);
+#endif
+	g.discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+	g.coopmat = adopt.coopmat;
+	const char *forced = getenv("XMX_PORTABLE");
+	g.portable = !g.coopmat || (forced && *forced && atoi(forced) != 0);
+	g.inst = adopt.inst; g.pd = adopt.pd; g.q = adopt.q; g.qi = adopt.qi;
+	g.lock = adopt.lock; g.unlock = adopt.unlock; g.lock_ctx = adopt.ctx;
+	g.adopted = 1;
+	g.dev = adopt.dev;
+	adopt.set = 0;
+	return 0;
+}
+
+int xmx_open(void)
+{
+	if (g.dev) return 0;
+	if (adopt.set) return open_adopted();
+	xmx_gipa = linked_gipa();
+	if (!xmx_gipa) FAIL("no Vulkan library in the process (vkGetInstanceProcAddr not found)", 0);
+	if (resolve_global()) return -1;
+	uint32_t nie = 0;
+	vkEnumerateInstanceExtensionProperties(NULL, &nie, NULL);
+	VkExtensionProperties *ie = calloc(nie ? nie : 1, sizeof *ie);
+	vkEnumerateInstanceExtensionProperties(NULL, &nie, ie);
+	/* MoltenVK is a "portability" driver: behind the Vulkan loader on macOS it is
+	 * invisible until the instance enables this and sets the flag. Linked directly, or
+	 * on Linux, the extension is absent and nothing is asked for. */
+	int portability = has_extension(ie, nie, "VK_KHR_portability_enumeration");
+	free(ie);
+	const char *iext[] = { "VK_KHR_portability_enumeration" };
 	VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 				  .pApplicationName = "libxmx", .apiVersion = VK_API_VERSION_1_3 };
-	VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
+	VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
+				     .flags = portability ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0u,
+				     .enabledExtensionCount = portability ? 1u : 0u,
+				     .ppEnabledExtensionNames = iext };
 	VkResult r = vkCreateInstance(&ici, NULL, &g.inst);
 	if (r) FAIL("vkCreateInstance", r);
+	if (resolve_instance(g.inst)) return -1;
 
 	uint32_t n = 0;
 	vkEnumeratePhysicalDevices(g.inst, &n, NULL);
@@ -363,7 +643,13 @@ int xmx_init(const char *spv_path)
 	free(pds);
 	VkPhysicalDeviceProperties props;
 	vkGetPhysicalDeviceProperties(g.pd, &props);
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(g.name, sizeof g.name, "%s", props.deviceName);
+#else
 	snprintf(g.name, sizeof g.name, "%s", props.deviceName);
+#endif
+
 	g.discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
 	uint32_t nq = 0;
@@ -376,13 +662,29 @@ int xmx_init(const char *spv_path)
 	free(qf);
 	if (g.qi == UINT32_MAX) FAIL("no compute queue", 0);
 
+	/* What the device has decides the kernels, not the other way round. Without
+	 * VK_KHR_cooperative_matrix every GEMM runs on `gemm_portable*.comp`; the caller
+	 * reads `xmx_coopmat()` / `xmx_portable()` and hands over the matching SPIR-V. */
+	uint32_t nde = 0;
+	vkEnumerateDeviceExtensionProperties(g.pd, NULL, &nde, NULL);
+	VkExtensionProperties *de = calloc(nde ? nde : 1, sizeof *de);
+	vkEnumerateDeviceExtensionProperties(g.pd, NULL, &nde, de);
+	g.coopmat = has_extension(de, nde, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+	int subset = has_extension(de, nde, "VK_KHR_portability_subset");
+	free(de);
+	const char *forced = getenv("XMX_PORTABLE");
+	g.portable = !g.coopmat || (forced && *forced && atoi(forced) != 0);
+	const char *ext[2]; uint32_t next = 0;
+	if (g.coopmat) ext[next++] = VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME;
+	if (subset) ext[next++] = "VK_KHR_portability_subset";   /* required when offered */
+
 	VkPhysicalDeviceCooperativeMatrixFeaturesKHR cm = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR, .cooperativeMatrix = VK_TRUE };
 	/* bufferDeviceAddress lets the resident path pass operands as 64-bit pointers in
 	 * push constants, so a whole block of dispatches records into one command buffer
 	 * without a descriptor pool. scalarBlockLayout matches the shaders' layout. */
 	VkPhysicalDeviceVulkan12Features v12 = {
-		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &cm,
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = g.coopmat ? (void *)&cm : NULL,
 		.vulkanMemoryModel = VK_TRUE, .vulkanMemoryModelDeviceScope = VK_TRUE, .shaderFloat16 = VK_TRUE,
 		.bufferDeviceAddress = VK_TRUE, .scalarBlockLayout = VK_TRUE };
 	VkPhysicalDeviceVulkan11Features v11 = {
@@ -392,13 +694,78 @@ int xmx_init(const char *spv_path)
 	float prio = 1.0f;
 	VkDeviceQueueCreateInfo qci = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 					.queueFamilyIndex = g.qi, .queueCount = 1, .pQueuePriorities = &prio };
-	const char *ext[] = { VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME };
 	VkDeviceCreateInfo dci = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &f2,
 				   .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci,
-				   .enabledExtensionCount = 1, .ppEnabledExtensionNames = ext };
+				   .enabledExtensionCount = next, .ppEnabledExtensionNames = ext };
 	r = vkCreateDevice(g.pd, &dci, NULL, &g.dev);
-	if (r) FAIL("vkCreateDevice", r);
+	if (r) { g.dev = VK_NULL_HANDLE; FAIL("vkCreateDevice", r); }
 	vkGetDeviceQueue(g.dev, g.qi, 0, &g.q);
+	return 0;
+}
+
+/* Release everything libxmx made: buffers, graphs, pipelines, pools, fences — and its
+ * own device and instance, unless they were adopted, in which case they go back to the
+ * host untouched. `xmx_open` may be called again afterwards (an adoption handed over
+ * since then is taken up). Every buffer id and graph id is dead after this. */
+int xmx_buf_destroy(int id);
+int xmx_graph_destroy(int id);
+
+void xmx_close(void)
+{
+	if (!g.dev) { adopt.set = 0; return; }
+	if (g.adopted) { qlock(); vkQueueWaitIdle(g.q); qunlock(); }
+	else vkDeviceWaitIdle(g.dev);
+	for (int i = 0; i < MAX_RBUF; i++) xmx_buf_destroy(i);
+	for (int i = 0; i < MAX_GRAPHS; i++) xmx_graph_destroy(i);
+	for (unsigned i = 0; i < specialized_count; i++) vkDestroyPipeline(g.dev, specialized[i].pipeline, NULL);
+	specialized_count = 0;
+	VkPipeline *pipes[] = { &g.rgemm, &g.rtiled, &g.rstaged, &g.runary, &g.rrow, &g.rhistory, &g.pipe, &g.pipeb };
+	for (size_t i = 0; i < sizeof pipes / sizeof *pipes; i++) if (*pipes[i]) vkDestroyPipeline(g.dev, *pipes[i], NULL);
+	if (g.rpl) vkDestroyPipelineLayout(g.dev, g.rpl, NULL);
+	if (g.plb) vkDestroyPipelineLayout(g.dev, g.plb, NULL);
+	if (g.pl) vkDestroyPipelineLayout(g.dev, g.pl, NULL);
+	if (g.dsl) vkDestroyDescriptorSetLayout(g.dev, g.dsl, NULL);
+	for (int i = 0; i < 5; i++) free(g.rpaths[i]);
+	if (g.qpool) vkDestroyQueryPool(g.dev, g.qpool, NULL);
+	if (g.fence) vkDestroyFence(g.dev, g.fence, NULL);
+	if (g.rfence) vkDestroyFence(g.dev, g.rfence, NULL);
+	if (g.tfence) vkDestroyFence(g.dev, g.tfence, NULL);
+	if (g.cpool) vkDestroyCommandPool(g.dev, g.cpool, NULL);   /* frees cb, rcb, tcb */
+	if (g.dpool) vkDestroyDescriptorPool(g.dev, g.dpool, NULL); /* frees set */
+	struct buf *bufs[] = { &g.A, &g.B, &g.C, &g.stage };
+	for (size_t i = 0; i < sizeof bufs / sizeof *bufs; i++)
+		if (bufs[i]->b) {
+			if (bufs[i]->p) vkUnmapMemory(g.dev, bufs[i]->m);
+			vkDestroyBuffer(g.dev, bufs[i]->b, NULL);
+			vkFreeMemory(g.dev, bufs[i]->m, NULL);
+		}
+	if (!g.adopted) {
+		vkDestroyDevice(g.dev, NULL);
+		vkDestroyInstance(g.inst, NULL);
+	}
+	memset(&g, 0, sizeof g);
+	memset(graphs, 0, sizeof graphs);
+	memset(prof_ms, 0, sizeof prof_ms);
+	memset(prof_hits, 0, sizeof prof_hits);
+	adopt.set = 0;
+}
+
+int xmx_coopmat(void) { return g.dev ? g.coopmat : -1; }
+int xmx_portable(void) { return g.dev ? g.portable : -1; }
+/* One line for a log: which GEMM kernels this device runs, and why. */
+const char *xmx_path(void)
+{
+	if (!g.dev) return "not opened";
+	if (!g.portable) return "cooperative matrix (VK_KHR_cooperative_matrix, fp16 x fp16 -> fp32)";
+	return g.coopmat ? "portable multiply-add (XMX_PORTABLE=1; the device has cooperative matrix)"
+			 : "portable multiply-add (the device has no VK_KHR_cooperative_matrix)";
+}
+
+int xmx_init(const char *spv_path)
+{
+	if (g.ready) return 0;
+	if (xmx_open()) return -1;
+	VkResult r;
 
 	VkDescriptorSetLayoutBinding bind[3];
 	for (int i = 0; i < 3; i++)
@@ -493,7 +860,9 @@ int xmx_gemm(unsigned M, unsigned N, unsigned K, const void *a, const void *b, v
 	vkEndCommandBuffer(g.cb);
 	vkResetFences(g.dev, 1, &g.fence);
 	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &g.cb };
+	qlock();
 	VkResult r = vkQueueSubmit(g.q, 1, &si, g.fence);
+	qunlock();
 	if (r) FAIL("submit", r);
 	r = vkWaitForFences(g.dev, 1, &g.fence, VK_TRUE, 60ull * 1000000000ull);
 	if (r) FAIL("fence wait", r);
@@ -556,7 +925,9 @@ int xmx_gemm_batched(unsigned M, unsigned N, unsigned K, unsigned batch,
 	vkEndCommandBuffer(g.cb);
 	vkResetFences(g.dev, 1, &g.fence);
 	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &g.cb };
+	qlock();
 	VkResult r = vkQueueSubmit(g.q, 1, &si, g.fence);
+	qunlock();
 	if (r) FAIL("submit", r);
 	r = vkWaitForFences(g.dev, 1, &g.fence, VK_TRUE, 60ull * 1000000000ull);
 	if (r) FAIL("fence wait", r);
@@ -585,7 +956,7 @@ int xmx_res_init(const char *gemm_spv, const char *unary_spv, const char *row_sp
 	if (r) FAIL("resident pipeline layout", r);
 	const char *paths[] = { gemm_spv, tiled_spv, staged_spv, unary_spv, row_spv };
 	for (unsigned i = 0; i < 5; i++) {
-		g.rpaths[i] = strdup(paths[i]);
+		g.rpaths[i] = nr_strdup(paths[i]);
 		if (!g.rpaths[i]) FAIL("pipeline path allocation", 0);
 	}
 	const char *spec = getenv("XMX_SPECIALIZE");
@@ -695,7 +1066,10 @@ static int submit_transfer(void)
 	if ((r = vkResetFences(g.dev, 1, &g.tfence))) FAIL("reset transfer fence", r);
 	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
 			    .pCommandBuffers = &g.tcb };
-	if ((r = vkQueueSubmit(g.q, 1, &si, g.tfence))) FAIL("transfer submit", r);
+	qlock();
+	r = vkQueueSubmit(g.q, 1, &si, g.tfence);
+	qunlock();
+	if (r) FAIL("transfer submit", r);
 	if ((r = vkWaitForFences(g.dev, 1, &g.tfence, VK_TRUE, 60ull * 1000000000ull)))
 		FAIL("transfer fence", r);
 	return 0;
@@ -968,6 +1342,10 @@ int xmx_rec_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K, unsign
 	 * nothing to reuse; K >= 128 is where it stops losing. Over a whole frame the two
 	 * are indistinguishable — see notes/phase22-staging-and-storage.md. */
 	int staged = M % 64 == 0 && N % 32 == 0 && K % 32 == 0 && K >= g.staging;
+	/* The staged kernel has no portable twin — its 128-lane 64x32 geometry exists to feed
+	 * matrix units — so without them every shape goes to the 8x16 and 16x32 kernels,
+	 * whose portable builds take the same dispatch. */
+	if (g.portable) staged = 0;
 	int tiled = M % g.tilem == 0 && N % g.tilen == 0 && K >= g.tiling;
 	VkPipeline pipeline;
 	if (resident_pipeline(staged ? 2 : (tiled ? 1 : 0), bt,
@@ -1068,7 +1446,10 @@ static int submit_commands(VkCommandBuffer commands, int passes)
 	if (r) FAIL("reset resident fence", r);
 	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
 			    .pCommandBuffers = &commands };
-	if ((r = vkQueueSubmit(g.q, 1, &si, g.rfence))) FAIL("resident submit", r);
+	qlock();
+	r = vkQueueSubmit(g.q, 1, &si, g.rfence);
+	qunlock();
+	if (r) FAIL("resident submit", r);
 	if ((r = vkWaitForFences(g.dev, 1, &g.rfence, VK_TRUE, 60ull * 1000000000ull)))
 		FAIL("resident fence wait", r);
 	return passes;

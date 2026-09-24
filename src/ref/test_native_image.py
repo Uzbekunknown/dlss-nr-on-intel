@@ -172,7 +172,7 @@ def compose_checks(rng):
 
 def main():
     if nr_image.library() is None:
-        print("  no work/libnr_image.so — `make` builds it; the NumPy path still runs")
+        print("  no work/libnr_image.so (.dylib on macOS) — `make` builds it; the NumPy path still runs")
         return 0
     rng = np.random.default_rng(17)
     codec_checks(rng)

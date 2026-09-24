@@ -13,6 +13,10 @@
 #include <string.h>
 #include <vulkan/vulkan.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 /* Rotating buffers: several ctype() results are live in one printf call. */
 static const char *ctype(VkComponentTypeKHR t)
 {
@@ -40,7 +44,13 @@ static const char *ctype(VkComponentTypeKHR t)
 		break;
 	}
 	slot = (slot + 1) % 8;
+
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(pool[slot], sizeof pool[slot], "enum:%d", (int)t);
+#else
 	snprintf(pool[slot], sizeof pool[slot], "enum:%d", (int)t);
+#endif
+
 	return pool[slot];
 }
 
@@ -89,8 +99,16 @@ int main(void)
 	VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 				  .pApplicationName = "coopmat_probe",
 				  .apiVersion = VK_API_VERSION_1_3 };
+	/* macOS: MoltenVK is a portability driver, hidden by the loader until asked for. */
+	const char *portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 	VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-				     .pApplicationInfo = &app };
+				     .pApplicationInfo = &app,
+#ifdef __APPLE__
+				     .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+				     .enabledExtensionCount = 1, .ppEnabledExtensionNames = &portability,
+#endif
+	};
+	(void)portability;
 	VkInstance inst;
 	VkResult r = vkCreateInstance(&ici, NULL, &inst);
 

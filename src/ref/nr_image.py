@@ -18,15 +18,19 @@ changing any model or shader setting. With no library at all everything still ru
 import ctypes as C
 from functools import lru_cache
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+import nr_build  # noqa: E402
 
 
 @lru_cache(maxsize=1)
 def _library():
     try:
-        lib = C.CDLL(str(Path(__file__).resolve().parents[2] / 'work/libnr_image.so'))
+        lib = C.CDLL(str(nr_build.library('nr_image')))
     except OSError:
         return None
     ptr, stride, size = C.c_void_p, C.c_ssize_t, C.c_size_t

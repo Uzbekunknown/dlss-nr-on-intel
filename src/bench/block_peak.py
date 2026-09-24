@@ -12,9 +12,11 @@ so the ratio is RM*RN/(RM+RN).
 import os, pathlib, sys, time
 import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
 RM, RN = int(sys.argv[1]), int(sys.argv[2])
 BM, BN = 8 * RM, 16 * RN
-os.environ["XMX_TILED_SPV"] = str(ROOT / "work" / f"t_{RM}_{RN}.spv")
+os.environ["XMX_TILED_SPV"] = str(nr_build.shader(f"t_{RM}_{RN}.spv"))
 os.environ["XMX_TILE_M"], os.environ["XMX_TILE_N"] = str(BM), str(BN)
 os.environ["XMX_TILE_K"], os.environ["XMX_STAGE_K"] = "1", "4294967295"
 sys.path.insert(0, str(ROOT / "src" / "gpu"))

@@ -35,19 +35,29 @@ int main(int argc, char **argv)
 {
 	unsigned rounds = argc > 1 ? (unsigned)atoi(argv[1]) : 2;
 	const char *layers[] = { "VK_LAYER_dlssnr_intel" };
+	/* On macOS the loader hides MoltenVK — a "portability" driver — until the instance
+	 * asks for it, which a game does too; the layer sits behind whatever the game asked. */
 	const char *instance_ext[] = { VK_KHR_SURFACE_EXTENSION_NAME,
-				       VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME };
+				       VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME,
+				       VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME };
+#ifdef __APPLE__
+	const uint32_t instance_ext_count = 3;
+	const VkInstanceCreateFlags instance_flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#else
+	const uint32_t instance_ext_count = 2;
+	const VkInstanceCreateFlags instance_flags = 0;
+#endif
 	VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 				  .pApplicationName = "nr present test",
 				  .apiVersion = VK_API_VERSION_1_3 };
 	VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-				     .pApplicationInfo = &app,
+				     .pApplicationInfo = &app, .flags = instance_flags,
 				     /* `NR_TEST_NO_LAYER=1` runs the same frames with no layer
 				      * at all, which is how a failure is told apart from a
 				      * failure of ours */
 				     .enabledLayerCount = getenv("NR_TEST_NO_LAYER") ? 0 : 1,
 				     .ppEnabledLayerNames = layers,
-				     .enabledExtensionCount = 2,
+				     .enabledExtensionCount = instance_ext_count,
 				     .ppEnabledExtensionNames = instance_ext };
 	VkInstance instance;
 	CHECK("vkCreateInstance", vkCreateInstance(&ici, NULL, &instance));

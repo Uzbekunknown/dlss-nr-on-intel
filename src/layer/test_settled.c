@@ -43,7 +43,12 @@ int main(void)
 	build(now, before, width, height, panel_from, 40, 0);
 	uint32_t held = settled(now, before, pixels, mask);
 	uint32_t expect = (width - panel_from) * height;
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(detail, sizeof detail, "%u pixels held, expected %u", held, expect);
+#else
 	snprintf(detail, sizeof detail, "%u pixels held, expected %u", held, expect);
+#endif
+
 	check("a still panel over a moving scene is found exactly", held == expect, detail);
 
 	int marked_panel = 1, marked_scene = 0;
@@ -58,18 +63,36 @@ int main(void)
 	/* Dither: a still panel in a real game is not bit-identical between presents. */
 	build(now, before, width, height, panel_from, 40, 2);
 	held = settled(now, before, pixels, mask);
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(detail, sizeof detail, "two levels per channel still counts as held (%u)", held);
+#else
 	snprintf(detail, sizeof detail, "two levels per channel still counts as held (%u)", held);
+#endif
+
 	check("small dither does not break the panel", held == expect, detail);
 
 	build(now, before, width, height, panel_from, 40, 3);
 	held = settled(now, before, pixels, mask);
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(detail, sizeof detail, "three levels per channel counts as motion (%u held)", held);
+#else
 	snprintf(detail, sizeof detail, "three levels per channel counts as motion (%u held)", held);
+#endif
+
 	check("a real change is not swallowed by the tolerance", held == 0, detail);
 
 	/* Nothing moved: a paused scene is indistinguishable from an interface. */
 	build(now, before, width, height, panel_from, 0, 0);
 	held = settled(now, before, pixels, mask);
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(detail, sizeof detail, "%u of %u held", held, pixels);
+#else
 	snprintf(detail, sizeof detail, "%u of %u held", held, pixels);
+#endif
+
 	check("a frozen frame is refused rather than guessed",
 	      held == pixels && !mask_worth_sending(held, pixels), detail);
 
@@ -82,7 +105,13 @@ int main(void)
 	/* A thin HUD — a health bar — is above the floor and still worth sending. */
 	build(now, before, width, height, width - width / 20, 40, 0);
 	held = settled(now, before, pixels, mask);
+    
+#if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
+    sprintf_s(detail, sizeof detail, "%u%% of the frame", 100 * held / pixels);
+#else
 	snprintf(detail, sizeof detail, "%u%% of the frame", 100 * held / pixels);
+#endif
+
 	check("a thin HUD is above the floor", mask_worth_sending(held, pixels), detail);
 
 	free(now); free(before); free(mask);

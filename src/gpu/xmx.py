@@ -2,9 +2,11 @@
 """
 xmx — host-side interface to the Xe2 cooperative-matrix GEMM.
 
-Backed by `work/libxmx.so`, a resident Vulkan context: the instance, device,
+Backed by `work/libxmx.so` (`.dylib` on macOS), a resident Vulkan context: the instance, device,
 pipeline and buffers are created once and reused, so a call costs a memcpy, a submit
-and a fence wait rather than ~80 ms of setup.
+and a fence wait rather than ~80 ms of setup. `NR_GPU_BACKEND=metal` (macOS) or `=d3d12`
+(Windows) binds libmetalmx or libd3dmx instead — the same entry points on Metal or
+Direct3D 12 (`nr_build.library`).
 
 Two things this layer must do that the kernel does not:
 
@@ -16,24 +18,50 @@ Two things this layer must do that the kernel does not:
   2. **Pad to the tile shape.** The only float configuration is M=8 N=16 K=16.
 """
 import ctypes
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+import nr_build  # noqa: E402
 FP16_MAX = 65504.0
 TM, TN, TK = 8, 16, 16
 
 _lib = None
 
 
-def _load(spv="gemm_coopmat.spv"):
+def _load(spv=None):
+    """The library, opened and with the plain GEMM pipeline built.
+
+    `spv` names the descriptor-path GEMM shader; left as None it follows the device —
+    the cooperative-matrix kernel where `VK_KHR_cooperative_matrix` exists, the portable
+    multiply-add kernel where it does not (MoltenVK on Apple silicon) or where
+    `XMX_PORTABLE=1` asks for it.
+    """
     global _lib
     if _lib is not None:
         return _lib
-    lib = ctypes.CDLL(str(ROOT / "work" / "libxmx.so"))
+    if sys.platform == "darwin":
+        # MoltenVK reads its configuration from the environment when it is first used, so
+        # this has to happen before the library loads. Two settings, and the second is a
+        # correctness one: Metal compiles shaders with fast math unless told otherwise,
+        # which contracts the gate's multiply and add into one FMA and skips the half
+        # rounding between them. Every vendor rounding point in `publish.glsl` then moves —
+        # the gate epilogue came out 3e-03 off and every E4M3 publish downstream by a
+        # quantum — and the frame stops matching the reference. Off, every epilogue,
+        # softmax and cosine check is exact on an M3, same as on Xe2.
+        os.environ.setdefault("MVK_CONFIG_LOG_LEVEL", "1")       # errors only
+        os.environ.setdefault("MVK_CONFIG_FAST_MATH_ENABLED", "0")
+    lib = ctypes.CDLL(str(nr_build.library("xmx")))
     lib.xmx_init.argtypes = [ctypes.c_char_p]
     lib.xmx_init.restype = ctypes.c_int
+    for name in ("xmx_open", "xmx_coopmat", "xmx_portable"):
+        getattr(lib, name).argtypes = []
+        getattr(lib, name).restype = ctypes.c_int
+    lib.xmx_path.restype = ctypes.c_char_p
     lib.xmx_gemm.argtypes = [ctypes.c_uint] * 3 + [ctypes.c_void_p] * 3 + [ctypes.c_uint]
     lib.xmx_gemm.restype = ctypes.c_int
     lib.xmx_reserve.argtypes = [ctypes.c_uint] * 3 + [ctypes.POINTER(ctypes.c_void_p)] * 3
@@ -47,7 +75,11 @@ def _load(spv="gemm_coopmat.spv"):
     lib.xmx_error.restype = ctypes.c_char_p
     lib.xmx_device.restype = ctypes.c_char_p
     lib.xmx_memory.restype = ctypes.c_char_p
-    if lib.xmx_init(str(ROOT / "work" / spv).encode()) != 0:
+    if lib.xmx_open() != 0:
+        raise RuntimeError("xmx_open: " + lib.xmx_error().decode())
+    if spv is None:
+        spv = "gemm_portable_desc.spv" if lib.xmx_portable() else "gemm_coopmat.spv"
+    if lib.xmx_init(nr_build.shader_arg(lib, spv).encode()) != 0:
         raise RuntimeError("xmx_init: " + lib.xmx_error().decode())
     _lib = lib
     return lib
@@ -55,6 +87,18 @@ def _load(spv="gemm_coopmat.spv"):
 
 def device_name():
     return _load().xmx_device().decode()
+
+
+def portable():
+    """True when the GEMMs run on the plain multiply-add kernels rather than the
+    cooperative-matrix ones: no `VK_KHR_cooperative_matrix` on the device, or
+    `XMX_PORTABLE=1`. The rest of the graph is the same either way."""
+    return bool(_load().xmx_portable())
+
+
+def path_note():
+    """Which GEMM kernels this device runs, and why, for a log line."""
+    return _load().xmx_path().decode()
 
 
 def memory_note():
@@ -198,11 +242,13 @@ def gemm_mapped(A, right, b_key=None):
 _batched_ready = False
 
 
-def _load_batched(spv="gemm_batched.spv"):
+def _load_batched(spv=None):
     global _batched_ready
     lib = _load()
+    if spv is None:
+        spv = "gemm_portable_batched.spv" if lib.xmx_portable() else "gemm_batched.spv"
     if not _batched_ready:
-        if lib.xmx_init_batched(str(ROOT / "work" / spv).encode()) != 0:
+        if lib.xmx_init_batched(nr_build.shader_arg(lib, spv).encode()) != 0:
             raise RuntimeError("xmx_init_batched: " + lib.xmx_error().decode())
         _batched_ready = True
     return lib
