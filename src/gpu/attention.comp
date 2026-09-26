@@ -1,4 +1,4 @@
-#version 450
+﻿#version 450
 #extension GL_GOOGLE_include_directive : require
 /*
  * attention — the row-wise operators: the cosine publish and the bit-affine softmax.

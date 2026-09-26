@@ -48,6 +48,16 @@ def write(values):
 
 def alive():
     """Whether a daemon is listening. A stale socket file is not a daemon."""
+    if os.name == "nt":
+        # Windows: the endpoint is a named pipe, not a filesystem object, and CPython
+        # has no socket.AF_UNIX there. Opening the pipe namespace is the probe: it
+        # succeeds only while a server is listening, and a missing server surfaces as
+        # FileNotFoundError rather than a hang.
+        try:
+            with open(str(SOCKET), "r+b", buffering=0):
+                return True
+        except OSError:
+            return False
     if not SOCKET.exists():
         return False
     try:

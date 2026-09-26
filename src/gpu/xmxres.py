@@ -583,7 +583,17 @@ class Runtime:
         self.fuse_attention_merge = os.environ.get("NR_FUSE_ATTENTION_MERGE", "1") != "0"
         # Q/K normalised and V published in the QKV projection's own epilogue, so the
         # float32 projection never goes to memory (qkv_epilogue.glsl).
-        self.qkv_epilogue = os.environ.get("NR_QKV_EPILOGUE", "1") != "0"
+        #
+        # Off by default, unlike the other fusions. Fusing moves the epilogue's writes into
+        # the projection's own dispatch, and the projection's input shares a scratch-arena
+        # role with `k16`; HANDOFF.md records that the role table was built for passes that
+        # finish before the next starts, and this one does not. The epilogue therefore writes
+        # K to `key16` instead. On the B580 that is not enough: the picture comes back with
+        # horizontal bands through it (measured here, a plain scene at 640x360 through the
+        # deployed layer - clean with NR_QKV_EPILOGUE=0, banded with it on). Turning it on is
+        # still possible, and worth it on a driver where the race does not show - it is 22 %
+        # of a 720p frame (notes/improve-qkv-epilogue.md).
+        self.qkv_epilogue = os.environ.get("NR_QKV_EPILOGUE", "0") != "0"
         # The full-resolution glue around blocks 0 and 70 in fewer passes: the stem's
         # GEMM also stores the half copy block 0's feed-forward reads, and block 70's
         # input is upsampled, scaled and merged in one pass that stores both widths.

@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /*
  * nr_layer — a Vulkan layer that hands the presented frame to DLSS-NR.
  *
@@ -20,19 +21,77 @@
  *
  * Build: cc -O2 -shared -fPIC -o libnr_layer.so nr_layer.c -lvulkan
  */
-#define VK_USE_PLATFORM_XLIB_KHR
+/* The layer only needs a platform header so vulkan.h stops complaining; it never calls
+ * into the windowing system. Windows has no Xlib, so pick per platform. */
+#ifdef _WIN32
+#  define VK_USE_PLATFORM_WIN32_KHR
+#else
+#  define VK_USE_PLATFORM_XLIB_KHR
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <errno.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#include <sys/time.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
+#include "nr_transport.h"
+
+#ifdef _WIN32
+#  include <io.h>
+#  ifndef R_OK
+#    define R_OK 4
+#  endif
+#  ifndef W_OK
+#    define W_OK 2
+#  endif
+#  ifndef F_OK
+#    define F_OK 0
+#  endif
+#  ifndef access
+#    define access(p, m) _access(p, m)
+#  endif
+#else
+#  include <pthread.h>
+#  include <unistd.h>
+#  include <sys/stat.h>
+#  include <sys/time.h>
+#endif
+
+/* Locking uses the platform's own primitive: an SRWLOCK needs no destroy step and is
+ * what this file used on Windows before, a pthread_mutex is what Linux uses. */
+#ifdef _WIN32
+typedef SRWLOCK nr_mutex_t;
+#define NR_MUTEX_INIT SRWLOCK_INIT
+#define nr_mutex_init(m, ...) InitializeSRWLock(m)
+#define nr_mutex_lock(m)      AcquireSRWLockExclusive(m)
+#define nr_mutex_unlock(m)    ReleaseSRWLockExclusive(m)
+#define nr_mutex_destroy(m)   ((void)(m))
+#else
+typedef pthread_mutex_t nr_mutex_t;
+#define NR_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+#define nr_mutex_init(m, ...) pthread_mutex_init(m, NULL)
+#define nr_mutex_lock(m)      pthread_mutex_lock(m)
+#define nr_mutex_unlock(m)    pthread_mutex_unlock(m)
+#define nr_mutex_destroy(m)   pthread_mutex_destroy(m)
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
+#ifndef R_OK
+#define R_OK 4
+#endif
+#ifndef W_OK
+#define W_OK 2
+#endif
+#ifndef F_OK
+#define F_OK 0
+#endif
+#else
+#include <dlfcn.h>   /* dladdr: the layer's own path */
+#include <spawn.h>
+#include <fcntl.h>
+#endif
+
 
 #define MAX_SWAPCHAINS 8
 #define MAX_IMAGES 8
@@ -46,7 +105,7 @@ struct device_data {
 	VkPhysicalDevice physical;
 	VkQueue queue;
 	uint32_t queue_family;
-	pthread_mutex_t present_lock;
+	nr_mutex_t present_lock;
 	unsigned long frame_counter;
 	VkResult transfer_error, device_error;
 	VkFence stalled_fence;
@@ -99,7 +158,7 @@ struct swapchain_data {
 static struct device_data devices[8];
 static struct swapchain_data swapchains[MAX_SWAPCHAINS];
 
-static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static nr_mutex_t lock = NR_MUTEX_INIT;
 static PFN_vkGetInstanceProcAddr next_instance_proc;
 static VkInstance layer_instance;
 static const char *capture_path;
@@ -117,53 +176,37 @@ static int ui_mask;
 /* `reply_size` is deliberately separate from `payload_size`: the interface mask makes
  * the request larger than the answer, and reusing one size meant asking for bytes the
  * daemon never sends — the read hit EOF and every masked frame came back unchanged. */
+/* Sends the request and leaves the connection open: in asynchronous live mode the
+ * answer is read on the next present, so the endpoint has to outlive this call.
+ * Returns the open link, or -1. */
 static int exchange_send(const void *header, size_t header_size, const void *payload,
 			 size_t payload_size)
 {
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd < 0) return -1;
-	struct timeval timeout = { .tv_sec = 60 };
-	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout) ||
-	    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout)) {
-		close(fd); return -1;
-	}
-	struct sockaddr_un address = { .sun_family = AF_UNIX };
-	snprintf(address.sun_path, sizeof address.sun_path, "%s", socket_path);
-	if (connect(fd, (struct sockaddr *)&address, sizeof address) < 0) {
+	nr_link link;
+	if (nr_link_connect(&link, socket_path) != 0) {
 		fprintf(stderr, "[nr_layer] no daemon at %s\n", socket_path);
-		close(fd);
 		return -1;
 	}
-	const unsigned char *out = header;
-	for (size_t sent = 0; sent < header_size; ) {
-		ssize_t n = send(fd, out + sent, header_size - sent, MSG_NOSIGNAL);
-		if (n < 0 && errno == EINTR) continue;
-		if (n <= 0) { close(fd); return -1; }
-		sent += (size_t)n;
+	if (nr_link_write(&link, header, header_size) != 0
+	    || nr_link_write(&link, payload, payload_size) != 0) {
+		nr_link_close(&link);
+		return -1;
 	}
-	out = payload;
-	for (size_t sent = 0; sent < payload_size; ) {
-		ssize_t n = send(fd, out + sent, payload_size - sent, MSG_NOSIGNAL);
-		if (n < 0 && errno == EINTR) continue;
-		if (n <= 0) { close(fd); return -1; }
-		sent += (size_t)n;
-	}
-	return fd;
+	return nr_link_handle(link);
 }
 
 /* Reads the whole answer and closes the connection, whichever way it ends. */
 static int exchange_receive(int fd, void *reply, size_t reply_size)
 {
-	unsigned char *in = reply;
-	for (size_t got = 0; got < reply_size; ) {
-		ssize_t n = read(fd, in + got, reply_size - got);
-		if (n < 0 && errno == EINTR) continue;
-		if (n <= 0) { close(fd); return -1; }
-		got += (size_t)n;
+	nr_link link = nr_link_from_handle(fd);
+	if (nr_link_read(&link, reply, reply_size) != 0) {
+		nr_link_close(&link);
+		return -1;
 	}
-	close(fd);
+	nr_link_close(&link);
 	return 0;
 }
+
 
 static int exchange(const void *header, size_t header_size, const void *payload,
 		    size_t payload_size, void *reply, size_t reply_size)
@@ -180,16 +223,15 @@ static void drop_inflight(struct device_data *data)
 {
 	if (!data->inflight) return;
 	data->inflight = 0;
+	nr_link link = nr_link_from_handle(data->inflight_fd);
 	unsigned char sink[65536];
 	for (VkDeviceSize got = 0; got < data->inflight_size; ) {
 		size_t want = data->inflight_size - got < sizeof sink
 			      ? (size_t)(data->inflight_size - got) : sizeof sink;
-		ssize_t n = read(data->inflight_fd, sink, want);
-		if (n < 0 && errno == EINTR) continue;
-		if (n <= 0) break;
-		got += (VkDeviceSize)n;
+		if (nr_link_read(&link, sink, want) != 0) break;
+		got += want;
 	}
-	close(data->inflight_fd);
+	nr_link_close(&link);
 }
 
 static struct device_data *find_device(VkDevice device)
@@ -248,14 +290,14 @@ static void announce_queues(VkDevice device, VkQueue presenting, uint32_t presen
 {
 	uint32_t families[MAX_QUEUES];
 	int count = 0, others = 0;
-	pthread_mutex_lock(&lock);
+	nr_mutex_lock(&lock);
 	for (int i = 0; i < MAX_QUEUES; i++)
 		if (queues[i].queue && queues[i].device == device) {
 			families[count++] = queues[i].family;
 			if (queues[i].queue != presenting && queues[i].family != present_family)
 				others++;
 		}
-	pthread_mutex_unlock(&lock);
+	nr_mutex_unlock(&lock);
 	char list[128] = { 0 };
 	size_t used = 0;
 	for (int i = 0; i < count && used + 8 < sizeof list; i++)
@@ -270,14 +312,14 @@ static void announce_queues(VkDevice device, VkQueue presenting, uint32_t presen
 static void remember_queue(VkDevice device, uint32_t family, VkQueue queue, int capture_ok)
 {
 	if (!queue) return;
-	pthread_mutex_lock(&lock);
+	nr_mutex_lock(&lock);
 	if (!find_queue(queue))
 		for (int i = 0; i < MAX_QUEUES; i++)
 			if (!queues[i].queue) {
 				queues[i] = (struct queue_data){ queue, device, family, capture_ok };
 				break;
 			}
-	pthread_mutex_unlock(&lock);
+	nr_mutex_unlock(&lock);
 }
 
 VKAPI_ATTR void VKAPI_CALL nr_GetDeviceQueue(VkDevice device, uint32_t family,
@@ -347,6 +389,238 @@ static VkLayerDeviceCreateInfo *device_chain(const VkDeviceCreateInfo *info)
 	return item;
 }
 
+static void ensure_daemon(void);
+
+static void ensure_daemon(void)
+{
+	/* Opt-in, and silent when off: most processes that load the layer (vulkaninfo,
+	 * a compositor) must not start a daemon and must not print anything either. */
+	if (!getenv("NR_LAYER_SPAWN")) return;
+	/* Nothing to talk to without an endpoint: spawning a daemon nobody uses costs
+	 * ~3 GiB. */
+	if (!socket_path) return;
+	/* Do not re-spawn from inside a daemon we started: it inherits VK_INSTANCE_LAYERS
+	 * and would load this layer again, recursing until the OOM killer arrives. The
+	 * child is marked NR_LAYER_SPAWNED, so its own layer sees this and steps back. */
+	if (getenv("NR_LAYER_SPAWNED")) return;
+
+	/* Already up? Then leave it. A one-shot probe, not a blocking connect: waiting
+	 * would stall every game load. */
+	{
+		int alive = 0;
+#ifdef _WIN32
+		HANDLE h = CreateFileA(socket_path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+				       OPEN_EXISTING, 0, NULL);
+		if (h != INVALID_HANDLE_VALUE) { CloseHandle(h); alive = 1; }
+		else if (GetLastError() == ERROR_PIPE_BUSY) alive = 1;   /* exists, busy */
+#else
+		int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (fd >= 0) {
+			struct sockaddr_un a;
+			memset(&a, 0, sizeof a);
+			a.sun_family = AF_UNIX;
+			snprintf(a.sun_path, sizeof a.sun_path, "%s", socket_path);
+			if (connect(fd, (struct sockaddr *)&a, sizeof a) == 0) alive = 1;
+			close(fd);
+		}
+#endif
+		if (alive) return;
+	}
+
+	const char *py = getenv("NR_PYTHON");
+	if (!py || !*py) py = "python3";
+
+	/* The daemon script lives next to *this library*. /proc/self/exe is the game
+	 * (a Wine binary under Proton), so ask the loader for our own path instead. */
+	char self[1024];
+	self[0] = '\0';
+#ifdef _WIN32
+	{
+		HMODULE hmod;
+		if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+				       (LPCWSTR)(const void *)&ensure_daemon, &hmod)) {
+			WCHAR w[1024];
+			if (GetModuleFileNameW(hmod, w, 1024))
+				WideCharToMultiByte(CP_UTF8, 0, w, -1, self, sizeof self, NULL, NULL);
+		}
+	}
+#else
+	{
+		Dl_info info;
+		if (dladdr((const void *)&ensure_daemon, &info) && info.dli_fname)
+			snprintf(self, sizeof self, "%s", info.dli_fname);
+	}
+#endif
+	if (!self[0]) {
+		fprintf(stderr, "[nr_layer] could not locate this layer's path; set NR_DAEMON\n");
+		return;
+	}
+
+	char daemon_buf[1024];
+	const char *daemon = getenv("NR_DAEMON");
+	if (!daemon || !*daemon) {
+		/* Where the daemon sits relative to the library, in the layouts this tree and
+		 * its Makefile produce:
+		 *   <dir>/nr_daemon.py              flat deployment
+		 *   <dir>/src/layer/nr_daemon.py    a checkout, library beside the sources
+		 *   ../src/layer/nr_daemon.py       `make` builds the library into work/ and
+		 *                                   prepare_layer.py points the manifest there,
+		 *                                   so work/ is the directory beside it
+		 * The first that exists wins. */
+		char *slash = self;
+		for (char *p = self; *p; p++) if (*p == '/' || *p == '\\') slash = p;
+		*slash = '\0';
+		const char *cands[] = { "/nr_daemon.py", "/src/layer/nr_daemon.py",
+					"/../src/layer/nr_daemon.py" };
+		daemon = NULL;
+		for (size_t i = 0; i < sizeof cands / sizeof *cands; i++) {
+			snprintf(daemon_buf, sizeof daemon_buf, "%s%s", self, cands[i]);
+			if (access(daemon_buf, R_OK) == 0) { daemon = daemon_buf; break; }
+		}
+		if (daemon) {
+			/* The root is derived by stripping two levels off this path, so it must
+			 * not still contain a ".." when that happens. */
+			char resolved[1024];
+#ifdef _WIN32
+			void *ok = _fullpath(resolved, daemon, sizeof resolved);
+#else
+			void *ok = realpath(daemon, resolved);
+#endif
+			if (ok) {
+				snprintf(daemon_buf, sizeof daemon_buf, "%s", resolved);
+				daemon = daemon_buf;
+			}
+		}
+		if (!daemon) {
+			fprintf(stderr, "[nr_layer] could not find nr_daemon.py next to the "
+				"layer; set NR_DAEMON to its path\n");
+			return;
+		}
+	}
+
+	/* The daemon's module root is two levels above src/layer/nr_daemon.py; for a flat
+	 * deployment it is the directory holding the script. NR_ROOT overrides both. */
+	char root_buf[1024];
+	const char *root = getenv("NR_ROOT");
+	if (!root || !*root) {
+		snprintf(root_buf, sizeof root_buf, "%s", daemon);
+		char *slash = root_buf;
+		for (char *p = root_buf; *p; p++) if (*p == '/' || *p == '\\') slash = p;
+		*slash = '\0';                                  /* .../src/layer */
+		if (strstr(root_buf, "/src/layer") || strstr(root_buf, "\\src\\layer")) {
+			slash = root_buf;
+			for (char *p = root_buf; *p; p++) if (*p == '/' || *p == '\\') slash = p;
+			*slash = '\0';                              /* .../src */
+			slash = root_buf;
+			for (char *p = root_buf; *p; p++) if (*p == '/' || *p == '\\') slash = p;
+			*slash = '\0';                              /* ... (the root) */
+		}
+		root = root_buf;
+	}
+
+	/* Same defaults as src/layer/nr_paths.py, or the knobs the tools write never
+	 * reach a daemon started from here. */
+	const char *settings = getenv("NR_SETTINGS");
+	if (!settings || !*settings) settings = "/tmp/nr_settings.json";
+
+	char cmd[4096];
+	snprintf(cmd, sizeof cmd, "\"%s\" \"%s\" --socket \"%s\" --settings \"%s\" --root \"%s\"",
+			 py, daemon, socket_path, settings, root);
+
+#ifdef _WIN32
+	{
+		STARTUPINFOA si; PROCESS_INFORMATION pi;
+		memset(&si, 0, sizeof si); si.cb = sizeof si;
+		memset(&pi, 0, sizeof pi);
+		si.dwFlags = STARTF_USESTDHANDLES;
+		si.hStdInput = INVALID_HANDLE_VALUE;
+		char log[1024];
+		snprintf(log, sizeof log, "%s", getenv("NR_LAYER_LOG") ? getenv("NR_LAYER_LOG") : "/tmp/nr_daemon.log");
+		si.hStdOutput = CreateFileA(log, FILE_APPEND_DATA, FILE_SHARE_WRITE, NULL,
+					    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		si.hStdError = si.hStdOutput;
+		/* The marker goes in the child's environment block, not ours: setting it in
+		 * the game would stop a second instance in the same process from ever
+		 * spawning, and setenv is not safe while other threads read the environment.
+		 * VK_INSTANCE_LAYERS goes too: the daemon builds its own Vulkan instance, and
+		 * with the layer still named there its status lines land in the daemon's log
+		 * where a reader takes them for the layer talking about the game. */
+		char env_block[8192];
+		size_t used = 0;
+		char *env = GetEnvironmentStringsA();
+		if (env) {
+			for (char *e = env; *e && used + strlen(e) + 64 < sizeof env_block;
+			     e += strlen(e) + 1) {
+				if (strncmp(e, "NR_LAYER_SPAWNED=", 17) == 0) continue;
+				if (strncmp(e, "VK_INSTANCE_LAYERS=", 19) == 0) continue;
+				size_t len = strlen(e) + 1;
+				memcpy(env_block + used, e, len);
+				used += len;
+			}
+			FreeEnvironmentStringsA(env);
+		}
+		const char marker[] = "NR_LAYER_SPAWNED=1";
+		memcpy(env_block + used, marker, sizeof marker);
+		used += sizeof marker;
+		env_block[used] = '\0';
+
+		BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, DETACHED_PROCESS,
+					 env_block, NULL, &si, &pi);
+		if (si.hStdOutput != INVALID_HANDLE_VALUE) CloseHandle(si.hStdOutput);
+		if (!ok) {
+			fprintf(stderr, "[nr_layer] daemon spawn failed (%lu); frame stays "
+				"as the game drew it\n", GetLastError());
+			return;
+		}
+		CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+	}
+#else
+	{
+		/* Copy the environment with the marker added, so the game's own environment is
+		 * untouched (setenv() in a multithreaded process is not safe).
+		 * VK_INSTANCE_LAYERS is dropped for the same reason as on Windows: the daemon
+		 * builds its own Vulkan instance and would otherwise load this layer too. */
+		extern char **environ;
+		char marker[] = "NR_LAYER_SPAWNED=1";
+		size_t count = 0;
+		while (environ[count]) count++;
+		char **child_env = malloc((count + 2) * sizeof *child_env);
+		if (!child_env) return;
+		size_t w = 0;
+		for (size_t i = 0; i < count; i++)
+			if (strncmp(environ[i], "NR_LAYER_SPAWNED=", 17) != 0
+			    && strncmp(environ[i], "VK_INSTANCE_LAYERS=", 19) != 0)
+				child_env[w++] = environ[i];
+		child_env[w++] = marker;
+		child_env[w] = NULL;
+
+		posix_spawn_file_actions_t fa;
+		posix_spawn_file_actions_init(&fa);
+		posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+		const char *log = getenv("NR_LAYER_LOG");
+		if (!log || !*log) log = "/tmp/nr_daemon.log";
+		posix_spawn_file_actions_addopen(&fa, 1, log, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		posix_spawn_file_actions_adddup2(&fa, 1, 2);
+
+		char *argv[10];
+		int i = 0;
+		argv[i++] = (char *)py;
+		argv[i++] = (char *)daemon;
+		argv[i++] = "--socket";   argv[i++] = (char *)socket_path;
+		argv[i++] = "--settings"; argv[i++] = (char *)settings;
+		argv[i++] = "--root";     argv[i++] = (char *)root;
+		argv[i] = NULL;
+
+		pid_t pid;
+		if (posix_spawnp(&pid, py, &fa, NULL, argv, child_env) != 0)
+			fprintf(stderr, "[nr_layer] daemon spawn failed; frame stays as the "
+				"game drew it\n");
+		free(child_env);
+		posix_spawn_file_actions_destroy(&fa);
+	}
+#endif
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *info,
 						 const VkAllocationCallbacks *allocator,
 						 VkInstance *instance)
@@ -365,6 +639,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *inf
 		layer_instance = *instance;
 		capture_path = getenv("NR_LAYER_CAPTURE");
 		socket_path = getenv("NR_LAYER_SOCKET");
+		ensure_daemon();
 		trigger_path = getenv("NR_LAYER_TRIGGER");
 		const char *mask = getenv("NR_LAYER_UI_MASK");
 		ui_mask = mask && strcmp(mask, "0") != 0;
@@ -414,12 +689,12 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 	VkResult r = create(physical, info, allocator, device);
 	if (r != VK_SUCCESS) return r;
 
-	pthread_mutex_lock(&lock);
+	nr_mutex_lock(&lock);
 	struct device_data *data = NULL;
 	for (int i = 0; i < 8; i++) if (!devices[i].device) { data = &devices[i]; break; }
 	if (data) {
 		memset(data, 0, sizeof *data);
-		pthread_mutex_init(&data->present_lock, NULL);
+		nr_mutex_init(&data->present_lock, NULL);
 		data->device = *device;
 		data->physical = physical;
 		data->get_device_proc = next_device;
@@ -438,7 +713,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 		data->queue_family = info->queueCreateInfoCount
 			? info->pQueueCreateInfos[0].queueFamilyIndex : 0;
 	}
-	pthread_mutex_unlock(&lock);
+	nr_mutex_unlock(&lock);
 	return r;
 }
 
@@ -485,7 +760,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 			"leaving it alone\n", info->imageFormat);
 		return r;
 	}
-	pthread_mutex_lock(&lock);
+	nr_mutex_lock(&lock);
 	struct swapchain_data *entry = NULL;
 	for (int i = 0; i < MAX_SWAPCHAINS; i++)
 		if (!swapchains[i].swapchain) { entry = &swapchains[i]; break; }
@@ -506,7 +781,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 		 * answer; the alternative is an out-of-bounds read every present. */
 		if (got != VK_SUCCESS || !entry->image_count) {
 			memset(entry, 0, sizeof *entry);
-			pthread_mutex_unlock(&lock);
+			nr_mutex_unlock(&lock);
 			fprintf(stderr, "[nr_layer] swapchain has more than %d images or none; "
 				"capture off\n", MAX_IMAGES);
 			return r;
@@ -515,7 +790,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 			entry->extent.width, entry->extent.height, entry->format,
 			entry->image_count);
 	}
-	pthread_mutex_unlock(&lock);
+	nr_mutex_unlock(&lock);
 	return r;
 }
 
@@ -551,7 +826,7 @@ static void release_device(struct device_data *data)
         PFN_vkDestroyFence destroy = (PFN_vkDestroyFence)data->get_device_proc(data->device, "vkDestroyFence");
         destroy(data->device, data->stalled_fence, NULL);
     }
-	pthread_mutex_destroy(&data->present_lock);
+	nr_mutex_destroy(&data->present_lock);
 	free(data->result);
 	free(data->earlier);
 	free(data->outgoing);
@@ -563,14 +838,14 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroyDevice(VkDevice device,
 	struct device_data *data = find_device(device);
 	PFN_vkDestroyDevice next = data ? data->destroy_device : NULL;
 	if (data) {
-		pthread_mutex_lock(&lock);
+		nr_mutex_lock(&lock);
 		for (int i = 0; i < MAX_SWAPCHAINS; i++)
 			if (swapchains[i].device == device)
 				memset(&swapchains[i], 0, sizeof swapchains[i]);
 		for (int i = 0; i < MAX_QUEUES; i++)
 			if (queues[i].device == device)
 				memset(&queues[i], 0, sizeof queues[i]);
-		pthread_mutex_unlock(&lock);
+		nr_mutex_unlock(&lock);
 		release_device(data);
 		memset(data, 0, sizeof *data);
 	}
@@ -585,19 +860,19 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroySwapchainKHR(VkDevice device, VkSwapchainKH
 						  const VkAllocationCallbacks *allocator)
 {
 	struct device_data *data = find_device(device);
-    if (data) pthread_mutex_lock(&data->present_lock);
+    if (data) nr_mutex_lock(&data->present_lock);
     if (data && data->result_chain == swapchain) {
         data->result_chain = VK_NULL_HANDLE;
         data->holding = data->have_earlier = 0;
     }
-	pthread_mutex_lock(&lock);
+	nr_mutex_lock(&lock);
 	for (int i = 0; i < MAX_SWAPCHAINS; i++)
 		if (swapchains[i].swapchain == swapchain)
 			memset(&swapchains[i], 0, sizeof swapchains[i]);
-	pthread_mutex_unlock(&lock);
+	nr_mutex_unlock(&lock);
 	if (data && data->destroy_swapchain)
 		data->destroy_swapchain(device, swapchain, allocator);
-    if (data) pthread_mutex_unlock(&data->present_lock);
+    if (data) nr_mutex_unlock(&data->present_lock);
 }
 
 static uint32_t memory_type(struct device_data *data, uint32_t bits,
@@ -1092,9 +1367,9 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_QueuePresentKHR(VkQueue queue, const VkPresent
     struct device_data *data = owner ? find_device(owner->device) : NULL;
     if (!data) for (int i = 0; i < 8; i++) if (devices[i].device) { data = &devices[i]; break; }
     if (!data) return VK_ERROR_INITIALIZATION_FAILED;
-    pthread_mutex_lock(&data->present_lock);
+    nr_mutex_lock(&data->present_lock);
     VkResult result = data->device_error ? data->device_error : present_locked(queue, info);
-    pthread_mutex_unlock(&data->present_lock);
+    nr_mutex_unlock(&data->present_lock);
     return result;
 }
 
@@ -1130,13 +1405,13 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL nr_GetInstanceProcAddr(VkInstance insta
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(
-	VkNegotiateLayerInterface *interface)
+	VkNegotiateLayerInterface *pVersion)
 {
-	if (interface->loaderLayerInterfaceVersion < 2)
+	if (pVersion->loaderLayerInterfaceVersion < 2)
 		return VK_ERROR_INITIALIZATION_FAILED;
-	interface->loaderLayerInterfaceVersion = 2;
-	interface->pfnGetInstanceProcAddr = nr_GetInstanceProcAddr;
-	interface->pfnGetDeviceProcAddr = nr_GetDeviceProcAddr;
-	interface->pfnGetPhysicalDeviceProcAddr = NULL;
+	pVersion->loaderLayerInterfaceVersion = 2;
+	pVersion->pfnGetInstanceProcAddr = nr_GetInstanceProcAddr;
+	pVersion->pfnGetDeviceProcAddr = nr_GetDeviceProcAddr;
+	pVersion->pfnGetPhysicalDeviceProcAddr = NULL;
 	return VK_SUCCESS;
 }

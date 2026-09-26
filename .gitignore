@@ -37,3 +37,6 @@ __pycache__/
 *.7z
 *.zip
 *.zst
+
+# The daemon's own log, written beside the tree.
+nr_daemon.log

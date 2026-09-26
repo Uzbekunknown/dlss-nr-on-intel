@@ -2,9 +2,9 @@
 """
 xmx — host-side interface to the Xe2 cooperative-matrix GEMM.
 
-Backed by `work/libxmx.so`, a resident Vulkan context: the instance, device,
-pipeline and buffers are created once and reused, so a call costs a memcpy, a submit
-and a fence wait rather than ~80 ms of setup.
+Backed by `work/libxmx.so` (`.dll` on Windows), a resident Vulkan context: the instance,
+device, pipeline and buffers are created once and reused, so a call costs a memcpy, a
+submit and a fence wait rather than ~80 ms of setup.
 
 Two things this layer must do that the kernel does not:
 
@@ -16,6 +16,8 @@ Two things this layer must do that the kernel does not:
   2. **Pad to the tile shape.** The only float configuration is M=8 N=16 K=16.
 """
 import ctypes
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -26,12 +28,42 @@ TM, TN, TK = 8, 16, 16
 
 _lib = None
 
+# The MSVC build produces a .dll, the Makefile a .so. Kept as a name rather than a
+# hardcoded path so the Linux build is untouched. `nr_build.library()` is used when it
+# is present (the CMake tree resolves this and the backend per platform); this is the
+# Makefile-tree fallback.
+_LIBXMX_NAME = "libxmx.dll" if os.name == "nt" else "libxmx.so"
+
+
+def _library_path(name="xmx"):
+    """Where the runtime landed, and whether it is the .so or the .dll."""
+    src = ROOT / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    try:
+        import nr_build                                   # noqa: PLC0415
+    except ImportError:
+        return ROOT / "work" / _LIBXMX_NAME
+    return Path(nr_build.library(name))
+
+
+def _shader_arg(lib, spv):
+    """Shader path, or the bare name when the build system resolves it."""
+    src = ROOT / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    try:
+        import nr_build                                   # noqa: PLC0415
+    except ImportError:
+        return str(ROOT / "work" / spv)
+    return nr_build.shader_arg(lib, spv)
+
 
 def _load(spv="gemm_coopmat.spv"):
     global _lib
     if _lib is not None:
         return _lib
-    lib = ctypes.CDLL(str(ROOT / "work" / "libxmx.so"))
+    lib = ctypes.CDLL(str(_library_path()))
     lib.xmx_init.argtypes = [ctypes.c_char_p]
     lib.xmx_init.restype = ctypes.c_int
     lib.xmx_gemm.argtypes = [ctypes.c_uint] * 3 + [ctypes.c_void_p] * 3 + [ctypes.c_uint]
@@ -47,7 +79,7 @@ def _load(spv="gemm_coopmat.spv"):
     lib.xmx_error.restype = ctypes.c_char_p
     lib.xmx_device.restype = ctypes.c_char_p
     lib.xmx_memory.restype = ctypes.c_char_p
-    if lib.xmx_init(str(ROOT / "work" / spv).encode()) != 0:
+    if lib.xmx_init(_shader_arg(lib, spv).encode()) != 0:
         raise RuntimeError("xmx_init: " + lib.xmx_error().decode())
     _lib = lib
     return lib
@@ -202,7 +234,7 @@ def _load_batched(spv="gemm_batched.spv"):
     global _batched_ready
     lib = _load()
     if not _batched_ready:
-        if lib.xmx_init_batched(str(ROOT / "work" / spv).encode()) != 0:
+        if lib.xmx_init_batched(_shader_arg(lib, spv).encode()) != 0:
             raise RuntimeError("xmx_init_batched: " + lib.xmx_error().decode())
         _batched_ready = True
     return lib

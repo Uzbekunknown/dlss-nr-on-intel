@@ -245,6 +245,18 @@ run it again. Leave out `NR_LIVE=1` for photo mode. For a native Vulkan game,
 **If your frame rate drops as soon as the game starts and the daemon's log shows no frames**,
 one of the first four is missing or wrong: the layer is capturing and has nowhere to send it.
 
+  ### The layer can start the daemon itself
+
+  With `NR_LAYER_SPAWN=1` set next to the variables above, and `NR_LAYER_SOCKET` named, the
+  layer starts the daemon on that socket if nothing is listening there when the game creates
+  its instance. Without the variable nothing happens and nothing prints, which is the
+  default: `vulkaninfo` and every other Vulkan process that loads the layer must not each
+  bring up a model. A daemon started this way **outlives the game** — it holds the weights
+  (~3 GiB of device memory) until you stop it, so the next launch connects instead of paying
+  the load again; stop it with `nr-toggle stop` when you are done. Its settings and log
+  follow `src/layer/nr_paths.py` (`/tmp/nr_settings.json`, `NR_LAYER_LOG`), the same files
+  `nr-ctl` and `nr-panel` write, so the knobs reach a daemon started this way too.
+
 Without `NR_LAYER_LIVE` it is a **photo mode**: the pass fires once and holds its result
 on screen while the trigger exists. With it, every Nth frame is re-rendered and the ones
 between hold the last result — a slideshow you can play.

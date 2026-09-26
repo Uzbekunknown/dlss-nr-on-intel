@@ -36,7 +36,9 @@ import xmxres
 # copy silently mislabels every row the moment a kind is added, and this file
 # shipped one such mistake before the tables were generated.
 def _kinds(path, pattern):
-    text = (ROOT / path).read_text()
+    # encoding is explicit: the shaders are not ASCII, and on Windows the default is
+    # the ANSI code page rather than UTF-8.
+    text = (ROOT / path).read_text(encoding="utf-8")
     return {int(v): n.lower().replace("_", " ")
             for n, v in re.findall(pattern, text)}
 

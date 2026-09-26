@@ -1,4 +1,4 @@
-#version 450
+﻿#version 450
 #extension GL_GOOGLE_include_directive : require
 /*
  * window_block — a 32-channel window block's attention half, one 8x8 window a workgroup.

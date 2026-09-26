@@ -32,8 +32,11 @@ def _library():
     # on this machine a spinning core takes power the GPU would have used (notes/phase46).
     # Read once, when the runtime loads, so it has to be set before the library is.
     os.environ.setdefault('OMP_WAIT_POLICY', 'passive')
+    # The MSVC build produces a .dll, the Makefile a .so. NR_HOST_NATIVE=0 is the NumPy
+    # path either way, and a library that is missing just means the same fallback.
+    name = 'libnr_image.dll' if os.name == 'nt' else 'libnr_image.so'
     try:
-        lib = C.CDLL(str(Path(__file__).resolve().parents[2] / 'work/libnr_image.so'))
+        lib = C.CDLL(str(Path(__file__).resolve().parents[2] / 'work' / name))
     except OSError:
         return None
     ptr, stride, size = C.c_void_p, C.c_ssize_t, C.c_size_t
