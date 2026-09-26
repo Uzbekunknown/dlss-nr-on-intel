@@ -24,6 +24,21 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## A reference that claims the vendor's arithmetic, and how far we are from it (2026-09-27)
+
+`maanHimself/OpenDLSS-NR` claims the network bit-exact against captures of the original on an NVIDIA
+GPU — every block boundary — and its WebGPU port the same bytes with no FP8. That port runs here, in
+headless Chromium on the Arc 140V, from a model directory written out of our DLL
+(`src/tools/opendlss_model.py`, `src/bench/opendlss_reference.py`). Their specification says where our
+graph — MLX-DLSS's recovery — computes differently: the padded field at 1280x720 and 1920x1080 (not
+at the live sizes), FP8 fixed-point GEMMs on an f16 accumulator the residual seeds, the softmax's
+half-add tree, the ViT's own exponential and normalisation, E4M3 always via half.
+
+On the same features our head is **RGB corr 0.97 at 320x320, 0.99 at 1088x640; the composed pictures
+1.1-2.7 levels of 255 apart** where the pass moves them 4-12, and the temporal gate the least alike
+(0.65-0.86). Our own GPU path against our numpy reference is about half that distance. Side by side
+the pictures look the same; the difference is fine texture. `notes/opendlss-reference.md`.
+
 ## The bottleneck's attention in one pass, and a bug under `min_extent` (2026-09-26, evening)
 
 **A bug, fixed in `bb9cadf`: with `min_extent` below 320 the bottleneck's attention was

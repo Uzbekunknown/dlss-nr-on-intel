@@ -20,6 +20,7 @@ disproved.
 | `phase47-live-mode.md` | the live mode, 10.6 fps at 512x288, and the bottleneck leaving the graph |
 | `phase38-there-was-no-bug.md` | the "driver bug" that shaped three phases does not exist |
 | `phase9-numerics.md` | why bit-identical agreement with a CPU reference is impossible here |
+| `opendlss-reference.md` | a second implementation that claims the vendor's own arithmetic, runnable here: where ours differs from it by specification, and how far our head is from its on the same features (RGB corr 0.97-0.99, 1.1-2.7 levels of 255) |
 | `reviewing.md` | how to run `/ultrareview` on this repo without wasting a run |
 | `reproduce.md` | how to run the resident path from a clean checkout |
 
