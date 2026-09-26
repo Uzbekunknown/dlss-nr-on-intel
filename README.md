@@ -127,7 +127,8 @@ already have. See [Build](#build).
   it for everything else — but it is no longer the difference between working and crawling.
   This is written from one owner's report and tested by forcing the same path on the
   integrated GPU; it has not been measured on a discrete card.
-- Linux. Python 3 with NumPy. A C compiler, `glslangValidator`, the Vulkan loader.
+- Linux. Python 3 with NumPy. A C compiler with OpenMP support and its runtime
+  (GCC/libgomp or an equivalent), `glslangValidator`, the Vulkan loader.
 - **ImageMagick** for the still-frame tools, which read and write pictures through
   `magick`. The game path does not touch it.
 - About 0.7 GiB of memory for the device buffers at 720p and 1.2 GiB at 1080p, the weights

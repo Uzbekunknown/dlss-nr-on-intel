@@ -52,18 +52,30 @@ function(nr_shader output source)
     DEPENDS "${PROJECT_SOURCE_DIR}/${source}"
       "${PROJECT_SOURCE_DIR}/src/gpu/publish.glsl"
       "${PROJECT_SOURCE_DIR}/src/gpu/specialize.glsl"
+      "${PROJECT_SOURCE_DIR}/src/gpu/residual_epilogue.glsl"
+      "${PROJECT_SOURCE_DIR}/src/gpu/cosine_tree.glsl"
+      "${PROJECT_SOURCE_DIR}/src/gpu/qkv_epilogue.glsl"
     VERBATIM)
   set(NR_SPV ${NR_SPV} "${out}" PARENT_SCOPE)
 endfunction()
 nr_shader(gemm_resident.spv src/gpu/gemm_resident.comp)
 nr_shader(gemm_tiled.spv src/gpu/gemm_resident.comp -DRM=2 -DRN=2)
 nr_shader(gemm_staged.spv src/gpu/gemm_staged.comp)
+nr_shader(gemm_staged32.spv src/gpu/gemm_staged.comp -DSTAGED_BM=32)
+nr_shader(gemm_staged32_deep.spv src/gpu/gemm_staged.comp -DSTAGED_BM=32 -DSTAGED_BK=64)
 nr_shader(resident.spv src/gpu/resident.comp)
 nr_shader(attention.spv src/gpu/attention.comp)
+nr_shader(attention_rows.spv src/gpu/attention.comp -DROW_LANES=256)
 nr_shader(history.spv src/gpu/history.comp)
 nr_shader(gemm_coopmat.spv src/gpu/gemm_coopmat.comp)
 nr_shader(gemm_batched.spv src/gpu/gemm_coopmat_batched.comp)
 nr_shader(gemm_f16acc.spv src/gpu/gemm_coopmat_f16acc.comp)
+nr_shader(gemm_coopmat_int8.spv src/gpu/gemm_coopmat_int8.comp)
+nr_shader(gemm_staged_int8.spv src/gpu/gemm_staged_int8.comp)
+nr_shader(window_attention.spv src/gpu/window_attention.comp)
+nr_shader(window_block.spv src/gpu/window_block.comp)
+nr_shader(global_attention.spv src/gpu/global_attention.comp)
+nr_shader(ffn_fused.spv src/gpu/ffn_fused.comp)
 if(NR_BUILD_TESTS)
   nr_shader(attention_ab.spv src/gpu/attention.comp -DSOFTMAX_AB)
 endif()
@@ -79,7 +91,9 @@ target_compile_options(gemm_runner PRIVATE -O2)
 nr_output(gemm_runner)
 
 add_library(nr_image SHARED src/ref/nr_image.c)
-target_compile_options(nr_image PRIVATE -O3 -ffp-contract=off -fno-fast-math)
+find_package(OpenMP REQUIRED COMPONENTS C)
+target_link_libraries(nr_image PRIVATE OpenMP::OpenMP_C)
+target_compile_options(nr_image PRIVATE -O3 -ffp-contract=off -fno-fast-math -fno-trapping-math)
 include(CheckCCompilerFlag)
 if(NOT CMAKE_CROSSCOMPILING)
   check_c_compiler_flag(-march=native NR_HAS_MARCH_NATIVE)
@@ -129,7 +143,9 @@ if(NR_BUILD_TESTS)
     nr_test(${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/${name}.py")
   endforeach()
   foreach(name gemm_contract input_fp16 compact_head joint_qkv epilogue specialization softmax_pack qkv_fusion
-      scratch_arena graph frame_execution resident)
+      scratch_arena graph frame_execution resident gemm_int8 gemm_int8_staged
+      window_block global_attention int8_quant gemm_residual window_residual
+      window_attention gemm_qkv glue ffn_fused staged_partial staged32)
     nr_test(gpu_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py")
   endforeach()
   nr_test(gpu_ffn_batch "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_ffn_batch.py" --gpu)
