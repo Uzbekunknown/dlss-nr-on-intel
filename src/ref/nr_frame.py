@@ -692,7 +692,8 @@ def compose(head, color, *, intensity=1.0, detail_strength=1.0, colour_strength=
 def compose_encode(head, color, encoded, *, top=0, left=0, bgra=True, intensity=1.0,
                    control_mask=None, history=None, history_confidence=1.0,
                    history_previous=None, history_hold=0.0, history_release=0.0,
-                   blend_scale=BLEND_SCALE, samples=None, grade=None, neural=None):
+                   blend_scale=BLEND_SCALE, samples=None, grade=None, neural=None,
+                   colour8=None, previous8=None):
     """`compose` of the head brought up to the colour's size, encoded into `encoded` at
     (`top`, `left`), in one native pass; `None` where that pass does not apply, and then
     nothing has been written.
@@ -710,7 +711,8 @@ def compose_encode(head, color, encoded, *, top=0, left=0, bgra=True, intensity=
     if history is None:
         return nr_image.compose_encode(head, color, None, None, None, encoded, top=top,
                                        left=left, bgra=bgra, intensity=intensity,
-                                       samples=samples, grade=grade, neural=neural)
+                                       samples=samples, grade=grade, neural=neural,
+                                       colour8=colour8)
     previous = (history_previous if history_previous is not None
                 and (history_hold > 0 or history_release > 0) else None)
     confidence = (float(np.clip(np.float32(history_confidence), 0, 1))
@@ -723,7 +725,8 @@ def compose_encode(head, color, encoded, *, top=0, left=0, bgra=True, intensity=
                if previous is not None else 0.0),
         table=gate_table(float(blend_scale)), confidence=confidence,
         release=release_slope(history_release) if previous is not None else 0.0,
-        samples=samples, grade=grade, neural=neural)
+        samples=samples, grade=grade, neural=neural, colour8=colour8,
+        previous8=previous8 if previous is not None else None)
 
 
 def run_frame(model, color, *, intensity=1.0, detail_strength=1.0, colour_strength=1.0,

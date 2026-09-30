@@ -57,6 +57,10 @@ def _library():
         size, size, C.c_float, C.c_float, C.c_float, C.c_float, C.c_float,
         ptr, ptr, ptr, ptr, size, size, size, C.c_int, ptr, size]
     lib.nr_compose_encode.restype = None
+    if hasattr(lib, 'nr_compose_encode8'):
+        lib.nr_compose_encode8.argtypes = lib.nr_compose_encode.argtypes + [
+            ptr, stride, stride, ptr, stride, stride]
+        lib.nr_compose_encode8.restype = C.c_int
     lib.nr_resize_axis.argtypes = [ptr, stride, stride, stride, size, size, size,
                                   C.c_int, ptr, ptr, ptr, ptr]
     lib.nr_resize_axis.restype = None
@@ -256,7 +260,8 @@ def compose_temporal(head, colour, history, previous, gate, mask, *, intensity,
 
 def compose_encode(head, colour, history, previous, mask, encoded, *, top, left, bgra,
                    intensity, blend_scale=0.0, hold=0.0, slope=0.0, table=None,
-                   confidence=1.0, release=0.0, samples=None, grade=None, neural=None):
+                   confidence=1.0, release=0.0, samples=None, grade=None, neural=None,
+                   colour8=None, previous8=None):
     """`bilinear` of the head to the colour's extent, then `compose_temporal` — or, with
     no history, `compose` — then `encode8` into `encoded` at (`top`, `left`), in one pass.
 
@@ -267,15 +272,23 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
     `samples`, a step: the upscaled head on every step-th row and column comes back too,
     as `(composition, samples)` — what `bilinear(head)[::step, ::step]` would hold.
     `grade` and `neural` are `nr_frame.compose`'s; a grade takes the per-pixel loop.
+
+    Experimental `colour8`/`previous8` supply original HxWx4 bytes, in `bgra`'s order,
+    instead of reading the corresponding float source. `colour8` may be precisely the
+    output region of `encoded`: each source pixel is read before it is overwritten.
+    Other overlaps and any overlap with previous pixels are rejected.
     """
     lib = library()
-    if lib is None:
+    if lib is None or (colour8 is not None and not hasattr(lib, 'nr_compose_encode8')):
         return None
     head = np.require(head, dtype=np.float32, requirements=['A'])
     colour = np.require(colour, dtype=np.float32, requirements=['A'])
     channels = 4 if history is not None else 3
-    height, width = colour.shape[:2]
     if (head.ndim != 3 or head.shape[2] < channels or colour.ndim != 3 or colour.shape[2] != 3
+            or min(*head.shape[:2], *colour.shape[:2]) < 1):
+        raise ValueError('composition needs nonempty HWC head and RGB colour')
+    height, width = colour.shape[:2]
+    if (top < 0 or left < 0
             or head.shape[0] > height or head.shape[1] > width):
         raise ValueError('the fused composition upscales a head to the colour it composes')
     if history is not None:
@@ -299,15 +312,34 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
             or not encoded.flags.writeable
             or top + height > encoded.shape[0] or left + width > encoded.shape[1]):
         raise ValueError('the encoded frame must be writable HxWx4 bytes around the colour')
+    if previous8 is not None and (colour8 is None or previous is None):
+        raise ValueError('packed previous pixels require packed current pixels and a previous frame')
+    for pixels in (colour8, previous8):
+        if pixels is None:
+            continue
+        if (not isinstance(pixels, np.ndarray) or pixels.dtype != np.uint8
+                or pixels.shape != (height, width, 4) or pixels.strides[2] != 1):
+            raise ValueError('packed inputs must be HxWx4 bytes with adjacent channels')
+        if np.shares_memory(pixels, encoded):
+            region = encoded[top:top + height, left:left + width]
+            same_region = (pixels is colour8 and pixels is not previous8
+                           and pixels.ctypes.data == region.ctypes.data
+                           and pixels.strides == region.strides)
+            if not same_region:
+                raise ValueError('only the exact current-pixel region may alias encoded output')
+        if neural is not None and np.shares_memory(pixels, neural):
+            raise ValueError('packed inputs must not alias neural output')
     plans = [(_axis_plan(head.shape[axis], count) if head.shape[axis] != count else (None,) * 3)
              for axis, count in enumerate((height, width))]
     pointer = lambda array: array.ctypes.data if array is not None else None
     grade, neural = _grade(grade), _neural(neural, colour.shape)
     output = np.empty(colour.shape, np.float32)
     step = int(samples or 0)
+    if step < 0:
+        raise ValueError('sample step must be nonnegative')
     sampled = (np.empty((-(-height // step), -(-width // step), channels), np.float32)
                if step else None)
-    lib.nr_compose_encode(
+    arguments = (
         head.ctypes.data, *_strides(head), head.shape[1], channels,
         *(pointer(array) for array in plans[0]), *(pointer(array) for array in plans[1]),
         colour.ctypes.data, *_strides(colour),
@@ -319,6 +351,12 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
         output.ctypes.data, pointer(grade), pointer(neural),
         encoded.ctypes.data, encoded.shape[1], top, left, int(bool(bgra)),
         pointer(sampled), step)
+    if colour8 is None:
+        lib.nr_compose_encode(*arguments)
+    elif lib.nr_compose_encode8(
+            *arguments, pointer(colour8), *colour8.strides[:2],
+            pointer(previous8), *(previous8.strides[:2] if previous8 is not None else (0, 0))):
+        raise MemoryError('native composition could not allocate row scratch')
     return (output, sampled) if step else output
 
 

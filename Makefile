@@ -165,6 +165,7 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/gpu/test_resident.py
 	python3 src/ref/test_frame_cache.py
 	python3 src/ref/test_native_image.py
+	python3 src/ref/test_bgra_compose.py
 	python3 src/ref/test_nr_model.py
 	python3 src/ref/test_temporal_controls.py
 
