@@ -27,6 +27,8 @@ def main():
     parser.add_argument('--pairs', type=int, default=21)
     parser.add_argument('--scale', type=float, default=.55)
     parser.add_argument('--pipeline', action='store_true')
+    parser.add_argument('--raw-pipeline', action='store_true',
+                        help='fuse input decode/resize and decode the full colour during composition')
     parser.add_argument('--profile', choices=F.PROFILES, default='standard')
     parser.add_argument('--packed-history', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--baseline-library', type=pathlib.Path,
@@ -35,6 +37,10 @@ def main():
     h, w = args.size
     if min(h, w, args.pairs) < 1 or not 0 < args.scale <= 1:
         parser.error('positive dimensions/pairs and scale in (0,1] required')
+    if args.raw_pipeline:
+        if not args.pipeline:
+            parser.error('--raw-pipeline requires --pipeline')
+        args.packed_history = False
     native = nr_image.library()
     if native is None or not hasattr(native, 'nr_compose_encode8'):
         parser.error('build the experimental work/libnr_image.so first')
@@ -63,8 +69,13 @@ def main():
         start = time.perf_counter()
         current = colour
         if args.pipeline:
-            current = D.decode(payload, w, h, 44)
-            inner = D.resample(current, (hh, ww))
+            if packed and args.raw_pipeline:
+                current = np.empty_like(colour)
+                inner = nr_image.resample8(np.frombuffer(payload, np.uint8).reshape(h, w, 4),
+                                           (hh, ww), True)
+            else:
+                current = D.decode(payload, w, h, 44)
+                inner = D.resample(current, (hh, ww))
             F.build_features(inner, geometry=geometry, history=history_inner,
                              **F.PROFILES[args.profile])
         # Keeping packed history requires a fresh answer. With float history, the
@@ -77,8 +88,8 @@ def main():
             history_hold=1, history_release=24, samples=8,
             colour8=np.frombuffer(payload, np.uint8).reshape(h, w, 4) if packed else None,
             previous8=previous8 if packed and args.packed_history else None,
-            grade=grade, neural=neural)
-        return (time.perf_counter() - start) * 1000, out, encoded, samples, neural
+            grade=grade, neural=neural, decode_colour=packed and args.raw_pipeline)
+        return (time.perf_counter() - start) * 1000, out, encoded, samples, neural, current
 
     expected = run(False)[1:]
     for mode in (False, True):
@@ -92,13 +103,17 @@ def main():
             times[mode].append(elapsed)
     print(f'{w}x{h}, scale {args.scale}, threads {os.environ["OMP_NUM_THREADS"]}, '
           f'{args.pairs} alternating pairs, pipeline={args.pipeline}, '
-          f'profile={args.profile}, packed_history={args.packed_history}')
+          f'profile={args.profile}, packed_history={args.packed_history}, '
+          f'raw_pipeline={args.raw_pipeline}')
     for mode in (False, True):
         t = times[mode]
         print(f'{"packed BGRA8" if mode else "float RGB"}: median {statistics.median(t):.3f} ms, '
               f'range {min(t):.3f}..{max(t):.3f}')
     before, after = (statistics.median(times[m]) for m in (False, True))
     print(f'saved {before - after:.3f} ms, speedup {before / after:.3f}x; all outputs byte-identical')
+    differences = [a - b for a, b in zip(times[False], times[True])]
+    print(f'paired median saving {statistics.median(differences):.3f} ms, '
+          f'packed wins {sum(d > 0 for d in differences)}/{len(differences)} pairs')
 
 
 if __name__ == '__main__':

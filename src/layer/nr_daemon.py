@@ -293,6 +293,15 @@ def resample(image, size):
 
 
 LETTERBOX_TOLERANCE = np.float32(2.0 / 255.0)
+_BYTE_LEVELS = np.arange(256, dtype=np.float32) / np.float32(255.0)
+
+
+def _dark_threshold(colour, tolerance=LETTERBOX_TOLERANCE):
+    # The byte cutoff whose decoded float obeys the existing comparison, including
+    # an exact boundary. Alpha is excluded by the caller of the raw-byte path.
+    if colour.dtype == np.uint8:
+        return int(np.searchsorted(_BYTE_LEVELS, np.float32(tolerance), side='right')) - 1
+    return tolerance
 
 
 def active_region(colour, tolerance=LETTERBOX_TOLERANCE, limit=0.45):
@@ -309,6 +318,7 @@ def active_region(colour, tolerance=LETTERBOX_TOLERANCE, limit=0.45):
     a letterbox is symmetric and a dark sky is not.
     """
     height, width = colour.shape[:2]
+    tolerance = _dark_threshold(colour, tolerance)
     rows = colour.max(axis=(1, 2))
     columns = colour.max(axis=(0, 2))
 
@@ -364,9 +374,10 @@ class Letterbox:
         # is ours. Without this a mismatched key reads other rows and crops to them.
         if bottom > height or right > width:
             return False
+        threshold = _dark_threshold(colour)
 
         def dark(line):
-            return float(line.max()) <= LETTERBOX_TOLERANCE
+            return float(line.max()) <= threshold
 
         for line, wanted_dark in ((colour[top - 1] if top else None, True),
                                   (colour[bottom] if bottom < height else None, True),
@@ -586,23 +597,45 @@ def process_connection(connection, backend, args):
     live = args.live
     live.refresh()
     clock = time.perf_counter()
-    whole = decode(payload, width, height, vk_format)
+    kind = FORMATS[vk_format][0]
+    raw_requested = (os.environ.get('NR_HOST_BGRA8') == '1' and kind in ('bgra8', 'rgba8')
+                and live.detail_strength == 1 and live.colour_strength == 1
+                and not args.dump)
+    native = nr_image.library() if raw_requested and nr_image is not None else None
+    raw_host = native is not None and hasattr(native, 'nr_resample8')
+    pixels8 = np.frombuffer(payload, np.uint8).reshape(height, width, 4) if raw_host else None
+    whole = None if raw_host else decode(payload, width, height, vk_format)
     # A letterboxed game — DoA5's smallest window is 1024x768 with 16:9 inside it — leaves
     # a quarter of the frame black, and every stage below is measured at the output
     # resolution (`notes/phase51`). Working on the active region alone skips that, and the
     # bars are handed back untouched: `encode(decode(v)) == v` for all 256 values, so
     # leaving them in the output array is byte-exact.
-    top, bottom, left, right = args.letterbox.region(whole, (width, height, vk_format))
+    top, bottom, left, right = args.letterbox.region(
+        pixels8[..., :3] if raw_host else whole, (width, height, vk_format))
     boxed = (top, bottom, left, right) != (0, height, 0, width)
-    colour = whole[top:bottom, left:right] if boxed else whole
-    active_height, active_width = colour.shape[:2]
+    active_height, active_width = bottom - top, right - left
+    extent = ((active_width, active_height) if live.render_scale >= 1
+              else nr_frame.render_extent(active_width, active_height, float(live.render_scale),
+                                          int(live.min_extent)))
+    raw_inner = (nr_image.resample8(pixels8[top:bottom, left:right], (extent[1], extent[0]),
+                                    kind == 'bgra8')
+                 if raw_host and extent != (active_width, active_height) else None)
+    raw_host = raw_inner is not None
+    if raw_host:
+        # Filled from the original bytes inside the composition, after the graph. It
+        # remains the exact original colour for history, the meter and log statistics.
+        colour = np.empty((active_height, active_width, 3), np.float32)
+    else:
+        if whole is None:
+            whole = decode(payload, width, height, vk_format)
+        colour = whole[top:bottom, left:right] if boxed else whole
     # The network's cost follows the extent it is given and nothing else, so a smaller
     # internal frame is the only lever that changes the frame rate (notes/phase37,
     # phase45). What comes back up is the *head* — the detail the network drew — which
     # is then composed against the full-resolution original, so the game's own pixels
     # are never resampled and only the synthesised part is interpolated.
-    inner = colour
-    if live.render_scale < 1.0:
+    inner = raw_inner if raw_host else colour
+    if not raw_host and live.render_scale < 1.0:
         # The scale's own frame, or the largest that lands on the same network field — the
         # same cost, more of the picture and less of its mirror image (`render_extent`).
         extent = nr_frame.render_extent(active_width, active_height, float(live.render_scale),
@@ -674,7 +707,6 @@ def process_connection(connection, backend, args):
     # are the same (`nr_frame.compose_encode`, `test_native_image.py`). The answer is
     # written into the request's own buffer when nothing needs the request's bytes
     # afterwards — the interface restore does.
-    kind = FORMATS[vk_format][0]
     fused = None
     if (kind in ("bgra8", "rgba8") and live.detail_strength == 1 and live.colour_strength == 1
             and head.shape[0] <= active_height and head.shape[1] <= active_width):
@@ -686,12 +718,19 @@ def process_connection(connection, backend, args):
             top=top, left=left, bgra=kind == "bgra8", intensity=live.intensity,
             control_mask=control, history=history_full, history_confidence=live.temporal,
             history_previous=previous, history_hold=live.hold,
-            history_release=live.release, samples=8, grade=grade, neural=neural)
+            history_release=live.release, samples=8, grade=grade, neural=neural,
+            colour8=pixels8[top:bottom, left:right] if raw_host else None,
+            decode_colour=raw_host)
     full = None
     if fused is not None:
         composed, samples = fused
         encoded = answer
     else:
+        if raw_host:
+            # A first frame with an interface mask cannot use the fused composition.
+            # No bytes were written when it returned None; decode for that fallback.
+            whole = decode(payload, width, height, vk_format)
+            colour = whole[top:bottom, left:right] if boxed else whole
         if head.shape[:2] != colour.shape[:2]:
             head = resample(head[..., :channels], colour.shape[:2])
         samples = head[::8, ::8]

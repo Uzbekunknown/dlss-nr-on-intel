@@ -502,11 +502,12 @@ static inline float clamp01(float value)
     return value > 1.0f ? 1.0f : value;
 }
 
-/* Optional experiment: precompute exactly the same float division for all bytes.
- * The lookup remains separate from nr_decode8 so the ordinary path is untouched. */
+/* The exact /255 conversion from a 256-entry table, used by the raw host path.
+ * NR_PACKED_DIVISION retains direct division for a controlled CPU comparison.
+ * nr_decode8 itself stays unchanged. */
 static inline __attribute__((always_inline)) float compose_byte(uint8_t value)
 {
-#ifdef NR_PACKED_LOOKUP
+#ifndef NR_PACKED_DIVISION
 #define BYTE_VALUES16(n)                                                        \
     ((n) + 0) / 255.0f, ((n) + 1) / 255.0f, ((n) + 2) / 255.0f, ((n) + 3) / 255.0f, \
     ((n) + 4) / 255.0f, ((n) + 5) / 255.0f, ((n) + 6) / 255.0f, ((n) + 7) / 255.0f, \
@@ -548,7 +549,7 @@ compose_encode_pixel(const float *restrict hq, const float *restrict rgb, const 
                      const uint8_t *rgb8, const uint8_t *restrict before8,
                      float confidence, float intensity, float still, float scale, float hold,
                      float slope, float release,
-                     float *restrict out, float *restrict kept,
+                     float *restrict out, float *restrict kept, float *restrict decoded,
                      uint8_t *pixel, int x, const int temporal, const int moving,
                      const int releasing, const int grading, const int bgra,
                      const int packed, const int packed_before)
@@ -561,6 +562,8 @@ compose_encode_pixel(const float *restrict hq, const float *restrict rgb, const 
         for (int c = 0; c < 3; ++c)
             source[c] = compose_byte(rgb8[4 * x + (bgra ? 2 - c : c)]);
     const float *p = packed ? source : rgb + 3 * x;
+    if (packed && decoded)
+        for (int c = 0; c < 3; ++c) decoded[3 * x + c] = p[c];
     float h[3] = { hq[4 * x], hq[4 * x + 1], hq[4 * x + 2] };
     float o[3], predicted[3];
     if (temporal) {
@@ -662,7 +665,7 @@ grade_blend_row(const float *restrict rgb, const uint8_t *rgb8,
     for (int x = 0; x < width; ++x)                                                          \
         compose_encode_pixel(rows, rgb, was, before, table, rgb8, before8,                   \
                              confidence, intensity,                                        \
-                             still, scale, hold, slope, release, out, kept, pixel, x,        \
+                             still, scale, hold, slope, release, out, kept, decoded, pixel, x, \
                              temporal, moving, releasing, grading, bgra, packed, packed_before)
 /* each combination of the knobs, with and without a grade */
 #define COMPOSE_ROWS(grading, packed, packed_before)                                        \
@@ -688,7 +691,7 @@ static void compose_encode_row(const float *restrict line, int lx,
                                float hold, float slope, float release,
                                const float *restrict grade, int width,
                                float *restrict rows, float *restrict graded,
-                               float *restrict out, float *restrict kept,
+                               float *restrict out, float *restrict kept, float *restrict decoded,
                                uint8_t *pixel, int bgra)
 {
     /* the head's second axis, its channels side by side — one vector a tap with a history,
@@ -759,7 +762,8 @@ int nr_compose_encode8(const float *head, ptrdiff_t hy, ptrdiff_t hx, ptrdiff_t 
                        uint8_t *encoded, size_t frame_width,
                        size_t top, size_t left, int bgra, float *samples, size_t step,
                        const uint8_t *colour8, ptrdiff_t cy8, ptrdiff_t cx8,
-                       const uint8_t *previous8, ptrdiff_t py8, ptrdiff_t px8)
+                       const uint8_t *previous8, ptrdiff_t py8, ptrdiff_t px8,
+                       float *decoded)
 {
     size_t sampled = samples && step ? (width + step - 1) / step : 0;
     /* nr_compose's blend: below 1 clamped to [0, 1], above it extrapolating */
@@ -812,6 +816,7 @@ int nr_compose_encode8(const float *head, ptrdiff_t hy, ptrdiff_t hx, ptrdiff_t 
                                    release, grade, (int)width, rows, graded,
                                    output + y * width * 3,
                                    neural ? neural + y * width * 3 : discard,
+                                   decoded ? decoded + y * width * 3 : NULL,
                                    encoded + ((top + y) * frame_width + left) * 4, bgra);
                 if (sampled && y % step == 0) {
                     for (size_t x = 0; x < width; x += step) {
@@ -851,6 +856,9 @@ int nr_compose_encode8(const float *head, ptrdiff_t hy, ptrdiff_t hx, ptrdiff_t 
                 const float *rgb = colour8 ? source
                     : colour + (ptrdiff_t)y * sy + (ptrdiff_t)x * sx;
                 ptrdiff_t rgb_stride = colour8 ? 1 : sc;
+                if (decoded)
+                    for (int c = 0; c < 3; ++c)
+                        decoded[(y * width + x) * 3 + c] = rgb[c];
                 float *out = output + (y * width + x) * 3;
                 if (history) {
                     temporal_pixel(h, 1, rgb, rgb_stride,
@@ -909,5 +917,72 @@ void nr_compose_encode(const float *head, ptrdiff_t hy, ptrdiff_t hx, ptrdiff_t 
         table, confidence, mask, my, mx, height, width, intensity,
         scale, hold, slope, release, output, grade, neural, encoded,
         frame_width, top, left, bgra, samples, step,
-        NULL, 0, 0, NULL, 0, 0);
+        NULL, 0, 0, NULL, 0, 0, NULL);
+}
+
+/* Decode and resample directly from wire bytes, keeping the old separable float32
+ * operation order. An intermediate row stays private to a worker rather than being
+ * written as a whole resized image. Whole-factor downscales retain the area filter. */
+int nr_resample8(const uint8_t *source, ptrdiff_t sy, ptrdiff_t sx,
+                 size_t source_height, size_t source_width, size_t height, size_t width,
+                 const int32_t *low_y, const int32_t *high_y, const float *weight_y,
+                 const int32_t *low_x, const int32_t *high_x, const float *weight_x,
+                 int bgra, float *output)
+{
+    if (source_height > height && source_width > width
+            && source_height % height == 0 && source_width % width == 0) {
+        size_t fy = source_height / height, fx = source_width / width;
+        #pragma omp parallel for schedule(dynamic, 4)
+        for (size_t y = 0; y < height; ++y)
+            for (size_t x = 0; x < width; ++x) {
+                float total[3];
+                const uint8_t *first = source + (ptrdiff_t)(y * fy) * sy + (ptrdiff_t)(x * fx) * sx;
+                for (int c = 0; c < 3; ++c) total[c] = compose_byte(first[bgra ? 2 - c : c]);
+                for (size_t dy = 0; dy < fy; ++dy)
+                    for (size_t dx = 0; dx < fx; ++dx) {
+                        if (!dy && !dx) continue;
+                        const uint8_t *pixel = first + (ptrdiff_t)dy * sy + (ptrdiff_t)dx * sx;
+                        for (int c = 0; c < 3; ++c)
+                            total[c] += compose_byte(pixel[bgra ? 2 - c : c]);
+                    }
+                for (int c = 0; c < 3; ++c)
+                    output[(y * width + x) * 3 + c] = total[c] / (float)(fy * fx);
+            }
+        return 0;
+    }
+    int failed = 0;
+    #pragma omp parallel reduction(|:failed)
+    {
+        float *row = malloc(source_width * 3 * sizeof *row);
+        #pragma omp for schedule(dynamic, 4)
+        for (size_t y = 0; y < height; ++y) {
+            if (!row) { failed = 1; continue; }
+            ptrdiff_t source_y = low_y ? (ptrdiff_t)low_y[y] : (ptrdiff_t)y;
+            const uint8_t *a = source + source_y * sy;
+            const uint8_t *b = low_y ? source + (ptrdiff_t)high_y[y] * sy : NULL;
+            float wy = low_y ? weight_y[y] : 0.0f, other_y = 1.0f - wy;
+            for (size_t x = 0; x < source_width; ++x)
+                for (int c = 0; c < 3; ++c) {
+                    int channel = bgra ? 2 - c : c;
+                    float value = compose_byte(a[(ptrdiff_t)x * sx + channel]);
+                    if (low_y)
+                        value = value * other_y
+                              + compose_byte(b[(ptrdiff_t)x * sx + channel]) * wy;
+                    row[x * 3 + c] = value;
+                }
+            float *out = output + y * width * 3;
+            if (!low_x) {
+                memcpy(out, row, width * 3 * sizeof *out);
+            } else {
+                for (size_t x = 0; x < width; ++x) {
+                    float wx = weight_x[x], other_x = 1.0f - wx;
+                    for (int c = 0; c < 3; ++c)
+                        out[x * 3 + c] = row[(size_t)low_x[x] * 3 + c] * other_x
+                                      + row[(size_t)high_x[x] * 3 + c] * wx;
+                }
+            }
+        }
+        free(row);
+    }
+    return failed ? -1 : 0;
 }

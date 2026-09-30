@@ -59,8 +59,12 @@ def _library():
     lib.nr_compose_encode.restype = None
     if hasattr(lib, 'nr_compose_encode8'):
         lib.nr_compose_encode8.argtypes = lib.nr_compose_encode.argtypes + [
-            ptr, stride, stride, ptr, stride, stride]
+            ptr, stride, stride, ptr, stride, stride, ptr]
         lib.nr_compose_encode8.restype = C.c_int
+    if hasattr(lib, 'nr_resample8'):
+        lib.nr_resample8.argtypes = [ptr, stride, stride, size, size, size, size,
+                                    ptr, ptr, ptr, ptr, ptr, ptr, C.c_int, ptr]
+        lib.nr_resample8.restype = C.c_int
     lib.nr_resize_axis.argtypes = [ptr, stride, stride, stride, size, size, size,
                                   C.c_int, ptr, ptr, ptr, ptr]
     lib.nr_resize_axis.restype = None
@@ -261,7 +265,7 @@ def compose_temporal(head, colour, history, previous, gate, mask, *, intensity,
 def compose_encode(head, colour, history, previous, mask, encoded, *, top, left, bgra,
                    intensity, blend_scale=0.0, hold=0.0, slope=0.0, table=None,
                    confidence=1.0, release=0.0, samples=None, grade=None, neural=None,
-                   colour8=None, previous8=None):
+                   colour8=None, previous8=None, decode_colour=False):
     """`bilinear` of the head to the colour's extent, then `compose_temporal` — or, with
     no history, `compose` — then `encode8` into `encoded` at (`top`, `left`), in one pass.
 
@@ -277,11 +281,17 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
     instead of reading the corresponding float source. `colour8` may be precisely the
     output region of `encoded`: each source pixel is read before it is overwritten.
     Other overlaps and any overlap with previous pixels are rejected.
+    With `decode_colour`, the writable contiguous float `colour` is filled from
+    those same original bytes during composition, for the daemon's later consumers.
     """
     lib = library()
     if lib is None or (colour8 is not None and not hasattr(lib, 'nr_compose_encode8')):
         return None
     head = np.require(head, dtype=np.float32, requirements=['A'])
+    if decode_colour:
+        if colour8 is None:
+            raise ValueError('decoding colour requires packed pixels')
+        _neural(colour, colour8.shape[:2] + (3,))
     colour = np.require(colour, dtype=np.float32, requirements=['A'])
     channels = 4 if history is not None else 3
     if (head.ndim != 3 or head.shape[2] < channels or colour.ndim != 3 or colour.shape[2] != 3
@@ -329,6 +339,13 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
                 raise ValueError('only the exact current-pixel region may alias encoded output')
         if neural is not None and np.shares_memory(pixels, neural):
             raise ValueError('packed inputs must not alias neural output')
+        if decode_colour and np.shares_memory(pixels, colour):
+            raise ValueError('packed inputs must not alias decoded colour')
+    if decode_colour and neural is not None and np.shares_memory(colour, neural):
+        raise ValueError('decoded colour must not alias neural output')
+    if decode_colour and any(a is not None and np.shares_memory(colour, a)
+                             for a in (head, history, previous, encoded)):
+        raise ValueError('decoded colour must not alias composition inputs or encoded output')
     plans = [(_axis_plan(head.shape[axis], count) if head.shape[axis] != count else (None,) * 3)
              for axis, count in enumerate((height, width))]
     pointer = lambda array: array.ctypes.data if array is not None else None
@@ -355,9 +372,34 @@ def compose_encode(head, colour, history, previous, mask, encoded, *, top, left,
         lib.nr_compose_encode(*arguments)
     elif lib.nr_compose_encode8(
             *arguments, pointer(colour8), *colour8.strides[:2],
-            pointer(previous8), *(previous8.strides[:2] if previous8 is not None else (0, 0))):
+            pointer(previous8), *(previous8.strides[:2] if previous8 is not None else (0, 0)),
+            pointer(colour) if decode_colour else None):
         raise MemoryError('native composition could not allocate row scratch')
     return (output, sampled) if step else output
+
+
+def resample8(pixels, size, bgra):
+    """Decode uint8 HxWx4 and resize in one pass, retaining bilinear/area float order."""
+    lib = library()
+    if lib is None or not hasattr(lib, 'nr_resample8'):
+        return None
+    if (not isinstance(pixels, np.ndarray) or pixels.dtype != np.uint8 or pixels.ndim != 3
+            or pixels.shape[2] != 4 or pixels.strides[2] != 1 or min(pixels.shape[:2]) < 1
+            or len(size) != 2 or any(not isinstance(n, (int, np.integer)) for n in size)
+            or min(size) < 1):
+        raise ValueError('resample8 expects nonempty HxWx4 bytes and positive target dimensions')
+    area = (pixels.shape[0] > size[0] and pixels.shape[1] > size[1]
+            and pixels.shape[0] % size[0] == 0 and pixels.shape[1] % size[1] == 0)
+    plans = [(_axis_plan(pixels.shape[axis], count)
+              if not area and pixels.shape[axis] != count else (None,) * 3)
+             for axis, count in enumerate(size)]
+    pointer = lambda a: a.ctypes.data if a is not None else None
+    output = np.empty(tuple(size) + (3,), np.float32)
+    if lib.nr_resample8(pixels.ctypes.data, *pixels.strides[:2], *pixels.shape[:2], *size,
+                        *(pointer(a) for plan in plans for a in plan), int(bool(bgra)),
+                        output.ctypes.data):
+        raise MemoryError('native resample could not allocate row scratch')
+    return output
 
 
 @lru_cache(maxsize=32)
