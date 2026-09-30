@@ -56,6 +56,7 @@ static struct {
 	VkQueryPool qpool; unsigned prof, prof_n; float ts_period;
 	char name[256]; char err[256]; char memory[256]; char memory_read[256];
 	int ready, lost, discrete, unmapped;
+	int pin32;                /* pipelines require 32-lane subgroups (build_pipeline_spec) */
 	struct buf stage;
 } g;
 
@@ -273,8 +274,20 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 	VkResult r = vkCreateShaderModule(g.dev, &smi, NULL, &sm);
 	free(code);
 	if (r) FAIL("shader module", r);
+	/* Every kernel here is written for 32-lane subgroups — a row pass's workgroup is one
+	 * subgroup, window attention's eight subgroups are a window's eight rows — and SPIR-V
+	 * 1.6 lets the driver pick the width: ANV takes SIMD16 where SIMD32 would spill, and
+	 * the row passes, which order their shared memory with subgroup barriers, then raced.
+	 * Adding the ViT's softmax to attention.comp tipped its unspecialised build over, and
+	 * a handful of cosine publishes came out unpublished. So the width is pinned.
+	 * A driver that cannot pin it (g.pin32 unset, `xmx_init`) builds as before. */
+	VkPipelineShaderStageRequiredSubgroupSizeCreateInfo width = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+		.requiredSubgroupSize = 32 };
 	VkComputePipelineCreateInfo cpi = { .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			   .pNext = (g.pin32 & 1) ? &width : NULL,
+			   .flags = (g.pin32 & 2) ? VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT : 0,
 			   .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = sm, .pName = "main",
 			   .pSpecializationInfo = specialization }, .layout = layout };
 	r = vkCreateComputePipelines(g.dev, VK_NULL_HANDLE, 1, &cpi, NULL, out);
@@ -453,11 +466,34 @@ int xmx_init(const char *spv_path)
 
 	VkPhysicalDeviceCooperativeMatrixFeaturesKHR cm = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR, .cooperativeMatrix = VK_TRUE };
+	/* The subgroup width pinned at 32 on every pipeline (build_pipeline_spec), where the
+	 * driver can: Vulkan 1.3's subgroup size control with 32 in range for compute, and full
+	 * subgroups apart. Not every driver a desktop Arc runs has both, and asking for a
+	 * feature the device lacks fails the device outright. */
+	VkPhysicalDeviceVulkan13Features have13 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+	VkPhysicalDeviceVulkan13Properties sizes = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES };
+	g.pin32 = 0;
+	if (props.apiVersion >= VK_API_VERSION_1_3) {
+		VkPhysicalDeviceFeatures2 query = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &have13 };
+		vkGetPhysicalDeviceFeatures2(g.pd, &query);
+		VkPhysicalDeviceProperties2 props2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &sizes };
+		vkGetPhysicalDeviceProperties2(g.pd, &props2);
+		if (have13.subgroupSizeControl && sizes.minSubgroupSize <= 32 && sizes.maxSubgroupSize >= 32
+		    && (sizes.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT))
+			g.pin32 = 1 | (have13.computeFullSubgroups ? 2 : 0);
+	}
+	if (!(g.pin32 & 1))
+		fprintf(stderr, "libxmx: %s cannot fix the subgroup width at 32; the kernels are written "
+			"for 32 lanes, and a driver that picks another width can make them race\n", g.name);
+	VkPhysicalDeviceVulkan13Features v13 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &cm,
+		.subgroupSizeControl = (g.pin32 & 1) ? VK_TRUE : VK_FALSE,
+		.computeFullSubgroups = (g.pin32 & 2) ? VK_TRUE : VK_FALSE };
 	/* Shared-memory blocks that alias: gemm_staged.comp puts its operand tiles and its
 	 * output stage in the same bytes, which is what fits sixteen of its workgroups in a
 	 * core's 128 KB (notes/improve-shared-memory.md). */
 	VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR wm = {
-		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_FEATURES_KHR, .pNext = &cm,
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_FEATURES_KHR, .pNext = &v13,
 		.workgroupMemoryExplicitLayout = VK_TRUE, .workgroupMemoryExplicitLayoutScalarBlockLayout = VK_TRUE,
 		.workgroupMemoryExplicitLayout16BitAccess = VK_TRUE,
 		/* the integer path's int8 tiles (gemm_staged_int8.comp) */
@@ -1148,9 +1184,11 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	/* The QKV epilogue normalises a head inside one workgroup, so the column block must
 	 * be one head exactly: 32 wide, which the staged block always is and the tiled one
 	 * is unless XMX_TILE_N moved it. The 8x16 kernel never qualifies. */
-	if ((bt & 0x100000u) && !(qkv && (bt & ~0x408000u) == 0x100000u
+	if ((bt & 0x100000u) && !(qkv && (bt & ~0x40e000u) == 0x100000u
 				  && (staged || (tiled && g.tilen == 32))))
 		FAIL("QKV epilogue needs its targets, no other flag, and a 32-column block", 0);
+	if ((bt & 0x4000u) && !(bt & 0x400000u))
+		FAIL("an A published on the way in is a window-gathered one", 0);
 	/* the half copy lives in gemm_resident.comp's plain-store path only */
 	if ((bt & 0x200000u) && !(half_copy >= 0 && bt == 0x200000u && !staged))
 		FAIL("a GEMM half copy needs its target, no other flag, and the resident kernel", 0);
@@ -1253,25 +1291,29 @@ static int record_gemm_qkv(int a, int weight, int q, int k, int v, int scale,
 			   0x100000u | flags, 0, 0, 0, 0, 0, 0, -1, -1, NULL, &targets, -1, window_a, -1);
 }
 
+/* `vit`: the ViT's normalisation and query scale (qkv_epilogue.glsl, flag 0x2000). */
 int xmx_rec_gemm_qkv(int a, int weight, int q, int k, int v, int scale,
-		     unsigned M, unsigned channels, unsigned heads, unsigned tokens)
+		     unsigned M, unsigned channels, unsigned heads, unsigned tokens, unsigned vit)
 {
-	return record_gemm_qkv(a, weight, q, k, v, scale, M, channels, heads, tokens, NULL, 0u);
+	return record_gemm_qkv(a, weight, q, k, v, scale, M, channels, heads, tokens, NULL,
+			       vit ? 0x2000u : 0u);
 }
 
 /* The same, with A gathered from the image — `width` x `height`, `channels` deep, float32
- * or (`image_half`) half — in the window order of `across` windows a row and `pad` as
+ * or (bit 0 of `image`, 0x8000) half, and with bit 1 (0x4000) published to E4M3 as it
+ * is loaded — in the window order of `across` windows a row and `pad` as
  * (top << 16) | left: the partition folded into the projection's own loads. */
 int xmx_rec_gemm_qkv_window(int image, int weight, int q, int k, int v, int scale,
 			    unsigned M, unsigned channels, unsigned heads, unsigned tokens,
 			    unsigned width, unsigned height, unsigned across, unsigned pad,
-			    unsigned image_half)
+			    unsigned image_mode)
 {
-	if (!width || !height || !across || tokens != 64u)
+	if (!width || !height || !across || tokens != 64u || image_mode > 3u)
 		FAIL("invalid window-gathered QKV projection", 0);
 	uint32_t window_a[] = { width, height, across, pad };
 	return record_gemm_qkv(image, weight, q, k, v, scale, M, channels, heads, tokens,
-			       window_a, 0x400000u | (image_half ? 0x8000u : 0u));
+			       window_a, 0x400000u | ((image_mode & 1u) ? 0x8000u : 0u)
+			       | ((image_mode & 2u) ? 0x4000u : 0u));
 }
 
 /* A plain GEMM whose float32 result is also stored as half into `half_copy`: for a
@@ -1326,11 +1368,12 @@ int xmx_rec_unary2(unsigned kind, int a, int b, int c, int d, int second, unsign
 /* One dispatch for independent Q, K and V workgroup planes. The fifth pointer
  * occupies byte offset 80, the lda/ldb fields unused by attention.comp. */
 int xmx_rec_qkv(int source, int q, int k, int v, int scale,
-		unsigned rows, unsigned tokens, unsigned heads)
+		unsigned rows, unsigned tokens, unsigned heads, unsigned vit)
 {
 	if (!g.recording) FAIL("not recording", 0);
 	if (!rows || !tokens || !heads) FAIL("invalid QKV extent", 0);
-	const unsigned flags = 2u | 0x1000u | 0x20000u;
+	/* 0x80000: the ViT's normalisation and query scale (attention.comp) */
+	const unsigned flags = 2u | 0x1000u | 0x20000u | (vit ? 0x80000u : 0u);
 	VkDeviceAddress scale_addr = addr_of(scale);
 	struct push p = { .a = addr_of(source), .b = addr_of(q), .c = addr_of(k),
 		.d = addr_of(v), .m = rows, .n = tokens, .batch = heads, .flags = flags,
@@ -1498,15 +1541,17 @@ int xmx_global_attention_init(const char *path)
 
 /* A bottleneck block's attention in one pass (global_attention.comp): Q, K and V as the
  * QKV epilogue leaves them, (heads, rows, 32) half, into the merged (rows, heads * 32)
- * half — what QK^T, the softmax over `tokens` of `rows` columns, PV and merge_heads write. */
+ * half — what QK^T, the ViT's softmax over `tokens` of `rows` columns, PV and the scaled
+ * merge_heads write. The rows reach no further than the tokens' last 64-block. */
 int xmx_rec_global_attention(int q, int k, int v, int merged, unsigned rows,
-			     unsigned tokens, unsigned heads, float cap)
+			     unsigned tokens, unsigned heads)
 {
 	if (!g.recording || !g.rglobal) FAIL("global attention not ready for recording", 0);
-	if (!rows || rows % 16u || !tokens || tokens > rows || !heads)
-		FAIL("global attention needs rows a multiple of 16, at least the tokens", 0);
+	if (!rows || rows % 16u || !tokens || tokens > rows || !heads
+	    || (rows + 63u) / 64u != (tokens + 63u) / 64u)
+		FAIL("global attention needs rows a multiple of 16 within the tokens' 64-block", 0);
 	struct push p = { .a = addr_of(q), .b = addr_of(k), .c = addr_of(merged), .d = addr_of(v),
-			  .m = rows, .n = tokens, .batch = heads, .p0 = cap };
+			  .m = rows, .n = tokens, .batch = heads };
 	if (!p.a || !p.b || !p.c || !p.d) FAIL("global attention operand is not a live buffer", 0);
 	vkCmdBindPipeline(g.rcb, VK_PIPELINE_BIND_POINT_COMPUTE, g.rglobal);
 	vkCmdPushConstants(g.rcb, g.rpl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof p, &p);

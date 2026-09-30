@@ -12,7 +12,8 @@ vendor's arithmetic, not a recovery of it.
 This feeds both networks the same features — ours, built as the daemon builds them — and compares
 the heads and the pictures they compose. The two must agree on the padded field, or the window grids
 differ and the comparison measures that instead: the script refuses a size where our field rule
-(`nr_frame.network_geometry`) and theirs (`geometryFromValid`) disagree.
+(`nr_frame.network_geometry`) and theirs (`geometryFromValid`) disagree — which, since ours became
+theirs on 2026-09-27, is only below 129 pixels a side.
 
     python3 src/bench/opendlss_reference.py [--size 320x180] [--image IMAGE] [--save DIR]
 

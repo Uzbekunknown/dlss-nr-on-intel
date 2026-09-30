@@ -33,16 +33,28 @@ engine `HNet`, configs `crazy-cuckoo` and `hnet-vigilant-squid`.
 
 ### Extent
 
-The network runs on an extent that is **at least 320 and a multiple of 64** on each axis.
-A frame smaller than that, or not on the grid, is mirrored outward to fit and cropped back
-afterwards; the mirror is a reflection of row and column indices, not padding.
+The network runs on a padded field, **at least 320 on each axis**, each side aligned to the
+graph's own reductions: two to the number of halvings, rounded up to 4, that shrink it, and
+one more when level 0 would not be whole 8-pixel windows — 64 for most sizes, 128 for some.
+And when both sides come out at four alignments the width takes one more. A frame smaller
+than its field is mirrored outward to fit and cropped back afterwards; the mirror is a
+reflection of row and column indices, not padding.
 
 ```
 1024x576 -> 1024x576      already aligned
- 563x317 ->  576x320      rounded up
-1920x1080 -> 1920x1088
-   64x48 ->  320x320      the floor
+ 563x317 ->  640x320      317 aligns to 64, 563 to 128
+1920x1080 -> 1920x1152    level 0 would be 540 rows: aligned to 128
+1280x720 -> 1344x768      1280x768 is four alignments each way: one more on the width
+   64x48 ->  384x320      the floor, then as for 1280x720: 336, rounded up to 64 here
 ```
+
+The last step is the one to keep. A field whose sides are both multiples of 256 pools to a
+bottleneck with no padding token, and on every such field the pass comes out 25-30 % weaker
+than on the fields around it; the vendor's extra column keeps the common sizes off them. This
+is the vendor's rule as [OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR) reproduces it
+from captures (`notes/opendlss-reference.md`); MLX-DLSS's — a multiple of 64 — put 1280x720 on
+1280x768. Below 129 pixels a side the rule need not give a multiple of 64, which this
+implementation's exact halvings cannot follow, and it rounds up there.
 
 ### Input: 16 channels, float32
 
@@ -51,7 +63,7 @@ afterwards; the mirror is a reflection of row and column indices, not padding.
 | 0–2 | deterministic noise for this extent and frame index |
 | 3 | constant 1 |
 | 4–6 | the current frame, scaled |
-| 7–9 | the **previous output**, reprojected along motion, scaled the same way |
+| 7–9 | the **previous prediction** — the composed head before the grade and the intensity, in half — reprojected along motion, scaled the same way |
 | 10 | normalised style index |
 | 11 | local tone strength |
 | 12 | local structure strength |
@@ -88,20 +100,32 @@ alpha     = clamp(sigmoid(half(head.a)) * half(0.73974609375), 0, 1)
 output    = predicted + alpha * (history - predicted)
 ```
 
-`history` here is channels 7–9 recovered as `channels * 8 + 0.5`. An `intensity` control
-then blends the result against the untouched frame — above 1 it extrapolates past the
-model's own picture, which the vendor's panel allows up to 2.
+`history` here is channels 7–9 recovered as `channels * 8 + 0.5`. `output` is also what
+the next frame gets as its history — before anything below — held in RGBA16F, truncated
+toward zero. A post-process of its own (`cg2r_post_process_kernel`) then grades that half
+for the style and blends it against the untouched frame by `intensity` and the masks:
+
+```
+graded = style_grade(half(output))            # natural and cinematic only
+result = frame + intensity * mask * (graded - frame)
+```
+
+Ours extrapolates above an intensity of 1, which the vendor's pass does only when something
+else — a grade, a mask — makes it run. `notes/phase70-post-process.md`.
 
 ### The controls
 
-Four profiles, which are three scalars and nothing more:
+Four profiles: three scalars for the network, and for two of them a colour grade after it,
+read out of the DLL's own style table — each value times the tone clamped to [0, 1]:
 
-| profile | style | tone | structure |
-| --- | --- | --- | --- |
-| `standard` | 0 | 1 | 1 |
-| `natural` | 1/128 | 1 | 1 |
-| `cinematic` | 2/128 | 1 | 1 |
-| `neutral` | 0 | 0 | 0 |
+| profile | style | tone | structure | the grade after the network |
+| --- | --- | --- | --- | --- |
+| `standard` | 0 | 1 | 1 | none |
+| `natural` | 1/128 | 1 | 1 | exposure -0.1 EV, contrast -0.25, saturation -10 % |
+| `cinematic` | 2/128 | 1 | 1 | saturation -15 % |
+| `neutral` | 0 | 0 | 0 | none |
+
+The contrast is a smoothstep blend, `c + k * (c²(3 - 2c) - c)`, and the saturation is HSL's.
 
 They are a trade, not a quality ladder: everything the pass adds to skin texture it takes
 out of speculars and colour. `notes/phase44-profile-tradeoff.md` measures the curve.
@@ -132,7 +156,9 @@ storage format, not the attention (section 4). This file said otherwise when it 
 published, repeating a claim the project's own notes had already withdrawn.
 
 The non-linearity in attention is a **softmax**, hand-rolled in `f16x2` with hard logit
-clamps and **no max subtraction**.
+clamps and **no max subtraction**. The ViT's is its own: another affine and a four-bit shift for
+the exponential, the weights published unnormalised and the value sum normalised instead, over
+keys padded to a whole 64 whose weight the denominator gives back.
 
 **Each encoder level's skip is its last block's output** — blocks 4, 8, 14 and 22, the ones
 whose output is also pooled into the next level, published E4M3 (and 30 at 512 channels).
@@ -141,6 +167,15 @@ MLX-DLSS's model, and this implementation until 2026-09-27, merged the block bef
 claims its network bit-exact against captures of the original, the first decoder blocks agree
 with it 18-25 % that way and 61-69 % this way, like any other block
 (`notes/opendlss-reference.md`).
+
+**Every GEMM reads its operand published as E4M3**; half carries only accumulators and the
+32-channel blocks' skips. So a 32-channel block's QKV projection reads its feed-forward output
+published while the attention's residual takes it raw; a feed-forward whose input arrives raw —
+block 0's stem, the merges into blocks 66 and 70 — reads it published and keeps it raw as the
+skip; the 512-channel and ViT blocks publish their feed-forward output, as the narrower branched
+ones do; and the bottleneck pools block 30's raw output, published before its projection.
+MLX-DLSS's graph fed four of those GEMMs a raw value; step by step on the reference's inputs each
+of them agrees with it on 0.8-2.3 % of values one way and 48-100 % the other.
 
 `notes/MODEL-SPEC.txt` tabulates the **container** — per-block element counts and layout as
 stored. Those counts are storage, not parameters: their total, 73 841 889, is the weight
@@ -183,12 +218,13 @@ and output. NumPy's own float32 GEMM carries more error than the threshold below
 perturbations vanish. Judge on the composed image and on whether the controls behave;
 `notes/phase9-numerics.md` has the measurements. OpenDLSS-NR claims per-element agreement by
 doing the vendor's arithmetic itself — FP8 products summed as fixed point onto an f16
-accumulator, the vendor's reduction orders — which this implementation does not; its head is
-0.97-0.99 correlated with theirs on the same input (`notes/opendlss-reference.md`).
+accumulator, the vendor's reduction orders — which this implementation does not; with the graph
+the same, its head is 0.98-0.997 correlated with theirs on the same input and the pictures 0.5-1.9
+levels of 255 apart, about what two arithmetics of one graph make (`notes/opendlss-reference.md`).
 
 ## 6. The temporal path
 
-The previous output, reprojected along motion vectors into channels 7–9, blended back
+The previous prediction, reprojected along motion vectors into channels 7–9, blended back
 through the head's fourth channel. The gate is learned and it discriminates:
 
 | history given | gate |
@@ -231,6 +267,7 @@ measures this and what to do about it when you have no motion vectors.
 | the 16 input channels | `notes/phase48-feature-inputs.md` |
 | the controls | `notes/phase30-control-atlas.md` |
 | the temporal path | `notes/phase12-temporal.md`, `phase54-flicker-fix.md` |
+| the grade after the network, what the history holds | `notes/phase70-post-process.md` |
 | why bit-exactness is impossible | `notes/phase9-numerics.md` |
 
 `notes/INDEX.md` maps all of them.

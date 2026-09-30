@@ -18,6 +18,10 @@ It needs torch, which the system Python does not have:
 
 Chunking is disabled on both sides so any difference is the arithmetic, not the row
 count a BLAS was handed.
+
+Our graph is not theirs everywhere: where MLX-DLSS's recovery and the vendor's own differ,
+this tree follows the vendor's (`nr_model.MLX_DLSS_GRAPH`, notes/opendlss-reference.md).
+The switch restores theirs, and this check runs with it on: it is a check of the port.
 """
 from __future__ import annotations
 
@@ -33,6 +37,9 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
 import nr_model as ours  # noqa: E402
+
+# the port check compares like with like: MLX-DLSS's graph on both sides
+ours.MLX_DLSS_GRAPH = True
 
 try:
     import torch
@@ -299,25 +306,8 @@ def synthetic_features(extent, rng):
     return features
 
 
-def _downsample_keeping_skip(self, value, index, *, head_count):
-    """MLX-DLSS's transition, with the one change this tree makes to its graph: each level's
-    skip is the transition block's own output, published, not the block before it
-    (notes/opendlss-reference.md). Its forward keeps the skip as the very tensor it hands
-    this method, so writing the transition's output into it changes the skip and nothing
-    else; everything else stays theirs, and the whole forward is compared bit for bit."""
-    transformed = self._window(value, index, head_count=head_count, publish=False)
-    skip = theirs.e4m3_round_trip(transformed)
-    if index == 22:
-        transformed = theirs.pad_spatial_end(transformed, 8)
-    result = theirs.e4m3_round_trip(theirs.e4m3_round_trip(theirs.average_pool2(transformed))
-                                    @ self.weight(f"block{index}.layer0.weight0"))
-    value.copy_(skip)
-    return result
-
-
 def run_theirs(weights, features):
     model = theirs.NeuralRenderingModel({name: t(value) for name, value in weights.items()}).eval()
-    model._downsample_window = types.MethodType(_downsample_keeping_skip, model)
     with torch.no_grad():
         return n(model(t(features)))
 

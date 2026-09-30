@@ -33,7 +33,7 @@ work/libxmx.so: src/gpu/libxmx.c
 # and vectorise the fused composition's pixels (`compose_encode_row`).
 work/libnr_image.so: src/ref/nr_image.c Makefile | work
 	$(CC) -O3 -march=native -fPIC -Wall -Wextra -ffp-contract=off -fno-fast-math \
-	      -fno-trapping-math -fopenmp -shared -o $@ $<
+	      -fno-trapping-math -fopenmp -shared -o $@ $< -lm
 
 # The Vulkan layer that puts the pass inside a running game.
 work/libnr_layer.so: src/layer/nr_layer.c
@@ -140,6 +140,8 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/layer/test_panel.py
 	python3 src/tools/publish_check.py
 	python3 src/tools/claims_check.py
+	python3 src/tools/build_check.py
+	python3 src/bench/frame_profile.py --tables
 	python3 src/gpu/test_gemm_int8.py
 	python3 src/gpu/test_gemm_int8_staged.py
 	python3 src/gpu/test_window_block.py

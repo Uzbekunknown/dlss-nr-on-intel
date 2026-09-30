@@ -22,13 +22,15 @@ KNOBS = (
         "The only knob that changes the frame rate. The network draws its detail on a "
         "frame this much smaller; the detail is then scaled up and laid over the game's "
         "full-resolution frame, so the game's own pixels are never resampled. Lower is "
-        "faster and draws coarser detail. The network never runs below 320 pixels on a "
-        "side, so on a small window the low scales all cost the same: at 512x288, "
-        "everything up to about 0.6 runs the same 320x320 network. For play, 0.35-0.6 is "
-        "the useful range. For screenshots 0.9 tends to look better than 1.0: at exactly "
-        "the display size the network is handed the game's raw pixels, jagged edges and "
-        "all, turns part of them into pixel-level grain, and its effect comes out weaker. "
-        "Cost on an Arc 140V: about 9 ms plus 162 ms per megapixel of network frame.",
+        "faster and draws coarser detail, at about the same strength. The network's frame "
+        "is never smaller than 320 pixels a side (`min_extent`), so on a small window a low "
+        "scale is raised, at no cost, to fill the cheapest frame it lands on: 640x360 runs "
+        "as 0.5 for anything up to 0.5, 800x450 as 0.4 for anything up to 0.4, and a lower "
+        "scale is never the slower one. For play, 0.35-0.6 is the useful range. For "
+        "screenshots, 1.0 hands the network the game's raw pixels, jagged edges and all, "
+        "and it turns a little of them into pixel-level grain; 0.9 smooths them first and "
+        "draws the same strength of effect. Cost on an Arc 140V: about 130 ms per megapixel "
+        "of network frame, plus 10-20 ms that grows with the game's own resolution.",
     ),
     Knob(
         "min_extent", "min extent", "number", 128.0, 320.0, 64.0, 320.0,
@@ -36,21 +38,23 @@ KNOBS = (
         "The network's frame is padded, by mirroring the picture, to at least this many "
         "pixels on a side. 320 is what NVIDIA's own driver does; the network itself runs "
         "down to 128. At small live sizes most of a 320 frame is padding, so a lower floor "
-        "is much faster — on an Arc 140V, 512x288 at scale 0.35 takes 29 ms a frame at "
-        "320 and 15 at 128 — and draws a somewhat different picture, since the network no "
+        "is much faster — on an Arc 140V, 512x288 at scale 0.35 takes 25 ms a frame at "
+        "320 and 14 at 128 — and draws a somewhat different picture, since the network no "
         "longer sees a mirrored copy of the scene around it. Neither is wrong; compare them "
         "in a game. It changes nothing once the scaled frame is larger than this anyway.",
     ),
     Knob(
         "profile", "profile", "choice", None, None, None, "standard",
-        "which way to trade skin texture against highlights and colour",
-        "The style the network is asked for. The profiles are a trade, not a quality "
-        "ladder: what one adds to skin and surface texture it takes from highlights and "
-        "colour. `standard` is the default and adds the most texture; `natural` and "
-        "`cinematic` keep more of the highlights and colour, and on very bright scenes "
-        "`cinematic` can smooth fine detail rather than add it. `neutral` all but switches "
-        "the effect off. The profile is an input to the network, so it takes effect on the "
-        "next frame the network draws; the knobs below act after it.",
+        "which way to trade skin texture against highlights, and its colour grade",
+        "The style the network is asked for, and the colour grade that comes with it. The "
+        "profiles are a trade, not a quality ladder: what one adds to skin and surface "
+        "texture it takes from highlights. `standard` is the default and adds the most "
+        "texture; `natural` and `cinematic` keep more of the highlights, and on very bright "
+        "scenes `cinematic` can smooth fine detail rather than add it. After the network, "
+        "as NVIDIA grades them, `natural` comes out a little darker, flatter and less "
+        "saturated and `cinematic` less saturated. `neutral` all but switches the effect "
+        "off. The profile is an input to the network, so it takes effect on the next frame "
+        "the network draws; the knobs below act after it.",
     ),
     Knob(
         "intensity", "intensity", "number", 0.0, 2.0, 0.05, 1.0,
@@ -126,17 +130,17 @@ DEFAULTS = {knob.name: knob.default for knob in KNOBS}
 # by `src/tools/knob_doc.py`, because the hand-written one went two days out of date the
 # moment the host passes moved to C and then stayed wrong for a week.
 RATES = (
-    (512, 288, 0.35, 25.5),
+    (512, 288, 0.35, 25.9),
     (512, 288, 0.50, 26.0),
-    (640, 360, 0.35, 25.8),
-    (640, 360, 0.50, 26.5),
-    (854, 480, 0.50, 32.3),
-    (1024, 768, 0.55, 48.5),
-    (1920, 1080, 0.55, 110.8),
+    (640, 360, 0.35, 26.0),
+    (640, 360, 0.50, 27.0),
+    (854, 480, 0.50, 34.0),
+    (1024, 768, 0.55, 56.5),
+    (1920, 1080, 0.55, 111.8),
 )
-RATES_MEASURED = "2026-09-26"
+RATES_MEASURED = "2026-09-27"
 # What a reader of the table needs and the numbers cannot say. Empty when there is nothing.
-RATES_NOTE = ("Medians of three runs with swap empty, which agreed within 10 %. On "
+RATES_NOTE = ("Medians of six runs with swap empty; a row's runs spread up to 15 %. On "
               "2026-09-23, with 5.5 GiB in zram and the kernel's memory-pressure figures "
               "rising, 1920x1080 ran anywhere from 322 to 463 ms: if that row is much slower "
               "for you, look at swap before anything else.")

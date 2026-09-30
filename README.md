@@ -8,6 +8,11 @@ No NVIDIA hardware, no NGX, no CUDA. The graph runs on Intel's XMX matrix units 
 `VK_KHR_cooperative_matrix`, and the pass is injected at `vkQueuePresentKHR`, so it
 attaches to anything that presents with Vulkan — including a Windows game under Proton.
 
+**It is playable.** Live, every frame goes through the network on the laptop's own iGPU,
+beside the game: Tekken 7 runs at **30 fps at 800x450**. Block by block, its graph matches a
+reference implementation that claims NVIDIA's own arithmetic; what is left between the two is
+rounding, not structure (`notes/opendlss-reference.md`).
+
 **This is a research port, not a product.**  
 Read "What to expect" before deciding it is broken.
 
@@ -19,6 +24,10 @@ Read "What to expect" before deciding it is broken.
 
 Stills with the model at full resolution. Left, or on top: the game's own frame. Right, or
 below: the same frame through DLSS-NR on this Intel Arc 140V.
+
+<sub>Captured on 2026-09-16 and rendered again on 2026-09-28, from the same captured frames,
+through the graph as it is now (`src/bench/restill.py`); the images and the table below come
+out of `src/tools/comparisons.py`.</sub>
 
 **Tekken 7** — Unreal Engine 4, D3D11, 1920x1080, crops enlarged 2x:
 
@@ -41,21 +50,21 @@ change in brightness, because on this model the brightness moves and it fools th
 
 | image | region | brightness | relative texture | colour change |
 | --- | --- | --- | ---: | ---: |
-| Tekken 7 | face | 78 -> 57 | **+22 %** | 23.5 |
-| | jacket weave | 90 -> 71 | **+50 %** | 19.4 |
-| | embroidery | 135 -> 115 | +36 % | 20.6 |
-| | background | 35 -> 34 | -9 % | **4.8** |
-| DoA5, close-up | face | 107 -> 90 | +4 % | 20.3 |
-| | background | | -22 % | **4.3** |
-| DoA5, by the fire | face | 96 -> 83 | +12 % | 15.6 |
-| | background, fire | | -3 % | 8.9 |
-| Mortal Kombat 1 | Omni-Man's face | 131 -> 132 | **-14 %** | 15.6 |
-| | Homelander's face | 131 -> 131 | **-24 %** | 14.6 |
+| Tekken 7 | face | 78 -> 59 | **+28 %** | 22.0 |
+| | jacket weave | 90 -> 70 | **+61 %** | 20.9 |
+| | embroidery | 135 -> 115 | +43 % | 21.0 |
+| | background | 35 -> 34 | -9 % | **4.5** |
+| DoA5, close-up | face | 107 -> 93 | +10 % | 17.9 |
+| | background | | -24 % | **4.7** |
+| DoA5, by the fire | face | 96 -> 84 | +16 % | 15.3 |
+| | background, fire | | -4 % | 8.2 |
+| Mortal Kombat 1 | Omni-Man's face | 131 -> 131 | **-10 %** | 14.8 |
+| | Homelander's face | 131 -> 130 | **-19 %** | 13.8 |
 | | the whole fight frame | 56 -> 57 | -2 % | 6.8 |
 
 **The three games do not get the same treatment, and that is the honest summary.** On
 Tekken 7 and Dead or Alive 5 the character comes out darker and gains texture — a great deal
-on Tekken's fabric, little on Dead or Alive's already-smooth skin — while the background is
+on Tekken's fabric, less on Dead or Alive's already-smooth skin — while the background is
 left almost alone. On Mortal Kombat 1, whose faces are already rendered in fine detail, the
 brightness does not move and the fine detail on the faces goes *down*: what changes is the
 colour, with the warm filmic grade and the glow on the skin taken out. That is not film grain
@@ -65,7 +74,9 @@ what goes is skin detail or the game's own sharpening has not been measured.
 Across all of them, what the pass adds in one place it takes from another. **Whether any of
 it is better is taste, not measurement** — it is photographic where the games are stylised.
 
-These are stills. Live, Tekken 7 runs at **25 fps at 640x360**.
+These are stills. Live — every frame through the network, beside the game on the same
+iGPU — **Tekken 7 runs at 30 fps at 800x450** with the render scale at 0.35, and 27 at 0.6
+(the author, 2026-09-27).
 
 <sub>Tekken 7 © Bandai Namco Entertainment. Dead or Alive 5 Last Round © Koei Tecmo Games.
 Mortal Kombat 1 © Warner Bros. Entertainment Inc.; its guest characters belong to their
@@ -77,14 +88,14 @@ respective owners. Shown for comparison.</sub>
 
 **This project was written by AI agents.** The author supplied the machine, the binary and
 the direction, and made the decisions; the code, the measurements and the notes were
-produced by **Claude Opus 5** and, in a parallel tree, by **Astra** — whose work on the
+produced by **Claude Opus 5 and 5.5** and, in a parallel tree, by **Astra** — whose work on the
 native host passes was taken into this one (`src/ref/nr_image.c`, `notes/phase57`).
 
 That is stated here rather than left to be noticed, because it changes how you should read
 everything else. What it means in practice:
 
 - **Nothing is asserted that was not measured.** Every number in the notes has a program
-  behind it in `src/bench/`, and `make test` is around 190 checks, including the native
+  behind it in `src/bench/`, and `make test` is about 570 checks, including the native
   passes against the NumPy they replace byte for byte.
 - **The wrong turns are in the notes too**, deliberately. A hypothesis about shared-memory
   bank conflicts that measured 1.11x instead of the textbook 32x. A "driver bug" that
@@ -131,7 +142,7 @@ already have. See [Build](#build).
   (GCC/libgomp or an equivalent), `glslangValidator`, the Vulkan loader.
 - **ImageMagick** for the still-frame tools, which read and write pictures through
   `magick`. The game path does not touch it.
-- About 0.7 GiB of memory for the device buffers at 720p and 1.2 GiB at 1080p, the weights
+- About 0.7 GiB of memory for the device buffers at 720p and 1.3 GiB at 1080p, the weights
   included — it shares system RAM.
 - OpenCV is optional and worth having: it is the fast path for the blur that moving
   `detail_strength` or `colour_strength` needs — 32 ms against 110 at 854x480
@@ -165,8 +176,9 @@ The CMake build and additional GEMM checks are adapted from
 [andyvand's fork](https://github.com/andyvand/dlss-nr-on-vulkan); see `NOTICE`.
 Its macOS/Windows runtime and C frame library are separate changes, not included here.
 The normal CMake build covers the 64-bit layer; use the existing Makefile target for
-`work/libnr_layer32.so` when a 32-bit game needs it. Avoid running both build systems
-at the same time because they write the same artifacts.
+`work/libnr_layer32.so` when a 32-bit game needs it. The two build the same shaders with the
+same flags and register the same tests — `src/tools/build_check.py` fails the suite when they
+part. Avoid running both at the same time because they write the same artifacts.
 
 Then extract the weights from your own DLL (needs `safetensors` as well as NumPy):
 
@@ -190,7 +202,7 @@ it on the machine that runs it rather than copying it. Everything still works wi
 `NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
 
 ```sh
-make test                                        # 190-odd checks, fewer without weights
+make test                                        # about 570 checks, fewer without weights
 python3 src/ref/nr_frame.py IN.png OUT.png --resident   # one still, no game
 ```
 
@@ -247,8 +259,9 @@ run it again. Leave out `NR_LIVE=1` for photo mode. For a native Vulkan game,
 one of the first four is missing or wrong: the layer is capturing and has nowhere to send it.
 
 Without `NR_LAYER_LIVE` it is a **photo mode**: the pass fires once and holds its result
-on screen while the trigger exists. With it, every Nth frame is re-rendered and the ones
-between hold the last result — a slideshow you can play.
+on screen while the trigger exists. With `NR_LAYER_LIVE=1` every present goes through the
+network — 25-30 fps at 640x360 to 800x450 on the Arc 140V, beside the game; with a larger N
+the presents between hold the last result.
 
 ## The three tools
 
@@ -317,19 +330,19 @@ all of them move between frames. Only `profile` costs a forward pass.
 
 `0.05` to `1`, step `0.05`, default `1`
 
-The only knob that changes the frame rate. The network draws its detail on a frame this much smaller; the detail is then scaled up and laid over the game's full-resolution frame, so the game's own pixels are never resampled. Lower is faster and draws coarser detail. The network never runs below 320 pixels on a side, so on a small window the low scales all cost the same: at 512x288, everything up to about 0.6 runs the same 320x320 network. For play, 0.35-0.6 is the useful range. For screenshots 0.9 tends to look better than 1.0: at exactly the display size the network is handed the game's raw pixels, jagged edges and all, turns part of them into pixel-level grain, and its effect comes out weaker. Cost on an Arc 140V: about 9 ms plus 162 ms per megapixel of network frame.
+The only knob that changes the frame rate. The network draws its detail on a frame this much smaller; the detail is then scaled up and laid over the game's full-resolution frame, so the game's own pixels are never resampled. Lower is faster and draws coarser detail, at about the same strength. The network's frame is never smaller than 320 pixels a side (`min_extent`), so on a small window a low scale is raised, at no cost, to fill the cheapest frame it lands on: 640x360 runs as 0.5 for anything up to 0.5, 800x450 as 0.4 for anything up to 0.4, and a lower scale is never the slower one. For play, 0.35-0.6 is the useful range. For screenshots, 1.0 hands the network the game's raw pixels, jagged edges and all, and it turns a little of them into pixel-level grain; 0.9 smooths them first and draws the same strength of effect. Cost on an Arc 140V: about 130 ms per megapixel of network frame, plus 10-20 ms that grows with the game's own resolution.
 
 ### `min_extent` — the smallest side the network's frame is padded to
 
 `128` to `320`, step `64`, default `320`
 
-The network's frame is padded, by mirroring the picture, to at least this many pixels on a side. 320 is what NVIDIA's own driver does; the network itself runs down to 128. At small live sizes most of a 320 frame is padding, so a lower floor is much faster — on an Arc 140V, 512x288 at scale 0.35 takes 29 ms a frame at 320 and 15 at 128 — and draws a somewhat different picture, since the network no longer sees a mirrored copy of the scene around it. Neither is wrong; compare them in a game. It changes nothing once the scaled frame is larger than this anyway.
+The network's frame is padded, by mirroring the picture, to at least this many pixels on a side. 320 is what NVIDIA's own driver does; the network itself runs down to 128. At small live sizes most of a 320 frame is padding, so a lower floor is much faster — on an Arc 140V, 512x288 at scale 0.35 takes 25 ms a frame at 320 and 14 at 128 — and draws a somewhat different picture, since the network no longer sees a mirrored copy of the scene around it. Neither is wrong; compare them in a game. It changes nothing once the scaled frame is larger than this anyway.
 
-### `profile` — which way to trade skin texture against highlights and colour
+### `profile` — which way to trade skin texture against highlights, and its colour grade
 
 `standard` / `natural` / `cinematic` / `neutral`
 
-The style the network is asked for. The profiles are a trade, not a quality ladder: what one adds to skin and surface texture it takes from highlights and colour. `standard` is the default and adds the most texture; `natural` and `cinematic` keep more of the highlights and colour, and on very bright scenes `cinematic` can smooth fine detail rather than add it. `neutral` all but switches the effect off. The profile is an input to the network, so it takes effect on the next frame the network draws; the knobs below act after it.
+The style the network is asked for, and the colour grade that comes with it. The profiles are a trade, not a quality ladder: what one adds to skin and surface texture it takes from highlights. `standard` is the default and adds the most texture; `natural` and `cinematic` keep more of the highlights, and on very bright scenes `cinematic` can smooth fine detail rather than add it. After the network, as NVIDIA grades them, `natural` comes out a little darker, flatter and less saturated and `cinematic` less saturated. `neutral` all but switches the effect off. The profile is an input to the network, so it takes effect on the next frame the network draws; the knobs below act after it.
 
 ### `intensity` — how far to go towards the model's picture, or past it
 
@@ -379,21 +392,21 @@ The average change between two frames above which the scene is taken to have cut
 
 <!-- rates:begin -->
 
-Measured through the socket on 2026-09-26 by `python3 src/bench/live_rates.py` — the whole round trip a game waits for, median of nine frames, not graph time alone:
+Measured through the socket on 2026-09-27 by `python3 src/bench/live_rates.py` — the whole round trip a game waits for, median of nine frames, not graph time alone:
 
 | swapchain | render scale | ms | fps |
 | --- | ---: | ---: | ---: |
-| 512x288 | 0.35 | 26 | 39.2 |
+| 512x288 | 0.35 | 26 | 38.6 |
 | 512x288 | 0.50 | 26 | 38.5 |
-| 640x360 | 0.35 | 26 | 38.8 |
-| 640x360 | 0.50 | 26 | 37.7 |
-| 854x480 | 0.50 | 32 | 31.0 |
-| 1024x768 | 0.55 | 48 | 20.6 |
-| 1920x1080 | 0.55 | 111 | 9.0 |
+| 640x360 | 0.35 | 26 | 38.5 |
+| 640x360 | 0.50 | 27 | 37.0 |
+| 854x480 | 0.50 | 34 | 29.4 |
+| 1024x768 | 0.55 | 56 | 17.7 |
+| 1920x1080 | 0.55 | 112 | 8.9 |
 
-Medians of three runs with swap empty, which agreed within 10 %. On 2026-09-23, with 5.5 GiB in zram and the kernel's memory-pressure figures rising, 1920x1080 ran anywhere from 322 to 463 ms: if that row is much slower for you, look at swap before anything else.
+Medians of six runs with swap empty; a row's runs spread up to 15 %. On 2026-09-23, with 5.5 GiB in zram and the kernel's memory-pressure figures rising, 1920x1080 ran anywhere from 322 to 463 ms: if that row is much slower for you, look at swap before anything else.
 
-That is the daemon's own cost with nothing else on the GPU. A game adds its own frame to it: **Tekken 7** ran at **25 fps at 640x360** in a live session on 2026-09-24, against 10.5 fps nine days earlier (`notes/phase59`).
+That is the daemon's own cost with nothing else on the GPU. A game adds its own frame to it: **Tekken 7** ran at **30 fps at 800x450** with the render scale at 0.35, and 27 at 0.6, in a live session on 2026-09-27 — against 10.5 fps at 640x360 on 2026-09-16 (`notes/phase59`).
 
 <!-- rates:end -->
 
@@ -410,15 +423,23 @@ did move the graph was deleting passes: a pass at the memory ceiling that need n
 all waste. Folding the residuals into the projections, attention into one pass with its
 head merge, Q/K normalisation and the window partition into the QKV projection's own
 epilogue and loads, the narrow blocks' feed-forward into one kernel and the full-resolution
-glue into fewer passes took a 1280x720 frame from 445 to 231 ms, 48 %, with every output
-bit-identical
+glue into fewer passes took a 1280x720 frame from 445 to 231 ms at the time, 48 %, with every
+output bit-identical
 (`notes/improve-fusions.md`, `notes/improve-qkv-epilogue.md`). The other thing that moved it
 was shared memory, which decides how many workgroups a core holds: 128 KB between them,
 each share rounded up to 1, 2, 4 ... KB. Window attention at 3104 bytes took 4 KB and so half
 the core's threads, and at exactly 2 KB is 18 % faster; the staged GEMM at 15.5 KB took 16
-and half the threads too — with its tiles and its stage sharing 8 KB, the 1280x720 frame
-went from 228 to 208 ms (`notes/improve-shared-memory.md`, which also has a driver quirk
-that makes some *smaller* declarations slower).
+and half the threads too (`notes/improve-shared-memory.md`, which also has a driver quirk
+that makes some *smaller* declarations slower). With the one-pass window blocks and
+bottleneck attention since, a full-scale 1280x720 frame is about 150 ms end to end and the
+live sizes 25-27 ms. What bounds the GEMMs now is the register file: Xe2's 256-register mode
+can be reached with a small Mesa patch, and with these kernels it is slower
+(`notes/improve-large-grf.md`).
+
+**On a small window, a low render scale costs no more than the frame it fills.** The network's
+frame is never smaller than 320 a side, so a scale whose frame would be smaller is raised,
+free, to fill the cheapest frame it lands on — 640x360 runs as 0.5 for anything up to 0.5, and
+800x450 as 0.4. The daemon's log line says `runs as` when it happens.
 
 ## How it works
 
@@ -429,8 +450,9 @@ game ──presents──▶ Vulkan layer ──socket──▶ daemon ──▶
 ```
 
 - **The graph** is a symmetric U-Net: five Swin stages at 32/64/128/256/512 channels down
-  to a ViT-1D bottleneck and back, 71 blocks, recovered from the DLL's intact RTTI and
-  anchored on MLX-DLSS's independent extraction of the same binary.
+  to a ViT-1D bottleneck and back, 71 blocks, recovered from the DLL's intact RTTI,
+  anchored on MLX-DLSS's independent extraction of the same binary, and corrected where it
+  and the vendor's differ against OpenDLSS-NR, which claims the vendor's own arithmetic.
 - **Every GEMM runs on XMX** in FP16 with FP32 accumulate, through cooperative matrix.
   The whole graph is resident: operands travel as 64-bit addresses in push constants, and
   activations never come back to the host.
@@ -473,8 +495,8 @@ library; `make work/libnr_layer32.so` builds it and `prepare_layer.py` writes bo
 manifests.
 
 **It is unbearably slow.** Look at the swapchain size before the render scale. See the
-table above; at 1920x1080 the daemon alone manages about 4 fps, and nothing will fix that
-but a smaller window.
+table above; at 1920x1080 the daemon alone manages about 3 fps at full scale and 9 at 0.55,
+and nothing will fix that but a smaller window.
 
 **`GPU lost, stopping` in the daemon's log** — or, from a clone older than 2026-09-17,
 `frame rejected/failed ... xmx_graph_run: resident submit (-4)` on every frame. `-4` is
@@ -557,7 +579,7 @@ work/         builds, checkouts and your weights. Ignored, and stays that way.
 make test
 ```
 
-Around 190 checks, including the layer's wire protocol, the native host passes
+About 570 checks, including the layer's wire protocol, the native host passes
 against the NumPy they replace byte for byte, the interface mask down to the
 byte, the temporal path against MLX-DLSS's own composition, and the panel driven through
 a pseudo-terminal. This page is checked too: the knob and frame-time tables are generated
@@ -573,7 +595,11 @@ and a skip is not a pass.
 The graph was recovered by [MLX-DLSS](https://github.com/iamwavecut/MLX-DLSS) (Apache-2.0)
 from vendor captures; this port reads its weight specification and its numpy modules, and
 the two independent extractions of the same DLL agree exactly — 0 missing, 0 extra, 0
-shape mismatches.
+shape mismatches. Where that graph and the vendor's differ — the decoder's skips, which
+values the GEMMs read published, the bottleneck's own attention — it follows
+[OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR) (MIT), which claims its network
+bit-exact against captures of the original: `src/bench/opendlss_*` run its WebGPU port here
+and compare, block by block and step by step (`notes/opendlss-reference.md`).
 
 DLSS, Neural Rendering and `nvngx_dlssnr.dll` are NVIDIA Corporation's. This is an
 independent reimplementation of the inference pass, not affiliated with or endorsed by
