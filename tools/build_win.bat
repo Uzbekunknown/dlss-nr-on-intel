@@ -8,6 +8,7 @@ rem    work\libxmx.dll      the resident Vulkan runtime the daemon drives
 rem    work\nr_layer.dll    the Vulkan layer a 64-bit game loads
 rem    work\nr_layer32.dll  the same layer for a 32-bit game, if the x86 tools are there
 rem    work\libnr_image.dll the host passes around the network
+rem    work\libnr_alloc.dll the daemon's NumPy allocator, which keeps a frame's large blocks
 rem    work\*.spv           the compute shaders
 rem
 rem  Two things here are not obvious and both cost an afternoon if missed:
@@ -64,7 +65,7 @@ rem ---- the shader and runtime stages, flat: no ( ) block around a set/if pair 
 if "%ONLY%"=="layer" goto :layer
 
 rem ---- shaders ----
-echo [1/5] compiling shaders ...
+echo [1/6] compiling shaders ...
 set "GLSL=%VULKAN_SDK%\Bin\glslangValidator.exe"
 if not exist "%GLSL%" (
   echo ERROR: glslangValidator not found in the Vulkan SDK
@@ -92,7 +93,7 @@ rem The daemon's start-up probe, whose source is a bench tool rather than a grap
 if exist "%WORK%\half_probe.spv" (echo   half_probe.spv) else (echo   half_probe.spv FAILED)
 
 rem ---- libxmx.dll ----
-echo [2/5] building libxmx.dll ...
+echo [2/6] building libxmx.dll ...
 rem Export list from the source: every non-static xmx_* definition, so a symbol added
 rem later cannot silently go missing from the DLL.
 powershell -NoProfile -Command "$s = Get-Content '%GPU%\libxmx.c' -Raw; $m = [regex]::Matches($s, '(?m)^(?!static)[^\n]*?\b(xmx_\w+)\s*\([^;]*\)\s*\{') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique; @('LIBRARY libxmx','EXPORTS') + ($m | ForEach-Object { '    ' + $_ }) | Set-Content '%WORK%\libxmx.def'"
@@ -106,7 +107,7 @@ echo   libxmx.dll
 if "%ONLY%"=="shaders" goto :done
 rem The layer calls no Vulkan function by name: the loader hands it every pointer, so it
 rem links no vulkan-1.lib, and its exports are its own functions (nr_layer.def).
-echo [3/5] building nr_layer.dll ...
+echo [3/6] building nr_layer.dll ...
 cl /nologo /O2 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%WORK%\nr_layer.obj" /Fe:"%WORK%\nr_layer.dll" /LD "%REPO%\src\layer\nr_layer.c" /link /DEF:"%REPO%\src\layer\nr_layer.def"
 if errorlevel 1 ( echo ERROR: nr_layer.dll failed & exit /b 1 )
 echo   nr_layer.dll
@@ -114,7 +115,7 @@ echo   nr_layer.dll
 rem A 32-bit game - Dead or Alive 5, through DXVK's 32-bit d3d9.dll - loads a 32-bit layer;
 rem the daemon it talks to stays 64-bit, on the same pipe. The x86 cross tools come with the
 rem C++ workload; they run in a shell of their own so the x86 environment ends with them.
-echo [4/5] building nr_layer32.dll ...
+echo [4/6] building nr_layer32.dll ...
 set "VCX86=%VCINSTALLDIR%Auxiliary\Build\vcvarsamd64_x86.bat"
 if not exist "%VCX86%" (
   echo   skipped: no x86 tools ^(%VCX86%^)
@@ -136,11 +137,19 @@ rem parallel for in C mode outright (C3015 on the canonical sample, in /TC), and
 rem it in C++ mode. So this one file goes through the C++ front end. The only C-isms that
 rem costs are explicit casts from malloc, added for it. Without OpenMP every host pass runs
 rem on one core: 212-216 ms of replayed graph at 720p against 191-195 with gcc's OpenMP.
-echo [5/5] building libnr_image.dll ...
+echo [5/6] building libnr_image.dll ...
 powershell -NoProfile -Command "$s = Get-Content '%REPO%\src\ref\nr_image.c' -Raw; $m = [regex]::Matches($s, '(?m)^(?!static)[^\n]*?\b(nr_\w+)\s*\([^;]*\)\s*\{') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique; @('LIBRARY libnr_image','EXPORTS') + ($m | ForEach-Object { '    ' + $_ }) | Set-Content '%WORK%\libnr_image.def'"
 cl /nologo /O2 /TP /D_WIN32 /D_CRT_SECURE_NO_WARNINGS /fp:precise /openmp /Fo:"%WORK%\nr_image.obj" /Fe:"%WORK%\libnr_image.dll" /LD "%REPO%\src\ref\nr_image.c" /link /DEF:"%WORK%\libnr_image.def"
 if errorlevel 1 ( echo ERROR: libnr_image.dll failed & exit /b 1 )
 echo   libnr_image.dll
+
+rem The daemon's NumPy allocator. Windows' heap returns a frame's large arrays to the system
+rem as they are freed, and the next frame pays a page fault for every 4 KB of them again;
+rem this keeps them from one frame to the next (src/layer/nr_alloc.py).
+echo [6/6] building libnr_alloc.dll ...
+cl /nologo /O2 /TC /Fo:"%WORK%\nr_alloc.obj" /Fe:"%WORK%\libnr_alloc.dll" /LD "%REPO%\src\layer\nr_alloc.c"
+if errorlevel 1 ( echo ERROR: libnr_alloc.dll failed & exit /b 1 )
+echo   libnr_alloc.dll
 
 :done
 
@@ -150,6 +159,7 @@ echo   libxmx.dll    the runtime the daemon loads
 echo   nr_layer.dll  the layer a 64-bit game loads
 echo   nr_layer32.dll the layer a 32-bit game loads, with a manifest whose library_arch is 32
 echo   libnr_image.dll the host passes around the network
+echo   libnr_alloc.dll the daemon's NumPy allocator
 echo   *.spv         the compute shaders
 echo.
 echo Next: tools\deploy.bat --game ^<game dir^> installs the layer and points the

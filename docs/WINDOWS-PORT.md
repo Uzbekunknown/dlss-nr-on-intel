@@ -19,6 +19,9 @@ the code is the current one:
 - libxmx declares `DenormPreserve 16`, so Windows and Linux compute the same graph bit for
   bit, and the three tests that differed here by a zero's sign or at mask 7 pass
   (`notes/phase71-intel-windows-driver.md`).
+- The daemon keeps NumPy's large blocks from one frame to the next on Windows
+  (`src/layer/nr_alloc.py`, `work/libnr_alloc.dll`): Windows' heap gives them back to the
+  system, and every frame paid their page faults again. `NR_KEEP_BLOCKS=0` turns it off.
 
 ## What this branch adds to master
 

@@ -86,6 +86,14 @@ compute tests and the tree's own checks, not the layer's. The layer, the daemon'
 everything else build with MSVC instead: `tools\build_win.bat`, into the same `work/`, so keep
 one build per checkout (`docs/WINDOWS-PORT.md`). Both give the same heads.
 
+Both builds also make `work/libnr_alloc.dll`, the daemon's NumPy allocator on Windows. Windows'
+heap gives a freed block of about a megabyte or more straight back to the system, so every
+frame's full-frame arrays started on fresh pages and paid a page fault for each 4 KB: 12 700 a
+1280x720 frame, 30 000 at 1080p. The daemon now keeps those blocks from one frame to the next,
+and gives back whatever a whole frame did not take again. That is 7-8 ms off a 1280x720 frame
+and 12-21 ms off a 1080p one. `NR_KEEP_BLOCKS=0` turns it off, and without the library the
+daemon runs as before. Linux does not build it.
+
 On Intel's driver, leave `gpu_window_attention` out: `ctest --test-dir work/cmake -E
 gpu_window_attention`. Its unmerged variant, which the graph does not use by default, hangs the
 engine from 32 windows up (phase71). Everything else passes, now that libxmx declares

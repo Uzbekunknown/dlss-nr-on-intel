@@ -24,6 +24,69 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Windows: the daemon keeps NumPy's large blocks, and its 1280x720 frame beside Linux's (2026-10-02, after the Linux run)
+
+On mains, quiet-checked before and after, Intel's 101.9033, the CMake/MinGW tree.
+
+**The comparison below this entry set unlike things side by side.** Windows' 27-29 ms of "rest"
+came from the DoA5 log, with the game running beside the daemon. Linux's 7-8 ms came from
+`daemon_stages.py`, with the daemon alone. On Windows the same command (1280x720 at 0.05, 0.3 and
+0.5, 15 frames) gives 17-21 ms on held frames, and 16-20 on fresh ones. So the gap that is
+Windows' own is 10-13 ms, and the other ~8-10 ms of the 27-29 came with the game.
+
+**`src/layer/nr_alloc.c`**, built as `work/libnr_alloc.dll` by `build_win.bat` (step 6) and by
+CMake on Windows, is a NumPy data allocator in front of NumPy's own. It keeps freed blocks of
+1 MB and more, matched by exact size. `serve()` installs it on Windows only, in the thread that
+runs the frames, and marks the end of every connection. A block that a whole frame did not take
+again goes back to the system at the next mark, and a mark with nothing in or out (a status
+check) changes nothing. A cap of 256 MB bounds it in between. `NR_KEEP_BLOCKS=0` turns it off,
+and without the library the daemon runs as before. Linux neither builds nor imports it.
+- What a frame keeps, measured after the sixth frame of one size: 8 MB at 640x360, 40 at
+  1280x720, 97-119 at 1080p, 172 at 1440p. That is one frame's large arrays: 3 of them at
+  640x360, 7-11 above it. Only the warm-up frames and size changes keep more, for a frame. That
+  is why the cap is 256 MB rather than the prototype's 1 GB.
+- `src/layer/test_alloc.py`, in CTest on Windows (35 of 35): the reuse, the zeroing, the marks,
+  the cap, four threads at once. Then the daemon's own frame path runs 22 frames twice:
+  - at 1280x720 and 640x360, fresh and held, letterboxed and with an interface mask;
+  - once on NumPy's allocator, once on this one with every large block it hands out filled with
+    0xff first.
+
+  The answers are the same bytes, so nothing in the frame reads a block before writing it. The
+  MSVC build passes the same test, and vkcube through the spawned daemon answered 90 frames.
+
+**The daemon at 1280x720** (`daemon_stages.py`, held frames, off against on, two alternating
+rounds; ms):
+
+| scale | rest, off | rest, on | Linux |
+|---|---:|---:|---:|
+| 0.05 | 17.1-17.4 | 10.6-11.3 | 7.2 |
+| 0.3 | 18.9-19.1 | 10.8-11.3 | 7.3 |
+| 0.5 | 20.4-20.9 | 11.6-11.7 | 8.2 |
+
+At 0.3, stage by stage, off against on: decode 0.6-0.8 to 0.4-0.5, resample 2.6-2.8 to 1.0-1.1,
+the composition and encode 4.7-5.1 to 1.8-2.0, after the answer 6.4-7.0 to 2.7. The composition
+is now faster than Linux's 2.1. What is left over Linux is mostly the pipe: the send takes
+2.6-2.8 ms against 0.75. The receive takes 3.2-3.7 against 0.9, outside the daemon's clock on
+both. The received frame is also a fresh 3.7 MB `bytearray` every frame, which this allocator
+does not see.
+
+**Round trips** (`work/tools-win/live_rates_win.py`, fresh frames, two alternating rounds):
+
+| case | off | on | page faults a frame, off | on |
+|---|---:|---:|---:|---:|
+| 640x360 at 0.5 | 32.6-32.7 ms | 30.7-31.4 ms | 2 030 | 0-8 |
+| 1280x720 at 0.3 | 46.0-46.6 | 39.0-39.4 | 12 700 | 2 600 |
+| 1280x720 at 0.5 | 65.2-66.0 | 57.5-58.2 | 13 900-14 000 | 2 580 |
+| 1920x1080 at 0.3 | 76.7-85.8 | 64.2-64.7 | 30 260 | 5 860 |
+
+**Not measured yet:** a game. DoA5 at 1280x720 and 0.3 was 60 ms a frame in the daemon's log.
+The steps this changes took ~8 ms less here, on the daemon alone.
+
+**Next:**
+- receive into a buffer kept from frame to frame;
+- what the pipe costs;
+- the two GEMM runs the Linux entry below asks for.
+
 ## On Linux at d2381ed: the 1280x720 frame taken apart beside Windows', and the GEMM epilogues (2026-10-02, late night)
 
 **d2381ed on Linux.** Nothing Linux builds changed: `nr_layer.def`, `build_win.bat`, the docs and

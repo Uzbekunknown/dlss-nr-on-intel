@@ -558,6 +558,16 @@ def serve(server, backend, args):
     cost of the copy, and the log fills with one line repeated — so it is said once and the
     daemon exits, which also lets `nr-toggle` and the panel see that there is no model.
     """
+    # On Windows a frame's large arrays go back to the system as they are freed, and the next
+    # frame pays a page fault for every 4 KB of them again; this keeps them (nr_alloc.py).
+    # Here, in the thread that runs the frames, because NumPy's allocator is per context.
+    keeping = None
+    if os.name == "nt":
+        import nr_alloc
+        keeping = nr_alloc if nr_alloc.install() else None
+    if keeping:
+        print("keeping NumPy's large blocks from frame to frame (NR_KEEP_BLOCKS=0 to stop)",
+              flush=True)
     while True:
         connection, _ = server.accept()
         try:
@@ -571,6 +581,8 @@ def serve(server, backend, args):
                   flush=True)
         finally:
             connection.close()
+            if keeping:
+                keeping.frame_done()
 
 
 def process_connection(connection, backend, args):
