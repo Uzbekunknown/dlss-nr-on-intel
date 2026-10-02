@@ -171,7 +171,7 @@ if [[ ${DRY_RUN:-0} -eq 1 ]]; then
   echo
   echo "[dry run] nothing was written"
   echo "  would install $HERE/nr_layer.so to $GAME/dlss-nr/$NAME"
-  echo "  would write $GAME/dlss-nr/VkLayer_dlss_nr.json with an absolute library_path"
+  echo "  would write $GAME/dlss-nr/VkLayer_dlss_nr.json with library_path ./$NAME"
   echo "  would copy the runtime: work/mlx-dlss, work/*.spv, work/*.so"
   if [[ -f "$weights" ]]; then
     echo "  weights: present, and are NOT copied - the layer points at this folder"
@@ -191,8 +191,13 @@ echo "  layer:      $DEST/$NAME"
 MANIFEST="$HERE/VkLayer_dlss_nr.json"
 [[ -f "$MANIFEST" ]] || MANIFEST="$HERE/src/layer/VkLayer_dlss_nr.json"
 [[ -f "$MANIFEST" ]] || { echo "ERROR: no VkLayer_dlss_nr.json in the release." >&2; exit 3; }
-sed "s|LIBRARY_PATH_PLACEHOLDER|$DEST/$NAME|g" "$MANIFEST" > "$DEST/VkLayer_dlss_nr.json"
-echo "  manifest:   $DEST/VkLayer_dlss_nr.json"
+# `./NAME`, not an absolute path and not a bare name. A bare name goes to dlopen, which
+# searches the system library path rather than the manifest's own folder, and the layer
+# then fails to load with `create instance: -6` (6083140, measured on Linux). An absolute
+# path also works, but `./NAME` is what tools/deploy.sh installs with and what was verified
+# there, so both scripts write the same thing for the same platform.
+sed "s|LIBRARY_PATH_PLACEHOLDER|./$NAME|g" "$MANIFEST" > "$DEST/VkLayer_dlss_nr.json"
+echo "  manifest:   $DEST/VkLayer_dlss_nr.json  library_path = ./$NAME"
 
 for d in layer ref gpu bench; do
   [[ -d "$HERE/src/$d" ]] && cp -r "$HERE/src/$d" "$DEST/src/$d"

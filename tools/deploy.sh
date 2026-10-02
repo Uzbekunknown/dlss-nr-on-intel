@@ -40,6 +40,7 @@ GAME=""
 DLL=""
 NAME="libnr_layer.so"
 EXE=""
+RELEASE=""
 SKIP_WEIGHTS=0
 SKIP_BUILD=0
 
@@ -49,14 +50,19 @@ while [[ $# -gt 0 ]]; do
     --dll)          DLL="$2";  shift 2 ;;
     --name)         NAME="$2"; shift 2 ;;
     --exe)          EXE="$2";  shift 2 ;;
+    --release)      RELEASE="$2"; shift 2 ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
     --skip-build)   SKIP_BUILD=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-[[ -n "$GAME" ]] || { echo "ERROR: --game is required" >&2; exit 2; }
-[[ -d "$GAME" ]] || { echo "ERROR: game directory not found: $GAME" >&2; exit 2; }
+# --release assembles a folder for other people and installs into nobody's game, so it is
+# the one mode that does not need --game.
+if [[ -z "$RELEASE" ]]; then
+  [[ -n "$GAME" ]] || { echo "ERROR: --game is required (or --release <folder>)" >&2; exit 2; }
+  [[ -d "$GAME" ]] || { echo "ERROR: game directory not found: $GAME" >&2; exit 2; }
+fi
 
 # ---- weights, delegated to scripts/get_weights.py ----
 # It clones MLX-DLSS at the pinned commit, runs its extractor against your DLL and
@@ -85,6 +91,74 @@ else
   ( cd "$REPO" && make )
 fi
 [[ -f "$WORK/libnr_layer.so" ]] || { echo "ERROR: $WORK/libnr_layer.so missing; build it first" >&2; exit 3; }
+
+# ---- release folder, or the game ----
+# A release is the same assembly as a game install without the game: everything
+# dist-tools/setup.sh needs to run on a machine with no compiler and no clone. Two things
+# differ. The layer sits at the top level as nr_layer.so - that is the name setup.sh looks
+# for, and it is not the libnr_layer.so the build produces - and the manifest's
+# library_path is ./, since the release folder is wherever the user unpacks it.
+if [[ -n "$RELEASE" ]]; then
+  echo "[3/3] assembling a release into $RELEASE ..."
+  mkdir -p "$RELEASE/src" "$RELEASE/work" "$RELEASE/scripts"
+
+  cp "$WORK/libnr_layer.so" "$RELEASE/nr_layer.so"
+  echo "  layer:      $RELEASE/nr_layer.so"
+
+  MANIFEST_SRC="$REPO/src/layer/VkLayer_dlss_nr.json"
+  [[ -f "$MANIFEST_SRC" ]] || { echo "ERROR: manifest template not found: $MANIFEST_SRC" >&2; exit 3; }
+  cp "$MANIFEST_SRC" "$RELEASE/VkLayer_dlss_nr.json"
+  echo "  manifest:   $RELEASE/VkLayer_dlss_nr.json  (template, setup.sh fills it in)"
+
+  for d in layer ref gpu bench; do
+    [[ -d "$REPO/src/$d" ]] && cp -r "$REPO/src/$d" "$RELEASE/src/$d"
+  done
+  echo "  src/        layer, ref, gpu, bench (the daemon imports all four)"
+
+  if [[ -d "$WORK/mlx-dlss" ]]; then
+    cp -r "$WORK/mlx-dlss" "$RELEASE/work/mlx-dlss"
+    echo "  work/mlx-dlss"
+  else
+    echo "  WARNING: $WORK/mlx-dlss is missing; the daemon cannot start without it" >&2
+  fi
+  for f in "$WORK"/libxmx.so* "$WORK"/libnr_image.so* "$WORK"/*.spv; do
+    [[ -e "$f" ]] && cp "$f" "$RELEASE/work/" || true
+  done
+  echo "  work/       libxmx, libnr_image, shaders"
+
+  cp "$REPO/dist-tools/setup.sh"  "$RELEASE/setup.sh"
+  cp "$REPO/dist-tools/setup.bat" "$RELEASE/setup.bat" 2>/dev/null || true
+  cp "$REPO/scripts/get_weights.py" "$RELEASE/scripts/get_weights.py"
+  chmod +x "$RELEASE/setup.sh"
+  echo "  setup.sh    the one-click script (finds the DLL, extracts, renames, installs)"
+  echo "  scripts/get_weights.py"
+
+  find "$RELEASE/src" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
+  find "$RELEASE/src" -name '*.o' -delete 2>/dev/null
+  find "$RELEASE/src" -name '*.so' -delete 2>/dev/null
+
+  # A release must not carry anything NVIDIA's: check rather than trust, because this
+  # folder is the one that gets published.
+  for bad in "$RELEASE/nvngx_dlssnr.dll" "$RELEASE/nvngx_dlssnr.so" "$RELEASE/ref"; do
+    if [[ -e "$bad" ]]; then
+      echo "ERROR: $(basename "$bad") is in the release folder - that cannot be published" >&2
+      exit 3
+    fi
+  done
+  if [[ -e "$RELEASE/work/mlxw" ]]; then
+    echo "ERROR: weights are in the release folder - those cannot be published" >&2
+    exit 3
+  fi
+
+  echo
+  echo "Done. Release folder: $RELEASE"
+  echo
+  echo "Ship that folder as it is. On the user's machine they run ./setup.sh, which asks"
+  echo "for their own nvngx_dlssnr.dll, extracts the weights from it, installs into the"
+  echo "game folder under a name they choose, and writes the launcher. Nothing NVIDIA's"
+  echo "is in this folder - verified above, not assumed."
+  exit 0
+fi
 
 # ---- install into the game folder ----
 echo "[3/3] installing into $GAME ..."
