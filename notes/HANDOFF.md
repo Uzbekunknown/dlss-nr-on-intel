@@ -24,6 +24,55 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Windows, on mains: MSVC's OpenMP measured, and the staged GEMM taken apart (2026-10-02, later)
+
+On mains, quiet-checked before and after, Intel's 101.9033.
+
+**MSVC's OpenMP holds up.** `work/tools-win/live_rates_win.py` ran the MSVC tree and the
+CMake/MinGW tree in turn, two rounds each, and the first round was warm-up. In the second
+round MSVC was 32.9-34.8 ms at 512x288-640x360 against MinGW's 32.6-33.7, 74.3 against 71.2 at
+1024x768, and 180.3 against 183.5 at 1080p. The host's share of a frame (the frame less the
+daemon's own GPU split) is 4.9-6.3 ms against 4.6-5.7 at the live sizes, and 45 against 41 at
+1080p. Without OpenMP the MSVC build had been about 10 % slower at 720p.
+
+**Intel's instruction counts do not explain the GEMM.** `XMX_PIPELINE_STATS` on 3d8951c,
+pipeline by pipeline against Mesa's (`NRonWindows/windows-vs-linux-stats.txt`):
+
+| kernel | Intel's instructions against Mesa's | speed on Intel |
+|---|---|---|
+| staged GEMM, every specialisation | 0.74-1.07x: fewer, and still slower | slower |
+| window block | 1.2-1.5x | faster |
+| fused feed-forward | 2.2-3.2x | as fast |
+
+Instruction counts say nothing across the two compilers. Intel has no spills anywhere in the
+graph, and the scratch only in the unspecialised builds.
+
+**One shape, each epilogue in turn** (`src/bench/gemm_epilogues.py`, new; on Windows in
+`NRonWindows/windows-gemm-epilogues-9033.txt`):
+- **The E4M3 publish and the gate activation cost nothing on Intel.** They take the time of
+  the plain half store through the stage: 64512x128x64 at 531 / 530 / 533 us, 16128x128x128
+  at 134 / 137 / 141.
+- **The residual costs a lot at a short K.** 64512x128x64 takes 1162 us against 531, and
+  16128x128x128 263 against 134. At K = 256 it is +10 %, and at K = 4096 nothing. The skip it
+  reads, 2 bytes an element, explains a third of that at most.
+- **A float32 output, stored straight from the accumulators, is slower than the half store
+  through the stage**: 659 against 531 us at 64512x128x64, with twice the bytes.
+- **The K loop**: about 41 us for each 32 of K at 16128x128, around 3.2 TFLOP/s.
+
+Tried on Intel's compiler, bit-identical and no faster, so not kept:
+- the residual read four channels at a time, the cosine column found once;
+- every skip loaded before the first store.
+
+The first, written as `branch + skip * cos`, broke `test_gemm_residual`. Intel's compiler did
+not contract it to one fused multiply-add the way it does the scalar form, and 5 % of the
+values came out an ulp apart. With `fma()` written out it was bit-identical. The scalar form
+is safe only because both compilers contract it.
+
+Set beside the frame, the slow part is the short GEMM's common path, not its epilogue. In the
+frame the gate's 64512x128x64 takes ~286 us an item on Mesa. Here it takes 533, the same as
+its plain half store. **Next on Linux: `gemm_epilogues.py` itself**, the same table and K
+sweep, so the K loop, the stage and the store can each be set against Intel's.
+
 ## On Windows at 3d8951c: the merge holds, and MSVC's build has OpenMP (2026-10-02)
 
 Linux's list after the merge, run on Intel's 101.9033. Master's history was checked first: the
