@@ -325,14 +325,28 @@ if exist "%NR_CANDIDATE%\nvngx_dlssnr.dll" (
   set "DLL=%NR_CANDIDATE%\nvngx_dlssnr.dll"
   exit /b 0
 )
-rem a bare file: accept only if it is the one we need
+rem Two things have to be resolved BEFORE the block below, because neither works inside it:
+rem
+rem   * the file name. `for %%F in ("%X%") do set "N=%%~nxF"` nested inside an
+rem     `if exist (...)` block leaves N empty - cmd expands %X% for the for before the
+rem     block's own substitution runs. Measured, and it is what made every --dll <file>
+rem     report an empty name.
+rem   * whether this is a directory. The obvious test, `if exist "%X%\"`, is true for a
+rem     REGULAR FILE as well - cmd takes a trailing backslash as "directory" whatever the
+rem     path is - so it cannot tell the two apart and rejected every file path with "that
+rem     folder does not contain nvngx_dlssnr.dll". `dir /ad` is not it either: it lists
+rem     SUBdirectories, so an empty folder lists nothing and looks like a file. `pushd`
+rem     is the unambiguous question - it succeeds on a directory and fails on a file.
+set "NR_NAME="
+for %%F in ("%NR_CANDIDATE%") do set "NR_NAME=%%~nxF"
+set "NR_ISDIR="
+pushd "%NR_CANDIDATE%" >nul 2>&1 && (set "NR_ISDIR=1" & popd)
+
 if exist "%NR_CANDIDATE%" (
-  rem a directory without the DLL in it is not a candidate
-  if exist "%NR_CANDIDATE%\" (
+  if defined NR_ISDIR (
     echo   That folder does not contain nvngx_dlssnr.dll.
     exit /b 1
   )
-  for %%F in ("%NR_CANDIDATE%") do set "NR_NAME=%%~nxF"
   if /i not "%NR_NAME%"=="nvngx_dlssnr.dll" (
     echo   That file is %NR_NAME%, not nvngx_dlssnr.dll.
     exit /b 1
