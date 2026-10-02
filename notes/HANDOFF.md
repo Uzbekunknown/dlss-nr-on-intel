@@ -89,6 +89,11 @@ The steps this changes took ~8 ms less here, on the daemon alone.
 
 ## On Linux at d2381ed: the 1280x720 frame taken apart beside Windows', and the GEMM epilogues (2026-10-02, late night)
 
+> **Corrected by the entry above.** The table below set Windows' DoA5 log, taken with the game
+> running beside the daemon, against Linux's daemon alone. On Windows, `daemon_stages.py` with
+> the daemon alone gives 17-21 ms of rest. So Windows' own gap is 10-13 ms, not the ~20 claimed
+> below, and the game added the rest. The per-stage figures for Linux stand.
+
 **d2381ed on Linux.** Nothing Linux builds changed: `nr_layer.def`, `build_win.bat`, the docs and
 a bench script. `make` gives no warnings, `make test` is green (570) and CTest 43 of 43.
 `make test-proton` loads both layers, the 32-bit one included.
