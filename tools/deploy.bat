@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal
 rem ===========================================================================
 rem  deploy.bat  -  run DLSS-NR on Intel against a game (Windows)
@@ -54,6 +54,7 @@ if /i "%~1"=="--name"         ( set "NAME=%~2" & shift & shift & goto :parse )
 if /i "%~1"=="--exe"          ( set "EXE=%~2"  & shift & shift & goto :parse )
 if /i "%~1"=="--skip-weights" ( set "SKIP_WEIGHTS=1" & shift & goto :parse )
 if /i "%~1"=="--skip-build"   ( set "SKIP_BUILD=1" & shift & goto :parse )
+if /i "%~1"=="--release"      ( set "RELEASE=%~2" & shift & shift & goto :parse )
 echo Unknown argument: %~1
 exit /b 2
 :done_parse
@@ -65,14 +66,19 @@ set "REPO=%CD%"
 popd
 set "WORK=%REPO%\work"
 
+rem --release assembles a folder for other people and installs into nobody's game, so it
+rem is the one mode that does not need --game.
+if not "%RELEASE%"=="" goto :release_ok
 if "%GAME%"=="" (
   echo ERROR: --game is required, the game directory to install into
+  echo        ^(or --release ^<folder^> to assemble a distributable instead^)
   exit /b 2
 )
 if not exist "%GAME%" (
   echo ERROR: game directory not found: %GAME%
   exit /b 2
 )
+:release_ok
 
 rem ---- weights: delegated to scripts/get_weights.py ----
 rem It clones MLX-DLSS at the pinned commit, runs its extractor against your DLL, and
@@ -130,9 +136,18 @@ if not exist "%WORK%\libxmx.dll" (
   echo WARNING: %WORK%\libxmx.dll is missing - the daemon cannot start without it
 )
 
+rem ---- release folder, or the game ----
+rem A release is the same assembly as a game install without the game: everything
+rem dist-tools/setup.bat needs to run on a machine that has no compiler, no Vulkan SDK and
+rem no clone. The one thing that differs is where the layer goes - a release folder carries
+rem nr_layer.dll at its top level, because that is what setup.bat looks for, and the game
+rem install puts it in dlss-nr\ under the name the user chose.
+if not "%RELEASE%"=="" goto :release
+
 rem ---- install into the game folder ----
 echo [3/3] installing into %GAME% ...
 set "DEPLOY=%GAME%\dlss-nr"
+set "DEST_NOTE="
 if not exist "%DEPLOY%" mkdir "%DEPLOY%"
 
 copy /Y "%WORK%\nr_layer.dll" "%DEPLOY%\%NAME%" >nul || exit /b 3
@@ -222,5 +237,78 @@ echo Run the game through %LAUNCH% so VK_LAYER_PATH is set.
 echo.
 echo COMPLIANCE: nothing NVIDIA's is shipped. The weights come from a DLL you own and
 echo are never copied into the game folder.
+endlocal
+exit /b 0
+
+rem ==== :release - assemble a distributable folder and stop ====
+rem The folder dist-tools/setup.bat expects: nr_layer.dll at the top level, the manifest
+rem template, src\, the runtime in work\, and the two scripts a user actually runs. What is
+rem deliberately absent is the weights and the NVIDIA DLL - setup.bat extracts those on the
+rem user's machine from a DLL they supply, which is the whole reason the release can be
+rem published at all.
+:release
+echo [3/3] assembling a release into %RELEASE% ...
+if not exist "%RELEASE%" mkdir "%RELEASE%"
+
+copy /Y "%WORK%\nr_layer.dll" "%RELEASE%\nr_layer.dll" >nul || exit /b 3
+echo   layer:      %RELEASE%\nr_layer.dll
+
+copy /Y "%REPO%\src\layer\VkLayer_dlss_nr.json" "%RELEASE%\VkLayer_dlss_nr.json" >nul || exit /b 3
+echo   manifest:   %RELEASE%\VkLayer_dlss_nr.json  ^(template, setup.bat fills it in^)
+
+if not exist "%RELEASE%\src" mkdir "%RELEASE%\src"
+if not exist "%RELEASE%\work" mkdir "%RELEASE%\work"
+if not exist "%RELEASE%\scripts" mkdir "%RELEASE%\scripts"
+xcopy /E /I /Y /Q "%REPO%\src\layer" "%RELEASE%\src\layer" >nul
+xcopy /E /I /Y /Q "%REPO%\src\ref"   "%RELEASE%\src\ref"   >nul
+xcopy /E /I /Y /Q "%REPO%\src\gpu"   "%RELEASE%\src\gpu"   >nul
+xcopy /E /I /Y /Q "%REPO%\src\bench" "%RELEASE%\src\bench" >nul
+echo   src\        layer, ref, gpu, bench ^(the daemon imports all four^)
+
+if exist "%WORK%\mlx-dlss" (
+  xcopy /E /I /Y /Q "%WORK%\mlx-dlss" "%RELEASE%\work\mlx-dlss" >nul
+  echo   work\mlx-dlss
+)
+if exist "%WORK%\libxmx.dll"      copy /Y "%WORK%\libxmx.dll"      "%RELEASE%\work\" >nul
+if exist "%WORK%\libnr_image.dll" copy /Y "%WORK%\libnr_image.dll" "%RELEASE%\work\" >nul
+copy /Y "%WORK%\*.spv" "%RELEASE%\work\" >nul 2>&1
+echo   work\       libxmx.dll, libnr_image.dll, shaders
+
+rem The two scripts the user runs, from dist-tools. setup.bat is the one-click path:
+rem it finds their DLL, extracts the weights, renames the layer and writes the launcher.
+copy /Y "%REPO%\dist-tools\setup.bat" "%RELEASE%\setup.bat" >nul || exit /b 3
+copy /Y "%REPO%\dist-tools\setup.sh"  "%RELEASE%\setup.sh"  >nul 2>&1
+copy /Y "%REPO%\scripts\get_weights.py" "%RELEASE%\scripts\get_weights.py" >nul || exit /b 3
+echo   setup.bat   the one-click script ^(finds the DLL, extracts, renames, installs^)
+echo   scripts\get_weights.py
+
+rem Keep local junk out, as in the game install
+for /d /r "%RELEASE%\src" %%J in (__pycache__) do @if exist "%%J" rmdir /S /Q "%%J" 2>nul
+del /S /Q "%RELEASE%\src\*.obj" >nul 2>&1
+del /S /Q "%RELEASE%\src\*.lib" >nul 2>&1
+del /S /Q "%RELEASE%\src\*.exp" >nul 2>&1
+
+rem A release must not carry anything NVIDIA's: check rather than trust, because this
+rem folder is the one that gets published.
+if exist "%RELEASE%\nvngx_dlssnr.dll" (
+  echo ERROR: nvngx_dlssnr.dll is in the release folder - that cannot be published
+  exit /b 3
+)
+if exist "%RELEASE%\work\mlxw" (
+  echo ERROR: weights are in the release folder - those cannot be published
+  exit /b 3
+)
+if exist "%RELEASE%\ref" (
+  echo ERROR: ref\ is in the release folder - that cannot be published
+  exit /b 3
+)
+
+echo.
+echo Done. Release folder: %RELEASE%
+echo.
+echo Ship that folder as it is. On the user's machine they run setup.bat, which asks for
+echo their own nvngx_dlssnr.dll, extracts the weights from it, installs into the game
+echo folder under a name they choose, and writes the launcher. Nothing NVIDIA's is in
+echo this folder - verified above, not assumed.
 endlocal
 exit /b 0
