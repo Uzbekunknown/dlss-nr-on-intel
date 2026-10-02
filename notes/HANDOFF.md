@@ -24,6 +24,64 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Linux at d2381ed: the 1280x720 frame taken apart beside Windows', and the GEMM epilogues (2026-10-02, late night)
+
+**d2381ed on Linux.** Nothing Linux builds changed: `nr_layer.def`, `build_win.bat`, the docs and
+a bench script. `make` gives no warnings, `make test` is green (570) and CTest 43 of 43.
+`make test-proton` loads both layers, the 32-bit one included.
+
+**The frame at 1280x720, stage by stage.** `src/bench/daemon_stages.py` (new) runs the daemon's
+own `main()` in-process, with each stage of `process_connection` timed. It drives the daemon over
+its own transport, one connection a frame, as the layer does. Below, medians of 15 frames of a
+held scene, so the history is kept as in the games' logs. "The rest" is the daemon log's own
+measure on both systems: its time from the decode to the end of the log line, less the graph.
+Windows' columns are the medians of its DoA5 log, whose frame counts in steps of 10 ms.
+
+| scale | network | Linux graph | Linux rest | Linux frame | Windows graph | Windows rest | Windows frame |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 0.05 | 320x320 | 23-26 ms | 7.2 ms | 30-33 ms | 31 ms | 29 ms | 60 ms |
+| 0.3 | 384x320 | 25-36 ms | 7.3 ms | 33-40 ms | 33 ms | 27 ms | 60 ms |
+| 0.5 | 640x384 | 42 ms | 8.2 ms | 51 ms | 52 ms | 29 ms | 80 ms |
+
+- **Every stage on Linux is under 2.2 ms.** At 0.3: decode 0.35, resample 0.57, the history 0.38,
+  the features 0.31, the graph's copies 0.7, the composition and encode 2.1, the send 0.75, and
+  1.9 after the answer (the change figure, the history, the log line). The receive, 0.9, is
+  outside the daemon's clock on both systems. So the pipe's inbound transfer is not in Windows'
+  27-29 ms; its outbound send is.
+- **So Windows spends ~20 ms more in the same steps.** Page faults explain most of it on the
+  agent's own numbers. Scaled by pixels from `phase71`'s 13 887 a frame at 1024x768, this size
+  takes ~16 000 faults a frame. At the 0.7-1 us a fault that 1080p's 36 478 imply, that is
+  11-15 ms. The tool names the stage on Windows too. Its pipe client is written and not yet run
+  there.
+- `live_rates.py`, as asked (fresh frames, so no history): 28.3 / 31.1 / 47.8 ms at
+  0.05 / 0.3 / 0.5.
+- **The graph at 384x320 moves between daemon processes**: 25 ms in some, 31-36 in others, with
+  the same code on a quiet machine, and steady within each. One process run across five scale
+  changes held 24-28 ms, so changing the scale live does not cause it. This file has recorded a
+  10 % spread between processes before, from buffer placement ("IT RENDERS"). On this field it
+  reaches 44 %.
+
+**`gemm_epilogues.py` on Linux.** The results are in `NRonWindows/linux-gemm-epilogues.txt`, and
+the comparison with Windows in `linux-vs-windows-gemm-epilogues.txt`. Every shape is 1.1-2.7x
+slower on Intel's compiler. There are two separate gaps:
+- **The memory path.** On Linux the short-K GEMMs run at the memory ceiling: 93-101 GB/s of A
+  read and C written at K = 64 (64512x128x64: the half output 266 us, the residual with its skip
+  438). On Intel's compiler the same bytes move at 36-62 GB/s through the stage (531 and 1162
+  us). The float32 output, stored straight from the accumulators, moves at 63-91 GB/s. So on
+  Windows the stage and its store loop are the slow part. The E4M3 publish and the gate look free there only because
+  that path already takes twice Mesa's time; on Linux the gate costs 16-25 % over the half store
+  at K = 64-128.
+- **The K loop.** 17-24 us a step of 32 at 16128x128 on Linux (two runs), against 42 on Windows.
+  That is the 2x at 320x1024x4096.
+
+**Next on Windows, to split the two:**
+1. The plain half output stored with `coopMatStore` straight from the accumulators, converted to
+   float16, without the stage. If that moves the float32 path's bytes, the element-wise
+   epilogues (E4M3, gate) could run on the accumulator's own elements (`length()` and `[]`) and
+   stay bit-identical. The residual is harder, because the window residual maps its skip
+   through the crop.
+2. The base kernel without staging (`gemm_coopmat.spv`) on both drivers, for the K loop alone.
+
 ## Dead or Alive 5 on Windows, 32-bit, and why the frame stays at 60 ms below scale 0.35 (2026-10-02, night)
 
 **What ran.** DoA5LR is 32-bit D3D9. It ran through DXVK 3.1.1's `x32\d3d9.dll`, with the new
