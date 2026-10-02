@@ -75,7 +75,7 @@ if "%GAME%"=="" (
   exit /b 2
 )
 if not exist "%GAME%" (
-  echo ERROR: game directory not found: %GAME%
+  echo ERROR: game directory not found: "%GAME%"
   exit /b 2
 )
 :release_ok
@@ -95,7 +95,7 @@ if "%DLL%"=="" (
   exit /b 2
 )
 if not exist "%DLL%" (
-  echo ERROR: DLL not found: %DLL%
+  echo ERROR: DLL not found: "%DLL%"
   exit /b 2
 )
 echo [1/3] extracting weights with scripts\get_weights.py ...
@@ -145,13 +145,13 @@ rem install puts it in dlss-nr\ under the name the user chose.
 if not "%RELEASE%"=="" goto :release
 
 rem ---- install into the game folder ----
-echo [3/3] installing into %GAME% ...
+echo [3/3] installing into "%GAME%" ...
 set "DEPLOY=%GAME%\dlss-nr"
 set "DEST_NOTE="
 if not exist "%DEPLOY%" mkdir "%DEPLOY%"
 
 copy /Y "%WORK%\nr_layer.dll" "%DEPLOY%\%NAME%" >nul || exit /b 3
-echo   layer:      %DEPLOY%\%NAME%
+echo   layer:      "%DEPLOY%\%NAME%"
 
 set "MANIFEST_SRC=%REPO%\src\layer\VkLayer_dlss_nr.json"
 set "MANIFEST_DST=%DEPLOY%\VkLayer_dlss_nr.json"
@@ -163,7 +163,7 @@ rem An ABSOLUTE library_path. A bare name makes the loader fail with error 87
 rem (ERROR_INVALID_PARAMETER) when the layer is found through VK_LAYER_PATH: measured
 rem here, the same manifest loads with the full path and not without it.
 powershell -NoProfile -Command "$lib = (Join-Path '%DEPLOY%' '%NAME%'); (Get-Content '%MANIFEST_SRC%') -replace 'LIBRARY_PATH_PLACEHOLDER', $lib.Replace('\','\\') | Set-Content '%MANIFEST_DST%'"
-echo   manifest:   %MANIFEST_DST%  library_path = %DEPLOY%\%NAME%
+echo   manifest:   "%MANIFEST_DST%"  library_path = "%DEPLOY%\%NAME%"
 
 rem The runtime the daemon needs at start: the MLX extractor it imports, the resident
 rem Vulkan runtime, and the shaders. Without these the daemon stops before it listens.
@@ -208,7 +208,7 @@ set "LAUNCH=%DEPLOY%\launch-nr.bat"
   echo rem Launcher for DLSS-NR on Intel.
   echo rem The loader finds the layer through VK_LAYER_PATH plus the manifest, so the
   echo rem library name above does not matter; the manifest names it.
-  echo set "VK_LAYER_PATH=%DEPLOY%"
+  echo set "VK_LAYER_PATH=%DEPLOY:^)=^)%"
   echo set "VK_INSTANCE_LAYERS=VK_LAYER_dlssnr_intel"
   echo set "ENABLE_NR_LAYER=1"
   echo set "NR_LAYER_SPAWN=1"
@@ -229,7 +229,7 @@ if defined EXE (
 echo   launcher:   %LAUNCH%
 
 echo.
-echo Done. Install folder: %DEPLOY%
+echo Done. Install folder: "%DEPLOY%"
 echo   %NAME%, VkLayer_dlss_nr.json, src\, work\ (runtime only - no weights)
 echo.
 echo Weights stay in %WORK%\mlxw; the launcher points NR_ROOT at the checkout.
@@ -247,14 +247,14 @@ rem deliberately absent is the weights and the NVIDIA DLL - setup.bat extracts t
 rem user's machine from a DLL they supply, which is the whole reason the release can be
 rem published at all.
 :release
-echo [3/3] assembling a release into %RELEASE% ...
+echo [3/3] assembling a release into "%RELEASE%" ...
 if not exist "%RELEASE%" mkdir "%RELEASE%"
 
 copy /Y "%WORK%\nr_layer.dll" "%RELEASE%\nr_layer.dll" >nul || exit /b 3
-echo   layer:      %RELEASE%\nr_layer.dll
+echo   layer:      "%RELEASE%\nr_layer.dll"
 
 copy /Y "%REPO%\src\layer\VkLayer_dlss_nr.json" "%RELEASE%\VkLayer_dlss_nr.json" >nul || exit /b 3
-echo   manifest:   %RELEASE%\VkLayer_dlss_nr.json  ^(template, setup.bat fills it in^)
+echo   manifest:   "%RELEASE%\VkLayer_dlss_nr.json"  ^(template, setup.bat fills it in^)
 
 if not exist "%RELEASE%\src" mkdir "%RELEASE%\src"
 if not exist "%RELEASE%\work" mkdir "%RELEASE%\work"
@@ -304,7 +304,7 @@ if exist "%RELEASE%\ref" (
 )
 
 echo.
-echo Done. Release folder: %RELEASE%
+echo Done. Release folder: "%RELEASE%"
 echo.
 echo Ship that folder as it is. On the user's machine they run setup.bat, which asks for
 echo their own nvngx_dlssnr.dll, extracts the weights from it, installs into the game

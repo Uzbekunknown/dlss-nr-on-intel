@@ -130,7 +130,7 @@ if not "%DLL%"=="" (
     echo ERROR: --dll did not name a usable nvngx_dlssnr.dll.
     exit /b 3
   )
-  echo == DLL: from the command line - %DLL%
+  echo == DLL: from the command line - "%DLL%"
   goto :find_python
 )
 
@@ -154,7 +154,7 @@ set /p "ANSWER=Path: "
 if not defined ANSWER goto :no_dll
 call :resolve_dll "%ANSWER%"
 if errorlevel 1 goto :no_dll
-echo   using %DLL%
+echo   using "%DLL%"
 goto :find_python
 
 :no_dll
@@ -187,7 +187,7 @@ if errorlevel 1 (
   exit /b 3
 )
 
-echo == extracting weights from %DLL%
+echo == extracting weights from "%DLL%"
 echo       (a few minutes; the DLL is read, nothing is written back to it)
 "%PY%" "%HERE%\scripts\get_weights.py" "%DLL%" --work-dir "%HERE%\work"
 if errorlevel 1 (
@@ -213,7 +213,7 @@ if not defined ANSWER (
 set "GAME=%ANSWER:"=%"
 :have_game
 if not exist "%GAME%" (
-  echo ERROR: game folder not found: %GAME%
+  echo ERROR: game folder not found: "%GAME%"
   exit /b 2
 )
 
@@ -224,8 +224,8 @@ rem checked on a machine nobody wants a layer installed on.
 if "%DRY_RUN%"=="1" (
   echo.
   echo == dry run: nothing was written
-  echo   would install %HERE%\nr_layer.dll to %GAME%\dlss-nr\%NAME%
-  echo   would write %GAME%\dlss-nr\VkLayer_dlss_nr.json with an absolute library_path
+  echo   would install "%HERE%\nr_layer.dll" to "%GAME%\dlss-nr\%NAME%"
+  echo   would write "%GAME%\dlss-nr\VkLayer_dlss_nr.json" with an absolute library_path
   echo   would copy the runtime: work\mlx-dlss, work\*.spv, work\*.dll
   if exist "%HERE%\work\mlxw\dlssnr-logical.safetensors" (
     echo   weights: present, and are NOT copied - the layer points at this folder
@@ -236,7 +236,7 @@ if "%DRY_RUN%"=="1" (
   exit /b 0
 )
 
-echo == installing into %GAME%
+echo == installing into "%GAME%"
 set "DEST=%GAME%\dlss-nr"
 if not exist "%DEST%" mkdir "%DEST%"
 copy /Y "%HERE%\nr_layer.dll" "%DEST%\%NAME%" >nul || exit /b 3
@@ -272,7 +272,7 @@ set "LAUNCH=%DEST%\launch-nr.bat"
   echo setlocal
   echo.
   echo rem The loader finds the layer through VK_LAYER_PATH plus the manifest.
-  echo set "VK_LAYER_PATH=%DEST%"
+  echo set "VK_LAYER_PATH=%DEST:^)=^)%"
   echo set "VK_INSTANCE_LAYERS=VK_LAYER_dlssnr_intel"
   echo set "ENABLE_NR_LAYER=1"
   echo set "NR_LAYER_SPAWN=1"
@@ -280,7 +280,7 @@ set "LAUNCH=%DEST%\launch-nr.bat"
   echo rem Windows talks to the daemon over a named pipe.
   echo set "NR_LAYER_SOCKET=\\.\pipe\nr_dlssnr_intel"
   echo rem The weights stay in the release folder.
-  echo set "NR_ROOT=%HERE%"
+  echo set "NR_ROOT=%HERE:^)=^)%"
   echo.
   echo set "GAME_EXE="
   echo for %%%%F in ^("%GAME%\*.exe"^) do ^( if not defined GAME_EXE set "GAME_EXE=%%%%F" ^)
