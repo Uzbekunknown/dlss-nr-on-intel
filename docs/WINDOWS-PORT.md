@@ -22,6 +22,10 @@ the code is the current one:
 - The daemon keeps NumPy's large blocks from one frame to the next on Windows
   (`src/layer/nr_alloc.py`, `work/libnr_alloc.dll`): Windows' heap gives them back to the
   system, and every frame paid their page faults again. `NR_KEEP_BLOCKS=0` turns it off.
+- The pipe reads a frame straight into the buffer the daemon keeps for it, and writes the
+  answer from where it lies (`recv_into`, `sendall`). The frame used to be copied three
+  times on the way in and twice on the way out: 5.6-6.0 ms of a 1280x720 frame, where
+  1.0-1.1 are left.
 
 ## What this branch adds to master
 

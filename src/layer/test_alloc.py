@@ -2,10 +2,11 @@
 """The daemon's NumPy allocator on Windows (nr_alloc.c): what it keeps, what it gives back,
 and that the daemon answers with the same bytes through it.
 
-The second half runs the daemon's own frame path twice on the same frames: once on NumPy's
-allocator, once on this one with every large block it hands out filled with 0xff first. A
-read of a block before it is written — which fresh pages from the system, all zero, would have
-hidden — then changes the answer.
+The second half runs the daemon's own frame path twice on the same frames. Once on NumPy's
+allocator, with a fresh request buffer every frame. Once on this one, with every large block
+it hands out filled with 0xff first, and the request buffer kept from frame to frame
+(`nr_daemon.receive`). A read of a block before it is written — which fresh pages from the
+system, all zero, would have hidden — or of the last frame's request then changes the answer.
 
     python src/layer/test_alloc.py           # the allocator, then the daemon's frames
     python src/layer/test_alloc.py --quick   # the allocator alone
@@ -198,6 +199,8 @@ def daemon_frames():
         digests = []
         for width, height, scale, magic, body in plan:
             args.live.render_scale = scale
+            if not keep:
+                nr_daemon._INBOX.clear()       # a fresh request buffer every frame, as before
             exchange = Exchange(np.array([magic, width, height, 44], "<u4").tobytes() + body)
             nr_daemon.process_connection(exchange, backend, args)
             if keep:
@@ -212,7 +215,8 @@ def daemon_frames():
     plain, _ = answers(False)
     kept, counts = answers(True)
     differ = [i for i, (a, b) in enumerate(zip(plain, kept)) if a != b]
-    check(f"the daemon's {len(plain)} answers, the same bytes with every block poisoned",
+    check(f"the daemon's {len(plain)} answers, the same bytes with every block poisoned "
+          f"and the request buffer kept",
           not differ and len(plain) == len(kept), f"frames {differ}" if differ else "")
     check("and the blocks were reused", counts["hits"] > counts["misses"],
           f"hits {counts['hits']}, misses {counts['misses']}, the last frame kept at most "

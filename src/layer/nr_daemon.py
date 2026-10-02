@@ -122,11 +122,25 @@ def encode(image, raw, vk_format):
     return pixels.tobytes()
 
 
-def receive(connection, count, probe_ok=False):
+# The buffers a frame arrives in, kept for the next frame of the same size. A fresh one every
+# frame is fresh pages every frame — 3.7 MB at 1280x720, page faults on Windows and a new mmap
+# on Linux — and nothing holds a request past its answer: the daemon answers one frame at a
+# time, decode and encode make arrays of their own, and the answer written into the request's
+# bytes is gone, sent, before the next frame arrives.
+_INBOX = {}
+
+
+def receive(connection, count, probe_ok=False, keep=None):
     # Straight into one buffer where the socket allows it: collecting the chunks and
     # joining them copied the whole frame once more, 0.3 ms at 1280x720.
     into = getattr(connection, "recv_into", None)
-    buffer = bytearray(count) if into is not None else None
+    buffer = None
+    if into is not None:
+        buffer = _INBOX.get(keep)
+        if buffer is None or len(buffer) != count:
+            buffer = bytearray(count)
+            if keep is not None:
+                _INBOX[keep] = buffer
     view = memoryview(buffer) if buffer is not None else None
     chunks, got = [], 0
     while got < count:
@@ -598,8 +612,9 @@ def process_connection(connection, backend, args):
         raise ValueError(f"bad magic {magic:#x}")
     if not width or not height or width * height > args.max_pixels:
         raise ValueError(f"rejected extent {width}x{height}; limit {args.max_pixels} pixels")
-    payload = receive(connection, width * height * 4)
-    interface = receive(connection, width * height) if magic == MAGIC_MASKED else None
+    payload = receive(connection, width * height * 4, keep="frame")
+    interface = (receive(connection, width * height, keep="interface")
+                 if magic == MAGIC_MASKED else None)
     if vk_format not in FORMATS:
         print(f"unsupported VkFormat {vk_format}; passing the frame through",
               flush=True)

@@ -24,6 +24,54 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Windows: the pipe without copies, and the request buffer kept between frames (2026-10-03, morning)
+
+**What the pipe did.** `nr_pipe.NamedPipeConnection` had no `recv_into`, so
+`nr_daemon.receive` read a frame a megabyte at a time:
+- each piece into a fresh ctypes buffer;
+- copied out as `bytes`;
+- the pieces joined.
+
+`sendall` copied the answer twice before `WriteFile`. Now `recv_into` reads straight into the
+target, and `sendall` hands `WriteFile` the bytes where they lie: a bytearray through
+`from_buffer`, `bytes` through its own storage. `WriteFile` on this blocking pipe returns once
+the pipe holds the bytes, so the buffer is free again after it.
+
+**`nr_daemon.receive` keeps the request's buffer** (and the interface mask's) for the next frame
+of the same size. That holds because nothing keeps a request past its answer:
+- the daemon answers one frame at a time;
+- decode and encode make arrays of their own;
+- the history keeps decoded floats;
+- the answer written into the request's bytes has been sent before the next frame arrives.
+
+This change runs on Linux too, where the 3.7 MB came from a fresh mmap every frame.
+
+**Tests.**
+- `src/layer/test_pipe.py` (new, CTest on Windows) sends 8 frames from 1 byte to 3.7 MB through a
+  real pipe, one connection each. Every byte comes back. A frame of the same size lands in the
+  same buffer and a new size gets a new one. A status check is still one, and both sends work.
+- `test_alloc.py`'s daemon half now sets the old path against the new one: NumPy's allocator
+  with a fresh request buffer every frame, against the kept blocks, poisoned, with the kept
+  request buffer. The answers are the same bytes.
+- CTest 36 of 36, and vkcube through the MSVC layer answered 90 frames.
+
+**At 1280x720** (`daemon_stages.py`, 0.3 and 0.5, fresh and held, old and new alternated twice;
+ms):
+
+| | old | new | Linux |
+|---|---:|---:|---:|
+| receive | 3.0-3.2 | 0.55-0.59 | 0.9 |
+| send | 2.6-2.8 | 0.46-0.55 | 0.75 |
+| the daemon's rest | 9.4-11.4 | 5.9-7.4 | 7.2-8.2 |
+| round trip at 0.3 | 40.8-41.8 | 34.9-36.0 | 33-40 |
+
+Windows' host side is level with Linux's now. What is left of the gap is the graph: the K loop
+on Intel's compiler (the entry below).
+
+**Next on Linux:**
+- `make test` with this commit: the kept request buffer is its one change that Linux runs;
+- the three `gemm_epilogues.py --kernel` runs, as asked in the entry below.
+
 ## On Windows: Linux's two GEMM runs — the stage is not the slow part, the K loop is (2026-10-03, morning)
 
 On mains, quiet-checked before and after, Intel's 101.9033; the first runs 12 minutes after a
