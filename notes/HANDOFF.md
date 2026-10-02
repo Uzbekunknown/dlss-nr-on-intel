@@ -24,6 +24,40 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## The first game on Windows: Mortal Kombat 11 through DXVK, live (2026-10-02, evening)
+
+**What ran.** MK11's DX11 executable, 64-bit, with DXVK 3.1.1's `d3d11.dll` and `dxgi.dll`
+beside it. The MSVC build's layer was found through `VK_ADD_IMPLICIT_LAYER_PATH`, in live mode;
+it spawned its own daemon on a named pipe, and the probe read `float16_t 0/90368`. Nothing was
+installed or registered. The game's folder is back as Steam left it: the three files the test
+added are gone, and the daemon is stopped. The recipe is in `docs/WINDOWS.md`. The launchers are
+outside the tree, in `D:\NRonWindows\nr-game`. The owner played; 4 003 frames were answered with
+no error.
+
+At 1280x720, per render scale. The times are the daemon's own: the frame from the log, which
+counts in steps of 10 ms, and the graph from its GPU split. "The rest" is the frame less the
+graph.
+
+| scale | network | frames | frame | daemon fps | graph | the rest |
+|---|---|---:|---:|---:|---:|---:|
+| 0.35 | 448x320 | 790 | 60 ms | 16.7 | 35 ms | 25 ms |
+| **0.5** | 640x384 | 2 988 | 80 ms | 12.5 | 51 ms | 29 ms |
+| 0.55 | 704x448 | 50 | 100 ms | 10.0 | 61 ms | 39 ms |
+| 0.75 | 960x576 | 33 | 150 ms | 6.7 | 107 ms | 43 ms |
+
+**The game's own counter showed 10 fps at 0.5**, against the daemon's 12.5: the layer's copies and
+the game's own rendering are the difference. Tekken 7 on Linux reached 20-22 fps at 1280x720 and
+0.3. That is another game, but it is the same ~1.3x this machine's live rates show against
+Linux's (the page faults and the GEMM, below). The game's frame rate without the layer was not
+recorded.
+
+**One trap.** MK11 calls `SteamAPI_RestartAppIfNecessary`. Started outside Steam, it restarts
+through Steam and drops the environment that loads the layer. A `steam_appid.txt` with its app id
+(976310), beside the executable, keeps it in place.
+
+**Next:** Dead or Alive 5, the game with the most Linux numbers. It is 32-bit D3D9, so it needs a
+32-bit layer, and `build_win.bat` builds 64-bit only.
+
 ## On Windows, on mains: MSVC's OpenMP measured, and the staged GEMM taken apart (2026-10-02, later)
 
 On mains, quiet-checked before and after, Intel's 101.9033.

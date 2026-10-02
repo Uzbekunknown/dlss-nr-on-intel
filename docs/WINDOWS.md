@@ -125,5 +125,29 @@ unfused reference differed here.
 
 PR #3, an outside contributor's port of exactly this part — the layer's threads and transport, a
 named pipe for the daemon, an MSVC build, deploy scripts — run on a B580, joined the main line on
-2026-10-02. What is left of the milestone is a game on this machine: a D3D9-11 one through
-DXVK, with the layer from `build_win.bat` and `tools\deploy.bat`.
+2026-10-02.
+
+**The first game on this machine is Mortal Kombat 11** (2026-10-02). It is 64-bit D3D11 and ran
+through DXVK 3.1.1 with the layer from `build_win.bat` in live mode. At 1280x720 the daemon
+answered every frame in 60 ms at render scale 0.35 and in 80 ms at 0.5. The game's own counter
+showed 10 fps at 0.5. A 32-bit game, Dead or Alive 5 among them, needs a 32-bit layer, and
+`build_win.bat` does not build one yet.
+
+To run a game with nothing installed or registered, as that test did:
+
+- put DXVK's `x64\d3d11.dll` and `x64\dxgi.dll` beside the game's executable;
+- put a copy of `src\layer\VkLayer_dlss_nr.json` in a folder of its own, its `library_path` the
+  absolute path of `work\nr_layer.dll`;
+- start the game from a shell with these set:
+  - `VK_ADD_IMPLICIT_LAYER_PATH`: that folder;
+  - `ENABLE_NR_LAYER=1`;
+  - `NR_LAYER_LIVE=1`;
+  - `NR_LAYER_SPAWN=1`;
+  - `NR_LAYER_SOCKET=\\.\pipe\<name>`;
+  - `NR_ROOT`: the checkout;
+  - `NR_PYTHON`: the interpreter with NumPy.
+
+**A Steam game that calls `SteamAPI_RestartAppIfNecessary` restarts itself through Steam when it
+is started this way, and loses the environment.** A `steam_appid.txt` holding its app id, beside
+the executable, keeps it in place. The daemon the layer starts outlives the game: stop it
+afterwards.
