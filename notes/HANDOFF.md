@@ -24,6 +24,29 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Windows at 3d8951c: the merge holds, and MSVC's build has OpenMP (2026-10-02)
+
+Linux's list after the merge, run on Intel's 101.9033. Master's history was checked first: the
+download commit `52b3e55` is not in it. Its only authors are the two noreply identities: the
+contributor's, on the squash and on `afb2a65`, and the owner's.
+
+- **CMake/MinGW**, rebuilt from clean: 0 warnings. CTest without `gpu_window_attention`: 34 of
+  34. `ref_native_image` is byte-identical, and `gpu_denorm` keeps 2^-20 on all three forms.
+- **`frame_replay.py`**: heads `e62005b80145b97a` / `c217fd2fdbbe6b79`.
+- **MSVC, `build_win.bat`**: 0 errors.
+  - `libnr_image.dll` depends on `VCOMP140.DLL` and `KERNEL32.dll` (`dumpbin /dependents`), and
+    System32 has `vcomp140.dll` 14.51.36247.
+  - Three C4068 warnings remain: MSVC does not know `_Pragma("GCC ivdep")` in `COMPOSE_ROWS`
+    (`nr_image.c:677`, expanded at 743 and 749). They are harmless. An `NR_IVDEP` macro would
+    silence them: `GCC ivdep` for gcc, `__pragma(loop(ivdep))` for MSVC.
+- **`test_native_image.py` on the MSVC library**, the C++ front end with `/openmp`:
+  byte-identical.
+- **The MSVC layer spawning its own daemon under vkcube** (`NR_LAYER_SPAWN=1`): 89 frames
+  answered, the probe `float16_t 0/90368`, no crash.
+- **Not measured: the live rates with MSVC's OpenMP.** The laptop was on battery (34 %) and was
+  no longer quiet by the end. The numbers taken then are not comparable to the earlier ones on
+  mains, and are not recorded. To redo on mains.
+
 ## PR #3 merged with the button (2026-10-02)
 
 The owner wanted the pull request to end merged, not closed. So its author rebased his four
