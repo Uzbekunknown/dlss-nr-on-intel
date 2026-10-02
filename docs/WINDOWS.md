@@ -127,3 +127,26 @@ PR #3, an outside contributor's port of exactly this part — the layer's thread
 named pipe for the daemon, an MSVC build, deploy scripts — run on a B580, joined the main line on
 2026-10-02. What is left of the milestone is a game on this machine: a D3D9-11 one through
 DXVK, with the layer from `build_win.bat` and `tools\deploy.bat`.
+
+## Shipping it to someone without a compiler
+
+Two scripts, and the split between them is the point:
+
+- **`tools\deploy.bat --release <folder>`** runs here, on a machine with MSVC and the Vulkan
+  SDK. It extracts the weights, builds, and assembles a distributable — about 2.7 MB, since
+  neither the weights nor NVIDIA's DLL travel with it. It then checks that neither is in the
+  folder and fails if one is, rather than trusting the copy list.
+- **`dist-tools\setup.bat`** runs on the *other* machine, from inside that folder, with
+  Python but no compiler. It finds the user's own `nvngx_dlssnr.dll` (beside the script, a
+  `--dll` path, or a prompt), extracts the 649 tensors from it, installs the layer into the
+  game folder under a name they choose, writes the manifest with an absolute `library_path`,
+  and writes a launcher that sets `VK_LAYER_PATH`, `NR_LAYER_SPAWN`, the pipe name and
+  `NR_ROOT`.
+
+    tools\deploy.bat --release dist\dlss-nr-windows --dll X:\path\nvngx_dlssnr.dll
+
+  then the user unpacks `dist\dlss-nr-windows` anywhere and runs `setup.bat`.
+
+The weights stay in the release folder on the user's machine; the launcher points `NR_ROOT`
+at it rather than copying 278 MB into the game. Nothing NVIDIA's is redistributed by either
+script — the DLL is the user's, and the weights are derived from it locally.
