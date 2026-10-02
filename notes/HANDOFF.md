@@ -24,6 +24,50 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Windows: Linux's two GEMM runs — the stage is not the slow part, the K loop is (2026-10-03, morning)
+
+On mains, quiet-checked before and after, Intel's 101.9033; the first runs 12 minutes after a
+boot. The tables are in `NRonWindows/windows-gemm-kernel-*-9033.txt`.
+
+**(a) The half output stored straight from the accumulators.** In a copy of `gemm_staged.comp`,
+a narrow output with no residual, no QKV, no pooling and no window gather is published on the
+accumulator's own elements, converted to a float16 matrix and stored with `coopMatStore`, with
+no stage and no barrier. The output is the same bytes: 30 outputs, half, E4M3 and gate, B plain
+and transposed, five shapes. It is not faster:
+- the short-K shape that is 2.1x Mesa's time, 64512x128x64, goes from 529-532 to 640-642 us for
+  half, and from 531-534 to 682 for gate;
+- 16128x128x128 and 320x1024x4096 are 4-12 % faster, and the rest move within 5 %.
+
+The stage stays, and the copy is not in the tree.
+
+**(b) The three kernels.** `gemm_epilogues.py --kernel staged|tiled|resident` (new) puts every
+call on one of libxmx's GEMM kernels, and checks it on the device's profile. At 16128x128, from
+K = 256 up, a step of 32 costs:
+
+| kernel | a step of 32 |
+|---|---:|
+| staged | 43-56 us |
+| tiled, no stage | about the same |
+| resident, the plain 8x16 | 77-110 us |
+| staged on Linux | 17-24 us |
+
+So the gap to Mesa is in the loop itself, and staging does not make it.
+- In isolation the tiled kernel beats the staged one at the middle shapes: 16128x128x128 half
+  73-86 against 131-134 us, 4032x128x256, 4032x256x256 and 320x1024x4096. It loses at
+  64512x128x64 and 320x4096x1024.
+- In the graph it does not pay: `frame_profile.py --calls` at 1344x768, two runs each.
+  - Staged: 125.0 ms of GEMM.
+  - Tiled wherever it can run: 131.8.
+  - The faster of the two at every call site: 122.1, at most 2.9 ms for a rule by shape.
+  - The heads are the same either way (`e62005b8`, `c217fd2f`).
+
+  So no kernel choice by driver.
+
+**Next, on Linux:** `python3 src/bench/gemm_epilogues.py --kernel resident --rounds 5`, and the
+same with `tiled` and `staged`, into `NRonWindows/linux-gemm-kernel-*.txt`. If Mesa's plain
+kernel is as far ahead of Intel's as its staged one is, what Intel's compiler loses is the
+loop's own code.
+
 ## On Windows: the daemon keeps NumPy's large blocks, and its 1280x720 frame beside Linux's (2026-10-02, after the Linux run)
 
 On mains, quiet-checked before and after, Intel's 101.9033, the CMake/MinGW tree.

@@ -16,13 +16,21 @@ Then a K sweep at a fixed output, `f32` and `gate`, so the K loop's cost per ste
 left at K -> 0 show apart. The same command on both drivers, set side by side, says which part
 the compiler loses time in.
 
+`--kernel` puts every call on one of libxmx's three GEMM kernels, through the thresholds that
+choose between them: `staged`, the graph's own for K >= 32 (`gemm_staged.spv`); `tiled`, the
+16x32 register block with no shared-memory stage (`gemm_tiled.spv`); `resident`, the plain 8x16
+kernel, `gemm_coopmat_batched` addressed by pointer (`gemm_resident.spv`). The last column
+names the kernel each row's calls ran on, from the device's own profile.
+
     python3 src/bench/gemm_epilogues.py
     python3 src/bench/gemm_epilogues.py --shapes 64512x128x64 320x1024x4096 --calls 20
+    python3 src/bench/gemm_epilogues.py --kernel resident
 
 Each number is the least of `--rounds` medians, the variants taken in turn within a round, after
 `--warm` seconds of GEMMs: a laptop's GPU clock climbs and dips, and one round reads it too.
 """
 import argparse
+import os
 import pathlib
 import statistics
 import sys
@@ -38,6 +46,11 @@ import xmxres  # noqa: E402
 SHAPES = ("64512x128x64", "64512x64x64", "16128x128x128", "4032x128x256", "4032x256x256",
           "320x4096x1024", "320x1024x4096", "64512x32x128")
 SWEEP = (16128, 128, (32, 64, 128, 256, 512, 1024))
+# libxmx reads these when it builds its pipelines: K below XMX_STAGE_K leaves the staged
+# kernel, K below XMX_TILE_K the tiled one, and what is left is the plain 8x16 kernel
+KERNELS = {"staged": {}, "tiled": {"XMX_STAGE_K": "1000000"},
+           "resident": {"XMX_STAGE_K": "1000000", "XMX_TILE_K": "1000000"}}
+FAMILIES = {0: "resident", 1: "tiled", 2: "staged"}
 
 
 def main():
@@ -51,12 +64,17 @@ def main():
     parser.add_argument("--warm", type=float, default=2.0, metavar="SECONDS",
                         help="GEMMs run first, so the clock has climbed before anything is timed")
     parser.add_argument("--no-sweep", action="store_true")
+    parser.add_argument("--kernel", choices=KERNELS, default="staged",
+                        help="the GEMM kernel every call runs on")
     args = parser.parse_args()
 
+    os.environ.update(KERNELS[args.kernel])      # before the runtime builds its pipelines
     rt = xmxres.Runtime()
     xmxres.profile(True)
     rng = np.random.default_rng(3)
+    ran = set()                                  # the kernels the timed calls ran on
     print(f"  {rt.lib.xmx_memory().decode()}")
+    print(f"  kernel: {args.kernel}")
 
     def buffer(values, dtype):
         buf = rt.buffer(values.size, dtype)
@@ -69,7 +87,13 @@ def main():
         for _ in range(args.calls):
             record()
         rt.submit()
+        ran.update(FAMILIES.get(kind // 32, str(kind)) for kind in xmxres.profile_each_kinds())
         return statistics.median(xmxres.profile_each()[1:]) * 1000
+
+    def kernels():
+        names = ",".join(sorted(ran))
+        ran.clear()
+        return names
 
     def least(records):
         """The least median of each variant over the rounds, the variants in turn."""
@@ -101,8 +125,9 @@ def main():
     for buf in held:
         buf.free()
 
+    ran.clear()
     print(f"\n  {'M x N x K':16} {'f32':>8} {'half':>8} {'e4m3':>8} {'gate':>8} {'resid':>8}"
-          f"   us a call")
+          f"   us a call, and the kernel")
     for shape in args.shapes:
         m, n, k = map(int, shape.lower().split("x"))
         a, b, c32, c16, skip16, cos = held = operands(m, n, k)
@@ -114,7 +139,8 @@ def main():
                      lambda: rt.gemm_residual(a, b, skip16, cos, c16, m, n, k,
                                               epilogue=xmxres.EPI_E4M3, narrow=True,
                                               skip_half=True)])
-        print(f"  {shape:16} " + " ".join(f"{t:8.1f}" for t in row), flush=True)
+        print(f"  {shape:16} " + " ".join(f"{t:8.1f}" for t in row) + f"   {kernels()}",
+              flush=True)
         for buf in held:
             buf.free()
 
@@ -134,7 +160,7 @@ def main():
             steps = (k - previous[0]) / 32
             step = (f"   +{(f32 - previous[1]) / steps:.1f} / +{(gate - previous[2]) / steps:.1f}"
                     f" us a step of 32")
-        print(f"  {k:6d} {f32:8.1f} {gate:8.1f}{step}", flush=True)
+        print(f"  {k:6d} {f32:8.1f} {gate:8.1f}{step}   {kernels()}", flush=True)
         previous = (k, f32, gate)
         for buf in held:
             buf.free()
