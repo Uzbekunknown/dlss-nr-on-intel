@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-01**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-02**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -23,6 +23,56 @@ you need the evidence behind a line in this file, rather than reading them in or
   game's motion-vector convention); deferred by the owner on 2026-09-26. Tekken 7 and DoA5
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
+
+## Dead or Alive 5 on Windows, 32-bit, and why the frame stays at 60 ms below scale 0.35 (2026-10-02, night)
+
+**What ran.** DoA5LR is 32-bit D3D9. It ran through DXVK 3.1.1's `x32\d3d9.dll`, with the new
+32-bit layer and the 64-bit daemon on a named pipe. 5 190 frames were answered at 1280x720 with
+no error. Its folder sits in the Steam library Linux's Proton also uses, and it is back as it
+was. The launchers are in `D:\NRonWindows\nr-game`.
+
+**The 32-bit layer needed a fix in `nr_layer.def`.** The file exported `vkGetInstanceProcAddr`
+and `vkGetDeviceProcAddr`, which the layer does not define; its own are `nr_GetInstanceProcAddr`
+and `nr_GetDeviceProcAddr`, handed over in the negotiation. The 64-bit build linked `vulkan-1.lib`,
+which supplied the loader's own functions to export under those names. The 32-bit build has no
+such library to link and failed. Now both names are aliases of the layer's own functions. The
+layer links no Vulkan library at all and depends on `KERNEL32.dll` alone. `build_win.bat`
+builds `nr_layer32.dll` beside `nr_layer.dll`, with the x86 cross tools in a shell of their own.
+- The 64-bit layer: vkcube with the spawn answered 90 frames, and the probe passed.
+- The 32-bit layer: the loader inserts it, and a 32-bit instance comes up through it.
+
+**The first try did nothing, through Steam.** `game.exe` imports `SteamAPI_Init` and not
+`SteamAPI_RestartAppIfNecessary`, and holds no `steam://` and no `ShellExecute`, so no
+`steam_appid.txt` went in. The game came back through Steam all the same, from inside the Steam
+API library beside it, and lost the layer's environment. The sign was DXVK's log, written beside
+the game rather than into `DXVK_LOG_PATH`. A `steam_appid.txt` with 311730 fixed it.
+
+**At 1280x720, per render scale.** The frame is the daemon's log, in steps of 10 ms. The rest is
+the frame less the graph.
+
+| scale | network | frames | frame | daemon fps | graph | the rest |
+|---|---|---:|---:|---:|---:|---:|
+| 0.05-0.15 | 320x320 | 436 | 60 ms | 16.7 | 31-32 ms | 28-29 ms |
+| 0.3 | 384x320 | 257 | 60 ms | 16.7 | 33 ms | 27 ms |
+| 0.35 | 448x320 | 158 | 60 ms | 16.7 | 36 ms | 24 ms |
+| 0.5 | 640x384 | 3 720 | 80 ms | 12.5 | 52 ms | 28 ms |
+| 0.55 | 704x448 | 269 | 90 ms | 11.1 | 63 ms | 27 ms |
+| 0.75 | 960x576 | 339 | 150 ms | 6.7 | 107 ms | 43 ms |
+
+**Why a lower scale stops helping.** The network's field has a floor of 320x320 (`min_extent`,
+the vendor's), so below 0.35 the graph stays at 31-33 ms. The rest, ~28 ms, is the work at the
+window's own resolution: the frame over the pipe, the decode, the composition with the history
+at 1280x720, the encode and the way back. The render scale does not touch it.
+
+On Linux the owner saw close to 30 fps at the same window size and 0.3. Linux's daemon took 33 ms
+a frame at 1280x720 and 0.35 (HANDOFF, 2026-09-26), so its graph and its rest are both smaller.
+The graph's share is the GEMM on Intel's compiler (below, `gemm_epilogues.py`). The rest's is
+mostly Windows' page faults (`phase71`), and the pipe's share has not been measured.
+
+**MK11 without the pass** ran a steady 60 fps, the game's own cap (the owner).
+
+**Next:** the NumPy allocator that keeps large blocks, into the Windows daemon. Measure what the
+pipe costs a frame. `min_extent` below 320 at the low scales, for the owner to judge in a game.
 
 ## The first game on Windows: Mortal Kombat 11 through DXVK, live (2026-10-02, evening)
 

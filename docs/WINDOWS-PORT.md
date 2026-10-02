@@ -60,7 +60,7 @@ auth handshake" belief cost a parallel implementation.
 | 5 | **whole picture NaN through the daemon** | **my own probe**: a second `xmxres.Runtime()` in the daemon's process reset libxmx.c's process-global Vulkan state | probe moved to a child process |
 | 6 | batched GEMM path dead: `cannot open spv` | `build_win.bat` compiled "every .comp to a same-named .spv", missing the three aliases (gemm_batched ← gemm_coopmat_batched, gemm_f16acc ← gemm_coopmat_f16acc, gemm_tiled ← gemm_resident `-DRM=2 -DRN=2`) | the Makefile's alias table transplanted |
 | 7 | contract test `16x32x16 batch 3 B^T` FAIL | same root as 6 — the staged/batched routing was broken | same fix |
-| 8 | layer DLL loaded but silent | first build exported `nr_GetInstanceProcAddr`; the loader asks for **`vkGetInstanceProcAddr`** | `nr_layer.def` with the real names |
+| 8 | layer DLL loaded but silent | first build exported `nr_GetInstanceProcAddr`; the loader asks for **`vkGetInstanceProcAddr`** | `nr_layer.def` with the real names. *Corrected 2026-10-02:* the layer defines no function by those names, so with `vulkan-1.lib` linked they exported the loader's own; the loader had reached the layer through the negotiation all along. They are aliases of the layer's functions now, and the layer links no Vulkan library (`notes/HANDOFF.md`) |
 
 **Lesson**: a green compile + a green `dumpbin /EXPORTS` proves nothing about which
 *names* are exported or whether the pipeline computes. Every gate here was passed by a
