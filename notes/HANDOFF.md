@@ -24,6 +24,41 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## On Linux at 5c8c31c: the kept request buffer, and the K loop Intel loses is the staged kernel's (2026-10-03)
+
+**5c8c31c on Linux.** No warnings, `make test` green (570), CTest 43 of 43. Its one change that
+Linux runs, the request buffer kept between frames, takes the receive at 1280x720 from 0.66-1.01
+to 0.39-0.53 ms (`daemon_stages.py` at 0.3, held, old and new alternated twice). The round trip
+stays within the noise.
+
+**`gemm_epilogues.py --kernel`, `--rounds 5`.** The files are `NRonWindows/linux-gemm-kernel-*.txt`.
+A step of 32 of K at 16128x128, from K = 256 to 1024:
+
+| kernel | Linux | Windows | Windows / Linux |
+|---|---:|---:|---:|
+| staged | 20 us | 43 us | 2.2x |
+| tiled | 33 us | 45 us | 1.35x |
+| resident, the plain 8x16 | 58-67 us | 80 us | 1.2-1.4x |
+
+So Mesa's plain kernel is not as far ahead of Intel's as its staged one is. **What Intel's
+compiler loses is the staged kernel's own loop.** On Mesa, staging the operands through shared
+memory makes a step 1.65x faster than the tiled kernel's. On Intel's it makes the step no faster
+(43 us against 45). Intel reports the staged kernel's shared memory as 8 KB, as Mesa does, so a
+larger declaration halving the workgroups a core holds is not the cause. The candidates are the
+staged loop's shared-memory work on Intel's compiler: the copy into shared memory, the barriers,
+and `coopMatLoad` from shared memory.
+
+At whole shapes on Linux the tiled kernel is slower than the staged one everywhere
+(16128x128x128 half 150 against 90 us, 320x1024x4096 1699 against 469), and the plain kernel
+slower again (254 and 1458). On Windows the tiled kernel wins at the middle shapes. So the
+ranking belongs to the driver, and the Windows entry below measured a rule by shape at no more
+than 2.9 ms of a 1344x768 frame there.
+
+**Next on Windows:** take the staged loop apart the way window attention's was found
+(`notes/improve-shared-memory.md`): each of the copy into shared memory, the barriers and the
+loads from shared memory replaced in turn by a constant (a wrong answer, timed only). Whichever
+one takes the 43 us toward 20 is the part Intel's compiler handles differently.
+
 ## On Windows: the pipe without copies, and the request buffer kept between frames (2026-10-03, morning)
 
 **What the pipe did.** `nr_pipe.NamedPipeConnection` had no `recv_into`, so
