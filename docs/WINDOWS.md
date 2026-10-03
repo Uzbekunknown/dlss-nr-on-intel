@@ -94,6 +94,14 @@ and gives back whatever a whole frame did not take again. That is 7-8 ms off a 1
 and 12-21 ms off a 1080p one. `NR_KEEP_BLOCKS=0` turns it off, and without the library the
 daemon runs as before. Linux does not build it.
 
+The staged GEMM uses raw 128-bit operand copies on Intel's Windows driver. On Arc 140V
+with driver 101.9033 this reduced warm graph time by about 6% at 320x320 and 9% at 720p,
+with the same output bytes (`notes/improve-shared-memory.md`). Set `XMX_STAGED_PACKED=0`
+before starting the daemon to compare the old loader; `=1` forces the new one. Other
+drivers keep the old loader by default. Rebuild both `libxmx` and the three staged shaders
+in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
+an already running daemon or a separate MSVC build.
+
 On Intel's driver, leave `gpu_window_attention` out: `ctest --test-dir work/cmake -E
 gpu_window_attention`. Its unmerged variant, which the graph does not use by default, hangs the
 engine from 32 windows up (phase71). Everything else passes, now that libxmx declares

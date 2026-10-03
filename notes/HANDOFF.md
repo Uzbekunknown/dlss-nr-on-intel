@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-02**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-03**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -23,6 +23,55 @@ you need the evidence behind a line in this file, rather than reading them in or
   game's motion-vector convention); deferred by the owner on 2026-09-26. Tekken 7 and DoA5
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
+
+## Windows staged operand copies: the interrupted experiment finished (2026-10-03)
+
+Continued the Windows session that stopped after its K-loop knockout measurements at
+6987c02. The allocator and pipe work were already complete. The useful change is now in
+`gemm_staged.comp`: aligned, non-transposed operands are copied to shared memory as raw
+128-bit vectors, instead of two half4 loads followed by individual half stores. The shared
+half view, arithmetic, accumulation order and output passes stay the same.
+
+`libxmx` selects it with specialization constant 2 on Intel's proprietary Windows driver.
+Other drivers keep the previous loader. `XMX_STAGED_PACKED=0` restores the old path;
+`=1` forces the new one, fixed at device creation. Eight-byte-only alignment uses the old
+half4 loader, odd alignment the scalar loader; gathered windows and transposed B retain
+their previous paths. No extra shader files or platform build flags are needed.
+
+**Measured on Arc 140V, Intel 101.9033, AC, quiet-checked before and after.** The final
+implementation, same shaders with the switch off/on/on/off, twelve warm replay samples per
+process (`frame_replay.py`; network-only wall time, not game FPS):
+
+| output / network | old loader | packed loader |
+|---|---:|---:|
+| 320x320 / 320x320 | 25.74-26.60 ms | 24.22-24.69 ms |
+| 1280x720 / 1344x768 | 186.46-199.63 ms | 169.13-170.15 ms |
+
+Comparing the faster median in each pair gives 5.9% and 9.3% less time. Both the original
+and changed-input heads retain their previous hashes: `e62005b8...` / `e7c72789...` at
+320, `c217fd2f...` / `95f46f67...` at 720p. All submission modes agree as well.
+
+`test_staged_packed.py`, registered in Make and CTest, compares 960 output buffers byte
+for byte in separate off/on processes: all simple epilogues, float/half outputs, transpose,
+partial tiles, the three staged builds, changed inputs, masks 0/7, output guards, and
+alignment that changes between batches. The initial standalone candidate also passed 452
+comparisons including fused residuals, QKV and gathered windows. The CMake/MinGW build
+passes all 37 CTest checks (the documented `gpu_window_attention` hang excluded); the
+MSVC runtime also passes the 62-case staged32 regression. Details and limitations are recorded in
+`notes/improve-shared-memory.md`.
+
+**The knockout figures need care.** Its `noglobal` values were `k0 & 7` and `k0 & 3`, both
+always zero for a step of 32; some other variants read uninitialized shared memory or remove
+required barriers. They suggested investigating operand copies, but do not establish an
+exact cost for any individual instruction. The retained implementation was selected from
+correct-output variants and full frames. The complete Windows/Mesa K-loop gap is not closed.
+
+Raw experiments, original interrupted-session logs, generators and the final A/B JSONs are
+local in `work/gemm-windows/`; no weights or captured frames were added to Git.
+**Next:** normal Linux regression after picking up the change; its default loader is unchanged.
+No new Linux timing round is required to finish this Windows investigation. A live game with
+the updated runtime remains unmeasured; existing game launchers may name a separate MSVC tree,
+which must be rebuilt before they can use this change.
 
 ## On Linux at 5c8c31c: the kept request buffer, and the K loop Intel loses is the staged kernel's (2026-10-03)
 
