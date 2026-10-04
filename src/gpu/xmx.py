@@ -2,20 +2,23 @@
 """
 xmx — host-side interface to the Xe2 cooperative-matrix GEMM.
 
-Backed by `work/libxmx.so`, a resident Vulkan context: the instance, device,
-pipeline and buffers are created once and reused, so a call costs a memcpy, a submit
-and a fence wait rather than ~80 ms of setup.
+Backed by `work/libxmx.so` (`.dll` on Windows), a resident Vulkan context: the instance,
+device, pipeline and buffers are created once and reused, so a call costs a memcpy, a
+submit and a fence wait rather than ~80 ms of setup.
 
 Two things this layer must do that the kernel does not:
 
-  1. **Rescale both operands by a power of two.** XMX flushes subnormal FP16 operands to
-     zero (notes/phase4-subnormal-flush.md), and an activation can land there whatever the
-     weights hold. A power-of-two scale is exact, so this is lossless. (That note's "27 %
-     of this model" was measured on the dense-FP16 misreading of the container and is
-     withdrawn: the real weights hold 7 subnormals, notes/phase61.)
+  1. **Rescale both operands by a power of two.** Mesa flushes subnormal FP16 operands to
+     zero in the GEMM unless a float-controls mode is declared (notes/phase71). libxmx
+     declares `DenormPreserve 16` where the driver can; where it cannot, an activation can
+     land there whatever the weights hold. A power-of-two scale is exact, so this is
+     lossless. (notes/phase4-subnormal-flush.md's "27 % of this model" was measured on the
+     dense-FP16 misreading of the container and is withdrawn: the real weights hold 7
+     subnormals, notes/phase61.)
   2. **Pad to the tile shape.** The only float configuration is M=8 N=16 K=16.
 """
 import ctypes
+import os
 from pathlib import Path
 
 import numpy as np
@@ -25,13 +28,30 @@ FP16_MAX = 65504.0
 TM, TN, TK = 8, 16, 16
 
 _lib = None
+_dll_directories = []          # the handles keep the directories on Windows' search path
+
+
+def native_library(name):
+    """`work/lib<name>.so`, or `work/lib<name>.dll` on Windows, where Python since 3.8 finds a
+    DLL's own dependencies only in the system folders and the ones added here: the build's
+    `work/`, and `NR_DLL_PATH` for a toolchain's runtime — MinGW's libgomp and libwinpthread —
+    wherever it is installed."""
+    folder = ROOT / "work"
+    if os.name == "nt":
+        if not _dll_directories:
+            extra = [p for p in os.environ.get("NR_DLL_PATH", "").split(os.pathsep) if p]
+            for directory in [str(folder), *extra]:
+                if os.path.isdir(directory):
+                    _dll_directories.append(os.add_dll_directory(directory))
+        return ctypes.CDLL(str(folder / f"lib{name}.dll"))
+    return ctypes.CDLL(str(folder / f"lib{name}.so"))
 
 
 def _load(spv="gemm_coopmat.spv"):
     global _lib
     if _lib is not None:
         return _lib
-    lib = ctypes.CDLL(str(ROOT / "work" / "libxmx.so"))
+    lib = native_library("xmx")
     lib.xmx_init.argtypes = [ctypes.c_char_p]
     lib.xmx_init.restype = ctypes.c_int
     lib.xmx_gemm.argtypes = [ctypes.c_uint] * 3 + [ctypes.c_void_p] * 3 + [ctypes.c_uint]
@@ -65,10 +85,11 @@ def memory_note():
 def _shift(x):
     """The exact 2^k that lifts |x| just under the FP16 ceiling.
 
-    XMX flushes subnormal FP16 operands to zero (notes/phase4-subnormal-flush.md);
-    a power of two is lossless. The "27 %" that note reports is withdrawn — it counted
-    the misread decode, notes/phase61 — but the flush is real and an activation can
-    reach it at any time.
+    A driver that cannot be told to keep FP16 subnormals may flush them (Mesa's default
+    does, notes/phase71); a power of two is lossless. The "27 %" that
+    notes/phase4-subnormal-flush.md reports is withdrawn — it counted the misread decode,
+    notes/phase61 — but where a flush happens it is real, and an activation can reach it
+    at any time.
     Two reductions rather than `abs(x).max()`, which allocates a whole temporary.
     """
     x = np.asarray(x)

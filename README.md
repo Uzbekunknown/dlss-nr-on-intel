@@ -138,8 +138,11 @@ already have. See [Build](#build).
   it for everything else — but it is no longer the difference between working and crawling.
   This is written from one owner's report and tested by forcing the same path on the
   integrated GPU; it has not been measured on a discrete card.
-- Linux. Python 3 with NumPy. A C compiler with OpenMP support and its runtime
-  (GCC/libgomp or an equivalent), `glslangValidator`, the Vulkan loader.
+- Linux. Python 3 with NumPy. A C compiler, `glslangValidator`, the Vulkan loader. On Windows
+  the compute side builds and runs with Intel's own driver, and the network's output is the
+  same as on Linux, bit for bit. The layer and the daemon run there too, on a named pipe,
+  from an MSVC build (`tools/build_win.bat`): run in games by their author on an Arc B580,
+  and here so far only under vkcube ([docs/WINDOWS.md](docs/WINDOWS.md)).
 - **ImageMagick** for the still-frame tools, which read and write pictures through
   `magick`. The game path does not touch it.
 - About 0.7 GiB of memory for the device buffers at 720p and 1.3 GiB at 1080p, the weights
@@ -175,10 +178,12 @@ Use `-DNR_BUILD_LAYER=OFF` for a compute-only build, or `-DNR_BUILD_TESTS=OFF` t
 The CMake build and additional GEMM checks are adapted from
 [andyvand's fork](https://github.com/andyvand/dlss-nr-on-vulkan); see `NOTICE`.
 Its macOS/Windows runtime and C frame library are separate changes, not included here.
-The normal CMake build covers the 64-bit layer; use the existing Makefile target for
-`work/libnr_layer32.so` when a 32-bit game needs it. The two build the same shaders with the
-same flags and register the same tests — `src/tools/build_check.py` fails the suite when they
-part. Avoid running both at the same time because they write the same artifacts.
+Both build the 32-bit layer, `work/libnr_layer32.so`, for 32-bit games, wherever a 32-bit
+compiler and a 32-bit Vulkan loader are installed (on Arch, `lib32-glibc`, `lib32-gcc-libs`
+and `lib32-vulkan-icd-loader` from multilib). `make LAYER32=0` or `-DNR_BUILD_LAYER32=OFF`
+leaves it out. The two build the same shaders with the same flags and register the same tests
+— `src/tools/build_check.py` fails the suite when they part. Avoid running both at the same
+time because they write the same artifacts.
 
 Then extract the weights from your own DLL (needs `safetensors` as well as NumPy):
 
@@ -257,6 +262,24 @@ run it again. Leave out `NR_LIVE=1` for photo mode. For a native Vulkan game,
 
 **If your frame rate drops as soon as the game starts and the daemon's log shows no frames**,
 one of the first four is missing or wrong: the layer is capturing and has nowhere to send it.
+
+### The layer can start the daemon itself
+
+With `NR_LAYER_SPAWN=1` set next to the variables above, and `NR_LAYER_SOCKET` named, the
+layer starts the daemon on that socket if nothing is listening there when the game creates
+its instance. Without the variable nothing happens and nothing prints, which is the
+default: `vulkaninfo` and every other Vulkan process that loads the layer must not each
+bring up a model. A daemon started this way **outlives the game** — it keeps its buffers
+and the weights resident, **0.7 GiB at 720p and 1.2 GiB at 1920x1088, weights included**
+— so the next launch connects instead of paying the load again. It ends on its own when
+the GPU is lost, and otherwise runs until you end the process. Its settings and log follow
+`src/layer/nr_paths.py` (`/tmp/nr_settings.json`, `NR_LAYER_LOG`), the same files `nr-ctl`
+and `nr-panel` write, so the knobs reach a daemon started this way too.
+
+`NR_PYTHON` names the interpreter to start it with, for an install the layer cannot guess
+at. On Windows the default is the `py` launcher, not `python3`: that name belongs there to
+the Microsoft Store's zero-byte alias, which `CreateProcessA` starts happily and which
+then exits without running anything.
 
 Without `NR_LAYER_LIVE` it is a **photo mode**: the pass fires once and holds its result
 on screen while the trigger exists. With `NR_LAYER_LIVE=1` every present goes through the
@@ -491,8 +514,8 @@ the client, so exporting it in your shell does not reach it — use the launch o
 `src/layer/nr-photo --steam <appid>` prints, or launch Proton directly with `--proton`.
 
 **A 32-bit game (D3D9 through DXVK) does not load the layer.** It needs the 32-bit
-library; `make work/libnr_layer32.so` builds it and `prepare_layer.py` writes both
-manifests.
+library, which `make` builds only where a 32-bit compiler and a 32-bit Vulkan loader are
+installed; `make LAYER32=1` says what is missing. `prepare_layer.py` writes both manifests.
 
 **It is unbearably slow.** Look at the swapchain size before the render scale. See the
 table above; at 1920x1080 the daemon alone manages about 3 fps at full scale and 9 at 0.55,

@@ -25,6 +25,9 @@ from pathlib import Path
 import numpy as np
 
 
+_DLL_DIRECTORIES = []         # the handles keep the directories on Windows' search path
+
+
 @lru_cache(maxsize=1)
 def _library():
     # The passes split their rows across OpenMP threads. Between frames the threads have
@@ -32,8 +35,17 @@ def _library():
     # on this machine a spinning core takes power the GPU would have used (notes/phase46).
     # Read once, when the runtime loads, so it has to be set before the library is.
     os.environ.setdefault('OMP_WAIT_POLICY', 'passive')
+    folder = Path(__file__).resolve().parents[2] / 'work'
     try:
-        lib = C.CDLL(str(Path(__file__).resolve().parents[2] / 'work/libnr_image.so'))
+        if os.name == 'nt':
+            # as `xmx.native_library`: Windows looks for the DLL's own dependencies — MinGW's
+            # libgomp for OpenMP — only in the folders added to its search path
+            for directory in [str(folder), *filter(None, os.environ.get('NR_DLL_PATH', '').split(os.pathsep))]:
+                if os.path.isdir(directory):
+                    _DLL_DIRECTORIES.append(os.add_dll_directory(directory))
+            lib = C.CDLL(str(folder / 'libnr_image.dll'))
+        else:
+            lib = C.CDLL(str(folder / 'libnr_image.so'))
     except OSError:
         return None
     ptr, stride, size = C.c_void_p, C.c_ssize_t, C.c_size_t

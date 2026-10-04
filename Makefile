@@ -12,7 +12,24 @@ SHADERS := work/gemm_resident.spv work/gemm_tiled.spv work/gemm_staged.spv \
            work/window_attention.spv work/window_block.spv work/global_attention.spv \
            work/ffn_fused.spv
 
-all: work/libxmx.so work/libnr_layer.so work/libnr_image.so work/gemm_runner $(SHADERS)
+# half_probe.spv is built by `all` because the daemon needs it: check_half_rounding()
+# runs it at start-up and refuses to run the graph if the driver's float16 conversion is
+# not what the build compiled in. It was only reachable through `bench`, so a plain
+# `make` left the daemon to start with the probe skipped.
+#
+# The 32-bit layer is for 32-bit games under Proton (Dead or Alive 5 is one). Only
+# `nr-photo` used to build it, so a game started from Steam kept running whatever layer was
+# built last, and on 2026-10-02 that was a week-old one. `all` builds it wherever a 32-bit
+# compiler and a 32-bit Vulkan loader are installed. LAYER32=0 leaves it out; LAYER32=1
+# builds it regardless, and fails loudly where it cannot.
+LAYER32 ?= auto
+ifeq ($(LAYER32),auto)
+LAYER32_TARGET := $(shell printf 'int main(void) { return 0; }' | $(CC) -m32 -x c - -o /dev/null -lvulkan >/dev/null 2>&1 && echo work/libnr_layer32.so)
+else ifeq ($(LAYER32),1)
+LAYER32_TARGET := work/libnr_layer32.so
+endif
+
+all: work/libxmx.so work/libnr_layer.so $(LAYER32_TARGET) work/libnr_image.so work/gemm_runner work/half_probe.spv $(SHADERS)
 
 work:
 	mkdir -p $@
@@ -36,10 +53,10 @@ work/libnr_image.so: src/ref/nr_image.c Makefile | work
 	      -fno-trapping-math -fopenmp -shared -o $@ $< -lm
 
 # The Vulkan layer that puts the pass inside a running game.
-work/libnr_layer.so: src/layer/nr_layer.c
+work/libnr_layer.so: src/layer/nr_layer.c src/layer/nr_transport.h
 	$(CC) $(CFLAGS) -shared -o $@ $< -lvulkan
 
-work/libnr_layer32.so: src/layer/nr_layer.c
+work/libnr_layer32.so: src/layer/nr_layer.c src/layer/nr_transport.h
 	$(CC) $(CFLAGS) -m32 -shared -o $@ $< -lvulkan
 
 work/test_layer_loader: src/layer/test_layer_loader.c
@@ -51,10 +68,10 @@ work/test_present: src/layer/test_present.c
 work/test_layer_loader32: src/layer/test_layer_loader.c
 	$(CC) $(CFLAGS) -m32 -o $@ $< -lvulkan
 
-work/test_settled: src/layer/test_settled.c src/layer/nr_layer.c
+work/test_settled: src/layer/test_settled.c src/layer/nr_layer.c src/layer/nr_transport.h
 	$(CC) $(CFLAGS) -Isrc/layer -o $@ $< -lvulkan
 
-work/test_exchange: src/layer/test_exchange.c src/layer/nr_layer.c
+work/test_exchange: src/layer/test_exchange.c src/layer/nr_layer.c src/layer/nr_transport.h
 	$(CC) $(CFLAGS) -o $@ $< -lvulkan -lpthread
 
 GEMM_GLSL := src/gpu/publish.glsl src/gpu/specialize.glsl src/gpu/residual_epilogue.glsl \
@@ -128,6 +145,7 @@ bench: all work/half_probe.spv
 test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_present
 	python3 src/gpu/test_ffn_batch.py --gpu
 	python3 src/gpu/test_gemm_contract.py
+	python3 src/gpu/test_denorm.py
 	python3 src/gpu/test_input_fp16.py
 	python3 src/gpu/test_compact_head.py
 	python3 src/gpu/test_joint_qkv.py
