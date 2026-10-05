@@ -58,6 +58,7 @@ static struct {
 	int ready, lost, discrete, unmapped;
 	int pin32;                /* pipelines require 32-lane subgroups (build_pipeline_spec) */
 	int half_by_cast;         /* half_round's spelling, constant 1 on every pipeline (xmx_init) */
+	int staged_packed;        /* raw 128-bit staged operand copies, constant 2 (xmx_init) */
 	int preserve16;           /* float16 subnormals kept: DenormPreserve 16 on every module (xmx_init) */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
@@ -317,14 +318,15 @@ static uint32_t *declare_preserve16(const uint32_t *words, size_t n, size_t *out
 static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, VkPipeline *out,
 			      const VkSpecializationInfo *specialization)
 {
-	/* Every pipeline also gets constant 1, half_round's spelling (publish.glsl, xmx_init);
-	 * a shader that does not declare it ignores the entry. */
+	/* Every pipeline also gets constant 1, half_round's spelling (publish.glsl), and
+	 * constant 2, staged operand copies (gemm_staged.comp). Both are fixed in xmx_init;
+	 * a shader that does not declare one ignores its entry. */
 	VkSpecializationMapEntry entries[4];
 	unsigned char data[32];
 	uint32_t count = 0, size = 0;
 	if (specialization) {
-		if (specialization->mapEntryCount >= sizeof entries / sizeof *entries
-		    || specialization->dataSize > sizeof data - sizeof(VkBool32))
+		if (specialization->mapEntryCount > sizeof entries / sizeof *entries - 2
+		    || specialization->dataSize > sizeof data - 2 * sizeof(VkBool32))
 			FAIL("specialization too large", 0);
 		count = specialization->mapEntryCount;
 		size = (uint32_t)specialization->dataSize;
@@ -335,6 +337,10 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 	entries[count++] = (VkSpecializationMapEntry){ .constantID = 1, .offset = size, .size = sizeof cast };
 	memcpy(data + size, &cast, sizeof cast);
 	size += sizeof cast;
+	VkBool32 packed = g.staged_packed ? VK_TRUE : VK_FALSE;
+	entries[count++] = (VkSpecializationMapEntry){ .constantID = 2, .offset = size, .size = sizeof packed };
+	memcpy(data + size, &packed, sizeof packed);
+	size += sizeof packed;
 	VkSpecializationInfo constants = { .mapEntryCount = count, .pMapEntries = entries,
 					   .dataSize = size, .pData = data };
 
@@ -666,6 +672,7 @@ int xmx_init(const char *spv_path)
 	 * rounding point in the graph silently vanishes. `XMX_HALF_ROUND=pack` or `cast` overrides,
 	 * to measure the other one on either driver. */
 	g.half_by_cast = 0;
+	g.staged_packed = 0;
 	if (props.apiVersion >= VK_API_VERSION_1_2) {
 		VkPhysicalDeviceDriverProperties driver = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
@@ -673,6 +680,7 @@ int xmx_init(const char *spv_path)
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &driver };
 		vkGetPhysicalDeviceProperties2(g.pd, &query);
 		g.half_by_cast = driver.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+		g.staged_packed = driver.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
 	}
 	const char *half = getenv("XMX_HALF_ROUND");
 	if (half && *half) {
@@ -680,6 +688,15 @@ int xmx_init(const char *spv_path)
 		else if (!strcmp(half, "pack")) g.half_by_cast = 0;
 		else fprintf(stderr, "libxmx: XMX_HALF_ROUND=%s is neither pack nor cast; keeping %s\n",
 			     half, g.half_by_cast ? "cast" : "pack");
+	}
+	/* Raw 128-bit global/shared copies speed up the staged GEMM on Intel's Windows
+	 * driver. Keep the old loader elsewhere until measured there; the override compares
+	 * both spellings with identical SPIR-V. Fixed before any pipelines are created. */
+	const char *packed = getenv("XMX_STAGED_PACKED");
+	if (packed) {
+		if (!strcmp(packed, "1")) g.staged_packed = 1;
+		else if (!strcmp(packed, "0")) g.staged_packed = 0;
+		else FAIL("XMX_STAGED_PACKED must be 0 or 1", 0);
 	}
 	/* Keep float16 subnormals wherever the driver can declare it. NVIDIA's tensor cores keep
 	 * them (notes/phase71), Mesa's undeclared default flushes them in the GEMMs, and without one

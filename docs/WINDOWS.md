@@ -90,6 +90,22 @@ compute tests and the tree's own checks, not the layer's. The layer, the daemon'
 everything else build with MSVC instead: `tools\build_win.bat`, into the same `work/`, so keep
 one build per checkout (`docs/WINDOWS-PORT.md`). Both give the same heads.
 
+Both builds also make `work/libnr_alloc.dll`, the daemon's NumPy allocator on Windows. Windows'
+heap gives a freed block of about a megabyte or more straight back to the system, so every
+frame's full-frame arrays started on fresh pages and paid a page fault for each 4 KB: 12 700 a
+1280x720 frame, 30 000 at 1080p. The daemon now keeps those blocks from one frame to the next,
+and gives back whatever a whole frame did not take again. That is 7-8 ms off a 1280x720 frame
+and 12-21 ms off a 1080p one. `NR_KEEP_BLOCKS=0` turns it off, and without the library the
+daemon runs as before. Linux does not build it.
+
+The staged GEMM uses raw 128-bit operand copies on Intel's Windows driver. On Arc 140V
+with driver 101.9033 this reduced warm graph time by about 6% at 320x320 and 9% at 720p,
+with the same output bytes (`notes/improve-shared-memory.md`). Set `XMX_STAGED_PACKED=0`
+before starting the daemon to compare the old loader; `=1` forces the new one. Other
+drivers keep the old loader by default. Rebuild both `libxmx` and the three staged shaders
+in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
+an already running daemon or a separate MSVC build.
+
 On Intel's driver, leave `gpu_window_attention` out: `ctest --test-dir work/cmake -E
 gpu_window_attention`. Its unmerged variant, which the graph does not use by default, hangs the
 engine from 32 windows up (phase71). Everything else passes, now that libxmx declares
@@ -129,5 +145,36 @@ unfused reference differed here.
 
 PR #3, an outside contributor's port of exactly this part — the layer's threads and transport, a
 named pipe for the daemon, an MSVC build, deploy scripts — run on a B580, joined the main line on
-2026-10-02. What is left of the milestone is a game on this machine: a D3D9-11 one through
-DXVK, with the layer from `build_win.bat` and `tools\deploy.bat`.
+2026-10-02.
+
+**The first game on this machine is Mortal Kombat 11** (2026-10-02). It is 64-bit D3D11 and ran
+through DXVK 3.1.1 with the layer from `build_win.bat` in live mode. At 1280x720 the daemon
+answered every frame in 60 ms at render scale 0.35 and in 80 ms at 0.5. The game's own counter
+showed 10 fps at 0.5. **Dead or Alive 5 Last Round** followed the same evening. It is 32-bit
+D3D9, and ran with `work\nr_layer32.dll`, which `build_win.bat` now builds beside the 64-bit
+layer. The daemon stays 64-bit, on the same kind of pipe.
+
+To run a game with nothing installed or registered, as those tests did:
+
+- put DXVK's DLLs for the game's API beside its executable: `x64\d3d11.dll` and `x64\dxgi.dll`
+  for a 64-bit D3D11 game, `x32\d3d9.dll` for a 32-bit D3D9 one;
+- put a copy of `src\layer\VkLayer_dlss_nr.json` in a folder of its own, its `library_path` the
+  absolute path of `work\nr_layer.dll`. For a 32-bit game it is `work\nr_layer32.dll`, and
+  `library_arch` is `"32"`;
+- start the game from a shell with these set:
+  - `VK_ADD_IMPLICIT_LAYER_PATH`: that folder;
+  - `ENABLE_NR_LAYER=1`;
+  - `NR_LAYER_LIVE=1`;
+  - `NR_LAYER_SPAWN=1`;
+  - `NR_LAYER_SOCKET=\\.\pipe\<name>`;
+  - `NR_ROOT`: the checkout;
+  - `NR_PYTHON`: the interpreter with NumPy.
+
+**A Steam game that calls `SteamAPI_RestartAppIfNecessary` restarts itself through Steam when it
+is started this way, and loses the environment.** The call need not be in the executable:
+Dead or Alive 5's imports only `SteamAPI_Init`, and the Steam API library beside it restarted
+the game all the same. The sign is DXVK's log, which then lands beside the game rather than in
+`DXVK_LOG_PATH`. A `steam_appid.txt` holding the game's app id, beside the executable, keeps it
+in place. The daemon the layer starts outlives the game: stop it afterwards. And a game in a
+Steam library that Proton also runs gets its folder back as it was: a DLL left beside the
+executable is found there before Proton's own.

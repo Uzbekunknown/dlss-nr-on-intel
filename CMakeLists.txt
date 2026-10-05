@@ -131,6 +131,14 @@ if(NOT CMAKE_CROSSCOMPILING)
 endif()
 nr_output(nr_image)
 
+# The daemon's NumPy allocator on Windows, whose heap returns a frame's large blocks to the
+# system for the next frame to fault in again (src/layer/nr_alloc.py).
+if(WIN32)
+  add_library(nr_alloc SHARED src/layer/nr_alloc.c)
+  target_compile_options(nr_alloc PRIVATE -O2)
+  nr_output(nr_alloc)
+endif()
+
 if(NR_BUILD_LAYER)
   find_package(Threads REQUIRED)
   add_library(nr_layer SHARED src/layer/nr_layer.c)
@@ -200,7 +208,7 @@ if(NR_BUILD_TESTS)
   nr_test(profile_tables "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/bench/frame_profile.py" --tables)
   foreach(name gemm_contract denorm input_fp16 compact_head joint_qkv gemm_int8 gemm_int8_staged
       window_block global_attention int8_quant gemm_residual window_residual window_attention
-      gemm_qkv glue ffn_fused staged_partial staged32 epilogue specialization softmax_pack
+      gemm_qkv glue ffn_fused staged_partial staged32 staged_packed epilogue specialization softmax_pack
       qkv_fusion scratch_arena graph frame_execution resident)
     nr_test(gpu_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py")
   endforeach()
@@ -208,5 +216,11 @@ if(NR_BUILD_TESTS)
   foreach(name frame_cache native_image nr_model temporal_controls)
     nr_test(ref_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/ref/test_${name}.py")
   endforeach()
+  if(WIN32)
+    foreach(name alloc pipe)
+      nr_test(layer_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_${name}.py")
+      set_tests_properties(layer_${name} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+  endif()
 endif()
 message(STATUS "${CMAKE_SYSTEM_NAME}/XMX build; artifacts: ${NR_WORK_DIR}; layer: ${NR_BUILD_LAYER}")

@@ -19,6 +19,13 @@ the code is the current one:
 - libxmx declares `DenormPreserve 16`, so Windows and Linux compute the same graph bit for
   bit, and the three tests that differed here by a zero's sign or at mask 7 pass
   (`notes/phase71-intel-windows-driver.md`).
+- The daemon keeps NumPy's large blocks from one frame to the next on Windows
+  (`src/layer/nr_alloc.py`, `work/libnr_alloc.dll`): Windows' heap gives them back to the
+  system, and every frame paid their page faults again. `NR_KEEP_BLOCKS=0` turns it off.
+- The pipe reads a frame straight into the buffer the daemon keeps for it, and writes the
+  answer from where it lies (`recv_into`, `sendall`). The frame used to be copied three
+  times on the way in and twice on the way out: 5.6-6.0 ms of a 1280x720 frame, where
+  1.0-1.1 are left.
 
 ## What this branch adds to master
 
@@ -60,7 +67,7 @@ auth handshake" belief cost a parallel implementation.
 | 5 | **whole picture NaN through the daemon** | **my own probe**: a second `xmxres.Runtime()` in the daemon's process reset libxmx.c's process-global Vulkan state | probe moved to a child process |
 | 6 | batched GEMM path dead: `cannot open spv` | `build_win.bat` compiled "every .comp to a same-named .spv", missing the three aliases (gemm_batched ← gemm_coopmat_batched, gemm_f16acc ← gemm_coopmat_f16acc, gemm_tiled ← gemm_resident `-DRM=2 -DRN=2`) | the Makefile's alias table transplanted |
 | 7 | contract test `16x32x16 batch 3 B^T` FAIL | same root as 6 — the staged/batched routing was broken | same fix |
-| 8 | layer DLL loaded but silent | first build exported `nr_GetInstanceProcAddr`; the loader asks for **`vkGetInstanceProcAddr`** | `nr_layer.def` with the real names |
+| 8 | layer DLL loaded but silent | first build exported `nr_GetInstanceProcAddr`; the loader asks for **`vkGetInstanceProcAddr`** | `nr_layer.def` with the real names. *Corrected 2026-10-02:* the layer defines no function by those names, so with `vulkan-1.lib` linked they exported the loader's own; the loader had reached the layer through the negotiation all along. They are aliases of the layer's functions now, and the layer links no Vulkan library (`notes/HANDOFF.md`) |
 
 **Lesson**: a green compile + a green `dumpbin /EXPORTS` proves nothing about which
 *names* are exported or whether the pipeline computes. Every gate here was passed by a
