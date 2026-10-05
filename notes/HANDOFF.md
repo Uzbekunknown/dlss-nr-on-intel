@@ -24,6 +24,16 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## Windows integrated into improve for master review (2026-10-05)
+
+`origin/windows` through `e616afc` is now integrated into improve. This includes
+allocator and named-pipe work, the x86 Windows layer, and packed staged loads
+selected on Intel's Windows driver. Linux retains the old loader by default.
+`notes/improve-windows-integration-20261005.md` records the scope and checks:
+all 44 Linux CTest entries passed, followed by the pipe-handle lifetime correction's
+daemon regressions. The actual Windows build/game sequence remains a Windows check.
+README's **How to test it** now precedes the example pictures.
+
 ## Windows user quick start on improve (2026-10-05)
 
 `docs/WINDOWS-QUICKSTART.md` gives one MSVC route for new users: a 64-bit Python

@@ -7,8 +7,8 @@ for your Windows driver.
 
 These commands use **Command Prompt (`cmd.exe`)**, not PowerShell or Git Bash.
 Follow them from one checkout. This guide is published on `improve`, which includes
-the main Windows port and the Windows manifest helper used below. `windows` has
-additional experimental changes; it is not needed for these instructions.
+the Windows port, its updates through `e616afc`, and the Windows manifest helper
+used below. Use the checkout command here until this integration joins `master`.
 
 The longer [Windows status page](WINDOWS.md) and [port history](WINDOWS-PORT.md)
 are background material. This page gives one MSVC setup path; MSYS2 is not needed.
@@ -89,7 +89,9 @@ tools\build_win.bat
 ```
 
 The build must produce `work\libxmx.dll`, `work\nr_layer.dll`,
-`work\libnr_image.dll`, and the `.spv` shaders, including `work\half_probe.spv`.
+`work\libnr_image.dll`, `work\libnr_alloc.dll`, and the `.spv` shaders, including
+`work\half_probe.spv`. It also builds `work\nr_layer32.dll` where the x86 MSVC
+tools are installed; the first test below uses the x64 layer.
 Stop if the output includes **ERROR** or a shader marked **FAILED**, even if the
 script prints its final summary. Save the complete build output when reporting it.
 
@@ -203,9 +205,10 @@ architecture decides this; a 64-bit Windows installation can run a 32-bit game.
 Back up existing game-local DLLs before replacing any, and start with an offline
 single-player test. This quick start does not install DXVK into a game for you.
 
-The baseline `master`/`improve` build here prepares the x64 layer. The experimental
-`windows` branch has additional x86-layer work for games such as Dead or Alive 5.
-Use its instructions for that route; do not load an x64 NR layer into a 32-bit game.
+This integrated build can also prepare an x86 manifest when `nr_layer32.dll` is
+available. Games such as Dead or Alive 5 need that x86 layer and matching DXVK
+DLLs; follow the [Windows status page](WINDOWS.md) for the 32-bit route. Do not load
+an x64 NR layer into a 32-bit game. The Python daemon remains 64-bit.
 There is no universal setup here for every D3D12 game or an integrated OptiScaler
 motion-vector path.
 

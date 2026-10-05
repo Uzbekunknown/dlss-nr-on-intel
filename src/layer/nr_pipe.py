@@ -129,9 +129,13 @@ class NamedPipeConnection:
         del holder
 
     def close(self):
-        if self._open:
+        # EOF/broken-pipe marks the stream unusable but does not release its handle.
+        # Status probes close without sending a header, so this distinction matters
+        # even when every real frame succeeds. Release once, independent of _open.
+        if self._handle is not None:
             _k32.CloseHandle(self._handle)
-            self._open = False
+            self._handle = None
+        self._open = False
 
     def __enter__(self):
         return self
