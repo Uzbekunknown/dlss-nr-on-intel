@@ -53,6 +53,21 @@ D3D9–11; setup does not install DXVK or provide a universal D3D12 route. Back 
 game-local DLLs before replacing them. If Steam restarts the game, launch Steam
 from the same configured environment so it inherits the layer settings.
 
+If a Windows Steam game starts the daemon but never logs processed frames after
+you create the trigger, try disabling Steam's Vulkan shader-cache recording layer
+for that launch. This was required for DOOM (2016) on Arc 140V with driver
+32.0.101.9033. Set this in the same configured game/Steam launch environment as
+the NR variables, before the game starts:
+
+```bat
+set "DISABLE_VK_LAYER_VALVE_steam_fossilize_1=1"
+```
+
+This disables Fossilize pipeline recording for that process and its children;
+it can affect shader-cache warmup. A normal launch without the variable restores
+recording. The tested workaround did not require disabling Steam's Vulkan
+overlay layer.
+
 The effect starts **off**, with render scale **0.4** configured for the first test.
 Keep the game running and use a second terminal to turn it on. Replace the release
 path below with yours:

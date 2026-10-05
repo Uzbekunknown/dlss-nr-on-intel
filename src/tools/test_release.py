@@ -98,7 +98,7 @@ class ReleaseTests(unittest.TestCase):
                 try:
                     with self.assertRaisesRegex(ValueError, "Incomplete build") as error:
                         release.assemble(self.root, self.target, "windows")
-                    self.assertIn(name, str(error.exception))
+                    self.assertIn(str(Path(name)), str(error.exception))
                     self.assertFalse(self.target.exists())
                 finally:
                     path.write_bytes(saved)
