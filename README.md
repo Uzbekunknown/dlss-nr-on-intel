@@ -153,6 +153,10 @@ already have. See [Build](#build).
 
 ## Build
 
+**Windows users:** follow the [Windows quick start](docs/WINDOWS-QUICKSTART.md)
+for the MSVC build, first Vulkan launch, effect toggle and diagnostic report.
+The commands below are the Linux setup.
+
 ```sh
 mkdir -p work
 git clone --depth 1 --branch v1.4.321 \

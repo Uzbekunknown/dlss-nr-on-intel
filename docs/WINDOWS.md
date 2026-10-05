@@ -1,5 +1,9 @@
 # Windows — the port, and where it stands
 
+For installation and a first game test, start with the
+[Windows user quick start](WINDOWS-QUICKSTART.md). This file records the port's
+status, driver findings and alternative build paths.
+
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the
 layer and the daemon do too, from an MSVC build (`docs/WINDOWS-PORT.md`). What

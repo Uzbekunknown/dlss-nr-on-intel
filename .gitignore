@@ -15,6 +15,7 @@ weights_ht.bin
 *.npz
 *.bin
 
+.venv/
 __pycache__/
 *.pyc
 

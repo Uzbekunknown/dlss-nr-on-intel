@@ -24,6 +24,20 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## Windows user quick start on improve (2026-10-05)
+
+`docs/WINDOWS-QUICKSTART.md` gives one MSVC route for new users: a 64-bit Python
+venv, their own weights, build and GPU check, `vkcube`, a Vulkan game, trigger
+on/off and a diagnostic report. It keeps the runtime in one checkout and explains
+Steam restarts losing the launcher environment. The README and Windows status
+page link it. It targets `improve` until merged; `windows` experiments are separate.
+
+`prepare_layer.py` now accepts `--platform windows` and writes absolute DLL paths
+for the available x64/x86 layers; native Windows selects that platform by default.
+The Linux/Proton launcher and fixture-based Windows manifest tests pass, including
+paths with spaces. The guide's MSVC/game sequence was not run end to end on a
+Windows machine in this change. `.venv/` is ignored.
+
 ## PR #3 merged with the button (2026-10-02)
 
 The owner wanted the pull request to end merged, not closed. So its author rebased his four
