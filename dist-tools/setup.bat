@@ -32,6 +32,7 @@ set "GAME="
 set "DLL="
 set "NAME=nr_layer.dll"
 set "SKIP_WEIGHTS=0"
+set "DRY_RUN=0"
 rem The script directory is the release root, and it must be captured before any
 rem shift moves %0.
 set "HERE=%~dp0"
@@ -172,7 +173,8 @@ exit /b 3
 :find_python
 rem ---- 2. Python and the two packages the extractor needs ----
 set "PY="
-where /q py && set "PY=py"
+if defined NR_PYTHON set "PY=%NR_PYTHON%"
+if not defined PY ( where /q py && set "PY=py" )
 if not defined PY ( where /q python3 && set "PY=python3" )
 if not defined PY ( where /q python && set "PY=python" )
 if not defined PY (
@@ -239,6 +241,7 @@ if "%DRY_RUN%"=="1" (
 echo == installing into "%GAME%"
 set "DEST=%GAME%\dlss-nr"
 if not exist "%DEST%" mkdir "%DEST%"
+if not exist "%DEST%\work" mkdir "%DEST%\work"
 copy /Y "%HERE%\nr_layer.dll" "%DEST%\%NAME%" >nul || exit /b 3
 echo   layer:      %DEST%\%NAME%
 
@@ -281,6 +284,9 @@ set "LAUNCH=%DEST%\launch-nr.bat"
   echo set "NR_LAYER_SOCKET=\\.\pipe\nr_dlssnr_intel"
   echo rem The weights stay in the release folder.
   echo set "NR_ROOT=%HERE:^)=^)%"
+  echo set "NR_SETTINGS=%HERE:^)=^)%\work\nr_settings.json"
+  echo set "NR_LAYER_LOG=%HERE:^)=^)%\work\nr_daemon.log"
+  echo set "NR_LAYER_TRIGGER=%HERE:^)=^)%\work\nr_trigger"
   echo.
   echo set "GAME_EXE="
   echo for %%%%F in ^("%GAME%\*.exe"^) do ^( if not defined GAME_EXE set "GAME_EXE=%%%%F" ^)

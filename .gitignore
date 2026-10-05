@@ -1,6 +1,7 @@
 # NVIDIA's property — never committed, never redistributed. See notes/CLAUDE.md "Rules".
 /ref/
 /work/
+/dist/
 *.dll
 *.exe
 *.7z

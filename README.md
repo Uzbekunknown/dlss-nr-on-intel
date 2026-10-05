@@ -29,6 +29,10 @@ Start with the current source and the setup for your operating system:
 | Windows | [Windows quick start](docs/WINDOWS-QUICKSTART.md): MSVC build, first Vulkan test, game launch and effect on/off. |
 | Linux | [Build](#build), then [Run it in a game](#run-it-in-a-game). Windows games can use the Proton launcher. |
 
+If you received a prebuilt release folder, follow its README or the
+[release quick start](docs/RELEASE-QUICKSTART.md). That route needs Python and
+your own DLL, but no compiler or Vulkan SDK.
+
 You need a supported **Intel Xe2 GPU** and the logical weights extracted from your
 own `nvngx_dlssnr.dll`. The repository supplies code, not the DLL or model weights;
 see [You supply the weights](#you-supply-the-weights) and [What you need](#what-you-need).

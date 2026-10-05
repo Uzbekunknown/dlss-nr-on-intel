@@ -24,6 +24,18 @@ you need the evidence behind a line in this file, rather than reading them in or
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
 
+## Release builder integrated on improve-release (2026-10-05)
+
+`improve-release` contains improve `6d23efb` and the changes from PR #5 through
+its original `67b9e03`, replayed with contributor authorship and noreply committers.
+Both deploy scripts now use the common `scripts/build_release.py`, which refuses
+incomplete builds and includes libnr_alloc.dll on Windows. The docs conflict kept
+both Windows game results and the release section. `notes/improve-release-20261005.md`
+records twelve passing release tests, a real Linux package/install, packaged GPU and
+native image checks, and three actual daemon frames with zero rejections.
+Linux release host passes are rebuilt without -march=native. Windows MSVC/setup/game
+validation remains to be done on Windows. Master, improve and PR #5's fork remain unchanged.
+
 ## Windows integrated into improve for master review (2026-10-05)
 
 `origin/windows` through `e616afc` is now integrated into improve. This includes

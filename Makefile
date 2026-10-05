@@ -4,6 +4,8 @@
 
 GLSL    := glslangValidator --target-env vulkan1.3 -Isrc/gpu
 CFLAGS  := -O2 -fPIC -Wall -Wextra -Wno-unused-parameter -Iwork/vulkan-headers/include
+# Normal local builds use this CPU; deploy.sh's release build clears this flag.
+NR_IMAGE_ARCH ?= -march=native
 SHADERS := work/gemm_resident.spv work/gemm_tiled.spv work/gemm_staged.spv \
            work/gemm_staged32.spv work/gemm_staged32_deep.spv work/attention_rows.spv \
            work/resident.spv work/attention.spv \
@@ -49,7 +51,7 @@ work/libxmx.so: src/gpu/libxmx.c
 # point exception flag nobody reads — and it is what lets GCC turn the clamps into selects
 # and vectorise the fused composition's pixels (`compose_encode_row`).
 work/libnr_image.so: src/ref/nr_image.c Makefile | work
-	$(CC) -O3 -march=native -fPIC -Wall -Wextra -ffp-contract=off -fno-fast-math \
+	$(CC) -O3 $(NR_IMAGE_ARCH) -fPIC -Wall -Wextra -ffp-contract=off -fno-fast-math \
 	      -fno-trapping-math -fopenmp -shared -o $@ $< -lm
 
 # The Vulkan layer that puts the pass inside a running game.
@@ -159,6 +161,7 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/tools/publish_check.py
 	python3 src/tools/claims_check.py
 	python3 src/tools/build_check.py
+	python3 src/tools/test_release.py
 	python3 src/bench/frame_profile.py --tables
 	python3 src/gpu/test_gemm_int8.py
 	python3 src/gpu/test_gemm_int8_staged.py

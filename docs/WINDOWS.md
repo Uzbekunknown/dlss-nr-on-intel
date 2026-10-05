@@ -183,9 +183,11 @@ executable is found there before Proton's own.
 Two scripts, and the split between them is the point:
 
 - **`tools\deploy.bat --release <folder>`** runs here, on a machine with MSVC and the Vulkan
-  SDK. It extracts the weights, builds, and assembles a distributable — about 2.7 MB, since
-  neither the weights nor NVIDIA's DLL travel with it. It then checks that neither is in the
-  folder and fails if one is, rather than trusting the copy list.
+  SDK. It builds and assembles a distributable in a new or empty folder. The shared
+  assembler requires the layer, `libxmx.dll`, `libnr_image.dll`, **`libnr_alloc.dll`**,
+  the runtime shaders, startup probe and MLX-DLSS modules/tools before copying.
+  The output contains neither the model weights nor NVIDIA's DLL. A build that already
+  has the MLX-DLSS modules can use `--skip-weights`; users extract their own weights later.
 - **`dist-tools\setup.bat`** runs on the *other* machine, from inside that folder, with
   Python but no compiler. It finds the user's own `nvngx_dlssnr.dll` (beside the script, a
   `--dll` path, or a prompt), extracts the 649 tensors from it, installs the layer into the
@@ -200,3 +202,8 @@ Two scripts, and the split between them is the point:
 The weights stay in the release folder on the user's machine; the launcher points `NR_ROOT`
 at it rather than copying 278 MB into the game. Nothing NVIDIA's is redistributed by either
 script — the DLL is the user's, and the weights are derived from it locally.
+
+The folder includes [a release quick start](RELEASE-QUICKSTART.md), licenses and
+initial settings at render scale 0.4. Setup writes a launcher with release-local
+settings, log and trigger paths; the effect starts off until the trigger is created.
+This first release route is x64. The source setup above remains the route for x86 games.
