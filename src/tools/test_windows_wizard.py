@@ -1,6 +1,8 @@
 """CPU-only release fixtures; no game, Steam, vendor weights or GPU execution."""
 from dataclasses import replace
+import ast
 import json
+import math
 import os
 from pathlib import Path
 import struct
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import windows_wizard_core as core
@@ -216,7 +219,7 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(saved.python, self.python)
         self.assertEqual(saved.game_exe, self.game)
         settings = core._read_json(self.root / "work/nr_settings.json")
-        self.assertEqual(settings, {"render_scale": 0.4, "min_extent": 320, "keep_me": 7})
+        self.assertEqual(settings, {"render_scale": 0.8, "min_extent": 640, "keep_me": 7})
         self.assertFalse(trigger.exists())
         destination = core.installed_path(self.profile)
         manifest = core._read_json(destination / "VkLayer_dlss_nr.json")
@@ -225,6 +228,151 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(any(destination.rglob("*.safetensors")))
         self.assertFalse(any(destination.rglob("nvngx_dlssnr.dll")))
         self.assertTrue(self.weights.is_file())
+
+    def test_first_install_sets_candidate_defaults_only_when_missing(self):
+        result = core.install(self.profile)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(core._read_json(self.root / "work/nr_settings.json"),
+                         {"render_scale": 0.4, "min_extent": 320})
+
+    def test_control_schema_and_daemon_defaults_come_from_linux_catalogue(self):
+        catalogue = core._runtime_knobs()
+        self.assertEqual([knob["name"] for knob in catalogue], [
+            "render_scale", "min_extent", "profile", "intensity", "detail_strength",
+            "colour_strength", "temporal", "hold", "release", "cut_limit"])
+        names = {knob["name"]: knob for knob in catalogue}
+        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic", "neutral"])
+        self.assertEqual((names["min_extent"]["high"], names["min_extent"]["runtime_high"]), (320, 4096))
+        self.assertEqual((names["release"]["high"], names["release"]["runtime_high"]), (64, 255))
+        daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
+        tree = ast.parse(daemon_source)
+        actual = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "add_argument" and node.args
+                    and isinstance(node.args[0], ast.Constant)):
+                for keyword in node.keywords:
+                    if keyword.arg == "default" and isinstance(keyword.value, ast.Constant):
+                        actual[str(node.args[0].value).removeprefix("--").replace("-", "_")] = keyword.value.value
+        self.assertEqual({knob["name"]: knob["default"] for knob in catalogue},
+                         {knob["name"]: actual[knob["name"]] for knob in catalogue})
+
+    def test_reading_control_defaults_needs_no_game_profile_or_processes_and_writes_nothing(self):
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")):
+            result = core.get_settings(self.root)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["settings"], result["defaults"])
+        self.assertEqual(result["explicit_keys"], [])
+        self.assertFalse(core.profile_path(self.root).exists())
+        self.assertFalse((self.root / "work/nr_settings.json").exists())
+        self.assertFalse((self.root / "work/nr_trigger").exists())
+
+    def test_partial_settings_save_merges_latest_values_and_preserves_trigger_and_profile(self):
+        core.save_profile(self.profile)
+        profile_before = core.profile_path(self.root).read_bytes()
+        trigger = self.root / "work/nr_trigger"
+        trigger.write_bytes(b"existing effect")
+        path = self.root / "work/nr_settings.json"
+        core._atomic_json(path, {"render_scale": 0.4, "min_extent": 640, "release": 100,
+                                 "other_tool": {"value": "preserve me"}})
+        observed = core.get_settings(self.root)
+        self.assertEqual(observed["settings"]["min_extent"], 640)
+        external = core._read_json(path)
+        external["detail_strength"] = 1.7
+        external["other_tool"]["value"] = "new external value"
+        core._atomic_json(path, external)
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("No game restart")):
+            result = core.save_settings(self.root, {"render_scale": 0.25})
+        saved = core._read_json(path)
+        self.assertEqual(saved["render_scale"], 0.25)
+        self.assertEqual(saved["detail_strength"], 1.7)
+        self.assertEqual(saved["min_extent"], 640)
+        self.assertEqual(saved["release"], 100)
+        self.assertEqual(saved["other_tool"]["value"], "new external value")
+        self.assertFalse(result["game_restart_required"])
+        self.assertFalse(result["processing_confirmed"])
+        self.assertEqual(trigger.read_bytes(), b"existing effect")
+        self.assertEqual(core.profile_path(self.root).read_bytes(), profile_before)
+
+    def test_invalid_runtime_settings_leave_saved_bytes_untouched(self):
+        path = self.root / "work/nr_settings.json"
+        core._atomic_json(path, {"render_scale": 0.4, "unknown": "untouched"})
+        before = path.read_bytes()
+        invalid = ({"render_scale": 0.049}, {"render_scale": 1.001}, {"render_scale": True},
+                   {"intensity": float("nan")}, {"detail_strength": float("inf")},
+                   {"colour_strength": -1}, {"temporal": 1.01}, {"hold": False},
+                   {"cut_limit": None}, {"release": 256}, {"min_extent": 127},
+                   {"min_extent": 4097}, {"profile": "unknown"}, {"master": True})
+        for changes in invalid:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                core.save_settings(self.root, changes)
+            self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(list(path.parent.glob(".nr-json-*")))
+
+    def test_saved_invalid_settings_are_reported_instead_of_claiming_default_values(self):
+        path = self.root / "work/nr_settings.json"
+        for values in ([0.4], {"render_scale": float("nan")}, {"hold": True}):
+            with self.subTest(values=values):
+                core._atomic_json(path, values)
+                with self.assertRaises(ValueError):
+                    core.get_settings(self.root)
+
+    def test_atomic_settings_failure_leaves_last_readable_document(self):
+        path = self.root / "work/nr_settings.json"
+        core._atomic_json(path, {"render_scale": 0.4})
+        before = path.read_bytes()
+        with patch.object(Path, "replace", side_effect=OSError("fixture rename failure")):
+            with self.assertRaises(OSError):
+                core.save_settings(self.root, {"render_scale": 0.3})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(list(path.parent.glob(".nr-json-*")))
+
+    def test_reset_one_and_all_write_defaults_consumed_by_actual_live_settings_parser(self):
+        # Execute just the real daemon's Settings class, avoiding its GPU imports.
+        daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
+        tree = ast.parse(daemon_source)
+        actual_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Settings")
+        namespace = {"os": os, "math": math, "json": json,
+                     "nr_frame": SimpleNamespace(PROFILES={choice: {} for choice in ("standard", "natural", "cinematic", "neutral")})}
+        exec(compile(ast.Module(body=[actual_class], type_ignores=[]), "nr_daemon.py", "exec"), namespace)
+        path = self.root / "work/nr_settings.json"
+        result = core.save_settings(self.root, {"render_scale": 0.25, "intensity": 0.3, "profile": "natural"})
+        values = core._read_json(path)
+        values["other_tool"] = 7
+        core._atomic_json(path, values)
+        args = SimpleNamespace(settings=str(path), **result["defaults"])
+        live = namespace["Settings"](args)
+        live.refresh()
+        self.assertEqual((live.render_scale, live.intensity, live.profile), (0.25, 0.3, "natural"))
+        result = core.reset_settings(self.root, ["render_scale"])
+        live.stamp = None  # Force observation even on a coarse-mtime test filesystem.
+        live.refresh()
+        self.assertEqual((live.render_scale, live.intensity, live.profile), (1, 0.3, "natural"))
+        self.assertEqual(core._read_json(path)["other_tool"], 7)
+        result = core.reset_settings(self.root)
+        live.stamp = None
+        live.refresh()
+        self.assertEqual({name: getattr(live, name) for name in live.KNOBS}, result["defaults"])
+        self.assertEqual(set(result["explicit_keys"]), set(result["defaults"]))
+        self.assertEqual(core._read_json(path)["other_tool"], 7)
+
+    def test_unknown_reset_does_not_change_settings_or_trigger(self):
+        path = self.root / "work/nr_settings.json"
+        core._atomic_json(path, {"render_scale": 0.4})
+        before = path.read_bytes()
+        with self.assertRaises(ValueError):
+            core.reset_settings(self.root, ["master", "render_scale"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse((self.root / "work/nr_trigger").exists())
+
+    def test_non_regular_settings_destination_is_rejected(self):
+        path = self.root / "work/nr_settings.json"
+        path.mkdir()
+        sentinel = path / "foreign.txt"
+        sentinel.write_bytes(b"preserve")
+        with self.assertRaises(ValueError):
+            core.save_settings(self.root, {"render_scale": 0.3})
+        self.assertEqual(sentinel.read_bytes(), b"preserve")
 
     def test_staging_failure_preserves_existing_owned_installation(self):
         destination = self.own()

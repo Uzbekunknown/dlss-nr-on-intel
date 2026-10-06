@@ -46,6 +46,52 @@ class BridgeTests(unittest.TestCase):
             self.assertFalse(data['ok'])
             self.assertIn('Choose your game', data['error'])
 
+    def test_runtime_controls_work_before_profile_and_only_write_command_line_root(self):
+        with tempfile.TemporaryDirectory(prefix='nr controls bridge (test) ') as room:
+            root = Path(room) / 'chosen root (release)'
+            other = Path(room) / 'ignored input root'
+            root.mkdir()
+            other.mkdir()
+            request = root / 'request.json'
+            output = root / 'result.json'
+            request.write_text(json.dumps({'root': str(other), 'game_exe': 'ignored.exe',
+                                           'settings': {'render_scale': 0.3, 'min_extent': 128}}), encoding='utf-8')
+            for action in ('settings', 'settings-save'):
+                with mock.patch.object(bridge.core, 'load_profile', side_effect=AssertionError('No launch profile needed')), \
+                     mock.patch.object(sys, 'argv', ['wizard', action, '--root', str(root),
+                        '--input', str(request), '--output', str(output)]):
+                    self.assertEqual(bridge.main(), 0)
+            data = json.loads(output.read_text(encoding='utf-8'))
+            self.assertEqual(data['settings']['render_scale'], 0.3)
+            self.assertEqual(data['settings']['min_extent'], 128)
+            self.assertNotIn('profile', data)
+            self.assertFalse((other / 'work').exists())
+            self.assertFalse((root / 'work/windows-profile.json').exists())
+            self.assertFalse((root / 'work/nr_trigger').exists())
+            request.write_text(json.dumps({'reset': ['render_scale']}), encoding='utf-8')
+            with mock.patch.object(sys, 'argv', ['wizard', 'settings-reset', '--root', str(root),
+                    '--input', str(request), '--output', str(output)]):
+                self.assertEqual(bridge.main(), 0)
+            data = json.loads(output.read_text(encoding='utf-8'))
+            self.assertEqual(data['settings']['render_scale'], 1)
+            self.assertEqual(data['settings']['min_extent'], 128)
+
+    def test_invalid_control_save_has_nonzero_exit_and_preserves_existing_settings(self):
+        with tempfile.TemporaryDirectory(prefix='nr bad controls ') as room:
+            root = Path(room)
+            request = root / 'request.json'
+            output = root / 'result.json'
+            bridge.core.save_settings(root, {'render_scale': 0.4})
+            before = (root / 'work/nr_settings.json').read_bytes()
+            request.write_text(json.dumps({'settings': {'render_scale': -1}}), encoding='utf-8')
+            with mock.patch.object(sys, 'argv', ['wizard', 'settings-save', '--root', room,
+                    '--input', str(request), '--output', str(output)]):
+                self.assertEqual(bridge.main(), 1)
+            data = json.loads(output.read_text(encoding='utf-8'))
+            self.assertFalse(data['ok'])
+            self.assertIn('render_scale', data['error'])
+            self.assertEqual((root / 'work/nr_settings.json').read_bytes(), before)
+
 
 if __name__ == '__main__':
     unittest.main()

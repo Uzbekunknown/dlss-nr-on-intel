@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-03**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-07**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -8,6 +8,69 @@ original brief; **this file overrides it wherever they disagree**, and after
 you need the evidence behind a line in this file, rather than reading them in order.
 
 ---
+
+## Windows release and setup window (2026-10-06)
+
+The Windows checkout `D:\NRonWindows\release-04459d2` is on
+`codex/windows-setup-wizard`, based on `improve-release` commit `04459d2` and the
+Windows release fixes `c1c97b1`. Commit `e58f729` adds the English/Russian WPF setup
+window, private Python preparation, owned runtime installation, Steam Vulkan EXE
+selection, live effect toggling and diagnostic export. Author and committer use
+`185953089+Uzbekunknown@users.noreply.github.com`. These commits are local.
+
+The x64 MSVC package was tested on Windows 11 25H2, Arc 140V 8GB, driver
+32.0.101.9033 and native CPython 3.12.12. 110 automated tests passed and 6 were
+skipped. The last DOOM Vulkan campaign session processed 3452 frames, with matching
+daemon/layer counts, zero NR rejections/errors, output 800x450 and network 320x320
+at scale 0.4. Off stopped the counts; game exit was 0; original Steam options and
+DOOM settings were restored. B570/B580 and the real DXVK path were unavailable.
+This was a functionality check, not a new controlled FPS benchmark or optimization.
+The complete commands, separate stdout/stderr and exit codes are in
+`D:\NRonWindows\wizard-check-20261006\REPORT.md`. The public ZIP is
+`dlss-nr-windows-wizard-e58f729-x64.zip` in that folder; it excludes NVIDIA DLLs,
+weights, private Python environments and user profiles.
+
+## Windows live controls restored (2026-10-07)
+
+The same branch now provides an English/Russian **NR controls** tab with all ten
+Linux `nr-panel` controls: render_scale, min_extent, profile, intensity,
+detail_strength, colour_strength, temporal, hold, release and cut_limit. The
+catalogue is shared `src/layer/nr_knobs.py`, rather than a second set of ranges.
+There are nine sliders with precise numeric entry, a profile selector, per-control
+defaults, reset all and reload. Configured users open directly on this tab.
+
+Settings changes merge only edited keys into the current root's JSON and replace
+it atomically. Unknown keys and valid advanced values outside a slider's normal
+range survive. Autosave waits 450 ms and for slider drag release. Failed workers
+retain pending changes. The daemon reads settings between frames, so there is no
+game restart; scale/extent can rebuild scratch for the next network frame. Reset
+writes explicit defaults because deleting keys leaves a running daemon's previous
+values. Daemon default scale is **1.0**; a new public package starts at **0.4**.
+Reinstallation now preserves chosen scale/minimum extent instead of forcing 0.4/320.
+
+Checks: 62 targeted Python tests, **56 passed / 6 skipped**; WPF self-test has 64
+named controls, all ten live controls and 140 EN/RU translation keys, exit 0.
+Real GUI drag saved 0.4 -> 0.55, numeric `0,35` saved 0.35, Natural selection,
+single default and all-ten reset each returned exit 0. English/Russian switching
+preserved settings; both the network controls and lower stability controls were
+visually checked. Live-parser tests exercised actual `Settings.refresh` without
+GPU initialization. No new game run or FPS benchmark is claimed for this follow-up.
+
+The configured consumer remains at
+`D:\NRonWindows\wizard-check-20261006\ready package (test)\NR-Setup.exe`.
+At the final check its chosen scale was **1.0**, min_extent **320**, effect off;
+do not overwrite user choices with the first-test recommendation. The last-frame
+320x320 readout is historical until new frames arrive. The follow-up report and
+separate command logs are in `D:\NRonWindows\wizard-controls-check-20261006`.
+Final public package: `dist\windows-controls-final`; ZIP:
+`D:\NRonWindows\wizard-controls-check-20261006\dlss-nr-windows-controls-x64.zip`.
+Its exact source commit is recorded by `release-metadata.json` and `REPORT.md`.
+These remain local commits, using the noreply identity stated above.
+
+Next work, only when requested: profile Windows frame time at a fixed scene and
+network size, separating game GPU contention, network execution, transport and
+host passes. Performance optimization is still deferred. Keep the earlier e58f729
+game results separate from this controls-only verification.
 
 ## Planned, not started
 

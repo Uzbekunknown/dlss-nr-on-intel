@@ -1,4 +1,4 @@
-﻿param([string]$Root = '', [switch]$SelfTest)
+﻿param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 if (-not $Root) { $Root = [IO.Path]::GetDirectoryName($PSCommandPath) }
@@ -12,6 +12,12 @@ $script:Ready = $false
 $script:Installed = $false
 $script:LastProfile = $null
 $script:BootPython = ''
+$script:KnobUi = @{}
+$script:PendingSettings = @{}
+$script:LoadingSettings = $false
+$script:SettingsReload = $false
+$script:SettingsDue = [DateTime]::MaxValue
+$script:SettingsStateKey = 'SettingsLoading'
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -36,6 +42,8 @@ $script:BootPython = ''
     <TextBlock x:Name="Subtitle" Text="" Foreground="#53647A" Margin="0,5,0,0" TextWrapping="Wrap"/>
    </StackPanel>
   </DockPanel>
+  <TabControl x:Name="Pages" Background="Transparent" BorderThickness="0">
+   <TabItem x:Name="SetupTab" Header="">
   <ScrollViewer x:Name="MainScroll" VerticalScrollBarVisibility="Auto">
    <StackPanel>
     <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
@@ -87,6 +95,26 @@ $script:BootPython = ''
     </Border>
    </StackPanel>
   </ScrollViewer>
+   </TabItem>
+   <TabItem x:Name="ControlsTab" Header="">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+     <StackPanel Margin="0,16,0,0">
+      <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
+       <StackPanel>
+        <TextBlock x:Name="ControlsHeading" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
+        <WrapPanel><Button x:Name="ControlsToggle"/><Button x:Name="ControlsLaunch"/><Button x:Name="ReloadSettings"/><Button x:Name="ResetSettings"/></WrapPanel>
+        <TextBlock x:Name="ControlsEffectState" FontWeight="SemiBold" Foreground="#1D4ED8" Margin="0,14,0,4"/>
+        <TextBlock x:Name="ControlsRuntimeState" TextWrapping="Wrap" Foreground="#53647A"/>
+        <TextBlock x:Name="FrameReadout" TextWrapping="Wrap" Foreground="#53647A" Margin="0,6,0,0"/>
+        <TextBlock x:Name="ControlsHint" TextWrapping="Wrap" Foreground="#64748B" FontSize="12" Margin="0,10,0,0"/>
+        <DockPanel Margin="0,12,0,0"><Button x:Name="ApplySettings" DockPanel.Dock="Right" Margin="10,0,0,0"/><TextBlock x:Name="SettingsState" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
+       </StackPanel>
+      </Border>
+      <StackPanel x:Name="KnobRows"/>
+     </StackPanel>
+    </ScrollViewer>
+   </TabItem>
+  </TabControl>
  </DockPanel>
 </Window>
 '@
@@ -94,6 +122,10 @@ $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xam
 $script:Ui = @{}
 foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','Mode','GameArgs','SteamId','Fossilize','Check','Dependencies','Install','Launch','Toggle','SteamSetup','SteamRestore','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','PythonHint','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ModeLabel','ModeDirect','ModeSteam','LaunchOptions','ArgsLabel','SteamIdLabel','FirstTestHint','CompareHeading','FpsHint','LanguageLabel','Language')) {
     $script:Ui[$name] = $script:Window.FindName($name)
+    if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
+}
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ReloadSettings','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','ControlsHint','ApplySettings','SettingsState','KnobRows')) {
+    $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
 $script:Window.MinHeight=540
@@ -156,6 +188,30 @@ $script:Strings=@{
   'Done.launch'='Launch requested. Enter a game scene.'; 'Done.steam-setup'='Steam configured. Launch the game through setup.'
   'Done.steam-restore'='Original Steam launch options restored.'; 'Done.on'='NR enabled. Wait for the first processed frames.'
   'Done.off'='NR disabled.'; 'Done.report'='Report saved.'; 'Done.save'='Settings saved.'
+  SetupTab='Setup'; ControlsTab='NR controls'; ControlsHeading='Live NR controls'
+  ControlsHint='Changes save automatically after you finish adjusting. The daemon reads them between frames; no game restart is needed. Requested scale and the actual padded network size may differ.'
+  ReloadSettings='Reload'; ResetSettings='Reset all'; ApplySettings='Apply now'; DefaultKnob='Default'
+  SettingsLoading='Loading NR settings…'; SettingsReady='Current settings loaded.'; SettingsUnsaved='Changes waiting to be saved…'
+  SettingsSaved='Saved. Used on the next processed frame.'; SettingsFailed='Settings could not be saved. See Setup → Check details.'
+  UnsavedClose='Some NR changes were not saved. Close and discard those changes?'
+  InvalidSetting='Enter a finite number within the supported range.'; FrameReadout='Last neural frame: output {0}×{1}; network {3}×{4}; processing {2} ms. This is not game FPS.'
+  NetworkGroup='Network size'; LookGroup='Look'; StabilityGroup='Stability'
+  'Loading.settings'='Loading NR settings…'; 'Loading.settings-save'='Saving NR controls…'; 'Loading.settings-reset'='Restoring NR defaults…'
+  'Done.settings'='NR settings loaded.'; 'Done.settings-save'='NR settings saved.'; 'Done.settings-reset'='NR defaults restored.'
+  'Knob.render_scale'='Render scale'; 'Knob.min_extent'='Minimum network side'; 'Knob.profile'='Profile'; 'Knob.intensity'='Intensity'
+  'Knob.detail_strength'='Detail strength'; 'Knob.colour_strength'='Colour strength'; 'Knob.temporal'='Temporal history'
+  'Knob.hold'='Hold unchanged pixels'; 'Knob.release'='Release moving pixels'; 'Knob.cut_limit'='Scene-cut threshold'
+  'Hint.render_scale'='Fraction of each dimension processed by the network. Lower is cheaper, with coarser detail; minimum padding can limit the reduction.'
+  'Hint.min_extent'='Minimum padded network side. 320 matches the vendor; 128 costs less for small frames and changes the surrounding mirrored context.'
+  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights; neutral greatly reduces the effect.'
+  'Hint.intensity'='Blend strength: 0 keeps the game image, 1 uses the model result, above 1 exaggerates the change.'
+  'Hint.detail_strength'='Strength of fine detail. Zero keeps only broad tone changes; above 1 adds more sharpening.'
+  'Hint.colour_strength'='Strength of tone and colour changes. Higher values can reduce saturation; zero preserves the game tone.'
+  'Hint.temporal'='How much previous output is fed back. Zero forgets history and draws frames independently.'
+  'Hint.hold'='Keep the previous result where the game pixels did not change, reducing flicker in still areas.'
+  'Hint.release'='Pixel change in levels of 255 that releases history. 16–24 is a useful starting range; zero disables this protection.'
+  'Hint.cut_limit'='Average frame change that discards history for a scene cut. Lower reacts sooner; 1 never cuts.'
+  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.neutral'='Neutral'
  }
  ru=@{
   Title='DLSS-NR — установка и запуск'; LanguageLabel='Язык'; LanguageTip='Выберите язык мастера.'
@@ -203,21 +259,45 @@ $script:Strings=@{
   'Done.launch'='Запуск запрошен. Войдите в игровую сцену.'; 'Done.steam-setup'='Steam настроен. Запустите игру через мастер.'
   'Done.steam-restore'='Обычные параметры Steam восстановлены.'; 'Done.on'='NR включён. Дождитесь первых обработанных кадров.'
   'Done.off'='NR выключен.'; 'Done.report'='Отчёт сохранён.'; 'Done.save'='Параметры сохранены.'
+  SetupTab='Установка'; ControlsTab='Настройки NR'; ControlsHeading='Настройки NR во время игры'
+  ControlsHint='Изменения сохраняются автоматически после регулировки. Демон читает их между кадрами; перезапуск игры не нужен. Выбранный масштаб и фактический размер сети с дополнением могут различаться.'
+  ReloadSettings='Перечитать'; ResetSettings='Сбросить всё'; ApplySettings='Применить'; DefaultKnob='Сброс'
+  SettingsLoading='Загружаем настройки NR…'; SettingsReady='Текущие настройки загружены.'; SettingsUnsaved='Изменения ожидают сохранения…'
+  SettingsSaved='Сохранено. Используется со следующего обработанного кадра.'; SettingsFailed='Не удалось сохранить. См. «Установка» → «Подробности проверки».'
+  UnsavedClose='Некоторые изменения NR не сохранены. Закрыть окно и отбросить эти изменения?'
+  InvalidSetting='Введите конечное число в допустимом диапазоне.'; FrameReadout='Последний нейронный кадр: выход {0}×{1}; сеть {3}×{4}; обработка {2} мс. Это не FPS игры.'
+  NetworkGroup='Размер сети'; LookGroup='Изображение'; StabilityGroup='Стабилизация'
+  'Loading.settings'='Загружаем настройки NR…'; 'Loading.settings-save'='Сохраняем настройки NR…'; 'Loading.settings-reset'='Возвращаем настройки NR…'
+  'Done.settings'='Настройки NR загружены.'; 'Done.settings-save'='Настройки NR сохранены.'; 'Done.settings-reset'='Настройки NR сброшены.'
+  'Knob.render_scale'='Масштаб сети'; 'Knob.min_extent'='Минимальная сторона сети'; 'Knob.profile'='Профиль'; 'Knob.intensity'='Интенсивность'
+  'Knob.detail_strength'='Сила деталей'; 'Knob.colour_strength'='Сила цвета'; 'Knob.temporal'='История кадров'
+  'Knob.hold'='Удержание неподвижных пикселей'; 'Knob.release'='Освобождение при движении'; 'Knob.cut_limit'='Порог смены сцены'
+  'Hint.render_scale'='Доля каждой стороны, которую обрабатывает сеть. Меньше — дешевле и грубее детали; минимальное дополнение может ограничить уменьшение.'
+  'Hint.min_extent'='Минимальная сторона сети с дополнением. 320 соответствует NVIDIA; 128 дешевле на малых кадрах и меняет зеркальное окружение сцены.'
+  'Hint.profile'='Стандартный добавляет текстуру; естественный и кинематографический лучше сохраняют светлые участки; нейтральный сильно уменьшает эффект.'
+  'Hint.intensity'='Смешивание: 0 оставляет картинку игры, 1 использует результат модели, выше 1 преувеличивает изменения.'
+  'Hint.detail_strength'='Сила мелких деталей. Ноль оставляет только тональные изменения; выше 1 усиливает резкость.'
+  'Hint.colour_strength'='Сила тональных и цветовых изменений. Большие значения могут снижать насыщенность; ноль сохраняет тон игры.'
+  'Hint.temporal'='Доля предыдущего результата в новом кадре. Ноль забывает историю и обрабатывает кадры независимо.'
+  'Hint.hold'='Сохраняет предыдущий результат там, где пиксели игры не менялись, уменьшая мерцание неподвижных участков.'
+  'Hint.release'='Изменение пикселя в уровнях из 255, которое освобождает историю. Начните с 16–24; ноль выключает эту защиту.'
+  'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
+  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
  }
 }
 $script:TextBindings=@{
  Subtitle='Subtitle'; FilesHeading='FilesHeading'; DllLabel='DllLabel'; GameLabel='GameLabel'; PythonLabel='PythonLabel'
  PythonHint='PythonHint'; ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'; ModeLabel='ModeLabel'
  ArgsLabel='ArgsLabel'; SteamIdLabel='SteamIdLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
- FpsHint='FpsHint'; LanguageLabel='LanguageLabel'
+ FpsHint='FpsHint'; LanguageLabel='LanguageLabel'; ControlsHeading='ControlsHeading'; ControlsHint='ControlsHint'
 }
 $script:ContentBindings=@{
  BrowseDll='Browse'; BrowseGame='Browse'; BrowsePython='Browse'; FindPython='FindPython'; GetPython='GetPython'
  ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ModeDirect='ModeDirect'; ModeSteam='ModeSteam'; Fossilize='Fossilize'
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Launch='Launch'; SteamSetup='SteamSetup'
- SteamRestore='SteamRestore'; Report='Report'
+ SteamRestore='SteamRestore'; Report='Report'; ControlsLaunch='Launch'; ReloadSettings='ReloadSettings'; ResetSettings='ResetSettings'; ApplySettings='ApplySettings'
 }
-$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails'}
+$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab'}
 $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; SteamId='SteamIdTip'; Fossilize='FossilizeTip'; Language='LanguageTip'}
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
@@ -231,6 +311,147 @@ function Set-RuntimeText([string]$Key,[object[]]$Values=@()) {
     $script:RuntimeKey=$Key
     $script:RuntimeValues=$Values
     $script:Ui.RuntimeState.Text=[string]::Format((T $Key),$Values)
+    $script:Ui.ControlsRuntimeState.Text=$script:Ui.RuntimeState.Text
+}
+function Set-SettingsState([string]$Key) {
+    $script:SettingsStateKey=$Key
+    $script:Ui.SettingsState.Text=T $Key
+}
+function Format-KnobValue($Value) {
+    if($Value -is [string]) { return $Value }
+    return ([double]$Value).ToString('0.####',[Globalization.CultureInfo]::InvariantCulture)
+}
+function Set-KnobDisplay([string]$Name,$Value) {
+    $row=$script:KnobUi[$Name]
+    $wasLoading=$script:LoadingSettings; $script:LoadingSettings=$true
+    try {
+        $row.Value=$Value
+        if($row.Choice) {
+            foreach($item in $row.Choice.Items) { if([string]$item.Tag -eq [string]$Value) { $row.Choice.SelectedItem=$item; break } }
+        } else {
+            $row.Input.Text=Format-KnobValue $Value
+            $row.Input.BorderBrush=[Windows.Media.Brushes]::LightGray
+            $row.Slider.Value=[Math]::Min([Math]::Max([double]$Value,[double]$row.Model.low),[double]$row.Model.high)
+        }
+    } finally { $script:LoadingSettings=$wasLoading }
+}
+function Change-Knob([string]$Name,$Value) {
+    if($script:LoadingSettings) { return }
+    $row=$script:KnobUi[$Name]
+    if($row.Model.kind -eq 'number') { $Value=[Math]::Round([double]$Value,4) }
+    if($null -ne $row.Value -and (Format-KnobValue $row.Value) -eq (Format-KnobValue $Value)) { Set-KnobDisplay $Name $Value; return }
+    Set-KnobDisplay $Name $Value
+    $script:PendingSettings[$Name]=$Value
+    $script:SettingsDue=[DateTime]::UtcNow.AddMilliseconds(450)
+    Set-SettingsState 'SettingsUnsaved'
+}
+function Commit-KnobInput($InputControl) {
+    if($script:LoadingSettings) { return }
+    $name=[string]$InputControl.Tag; $row=$script:KnobUi[$name]; $number=0.0
+    $valid=[double]::TryParse($InputControl.Text.Trim().Replace(',','.'),[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$number)
+    if(-not $valid -or [double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $row.Model.runtime_low -or $number -gt $row.Model.runtime_high) {
+        $InputControl.BorderBrush=[Windows.Media.Brushes]::IndianRed
+        Set-SettingsState 'InvalidSetting'
+        return
+    }
+    Change-Knob $name $number
+}
+function Commit-FocusedKnob {
+    $focused=[Windows.Input.Keyboard]::FocusedElement
+    if($focused -is [Windows.Controls.TextBox] -and $script:KnobUi.ContainsKey([string]$focused.Tag)) { Commit-KnobInput $focused }
+}
+function Update-KnobLanguage {
+    foreach($name in $script:KnobUi.Keys) {
+        $row=$script:KnobUi[$name]
+        $row.Label.Text=(T ('Knob.'+$name))+' ('+$name+')'
+        $row.Hint.Text=T ('Hint.'+$name)
+        $defaultLabel=$(if($row.Model.kind -eq 'choice'){T ('Profile.'+[string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
+        $row.Default.Content=(T 'DefaultKnob')+' '+$defaultLabel
+        $row.Default.ToolTip=T ('Hint.'+$name)
+        if($row.Choice) {
+            [Windows.Automation.AutomationProperties]::SetName($row.Choice,(T ('Knob.'+$name)))
+            foreach($item in $row.Choice.Items) { $item.Content=T ('Profile.'+[string]$item.Tag) }
+        } else {
+            $range=''+$row.Model.runtime_low+' – '+$row.Model.runtime_high
+            $row.Input.ToolTip=(T ('Knob.'+$name))+' ['+$range+']'
+            $row.Slider.ToolTip=T ('Hint.'+$name)
+            [Windows.Automation.AutomationProperties]::SetName($row.Input,(T ('Knob.'+$name)))
+            [Windows.Automation.AutomationProperties]::SetName($row.Slider,(T ('Knob.'+$name)))
+        }
+    }
+    foreach($group in @($script:Ui.KnobRows.Children)) { $group.Child.Children[0].Text=T ([string]$group.Tag) }
+}
+function Create-KnobControls($Schema) {
+    $script:KnobUi=@{}; $script:Ui.KnobRows.Children.Clear()
+    $script:LoadingSettings=$true
+    try {
+        $currentGroup=''; $groupPanel=$null
+        foreach($model in $Schema.knobs) {
+            $name=[string]$model.name
+            $group=$(if($name -in @('render_scale','min_extent')){'NetworkGroup'}elseif($name -in @('profile','intensity','detail_strength','colour_strength')){'LookGroup'}else{'StabilityGroup'})
+            if($group -ne $currentGroup) {
+                $card=[Windows.Controls.Border]::new(); $card.Background=[Windows.Media.Brushes]::White; $card.CornerRadius=[Windows.CornerRadius]::new(10); $card.Padding=[Windows.Thickness]::new(20); $card.Margin=[Windows.Thickness]::new(0,0,0,14); $card.Tag=$group
+                $groupPanel=[Windows.Controls.StackPanel]::new(); $card.Child=$groupPanel
+                $heading=[Windows.Controls.TextBlock]::new(); $heading.FontSize=18; $heading.FontWeight=[Windows.FontWeights]::SemiBold; $heading.Margin=[Windows.Thickness]::new(0,0,0,12)
+                $null=$groupPanel.Children.Add($heading); $null=$script:Ui.KnobRows.Children.Add($card); $currentGroup=$group
+            }
+            $container=[Windows.Controls.StackPanel]::new(); $container.Margin=[Windows.Thickness]::new(0,0,0,15)
+            $grid=[Windows.Controls.Grid]::new()
+            foreach($width in @('245','*','76','155')) { $column=[Windows.Controls.ColumnDefinition]::new(); $column.Width=[Windows.GridLengthConverter]::new().ConvertFromString($width); $null=$grid.ColumnDefinitions.Add($column) }
+            $label=[Windows.Controls.TextBlock]::new(); $label.TextWrapping='Wrap'; $label.VerticalAlignment='Center'; $label.FontSize=13; $null=$grid.Children.Add($label)
+            $defaultButton=[Windows.Controls.Button]::new(); $defaultButton.Tag=$name; $defaultButton.FontSize=12; $defaultButton.Padding=[Windows.Thickness]::new(6,7,6,7); $defaultButton.Margin=[Windows.Thickness]::new(10,0,0,0); [Windows.Controls.Grid]::SetColumn($defaultButton,3); $null=$grid.Children.Add($defaultButton)
+            $defaultButton.Add_Click({param($sender,$eventArgs); Reset-NrSettings @([string]$sender.Tag)})
+            $row=@{Model=$model;Label=$label;Default=$defaultButton;Input=$null;Slider=$null;Choice=$null}
+            if($model.kind -eq 'choice') {
+                $choice=[Windows.Controls.ComboBox]::new(); $choice.Tag=$name
+                foreach($value in $model.choices) { $item=[Windows.Controls.ComboBoxItem]::new(); $item.Tag=[string]$value; $null=$choice.Items.Add($item) }
+                [Windows.Controls.Grid]::SetColumn($choice,1); [Windows.Controls.Grid]::SetColumnSpan($choice,2); $null=$grid.Children.Add($choice); $row.Choice=$choice
+                [Windows.Automation.AutomationProperties]::SetAutomationId($choice,'NrChoice_'+$name)
+                $choice.Add_SelectionChanged({param($sender,$eventArgs); if($sender.SelectedItem) { Change-Knob ([string]$sender.Tag) ([string]$sender.SelectedItem.Tag) }})
+            } else {
+                $slider=[Windows.Controls.Slider]::new(); $slider.Tag=$name; $slider.Minimum=[double]$model.low; $slider.Maximum=[double]$model.high; $slider.TickFrequency=[double]$model.step; $slider.SmallChange=[double]$model.step; $slider.LargeChange=[double]$model.step*5; $slider.IsSnapToTickEnabled=$true; $slider.VerticalAlignment='Center'; $slider.Margin=[Windows.Thickness]::new(8,0,14,0)
+                [Windows.Controls.Grid]::SetColumn($slider,1); $null=$grid.Children.Add($slider); $row.Slider=$slider
+                [Windows.Automation.AutomationProperties]::SetAutomationId($slider,'NrSlider_'+$name)
+                $inputBox=[Windows.Controls.TextBox]::new(); $inputBox.Tag=$name; $inputBox.Padding=[Windows.Thickness]::new(6); $inputBox.HorizontalContentAlignment='Right'; [Windows.Controls.Grid]::SetColumn($inputBox,2); $null=$grid.Children.Add($inputBox); $row.Input=$inputBox
+                [Windows.Automation.AutomationProperties]::SetAutomationId($inputBox,'NrInput_'+$name)
+                $slider.Add_ValueChanged({param($sender,$eventArgs); Change-Knob ([string]$sender.Tag) $sender.Value})
+                $inputBox.Add_LostKeyboardFocus({param($sender,$eventArgs); Commit-KnobInput $sender})
+                $inputBox.Add_KeyDown({param($sender,$eventArgs); if($eventArgs.Key -eq [Windows.Input.Key]::Enter) { Commit-KnobInput $sender; $eventArgs.Handled=$true }})
+            }
+            $hint=[Windows.Controls.TextBlock]::new(); $hint.TextWrapping='Wrap'; $hint.FontSize=12; $hint.Foreground=[Windows.Media.Brushes]::SlateGray; $hint.Margin=[Windows.Thickness]::new(0,5,0,0); $row.Hint=$hint
+            $null=$container.Children.Add($grid); $null=$container.Children.Add($hint); $null=$groupPanel.Children.Add($container); $script:KnobUi[$name]=$row
+        }
+        Update-KnobLanguage
+    } finally { $script:LoadingSettings=$false }
+}
+function Apply-NrSettings($Result) {
+    if(-not $script:KnobUi.Count) { Create-KnobControls $Result }
+    foreach($model in $Result.knobs) {
+        $name=[string]$model.name
+        if(-not $script:PendingSettings.ContainsKey($name)) { Set-KnobDisplay $name $Result.settings.$name }
+    }
+    Set-SettingsState $(if($script:PendingSettings.Count){'SettingsUnsaved'}else{'SettingsReady'})
+}
+function Save-NrSettings {
+    if($script:Busy -or -not $script:PendingSettings.Count) { return }
+    $patch=@{}; foreach($key in $script:PendingSettings.Keys) { $patch[$key]=$script:PendingSettings[$key] }
+    $script:PendingSettings=@{}; $script:SettingsDue=[DateTime]::MaxValue
+    Start-Bridge 'settings-save' '' $false @{settings=$patch}
+    if($script:Busy) { $script:Busy | Add-Member -NotePropertyName SettingsPatch -NotePropertyValue $patch }
+    else { foreach($key in $patch.Keys) { $script:PendingSettings[$key]=$patch[$key] }; Set-SettingsState 'SettingsFailed' }
+}
+function Reset-NrSettings([string[]]$Names=@()) {
+    if($script:Busy) { return }
+    if($Names.Count) { foreach($name in $Names) { $script:PendingSettings.Remove($name) } } else { $script:PendingSettings=@{} }
+    $resetPayload=$(if($Names.Count){@{reset=@($Names)}}else{$null})
+    Start-Bridge 'settings-reset' '' $false $resetPayload
+}
+function Restore-SettingsFailure($Job) {
+    if($Job -and $Job.Action -in @('settings','settings-save','settings-reset')) { Set-SettingsState 'SettingsFailed' }
+    if($Job -and $Job.SettingsPatch) {
+        foreach($key in $Job.SettingsPatch.Keys) { if(-not $script:PendingSettings.ContainsKey($key)) { $script:PendingSettings[$key]=$Job.SettingsPatch[$key] } }
+        $script:SettingsDue=[DateTime]::MaxValue
+    }
 }
 function Set-Language([string]$Language) {
     if($Language -notin @('en','ru')) { throw 'Unsupported setup language' }
@@ -243,6 +464,8 @@ function Set-Language([string]$Language) {
         foreach($name in $script:ContentBindings.Keys) { $script:Ui[$name].Content=T $script:ContentBindings[$name] }
         foreach($name in $script:HeaderBindings.Keys) { $script:Ui[$name].Header=T $script:HeaderBindings[$name] }
         foreach($name in $script:TipBindings.Keys) { $script:Ui[$name].ToolTip=T $script:TipBindings[$name] }
+        Update-KnobLanguage
+        Set-SettingsState $script:SettingsStateKey
         Set-Progress $script:ProgressKey
         $runtimeKey=$script:RuntimeKey
         if($script:LastStatus) {
@@ -251,6 +474,8 @@ function Set-Language([string]$Language) {
         } else {
             $script:Ui.EffectState.Text=T 'EffectOff'
             $script:Ui.Toggle.Content=T 'Enable'
+            $script:Ui.ControlsToggle.Content=T 'Enable'
+            $script:Ui.ControlsEffectState.Text=T 'EffectOff'
             Set-RuntimeText $runtimeKey $script:RuntimeValues
         }
     } finally { $script:ChangingLanguage=$false }
@@ -284,10 +509,11 @@ function Apply-Profile($Profile) {
     if($Profile.game_args) { $script:Ui.GameArgs.Text=(@($Profile.game_args | ForEach-Object { Quote-Argument ([string]$_) }) -join ' ') }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Launch','Toggle','SteamSetup','SteamRestore','Report')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Launch','Toggle','SteamSetup','SteamRestore','Report','ControlsToggle','ControlsLaunch','ReloadSettings','ResetSettings','ApplySettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     $script:Ui.Spinner.Visibility=$(if($Busy){'Visible'}else{'Collapsed'})
 }
-function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$false) {
+function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$false, $Extra=$null) {
     $python=$script:Ui.PythonPath.Text.Trim()
     if($Action -eq 'discover') { $python=$script:BootPython }
     if(-not $python -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
@@ -302,7 +528,11 @@ function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$fal
         $stdout=Join-Path $script:Work ('action-'+$id+'.stdout.log')
         $stderr=Join-Path $script:Work ('action-'+$id+'.stderr.log')
         $args=@($script:Bridge,$Action,'--root',$script:Root,'--output',$output)
-        if($Action -ne 'discover') { Write-Json $request (Profile-FromWindow); $args+=@('--input',$request) }
+        if($Action -ne 'discover') {
+            $requestValues=Profile-FromWindow
+            if($Extra) { foreach($key in $Extra.Keys) { $requestValues[$key]=$Extra[$key] } }
+            Write-Json $request $requestValues; $args+=@('--input',$request)
+        }
         if($Destination) { $args+=@('--destination',$Destination) }
         $proc=Start-Process -FilePath $python -ArgumentList (($args | ForEach-Object { Quote-Argument $_ }) -join ' ') -WorkingDirectory $script:Root -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
         # Windows PS 5 needs the native handle retained before the first HasExited poll.
@@ -320,6 +550,8 @@ function Show-Status($Value) {
     $script:LastStatus=$Value
     $script:Ui.EffectState.Text=$(if($enabled){T 'EffectOn'}else{T 'EffectOff'})
     $script:Ui.Toggle.Content=$(if($enabled){T 'Disable'}else{T 'Enable'})
+    $script:Ui.ControlsToggle.Content=$script:Ui.Toggle.Content
+    $script:Ui.ControlsEffectState.Text=$script:Ui.EffectState.Text
     $count=$Value.processed
     if($null -eq $count -and $Value.counts) { $count=$Value.counts.processed }
     $refused=$Value.rejected
@@ -334,6 +566,11 @@ function Show-Status($Value) {
     } elseif([int]$count -gt 0) {
         Set-RuntimeText 'Historical' @($count,$refused)
     } else { Set-RuntimeText 'WaitingFrames' }
+    $script:Ui.FrameReadout.Text=''
+    if($Value.last_frame -and $Value.network_shape -and $Value.network_shape.Count -eq 2) {
+        $frame=$Value.last_frame
+        $script:Ui.FrameReadout.Text=[string]::Format((T 'FrameReadout'),$frame.width,$frame.height,[Math]::Round([double]$frame.seconds*1000),$Value.network_shape[0],$Value.network_shape[1])
+    }
 }
 function Finish-Bridge($Job,[bool]$Quiet) {
     $Job.Process.WaitForExit()
@@ -352,6 +589,7 @@ function Finish-Bridge($Job,[bool]$Quiet) {
         $script:StatusJob=$null; return
     }
     if(-not $value) {
+        Restore-SettingsFailure $Job
         Set-Progress 'NoResult'
         $script:Ui.Details.Text=$(if(Test-Path -LiteralPath $Job.Stderr){[IO.File]::ReadAllText($Job.Stderr)}else{T 'ResultMissing'})
     } else {
@@ -361,10 +599,19 @@ function Finish-Bridge($Job,[bool]$Quiet) {
             if($value.profile -and $Job.Action -in @('discover','dependencies','install','steam-setup')) { Apply-Profile $value.profile }
             if($Job.Action -eq 'discover' -and -not $value.profile -and $value.candidates.Count) { $script:Ui.PythonPath.Text=[string]$value.candidates[0] }
             if($Job.Action -eq 'install') { $script:Installed=$true }
+            if($Job.Action -in @('discover','install')) {
+                $script:SettingsReload=$true
+                if($Job.Action -eq 'install' -or $value.profile) { $script:Ui.Pages.SelectedItem=$script:Ui.ControlsTab }
+            }
+            if($Job.Action -in @('settings','settings-save','settings-reset')) {
+                Apply-NrSettings $value
+                if($Job.Action -ne 'settings' -and -not $script:PendingSettings.Count) { Set-SettingsState 'SettingsSaved' }
+            }
             if($Job.Action -in @('on','off','status')) { Show-Status $value }
         } else {
             Set-Progress 'FixChecks'
             $script:Ui.CheckDetails.IsExpanded=$true
+            Restore-SettingsFailure $Job
         }
     }
     $script:Busy=$null; Set-Busy $false
@@ -394,6 +641,15 @@ function Find-BootPython {
 
 Set-Language $script:Language
 if($SelfTest) {
+    if($ControlSchema) {
+        $schema=Read-Json $ControlSchema
+        Apply-NrSettings $schema
+        if($script:KnobUi.Count -ne 10) { throw 'Expected all ten Linux panel controls' }
+        foreach($model in $schema.knobs) {
+            $row=$script:KnobUi[[string]$model.name]
+            if($model.kind -eq 'number' -and ($row.Slider.Minimum -ne $model.low -or $row.Slider.Maximum -ne $model.high -or $row.Slider.TickFrequency -ne $model.step)) { throw "Wrong slider range: $($model.name)" }
+        }
+    }
     foreach($key in $script:Strings.en.Keys) {
         if(-not $script:Strings.ru.ContainsKey($key) -or -not $script:Strings.en[$key] -or -not $script:Strings.ru[$key]) { throw "Incomplete translation: $key" }
         if($script:Strings.en[$key] -match '[А-Яа-яЁё]') { throw "Russian text in English translation: $key" }
@@ -402,6 +658,10 @@ if($SelfTest) {
     $autoLanguage=$script:Language
     foreach($language in @('en','ru')) {
         Set-Language $language
+        if($script:KnobUi.Count) {
+            foreach($name in $script:KnobUi.Keys) { if($script:KnobUi[$name].Label.Text -notlike ((T ('Knob.'+$name))+'*')) { throw "Untranslated control $name" } }
+            if($script:PendingSettings.Count) { throw 'Loading or changing language changed settings' }
+        }
         foreach($binding in @($script:TextBindings,$script:ContentBindings,$script:HeaderBindings,$script:TipBindings)) {
             foreach($name in $binding.Keys) { if(-not (T $binding[$name])) { throw "Missing UI translation for $name" } }
         }
@@ -416,7 +676,7 @@ if($SelfTest) {
         Set-Language $language
         if($script:Ui.Progress.Text -ne (T 'Loading.install') -or $script:Ui.RuntimeState.Text -ne (T 'StatusUnavailable')) { throw 'Dynamic messages did not switch languages' }
     }
-    Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls. EN/RU coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
+    Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. EN/RU coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
     exit 0
 }
 $script:Ui.Language.Add_SelectionChanged({
@@ -433,6 +693,11 @@ $script:Ui.Dependencies.Add_Click({ Start-Bridge 'dependencies' })
 $script:Ui.Install.Add_Click({ Start-Bridge 'install' })
 $script:Ui.Launch.Add_Click({ Start-Bridge 'launch' })
 $script:Ui.Toggle.Add_Click({ $action=$(if($script:Ui.Toggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
+$script:Ui.ControlsToggle.Add_Click({ $action=$(if($script:Ui.ControlsToggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
+$script:Ui.ControlsLaunch.Add_Click({ Start-Bridge 'launch' })
+$script:Ui.ReloadSettings.Add_Click({ $script:PendingSettings=@{}; $script:SettingsDue=[DateTime]::MaxValue; Start-Bridge 'settings' })
+$script:Ui.ResetSettings.Add_Click({ Reset-NrSettings })
+$script:Ui.ApplySettings.Add_Click({ Commit-FocusedKnob; Save-NrSettings })
 $script:Ui.SteamSetup.Add_Click({
     if([Windows.MessageBox]::Show($script:Window,(T 'SteamConfirm'),(T 'SteamTitle'),'OKCancel','Information') -eq 'OK') { Start-Bridge 'steam-setup' }
 })
@@ -446,13 +711,22 @@ $script:Timer.Add_Tick({
     try {
         if($script:Busy -and $script:Busy.Process.HasExited) { Finish-Bridge $script:Busy $false }
         if($script:StatusJob -and $script:StatusJob.Process.HasExited) { Finish-Bridge $script:StatusJob $true }
+        if(-not $script:Busy -and $script:SettingsReload) { $script:SettingsReload=$false; Start-Bridge 'settings' }
+        if(-not $script:Busy -and $script:PendingSettings.Count -and [DateTime]::UtcNow -ge $script:SettingsDue) {
+            $dragging=$false
+            foreach($row in $script:KnobUi.Values) { if($row.Slider -and $row.Slider.IsMouseCaptureWithin) { $dragging=$true; break } }
+            if(-not $dragging) { Save-NrSettings }
+        }
         $script:TickCount++
         if($script:TickCount % 10 -eq 0 -and -not $script:Busy -and -not $script:StatusJob -and $script:Ui.GamePath.Text -and $script:Ui.PythonPath.Text) { Start-Bridge 'status' '' $true }
-    } catch { $script:Ui.Details.Text=$_.Exception.Message; $script:Busy=$null; $script:StatusJob=$null; Set-Busy $false }
+    } catch { $script:Ui.Details.Text=$_.Exception.Message; Restore-SettingsFailure $script:Busy; $script:Busy=$null; $script:StatusJob=$null; Set-Busy $false; Set-Progress 'ActionFailed' }
 })
 $script:Window.Add_Closing({
     param($sender,$eventArgs)
+    Commit-FocusedKnob
     if($script:Busy) { $eventArgs.Cancel=$true; Set-Progress 'BusyClose' }
+    elseif($script:PendingSettings.Count -and $script:SettingsStateKey -ne 'SettingsFailed') { $eventArgs.Cancel=$true; Save-NrSettings; Set-Progress 'BusyClose' }
+    elseif($script:PendingSettings.Count) { $eventArgs.Cancel=([Windows.MessageBox]::Show($script:Window,(T 'UnsavedClose'),(T 'Title'),'YesNo','Warning') -ne 'Yes') }
 })
 $script:Window.Add_Closed({ $script:Timer.Stop() })
 $script:Window.Add_ContentRendered({

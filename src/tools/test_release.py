@@ -26,7 +26,7 @@ class ReleaseTests(unittest.TestCase):
         self.target = self.base / "package (release)"
         # Minimal input tree with the real runtime's shader inventory and scripts.
         paths = ["src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py",
-                 "src/layer/VkLayer_dlss_nr.json", "scripts/get_weights.py",
+                 "src/layer/VkLayer_dlss_nr.json", "src/layer/nr_knobs.py", "scripts/get_weights.py",
                  "scripts/build_release.py", "tools/deploy.sh", "dist-tools/setup.sh",
                  "dist-tools/setup.bat", "docs/RELEASE-QUICKSTART.md", "LICENSE", "NOTICE"]
         paths += ["dist-tools/" + name for name in release.WINDOWS_UI]
@@ -129,6 +129,12 @@ class ReleaseTests(unittest.TestCase):
             release.assemble(self.root, self.target, "windows")
         self.assertEqual(sentinel.read_bytes(), b"user-owned file")
         self.assertEqual(list(self.target.iterdir()), [sentinel])
+
+    def test_missing_shared_controls_catalogue_refuses_release(self):
+        (self.root / "src/layer/nr_knobs.py").unlink()
+        with self.assertRaisesRegex(ValueError, "nr_knobs"):
+            release.assemble(self.root, self.target, "windows")
+        self.assertFalse(self.target.exists())
 
     def test_source_overlap_is_refused(self):
         for name in ("src/release", "work/release", "scripts/release", "dist-tools/release"):

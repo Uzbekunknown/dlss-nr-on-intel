@@ -44,7 +44,8 @@ def windows_arguments(text: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('discover', 'check', 'dependencies', 'install',
-        'launch', 'steam-setup', 'steam-restore', 'on', 'off', 'status', 'report', 'save'))
+        'launch', 'steam-setup', 'steam-restore', 'on', 'off', 'status', 'report', 'save',
+        'settings', 'settings-save', 'settings-reset'))
     parser.add_argument('--root', type=Path, default=release_root())
     parser.add_argument('--input', type=Path)
     parser.add_argument('--output', type=Path, required=True)
@@ -61,6 +62,21 @@ def main() -> int:
             profile = core.load_profile(args.root)
             result = {'ok': True, 'candidates': core.discover_python(),
                       'profile': profile.to_dict() if profile else None}
+        elif args.action in ('settings', 'settings-save', 'settings-reset'):
+            # Runtime controls are root-scoped and available before installation.
+            # Ignore any input launch profile or root: a slider cannot change the
+            # selected game, Steam configuration, Python or effect on/off state.
+            values = json.loads(args.input.read_text(encoding='utf-8-sig')) if args.input else {}
+            if not isinstance(values, dict):
+                raise ValueError('Runtime settings input must be a JSON object.')
+            if args.action == 'settings':
+                result = core.get_settings(args.root)
+            elif args.action == 'settings-save':
+                if 'settings' not in values:
+                    raise ValueError('Specify the runtime settings to save.')
+                result = core.save_settings(args.root, values['settings'])
+            else:
+                result = core.reset_settings(args.root, values.get('reset'))
         else:
             if args.input:
                 values = json.loads(args.input.read_text(encoding='utf-8-sig'))

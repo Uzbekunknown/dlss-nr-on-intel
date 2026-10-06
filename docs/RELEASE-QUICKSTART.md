@@ -33,6 +33,21 @@ starts with NR off; **Enable/disable NR** changes it during the same session.
 The status distinguishes a model that is loaded from fresh processed game frames;
 processed-frame throughput is not a game FPS measurement.
 
+Open **NR controls** for the same ten live settings as Linux `nr-panel`: render
+scale, minimum network side, profile, intensity, detail strength, colour strength,
+temporal history, hold, release and scene-cut threshold. Numeric settings have
+sliders and editable values. Changes save automatically after adjusting; **Apply
+now** also saves immediately. The daemon reads them between frames without a
+game restart. Changing scale can rebuild the network's working buffers, so a drag
+is saved after release. The readout shows actual network dimensions separately
+from requested scale; minimum padding may keep the same size at several scales.
+
+**Default** resets one control; **Reset all** writes the daemon's defaults,
+including render scale **1.0**. The release starts at **0.4** for a lighter first
+test. **Reload** discards pending edits and reads the current settings file.
+Reinstallation preserves chosen settings. Existing advanced values beyond a
+slider's normal range remain visible in the editable value and are preserved.
+
 For Steam, choose **Through Steam** and **Configure Steam**. The wizard keeps a
 backup of this game's launch options, closes Steam normally only when no Steam
 game is running, applies a wrapper for the selected executable, and reopens Steam.

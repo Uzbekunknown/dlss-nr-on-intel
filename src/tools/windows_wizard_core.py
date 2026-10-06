@@ -11,7 +11,9 @@ import base64
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -122,6 +124,136 @@ def _atomic_json(path, values):
         Path(temporary).replace(path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def _runtime_knobs():
+    """Read the same standard-library-only catalogue used by Linux nr-panel.
+
+    The backend lives in src/tools in a checkout and in scripts in a release.
+    Neither location needs NumPy, a selected game or a running daemon to describe
+    the controls. Keep the panel's normal slider ranges distinct from the wider
+    ranges accepted by the daemon, so existing advanced values survive a refresh.
+    """
+    here = Path(__file__).resolve().parent
+    candidates = (here.parent / "layer/nr_knobs.py", here.parent / "src/layer/nr_knobs.py")
+    source = next((path for path in candidates if path.is_file()), None)
+    if source is None:
+        raise ValueError("The release is missing its runtime control catalogue")
+    spec = importlib.util.spec_from_file_location("_nr_windows_knobs", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    knobs = []
+    for knob in module.KNOBS:
+        high = {"min_extent": 4096.0, "release": 255.0}.get(knob.name, knob.high)
+        knobs.append({"name": knob.name, "label": knob.label, "kind": knob.kind,
+                      "low": knob.low, "high": knob.high, "step": knob.step,
+                      "default": knob.default, "summary": knob.summary, "detail": knob.detail,
+                      "runtime_low": knob.low, "runtime_high": high,
+                      "choices": list(module.PROFILES) if knob.kind == "choice" else None})
+    return knobs
+
+
+def settings_path(root):
+    """Only the settings belonging to this release, never an inherited NR_ROOT."""
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError("The release root does not exist")
+    work = root / "work"
+    path = work / "nr_settings.json"
+    if (work.is_symlink() or getattr(work, "is_junction", lambda: False)()
+            or (work.exists() and not work.is_dir())
+            or _canonical(work) != _canonical(root) + "/work"):
+        raise ValueError("The release work directory is not an owned regular directory")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("The release settings path is not an owned regular file")
+    return path
+
+
+def _settings_document(root):
+    path = settings_path(root)
+    values = _read_json(path) if path.exists() else {}
+    if not isinstance(values, dict):
+        raise ValueError("Settings must be a JSON object")
+    return path, values
+
+
+def _validated_settings(values, knobs):
+    effective = {}
+    for knob in knobs:
+        name = knob["name"]
+        value = values.get(name, knob["default"])
+        if knob["kind"] == "choice":
+            if value not in knob["choices"]:
+                raise ValueError(f"{name} must be one of {', '.join(knob['choices'])}")
+        else:
+            if isinstance(value, bool):
+                raise ValueError(f"{name} must be a number, not a boolean")
+            try:
+                value = float(value)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(f"{name} must be a finite number") from None
+            if not math.isfinite(value) or not knob["runtime_low"] <= value <= knob["runtime_high"]:
+                raise ValueError(f"{name} must be between {knob['runtime_low']:g} and {knob['runtime_high']:g}")
+        effective[name] = value
+    return effective
+
+
+def _settings_result(path, values, knobs):
+    effective = _validated_settings(values, knobs)
+    return {"ok": True, "error": None, "path": str(path), "settings": effective,
+            "knobs": knobs, "defaults": {knob["name"]: knob["default"] for knob in knobs},
+            "explicit_keys": [knob["name"] for knob in knobs if knob["name"] in values],
+            "warnings": [], "apply": "next_frame", "game_restart_required": False,
+            "processing_confirmed": False}
+
+
+def get_settings(root):
+    """Describe validated saved values; this is not a daemon acknowledgement."""
+    path, values = _settings_document(root)
+    return _settings_result(path, values, _runtime_knobs())
+
+
+def save_settings(root, changes):
+    """Merge only changed controls with the latest document and replace atomically.
+
+    Unknown existing keys belong to other tools and are retained. A settings save
+    does not install a game, save a launch profile, start NR or change its trigger.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("Settings changes must be a JSON object")
+    knobs = _runtime_knobs()
+    known = {knob["name"] for knob in knobs}
+    unknown = set(changes) - known
+    if unknown:
+        raise ValueError("Unknown runtime controls: " + ", ".join(sorted(unknown)))
+    path, values = _settings_document(root)
+    values.update(changes)
+    effective = _validated_settings(values, knobs)
+    # Store numbers as numbers even when an existing command-line tool supplied
+    # a numeric string; never write bool, NaN or Infinity for a runtime control.
+    for name in changes:
+        values[name] = effective[name]
+    if changes:
+        _atomic_json(path, values)
+    return _settings_result(path, values, knobs)
+
+
+def reset_settings(root, names=None):
+    """Write explicit daemon defaults so a live daemon really changes its values.
+
+    Deleting a key cannot reset a running daemon: Settings.refresh deliberately
+    keeps its previous value when that key is absent from the next document.
+    """
+    knobs = _runtime_knobs()
+    defaults = {knob["name"]: knob["default"] for knob in knobs}
+    if names is None:
+        names = list(defaults)
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("Reset controls must be a list of names")
+    unknown = set(names) - defaults.keys()
+    if unknown:
+        raise ValueError("Unknown runtime controls: " + ", ".join(sorted(unknown)))
+    return save_settings(root, {name: defaults[name] for name in names})
 
 
 def load_profile(root):
@@ -705,7 +837,8 @@ def install(profile, emit=None):
             settings = json.loads(saved[work / "nr_settings.json"].decode("utf-8-sig"))
             if not isinstance(settings, dict):
                 raise ValueError("Settings must be a JSON object")
-        settings.update({"render_scale": 0.4, "min_extent": 320})
+        settings.setdefault("render_scale", 0.4)
+        settings.setdefault("min_extent", 320)
         _atomic_json(work / "nr_settings.json", settings)
         (work / "nr_trigger").unlink(missing_ok=True)
         save_profile(profile)
