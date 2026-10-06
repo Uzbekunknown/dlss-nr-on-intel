@@ -305,6 +305,8 @@ function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$fal
         if($Action -ne 'discover') { Write-Json $request (Profile-FromWindow); $args+=@('--input',$request) }
         if($Destination) { $args+=@('--destination',$Destination) }
         $proc=Start-Process -FilePath $python -ArgumentList (($args | ForEach-Object { Quote-Argument $_ }) -join ' ') -WorkingDirectory $script:Root -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+        # Windows PS 5 needs the native handle retained before the first HasExited poll.
+        $null=$proc.Handle
         $job=[pscustomobject]@{Process=$proc;Action=$Action;Output=$output;Request=$request;Stdout=$stdout;Stderr=$stderr;Started=[DateTime]::UtcNow}
         if($Quiet) { $script:StatusJob=$job } else {
             $script:Busy=$job; Set-Busy $true
@@ -334,9 +336,12 @@ function Show-Status($Value) {
     } else { Set-RuntimeText 'WaitingFrames' }
 }
 function Finish-Bridge($Job,[bool]$Quiet) {
-    # HasExited alone does not populate ExitCode for Start-Process on Windows PS 5.
     $Job.Process.WaitForExit()
-    if(-not $Quiet) { [IO.File]::WriteAllText(($Job.Output+'.exit.txt'),[string]$Job.Process.ExitCode,[Text.UTF8Encoding]::new($false)) }
+    if(-not $Quiet) {
+        $exitCode=$Job.Process.ExitCode
+        $measuredCode=$(if($null -eq $exitCode){'unavailable'}else{[string]$exitCode})
+        [IO.File]::WriteAllText(($Job.Output+'.exit.txt'),$measuredCode,[Text.UTF8Encoding]::new($false))
+    }
     $value=Read-Json $Job.Output
     if($Quiet) {
         if($value -and $value.ok) { Show-Status $value }

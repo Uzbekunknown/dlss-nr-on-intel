@@ -898,7 +898,8 @@ def check_half_rounding(tolerance=0):
              "PYTHONPATH": os.pathsep.join([str(ROOT / "src" / "gpu"),
                                             str(ROOT / "src" / "ref"),
                                             str(ROOT / "src" / "layer")])},
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     for line in (r.stdout or "").splitlines():
         print(line, flush=True)
     if r.returncode != 0:
