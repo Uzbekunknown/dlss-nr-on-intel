@@ -29,6 +29,8 @@ class ReleaseTests(unittest.TestCase):
                  "src/layer/VkLayer_dlss_nr.json", "scripts/get_weights.py",
                  "scripts/build_release.py", "tools/deploy.sh", "dist-tools/setup.sh",
                  "dist-tools/setup.bat", "docs/RELEASE-QUICKSTART.md", "LICENSE", "NOTICE"]
+        paths += ["dist-tools/" + name for name in release.WINDOWS_UI]
+        paths += ["src/tools/" + name for name in release.WINDOWS_TOOLS]
         for name in paths:
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +43,7 @@ class ReleaseTests(unittest.TestCase):
         for name in ("nr_layer.dll", "libxmx.dll", "libnr_image.dll", "libnr_alloc.dll",
                      "libnr_layer.so", "libxmx.so", "libnr_image.so"):
             self.write("work/" + name, name)
+        self.write("work/NR-Setup.exe", "own x64 GUI host fixture")
         for name in release.required_shaders(self.root):
             self.write("work/" + name, "shader:" + name)
 
@@ -84,6 +87,21 @@ class ReleaseTests(unittest.TestCase):
         if os.name != "nt":
             self.assertTrue(os.access(self.target / "setup.sh", os.X_OK))
         self.assertFalse((self.target / "work/libnr_alloc.dll").exists())
+
+    def test_windows_wizard_ships_without_git_or_local_profiles(self):
+        self.write("work/windows-profile.json", "local paths must stay private")
+        self.write("work/windows-wizard/steam-backup.json", "private Steam configuration")
+        release.assemble(self.root, self.target, "windows")
+        self.assertTrue((self.target / "NR-Setup.cmd").is_file())
+        self.assertTrue((self.target / "NR-Setup.exe").is_file())
+        self.assertTrue((self.target / "windows-wizard.ps1").is_file())
+        for name in release.WINDOWS_TOOLS:
+            self.assertTrue((self.target / "scripts" / name).is_file())
+        metadata = json.loads((self.target / "release-metadata.json").read_text())
+        self.assertEqual(metadata["platform"], "windows")
+        self.assertIsNone(metadata["source_commit"])
+        self.assertFalse((self.target / "work/windows-profile.json").exists())
+        self.assertFalse((self.target / "work/windows-wizard").exists())
 
     def test_missing_runtime_fails_before_creating_a_release(self):
         for name in ("work/libxmx.dll", "work/libnr_image.dll", "work/libnr_alloc.dll",

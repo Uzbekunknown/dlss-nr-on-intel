@@ -153,6 +153,10 @@ echo   libnr_alloc.dll
 
 :done
 
+rem A small native Windows host opens the WPF setup window without a console.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%\tools\build_wizard.ps1" -Root "%REPO%"
+if errorlevel 1 ( echo ERROR: NR-Setup.exe failed & exit /b 1 )
+
 echo.
 echo Built into %WORK%
 echo   libxmx.dll    the runtime the daemon loads
@@ -161,6 +165,7 @@ echo   nr_layer32.dll the layer a 32-bit game loads, with a manifest whose libra
 echo   libnr_image.dll the host passes around the network
 echo   libnr_alloc.dll the daemon's NumPy allocator
 echo   *.spv         the compute shaders
+echo   NR-Setup.exe  the Windows setup window
 echo.
 echo Next: tools\deploy.bat --game ^<game dir^> installs the layer and points the
 echo daemon at this checkout, so nothing has to be copied into the game folder.

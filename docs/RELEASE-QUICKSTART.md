@@ -13,6 +13,42 @@ For an MSVC Windows build, install the
 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
 if its runtime libraries are not already present.
 
+## Windows setup window
+
+Extract the Windows ZIP into a permanent folder and double-click **`NR-Setup.exe`**
+(`NR-Setup.cmd` is an alternative).
+The window uses Windows PowerShell/WPF, so it opens without Python or a compiler.
+Select your own `nvngx_dlssnr.dll` and the **exact x64 game executable**. Python is
+detected automatically; you can choose another native Windows x64 interpreter.
+Use **Check**, then **Install NR**. If only the Python packages are missing,
+installation prepares a private Python environment inside this release. The
+separate **Prepare Python** button also creates that local environment; it does
+not install packages globally. A missing Python installation still needs to be
+installed from [python.org](https://www.python.org/downloads/windows/).
+
+Choose native **Vulkan**, or **DirectX 9–11 with DXVK** only for a game that already
+works with matching x64 DXVK DLLs. The wizard does not add DXVK or a D3D12 route.
+Set the game itself to an 800×450 window for the first comparison. **Launch game**
+starts with NR off; **Enable/disable NR** changes it during the same session.
+The status distinguishes a model that is loaded from fresh processed game frames;
+processed-frame throughput is not a game FPS measurement.
+
+For Steam, choose **Through Steam** and **Configure Steam**. The wizard keeps a
+backup of this game's launch options, closes Steam normally only when no Steam
+game is running, applies a wrapper for the selected executable, and reopens Steam.
+Complex existing launch wrappers and ambiguous accounts are preserved and require
+manual configuration. **Restore Steam** restores the original launch options.
+The optional Fossilize workaround applies only to launches through the NR wrapper;
+it does not disable Steam Overlay or modify the global shader-cache setting.
+
+**Save report** exports settings, version/driver information and diagnostic log
+data without NVIDIA DLLs or weights. The release's private profile, extracted
+weights and Steam backups stay on this PC and must not be added to a distributable.
+The window supports English and Russian, chooses its initial language from Windows,
+and has a language selector at the top. The manual setup below remains available.
+
+## Manual setup
+
 Install the Python packages into the interpreter the daemon will use:
 
 ```text

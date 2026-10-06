@@ -12,11 +12,14 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIRS = ("layer", "ref", "gpu", "bench")
+WINDOWS_UI = ("NR-Setup.cmd", "windows-wizard.ps1")
+WINDOWS_TOOLS = ("windows_wizard.py", "windows_wizard_core.py", "windows_launch.py")
 IGNORE = shutil.ignore_patterns(
     ".git", ".venv", "__pycache__", "*.pyc", "*.pyo", "*.o", "*.obj",
     "*.lib", "*.exp", "*.dll", "*.exe", "*.so*", "*.spv", "*.safetensors",
@@ -63,6 +66,10 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         package / "tools/extract_dlssnr_weights.py",
         package / "tools/unpack_dlssnr_weights.py",
     ]
+    if windows:
+        files.append(root / "work/NR-Setup.exe")
+        files += [root / "dist-tools" / name for name in WINDOWS_UI]
+        files += [root / "src/tools" / name for name in WINDOWS_TOOLS]
     missing = [str(path.relative_to(root)) for path in files if not path.is_file()]
     if missing:
         raise ValueError("Incomplete build; missing: " + ", ".join(missing))
@@ -86,6 +93,25 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         shutil.copy2(root / "scripts/get_weights.py", stage / "scripts/get_weights.py")
         for name in ("setup.sh", "setup.bat"):
             shutil.copy2(root / "dist-tools" / name, stage / name)
+        if windows:
+            shutil.copy2(root / "work/NR-Setup.exe", stage / "NR-Setup.exe")
+            for name in WINDOWS_UI:
+                shutil.copy2(root / "dist-tools" / name, stage / name)
+            for name in WINDOWS_TOOLS:
+                shutil.copy2(root / "src/tools" / name, stage / "scripts" / name)
+        # Bug reports from a prebuilt package do not require an installed Git.
+        commit = None
+        try:
+            version = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                     capture_output=True, text=True, timeout=3)
+            if version.returncode == 0:
+                commit = version.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        (stage / "release-metadata.json").write_text(
+            json.dumps({"schema_version": 1, "source_commit": commit,
+                        "platform": platform, "windows_wizard": windows}, indent=2) + "\n",
+            encoding="utf-8")
         (stage / "setup.sh").chmod(0o755)
         for name in ("LICENSE", "NOTICE"):
             shutil.copy2(root / name, stage / name)
