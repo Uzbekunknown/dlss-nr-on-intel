@@ -9,6 +9,27 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## Windows integration ready for the requested publication (2026-10-07)
+
+The owner requested publication of this chat's finished work to `windows` after
+compatibility checks. `e616afc` is an ancestor of `ade823a`, so a separate clean
+checkout at `D:\NRonWindows\windows-publish-20261007` fast-forwarded its `windows`
+branch without conflicts. Required release-builder/deploy/setup and pipe cleanup
+prerequisites are included. Old experiments and the other checkout's uncommitted
+GPU work remain separate. Original working checkouts were not switched or reset.
+
+`notes/windows-release-integration-20261007.md` records the fresh MSVC build,
+123 passed/6 skipped Windows tests, native DLL comparisons, named-pipe checks,
+WPF controls/languages and three actual GPU inference frames with no rejections.
+No native C/shader/ABI changes are introduced relative to `e616afc`; all ten live
+settings use the existing catalogue. The localhost socketpair sandbox timeout was
+resolved by the host test rerun, with no production-code change.
+
+The target is `origin/windows`; a dry-run push was accepted. Final publication
+SHA/result and full command logs are recorded in the local report directory
+`D:\NRonWindows\windows-publish-check-20261007`. Keep the older campaign and
+controls-only reports below as historical evidence, not a new FPS measurement.
+
 ## Windows release and setup window (2026-10-06)
 
 The Windows checkout `D:\NRonWindows\release-04459d2` is on
@@ -16,7 +37,8 @@ The Windows checkout `D:\NRonWindows\release-04459d2` is on
 Windows release fixes `c1c97b1`. Commit `e58f729` adds the English/Russian WPF setup
 window, private Python preparation, owned runtime installation, Steam Vulkan EXE
 selection, live effect toggling and diagnostic export. Author and committer use
-`185953089+Uzbekunknown@users.noreply.github.com`. These commits are local.
+`185953089+Uzbekunknown@users.noreply.github.com`. This was the original local
+verification branch; the Windows integration entry above records the delivery.
 
 The x64 MSVC package was tested on Windows 11 25H2, Arc 140V 8GB, driver
 32.0.101.9033 and native CPython 3.12.12. 110 automated tests passed and 6 were
@@ -65,7 +87,7 @@ separate command logs are in `D:\NRonWindows\wizard-controls-check-20261006`.
 Final public package: `dist\windows-controls-final`; ZIP:
 `D:\NRonWindows\wizard-controls-check-20261006\dlss-nr-windows-controls-x64.zip`.
 Its exact source commit is recorded by `release-metadata.json` and `REPORT.md`.
-These remain local commits, using the noreply identity stated above.
+The validated Windows integration uses the noreply identity stated above.
 
 Next work, only when requested: profile Windows frame time at a fixed scene and
 network size, separating game GPU contention, network execution, transport and
