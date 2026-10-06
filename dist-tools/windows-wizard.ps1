@@ -334,6 +334,8 @@ function Show-Status($Value) {
     } else { Set-RuntimeText 'WaitingFrames' }
 }
 function Finish-Bridge($Job,[bool]$Quiet) {
+    # HasExited alone does not populate ExitCode for Start-Process on Windows PS 5.
+    $Job.Process.WaitForExit()
     if(-not $Quiet) { [IO.File]::WriteAllText(($Job.Output+'.exit.txt'),[string]$Job.Process.ExitCode,[Text.UTF8Encoding]::new($false)) }
     $value=Read-Json $Job.Output
     if($Quiet) {
