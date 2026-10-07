@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-07**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-08**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -8,6 +8,67 @@ original brief; **this file overrides it wherever they disagree**, and after
 you need the evidence behind a line in this file, rather than reading them in order.
 
 ---
+
+## The Windows release, prepared: a lighter setup window, Spanish, DXVK and 32-bit games, Remove NR; no DirectX 12 (2026-10-08)
+
+Seven commits on `windows` after `f1175bb`, for the first GitHub release. Arc 140V, 101.9033.
+
+**The setup window's load** (`aed08e5`), measured with a stand-in process as the launched game:
+- The hidden busy bar's indeterminate animation never stopped: 5.9 % of a core with the window
+  idle. It animates only while an action runs: 0.2 %.
+- WPF draws in software: 30 MB of GPU memory and 45 MB of RAM less (179 -> 130 MB).
+- The status check every 5 s started Python, and once a game was launched Python started a
+  PowerShell for WMI's whole process list: 0.45 s of CPU in four processes each time. The game is
+  found by its PID now (0.11 s in two), and the window checks only while it is in front.
+
+**Spanish** (`8a50654`): the third language, every string; the self-test takes its languages
+from the window's list.
+
+**DXVK and 32-bit games, and Remove NR** (`1980e5e`, `2bf9d6f`, `4d21118`, `b8a8a65`):
+- A release carries `nr_layer32.dll` and DXVK 3.1.1, pinned by version and SHA-256 in
+  `dist-tools/dxvk.json` and fetched by `scripts/fetch_dxvk.py` (`deploy.bat --release` runs it);
+  its zlib licence is `dxvk/LICENSE` and in NOTICE.
+- The window takes a 64- or a 32-bit game and installs the layer for its architecture. For
+  DirectX 8-11 it puts DXVK beside the game; a game file of the same name is set aside in
+  `dlss-nr/game-backup`, recorded in `dlss-nr/game-files.json`.
+- **Remove NR** deletes NR's files and puts the set-aside ones back; a file changed since is left
+  and named; it waits for Restore Steam. DXVK logs into the release's `work/logs` for NR
+  launches; Remove NR deletes only the DXVK logs that appeared after the installation.
+- The layer started its daemon with `DETACHED_PROCESS`. With a virtual environment's python.exe,
+  which Prepare Python makes, that put a console window over the game: DOOM, full screen, lost
+  the focus and stopped after 16 frames. `CREATE_NO_WINDOW` now.
+- Restore Steam waits up to 15 s for Steam's RunningAppID to clear after the game has gone; it
+  refused right after every exit before.
+
+**DirectX 12 is not offered.** VKD3D-Proton 3.0.1 with Mortal Kombat 1: Windows' DXGI gave
+E_NOTIMPL creating the swap chain; DXVK's DXGI with Windows' D3D11 crashed in d3d11; all of DXVK
+crashed in the game after it asked its D3D11 device for ID3D12Device. Intel's Vulkan driver has
+the extensions VKD3D-Proton needs (mutable descriptors, descriptor buffers, GPL), so the stop is
+in the D3D11/DXGI interplay, not in the driver.
+
+**Games, through the release, launched by Steam, NR on for 60 s:**
+
+| game | API | layer | NR frames | rejected | game folder after Remove NR |
+| --- | --- | --- | ---: | ---: | --- |
+| DOOM (2016) | Vulkan | x64 | 423 | 0 | as before |
+| Mortal Kombat 11 | DX11 through DXVK | x64 | 942 | 0 | as before |
+| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 1040 | 0 | as before |
+
+These ran the setup window's backend as its buttons call it (`scripts/windows_wizard.py`).
+Through the window itself, clicked by UI Automation with Mortal Kombat 11, the fields, the API and
+launch-mode choices and Install NR worked and put DXVK beside the game; the screen locked (04:25)
+before Configure Steam, so that run stopped there and the installation was removed through the
+backend. The window's polling behind a real game is still to be watched; with a stand-in it
+started nothing while minimised. Captures of DOOM and MK11 with NR on are in
+`D:\NRonWindows\nr-game\release-tests` (local, not for publishing).
+
+**Cleaned up on the way:** Codex's DOOM installation of 10-06 (`DOOM\dlss-nr`, from before there
+was a Remove) is in `D:\NRonWindows\nr-game\backups`; Dead or Alive 5's Steam launch options still
+ran Codex's test wrapper of 10-04 and are empty again, as before that test. The DirectX 12 test
+overwrote Mortal Kombat 1's `vkd3d-proton.cache` (13.5 MB from Proton); Proton rebuilds it.
+
+**Next on Linux:** `make test` and CTest at the head. `scripts/build_release.py` and
+`test_release.py` changed; the Linux release path is untouched, and the rest is Windows-only.
 
 ## On Windows at #9's head: green, and F16C for MSVC's host passes (2026-10-07, night)
 
