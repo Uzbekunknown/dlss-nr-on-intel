@@ -9,6 +9,43 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## On Windows at #9's head: green, and F16C for MSVC's host passes (2026-10-07, night)
+
+At `5fec502`, on the Arc 140V (101.9033):
+- CMake/MinGW, now built for `x86-64-v3`: CTest 38 of 38.
+- MSVC: `build_win.bat` all six steps, and CTest's 38 against its DLLs (CMake configured
+  without building, so `work/` keeps MSVC's): 38 of 38.
+- The MSVC layer spawning its own daemon under vkcube: 90 frames answered. With
+  `XMX_STAGING=1` (buffers in card memory, unmapped by choice) the spawned daemon passes the
+  half probe and answers its own 90: `7b9caba`'s `download()` holds on Windows too.
+
+**F16C for MSVC (`23a20b0`).** MSVC has no `_Float16`, and `nr_image.c` converted every half
+with its own arithmetic. With `x86-64-v3` the floor, `build_win.bat` defines `NR_F16C`, and the
+MSVC arm uses `vcvtps2ph`/`vcvtph2ps` on lane 0. For all 2^32 floats the half bits and the
+rounded values are the arithmetic's; the way back differs only on the 1022 signalling NaNs,
+which `nr_half_of` never makes. `test_native_image.py` byte-identical (353), MSVC CTest 38 of
+38, the spawn 90 frames, MinGW CTest 38 of 38 at the commit. `daemon_stages.py`, quiet, on
+mains, alternated twice with the old build; ms, the mean of two medians (gcc from two other
+runs):
+
+| case | `features` old / F16C / gcc | the daemon's own time old / F16C / gcc |
+| --- | --- | --- |
+| 1280x720 at 0.3, fresh | 1.0 / 0.4 / 0.3 | 7.1 / 6.5 / 5.8 |
+| 1280x720 at 0.3, held | 1.5 / 0.5 / 0.3 | 8.5 / 7.6 / 6.6 |
+| 1280x720 at 0.5, fresh | 1.9 / 0.7 / 0.5 | 8.8 / 7.5 / 6.3 |
+| 1280x720 at 0.5, held | 2.9 / 0.8 / 0.6 | 11.0 / 9.0 / 7.4 |
+| 1920x1080 at 0.3, fresh | 1.7 / 0.6 / 0.4 | 12.9 / 11.5 / 10.3 |
+| 1920x1080 at 0.3, held | 2.6 / 0.8 / 0.5 | 16.1 / 14.2 / 12.1 |
+
+`/arch:AVX2` was tried first: the same gain in `features`, but the composition, which MSVC
+vectorises in neither build, ran 0.1-0.4 ms slower under it, so it is not used; MSVC takes
+the intrinsics without it. What is left between MSVC and gcc is mostly that composition,
+0.5-1.8 ms (`docs/PERF-WINDOWS.md`, last section).
+
+**Next on Linux:** nothing for this change, which is inside `_MSC_VER` and `build_win.bat`.
+`build_check.py` reads only the Makefile and CMake; if it should hold `build_win.bat` to the
+floor too, `/DNR_F16C` beside `/fp:precise` and `/openmp` is what to look for.
+
 ## On Linux at #9's head: green, no slower than `master`; F16C for the host passes, and the packed loader for Mesa (2026-10-07, night)
 
 At `ea982d7`: `make test` green (570), CTest 45 of 45, `make test-proton` loads both layers, no
