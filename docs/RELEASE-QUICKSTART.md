@@ -1,8 +1,8 @@
 # Testing a prebuilt DLSS-NR release
 
 This folder contains the Intel runtime, the Vulkan layer, shaders and Python
-modules. It does not contain NVIDIA's DLL or model weights. Windows releases
-currently use the **64-bit layer**; use the source guide for 32-bit games.
+modules. It does not contain NVIDIA's DLL or model weights. Windows releases carry
+the layer for **64-bit and 32-bit games**, and DXVK for DirectX 8–11 games.
 
 You need a supported Intel Xe2 GPU, a working Vulkan graphics driver, **64-bit
 Python 3** with `numpy` and `safetensors`, and your own compatible
@@ -18,16 +18,22 @@ if its runtime libraries are not already present.
 Extract the Windows ZIP into a permanent folder and double-click **`NR-Setup.exe`**
 (`NR-Setup.cmd` is an alternative).
 The window uses Windows PowerShell/WPF, so it opens without Python or a compiler.
-Select your own `nvngx_dlssnr.dll` and the **exact x64 game executable**. Python is
-detected automatically; you can choose another native Windows x64 interpreter.
+Select your own `nvngx_dlssnr.dll` and the **game's executable**, 64-bit or 32-bit.
+Python is detected automatically; you can choose another native Windows x64 interpreter.
 Use **Check**, then **Install NR**. If only the Python packages are missing,
 installation prepares a private Python environment inside this release. The
 separate **Prepare Python** button also creates that local environment; it does
 not install packages globally. A missing Python installation still needs to be
 installed from [python.org](https://www.python.org/downloads/windows/).
 
-Choose native **Vulkan**, or **DirectX 9–11 with DXVK** only for a game that already
-works with matching x64 DXVK DLLs. The wizard does not add DXVK or a D3D12 route.
+Choose **Vulkan** for a game with its own Vulkan renderer, and **DirectX 8–11** for the
+rest. For DirectX 8–11, installation puts DXVK 3.1.1 (in `dxvk\`, with its zlib licence)
+beside the game, for the game's architecture, and sets aside any game file of the same
+name. **Remove NR** deletes the game's `dlss-nr` folder and the DXVK files and puts the
+set-aside files back; a file that changed since, for example in a game update, is left
+as it is and named. Until then the game runs through DXVK even when started without NR.
+DirectX 12 games do not work on Windows yet: DXVK covers DirectX 8–11, and VKD3D-Proton,
+tried with Mortal Kombat 1, stopped the game at startup.
 Set the game itself to an 800×450 window for the first comparison. **Launch game**
 starts with NR off; **Enable/disable NR** changes it during the same session.
 The status distinguishes a model that is loaded from fresh processed game frames;
@@ -59,8 +65,8 @@ it does not disable Steam Overlay or modify the global shader-cache setting.
 **Save report** exports settings, version/driver information and diagnostic log
 data without NVIDIA DLLs or weights. The release's private profile, extracted
 weights and Steam backups stay on this PC and must not be added to a distributable.
-The window supports English and Russian, chooses its initial language from Windows,
-and has a language selector at the top. The manual setup below remains available.
+The window supports English, Russian and Spanish, chooses its initial language from
+Windows, and has a language selector at the top. The manual setup below remains available.
 
 ## Manual setup
 
@@ -99,9 +105,9 @@ weights are missing. `--dry-run` skips installation into the game, but can still
 extract weights into the release folder.
 
 Start with a Vulkan game in a **640x360 to 800x450** window. On Windows, a DirectX
-game needs an appropriate translation path such as matching x64 DXVK DLLs for
-D3D9–11; setup does not install DXVK or provide a universal D3D12 route. Back up
-game-local DLLs before replacing them. If Steam restarts the game, launch Steam
+game needs a translation path such as matching DXVK DLLs for D3D8–11; this manual
+`setup.bat` does not install DXVK (the setup window does). Back up game-local DLLs
+before replacing them. If Steam restarts the game, launch Steam
 from the same configured environment so it inherits the layer settings.
 
 If a Windows Steam game starts the daemon but never logs processed frames after

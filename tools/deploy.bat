@@ -257,6 +257,10 @@ if not defined PY (
   echo ERROR: Python 3 is required to assemble the release
   exit /b 3
 )
+rem DXVK for DirectX 8-11 games: the pinned release, downloaded once into work\dxvk and
+rem checked against its SHA-256 (dist-tools\dxvk.json).
+"%PY%" "%REPO%\scripts\fetch_dxvk.py"
+if errorlevel 1 exit /b 3
 "%PY%" "%REPO%\scripts\build_release.py" "%RELEASE%" --platform windows
 if errorlevel 1 exit /b 3
 endlocal

@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -63,6 +64,10 @@ class WizardFixture(unittest.TestCase):
         for directory in core.SOURCE_DIRS:
             (self.root / "src" / directory).mkdir(parents=True, exist_ok=True)
         write_pe(self.root / "nr_layer.dll")
+        write_pe(self.root / "nr_layer32.dll", x64=False)
+        for directory, x64 in (("x64", True), ("x32", False)):
+            for name in core.DXVK_FILES:
+                write_pe(self.root / "dxvk" / directory / name, x64=x64, suffix=f"DXVK {directory} {name}".encode())
         for name in core.LIBRARIES:
             write_pe(self.root / "work" / name)
         for name in core.SHADERS:
@@ -142,9 +147,13 @@ class WizardFixture(unittest.TestCase):
         self.assertNotIn("DISABLE_VK_LAYER_VALVE_steam_overlay_1", env)
         self.assertNotIn("DISABLE_VK_LAYER_VALVE_steam_fossilize_1", core.runtime_env(replace(self.profile, disable_fossilize=False)))
 
-    def test_pe32_game_and_python_rejected_before_installation(self):
+    def test_32bit_game_accepted_and_other_machines_and_32bit_python_rejected(self):
         write_pe(self.game, x64=False)
-        self.assertFalse(self.checks()["game_x64"]["ok"])
+        self.assertTrue(self.checks()["game_architecture"]["ok"])
+        arm64 = bytearray(write_pe(self.game).read_bytes())
+        struct.pack_into("<H", arm64, 68, 0xAA64)
+        self.game.write_bytes(bytes(arm64))
+        self.assertFalse(self.checks()["game_architecture"]["ok"])
         write_pe(self.game)
         self.native.return_value = python_info(bits=32, abi_platform="win32")
         self.assertFalse(self.checks()["python_native_x64"]["ok"])
@@ -191,14 +200,110 @@ class WizardFixture(unittest.TestCase):
         with patch.object(core.tempfile, "mkdtemp", side_effect=AssertionError("No game writes after failed preflight")):
             self.assertFalse(core.install(self.profile)["ok"])
 
-    def test_dxvk_requires_existing_x64_pair_or_d3d9(self):
+    def test_dxvk_comes_from_the_release_for_the_games_architecture(self):
         profile = replace(self.profile, api="dxvk")
-        self.assertFalse(self.checks(profile)["existing_dxvk"]["ok"])
-        write_pe(self.game.parent / "d3d11.dll", suffix=b"DXVK fixture")
-        write_pe(self.game.parent / "dxgi.dll", x64=False, suffix=b"DXVK fixture")
-        self.assertFalse(self.checks(profile)["existing_dxvk"]["ok"])
-        write_pe(self.game.parent / "dxgi.dll", suffix=b"DXVK fixture")
-        self.assertTrue(self.checks(profile)["existing_dxvk"]["ok"])
+        self.assertTrue(self.checks(profile)["dxvk_files"]["ok"])
+        write_pe(self.root / "dxvk/x64/dxgi.dll", x64=False)
+        self.assertFalse(self.checks(profile)["dxvk_files"]["ok"])
+        write_pe(self.game, x64=False)
+        self.assertTrue(self.checks(profile)["dxvk_files"]["ok"])
+
+    def test_dxvk_install_sets_the_games_files_aside_and_remove_puts_them_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"the game's own proxy")
+        shutil.copy2(self.root / "dxvk/x64/d3d9.dll", game / "d3d9.dll")  # someone's identical copy
+        self.assertIn("dxgi.dll", self.checks(profile)["game_files"]["detail"])
+        result = core.install(profile)
+        self.assertTrue(result["ok"], result)
+        for name in core.DXVK_FILES:
+            self.assertEqual((game / name).read_bytes(), (self.root / "dxvk/x64" / name).read_bytes())
+        installed = core.installed_path(profile)
+        self.assertEqual((installed / core.GAME_BACKUP / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        manifest = json.loads((installed / "VkLayer_dlss_nr.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["layer"]["library_arch"], "64")
+        self.assertEqual(Path(core.runtime_env(profile)["DXVK_LOG_PATH"]), self.root / "work/logs")
+        # Installed again, the game's original is still the one set aside, once.
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((installed / core.GAME_BACKUP / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        self.assertFalse((installed / ".undo").exists())
+        (game / f"{self.game.stem}_dxgi.log").write_text("a DXVK log from a launch outside NR")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        self.assertEqual((game / "d3d9.dll").read_bytes(), (self.root / "dxvk/x64/d3d9.dll").read_bytes())
+        for name in ("d3d8.dll", "d3d10core.dll", "d3d11.dll", f"{self.game.stem}_dxgi.log"):
+            self.assertFalse((game / name).exists(), name)
+        self.assertFalse(installed.exists())
+        self.assertEqual(sorted(path.name for path in game.iterdir()), ["d3d9.dll", "dxgi.dll", self.game.name])
+
+    def test_dxvk_placement_failure_puts_the_games_files_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"original")
+        copy = shutil.copy2
+
+        def failing(source, target, *args, **kwargs):
+            if Path(source).name == "dxgi.dll":
+                raise OSError("disk full")
+            return copy(source, target, *args, **kwargs)
+        with patch.object(core.shutil, "copy2", side_effect=failing):
+            self.assertFalse(core.install(profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), ["dxgi.dll", self.game.name])
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"original")
+
+    def test_late_failure_after_dxvk_commit_puts_the_games_files_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"original")
+        with patch.object(core, "save_profile", side_effect=OSError("profile write failed")):
+            self.assertFalse(core.install(profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), ["dxgi.dll", self.game.name])
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"original")
+
+    def test_32bit_game_gets_the_32bit_layer_and_dxvk(self):
+        write_pe(self.game, x64=False)
+        profile = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(profile)["ok"])
+        installed = core.installed_path(profile)
+        manifest = json.loads((installed / "VkLayer_dlss_nr.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["layer"]["library_arch"], "32")
+        self.assertEqual(Path(manifest["layer"]["library_path"]), installed / "nr_layer32.dll")
+        self.assertEqual(core.pe_architecture(installed / "nr_layer32.dll"), "x86")
+        self.assertEqual((self.game.parent / "d3d9.dll").read_bytes(), (self.root / "dxvk/x32/d3d9.dll").read_bytes())
+
+    def test_changing_the_api_after_dxvk_needs_remove_first(self):
+        dxvk = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(dxvk)["ok"])
+        self.assertFalse(self.checks(self.profile)["game_files"]["ok"])
+        self.assertFalse(core.install(self.profile)["ok"])
+        self.assertTrue(core.uninstall(dxvk)["ok"])
+        self.assertTrue(core.install(self.profile)["ok"])
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+
+    def test_remove_leaves_files_changed_since_and_keeps_the_originals(self):
+        profile = replace(self.profile, api="dxvk")
+        (self.game.parent / "d3d11.dll").write_bytes(b"the game's d3d11")
+        self.assertTrue(core.install(profile)["ok"])
+        (self.game.parent / "d3d11.dll").write_bytes(b"a game update")
+        result = core.uninstall(profile)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["kept"], ["d3d11.dll"])
+        self.assertEqual((self.game.parent / "d3d11.dll").read_bytes(), b"a game update")
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+        backup = core.installed_path(profile) / core.GAME_BACKUP / "d3d11.dll"
+        self.assertEqual(backup.read_bytes(), b"the game's d3d11")
+
+    def test_remove_refuses_while_the_game_runs_and_without_an_installation(self):
+        profile = replace(self.profile, api="dxvk")
+        result = core.uninstall(profile)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["removed"])
+        self.assertTrue(core.install(profile)["ok"])
+        self.launch_state()
+        self.assertFalse(core.uninstall(profile)["ok"])
+        self.assertTrue((self.game.parent / "dxgi.dll").exists())
+        self.assertTrue(core.installed_path(profile).exists())
 
     def test_foreign_existing_installation_is_preserved(self):
         destination = core.installed_path(self.profile)

@@ -43,7 +43,7 @@ def windows_arguments(text: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('discover', 'check', 'dependencies', 'install',
+    parser.add_argument('action', choices=('discover', 'check', 'dependencies', 'install', 'uninstall',
         'launch', 'steam-setup', 'steam-restore', 'on', 'off', 'status', 'report', 'save',
         'settings', 'settings-save', 'settings-reset'))
     parser.add_argument('--root', type=Path, default=release_root())
@@ -94,6 +94,8 @@ def main() -> int:
                 result = core.ensure_dependencies(profile, emit=emit)
             elif args.action == 'install':
                 result = core.install(profile, emit=emit)
+            elif args.action == 'uninstall':
+                result = core.uninstall(profile, emit=emit)
             elif args.action in ('launch', 'steam-setup', 'steam-restore'):
                 import windows_launch as launch
                 method = {'launch': launch.launch, 'steam-setup': launch.configure_steam,
