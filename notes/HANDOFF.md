@@ -9,6 +9,37 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## PR #5 merged, and `windows` proposed for `master` as PR #9 (2026-10-07, evening)
+
+**PR #5 merged.** The owner merged PR #5 with the button (`2a5adfb`), so Paimonshen's five
+original commits are on `master`. `master` was then merged into `windows` (`2cf5985`) and
+`improve-release` (`b578e68`) with `-s ours`. Both already held those commits, replayed as
+`7ef5f84..11a5b8e` and followed up by `04459d2` and `c1c97b1`, and their trees stayed byte for
+byte the same. **Do not merge `master` that way into a branch without PR #5's content**, such as
+`improve`: a later merge would then undo PR #5.
+
+**PR #9, `windows` -> `master`.** It merges cleanly, and the result is this branch's tree. It
+supersedes #7 and #8: everything in them is here. Close both once #9 is merged.
+
+**`d235d58`, test fixes.** `test_windows_launch` and `test_windows_wizard` resolve their
+temporary root. Under a TEMP in 8.3 form (`C:\Users\NAME~1\...`), 16 tests had compared one
+file's short and long names. `test_release` now compares the names left in the target, because
+MSYS2's Python joins `iterdir()`'s entries with another separator.
+
+**Checked on Windows at this head.**
+- CTest 38 of 38;
+- the six setup suites: 129 tests, 6 skipped;
+- the packed staged loader A/B: 320x320 from 25.9-27.1 to 23.8-24.3 ms, 1344x768 from 183-200
+  to 169-172, heads unchanged.
+
+**Next on Linux, before #9 is merged:** `make test` and CTest at #9's head. Since Linux's last
+run these changes run there:
+- `nr_paths.start_daemon`: `NR_PYTHON`, `--root`, the layer's variables dropped from the
+  daemon's environment, and an early exit reported;
+- `nr-ctl report`, which reads the release metadata;
+- `scripts/build_release.py`, `setup.sh` and `deploy.sh`;
+- `test_release.py`.
+
 ## Windows integration ready for the requested publication (2026-10-07)
 
 The owner requested publication of this chat's finished work to `windows` after
