@@ -128,7 +128,9 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "new or empty"):
             release.assemble(self.root, self.target, "windows")
         self.assertEqual(sentinel.read_bytes(), b"user-owned file")
-        self.assertEqual(list(self.target.iterdir()), [sentinel])
+        # By name: MSYS2's Python joins iterdir()'s entries with "\" and the target with "/",
+        # and the two paths then compare unequal although they name the same file.
+        self.assertEqual([path.name for path in self.target.iterdir()], [sentinel.name])
 
     def test_missing_shared_controls_catalogue_refuses_release(self):
         (self.root / "src/layer/nr_knobs.py").unlink()

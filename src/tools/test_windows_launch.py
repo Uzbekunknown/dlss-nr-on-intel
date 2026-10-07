@@ -28,7 +28,9 @@ class LaunchTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="nr-launch-tests-")
         self.addCleanup(self.temporary.cleanup)
-        self.base = Path(self.temporary.name)
+        # Resolved, as the launcher resolves what it is given: a TEMP in 8.3 form
+        # (C:\Users\NAME~1\...) otherwise compares unequal to the same file's long name.
+        self.base = Path(self.temporary.name).resolve()
         self.root = self.base / "package (候補) & test"
         self.game = self.base / "library (games)" / "steamapps/common/DOOM"
         self.game.mkdir(parents=True)
