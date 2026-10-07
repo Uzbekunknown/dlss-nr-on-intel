@@ -870,9 +870,16 @@ def uninstall(profile, emit=None):
     owns, detail = _owned_installation(profile)
     if not owns:
         return {"ok": False, "error": detail}
-    allowed, detail = _profile_change_allowed(profile)
-    if not allowed:
-        return {"ok": False, "error": "Restore Steam's launch options before removing NR"}
+    # Not _profile_change_allowed, which lets an unchanged profile through: Steam would go on
+    # starting the game through a wrapper whose layer is gone, and the game would not start.
+    steam = profile.root / "work/windows-wizard/steam-backup.json"
+    if steam.exists():
+        try:
+            pending = not _read_json(steam, limit=64 * 1024).get("restored")
+        except (OSError, ValueError, AttributeError):
+            pending = True
+        if pending:
+            return {"ok": False, "error": "Restore Steam's launch options before removing NR"}
     game = profile.game_exe.parent
     kept, lost = [], []
     try:

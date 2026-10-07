@@ -294,6 +294,17 @@ class WizardFixture(unittest.TestCase):
         backup = core.installed_path(profile) / core.GAME_BACKUP / "d3d11.dll"
         self.assertEqual(backup.read_bytes(), b"the game's d3d11")
 
+    def test_remove_waits_for_steams_launch_options_to_be_restored(self):
+        profile = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(profile)["ok"])
+        steam = self.root / "work/windows-wizard/steam-backup.json"
+        core._atomic_json(steam, {"restored": False})  # the same, unchanged profile
+        self.assertFalse(core.uninstall(profile)["ok"])
+        self.assertTrue((self.game.parent / "dxgi.dll").exists())
+        core._atomic_json(steam, {"restored": True})
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+
     def test_remove_refuses_while_the_game_runs_and_without_an_installation(self):
         profile = replace(self.profile, api="dxvk")
         result = core.uninstall(profile)

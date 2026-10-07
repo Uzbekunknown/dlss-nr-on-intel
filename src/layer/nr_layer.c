@@ -668,7 +668,12 @@ static void ensure_daemon(void)
 		used += sizeof marker;
 		env_block[used] = '\0';
 
-		BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, DETACHED_PROCESS,
+		/* A console without a window, not DETACHED_PROCESS: a virtual environment's
+		 * python.exe is a launcher that starts the real interpreter as its own child, and a
+		 * console child of a process with no console gets a new, visible one - over the game,
+		 * which loses the focus and, full screen, stops presenting. Children of a
+		 * CREATE_NO_WINDOW process share its hidden console instead. */
+		BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW,
 					 env_block, NULL, &si, &pi);
 		free(env_block);
 		if (si.hStdInput != INVALID_HANDLE_VALUE &&
