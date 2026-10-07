@@ -92,8 +92,9 @@ else
   echo "[2/3] building the layer ..."
   ( cd "$REPO" && make )
   if [[ -n "$RELEASE" ]]; then
-    # -march=native is suitable for this checkout, not a binary for another CPU.
-    ( cd "$REPO" && make -B work/libnr_image.so NR_IMAGE_ARCH= )
+    # The release's CPU floor, whatever NR_IMAGE_ARCH this shell carries. It is also the
+    # default, and make rebuilds the library whenever its flags change.
+    ( cd "$REPO" && make work/libnr_image.so NR_IMAGE_ARCH=-march=x86-64-v3 )
   fi
 fi
 [[ -f "$WORK/libnr_layer.so" ]] || { echo "ERROR: $WORK/libnr_layer.so missing; build it first" >&2; exit 3; }

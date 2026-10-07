@@ -11,9 +11,9 @@ temporal composition — are added here. Every function is a transcription of th
 beside it, and the output is required to be byte-identical: `src/ref/test_native_image.py`
 runs both and compares.
 
-`make` builds the library for this host, with `-march=native`, so rebuild it rather than
-copying it. Every pass is split by rows across OpenMP threads, one per core by default
-(`OMP_NUM_THREADS` to change it); a row's arithmetic does not depend on which thread
+`make` builds the library for `x86-64-v3`, whose F16C turns each half conversion into one
+instruction rather than a call into libgcc. Every pass is split by rows across OpenMP
+threads, one per core by default (`OMP_NUM_THREADS` to change it); a row's arithmetic does not depend on which thread
 does it, so the output is the same bytes at any thread count. `NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement without
 changing any model or shader setting. With no library at all everything still runs.
 """

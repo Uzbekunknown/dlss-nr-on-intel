@@ -122,12 +122,15 @@ target_link_libraries(nr_image PRIVATE OpenMP::OpenMP_C)
 if(UNIX)
   target_link_libraries(nr_image PRIVATE m)
 endif()
+# The Makefile's CPU floor, NR_IMAGE_ARCH: x86-64-v3, so F16C makes each half conversion one
+# instruction instead of a call into libgcc, and AVX2 is there for the loops.
 include(CheckCCompilerFlag)
-if(NOT CMAKE_CROSSCOMPILING)
-  check_c_compiler_flag(-march=native NR_HAS_MARCH_NATIVE)
-  if(NR_HAS_MARCH_NATIVE)
-    target_compile_options(nr_image PRIVATE -march=native)
-  endif()
+check_c_compiler_flag(-march=x86-64-v3 NR_HAS_X86_64_V3)
+if(NR_HAS_X86_64_V3)
+  target_compile_options(nr_image PRIVATE -march=x86-64-v3)
+else()
+  message(WARNING "the compiler takes no -march=x86-64-v3: the host passes will convert "
+                  "every half through libgcc, several times slower")
 endif()
 nr_output(nr_image)
 

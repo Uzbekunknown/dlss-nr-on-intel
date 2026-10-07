@@ -141,7 +141,8 @@ Report the release/commit, GPU/CPU, OS/driver, game/API, resolution, render scal
 [Issues](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues).
 
 Maintainers: `tools/deploy.* --release <folder>` assembles a new or empty folder
-from a complete build. Linux's normal release build recompiles the host passes
-without `-march=native`; with `--skip-build`, supply binaries compatible with the
-target CPU and OS. This folder is platform-specific. User-extracted weights and
-the user-supplied DLL are local files and should not be included in a release.
+from a complete build. Linux's release build compiles the host passes for
+`x86-64-v3` (AVX2 and F16C), the floor every build uses; with `--skip-build`, supply
+binaries compatible with the target CPU and OS. This folder is platform-specific.
+User-extracted weights and the user-supplied DLL are local files and should not be
+included in a release.

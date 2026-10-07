@@ -239,9 +239,9 @@ and reading it as dense FP16 gives values correlating -0.02 with the truth.
 
 `make` also builds `work/libnr_image.so`: the full-frame passes around the network —
 feature assembly, the resizes, the composition, the 8-bit codecs — in C rather than NumPy,
-worth about 2.6x on the host side of a frame. It is built with `-march=native`, so rebuild
-it on the machine that runs it rather than copying it. Everything still works without it;
-`NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
+worth about 2.6x on the host side of a frame. It is built for `x86-64-v3` — AVX2 and F16C,
+every CPU since Haswell and Zen 1 — and `NR_IMAGE_ARCH` changes that. Everything still works
+without it; `NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
 
 ```sh
 make test                                        # about 570 checks, fewer without weights

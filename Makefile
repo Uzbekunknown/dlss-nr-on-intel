@@ -4,8 +4,11 @@
 
 GLSL    := glslangValidator --target-env vulkan1.3 -Isrc/gpu
 CFLAGS  := -O2 -fPIC -Wall -Wextra -Wno-unused-parameter -Iwork/vulkan-headers/include
-# Normal local builds use this CPU; deploy.sh's release build clears this flag.
-NR_IMAGE_ARCH ?= -march=native
+# The CPU the host passes are built for, here and in a release alike: x86-64-v3, every CPU
+# since Haswell and Zen 1. F16C makes each `_Float16` conversion one instruction; without it
+# each is a call into libgcc, and a frame was 5-13 % slower. On Lunar Lake v3 is as fast as
+# -march=native and byte-identical. CMakeLists.txt uses the same floor (build_check.py).
+NR_IMAGE_ARCH ?= -march=x86-64-v3
 SHADERS := work/gemm_resident.spv work/gemm_tiled.spv work/gemm_staged.spv \
            work/gemm_staged32.spv work/gemm_staged32_deep.spv work/attention_rows.spv \
            work/resident.spv work/attention.spv \
@@ -42,15 +45,21 @@ work/libnr_image.so work/test_exchange work/test_settled work/libnr_layer32.so w
 work/libxmx.so: src/gpu/libxmx.c
 	$(CC) $(CFLAGS) -shared -o $@ $< -lvulkan
 
-# The host passes in C. Built for this machine: `-march=native`, so rebuild it rather
-# than copy it. The FP16 casts and the separate multiply and add are the contract —
-# fused multiply-add or fast maths would change the last bit and the output must be
-# byte-identical to the NumPy it replaces (src/ref/test_native_image.py). OpenMP splits
-# each pass by rows; no row reads another's result, so the bytes do not depend on it.
-# `-fno-trapping-math` changes no value — only whether a comparison may raise a floating-
-# point exception flag nobody reads — and it is what lets GCC turn the clamps into selects
-# and vectorise the fused composition's pixels (`compose_encode_row`).
-work/libnr_image.so: src/ref/nr_image.c Makefile | work
+# The host passes in C, for `NR_IMAGE_ARCH` above. The FP16 casts and the separate multiply
+# and add are the contract — fused multiply-add or fast maths would change the last bit and
+# the output must be byte-identical to the NumPy it replaces (src/ref/test_native_image.py).
+# OpenMP splits each pass by rows; no row reads another's result, so the bytes do not depend
+# on it. `-fno-trapping-math` changes no value — only whether a comparison may raise a
+# floating-point exception flag nobody reads — and it is what lets GCC turn the clamps into
+# selects and vectorise the fused composition's pixels (`compose_encode_row`).
+#
+# `work/nr_image.arch` holds the flags the library was last built with, so one built with
+# other flags (NR_IMAGE_ARCH given by hand) is rebuilt by the next `make` rather than called
+# up to date by its time. That is how a release build left a checkout's library without F16C.
+work/nr_image.arch: FORCE | work
+	@echo '$(NR_IMAGE_ARCH)' | cmp -s - $@ || echo '$(NR_IMAGE_ARCH)' > $@
+FORCE:
+work/libnr_image.so: src/ref/nr_image.c Makefile work/nr_image.arch | work
 	$(CC) -O3 $(NR_IMAGE_ARCH) -fPIC -Wall -Wextra -ffp-contract=off -fno-fast-math \
 	      -fno-trapping-math -fopenmp -shared -o $@ $< -lm
 
