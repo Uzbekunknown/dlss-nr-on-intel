@@ -511,6 +511,21 @@ class LaunchTests(unittest.TestCase):
                 ORIGINAL_STOP(self.steam, self.profile, None)
         self.popen.assert_not_called()
 
+    def test_lingering_running_app_id_is_waited_for_and_then_refused(self):
+        lingering = [{"Name": "Steam RunningAppID 379720", "ProcessId": None}]
+        with patch.object(launch, "_steam_games", return_value=lingering), \
+                patch.object(launch, "_registry", side_effect=[379720, 0]), \
+                patch.object(launch, "_steam_running", return_value=False), \
+                patch.object(launch.time, "sleep"):
+            self.assertFalse(ORIGINAL_STOP(self.steam, self.profile, None))
+        with patch.object(launch, "_steam_games", return_value=lingering), \
+                patch.object(launch, "_registry", return_value=379720), \
+                patch.object(launch.time, "sleep"), \
+                patch.object(launch.time, "monotonic", side_effect=[0, 1, 16]):
+            with self.assertRaises(launch.LaunchError):
+                ORIGINAL_STOP(self.steam, self.profile, None)
+        self.popen.assert_not_called()
+
     def test_steam_exit_is_graceful_and_never_force_kills(self):
         with patch.object(launch, "_steam_games", return_value=[]), \
                 patch.object(launch, "_steam_running", side_effect=[True, True, False]), \

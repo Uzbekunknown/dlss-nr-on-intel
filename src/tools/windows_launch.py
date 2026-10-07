@@ -458,6 +458,16 @@ def _steam_running(timeout=15):
 
 def _stop_steam(steam_exe, profile, emit):
     games = _steam_games(steam_exe, profile)
+    if games and all(game.get("ProcessId") is None for game in games):
+        # Steam keeps RunningAppID for a few seconds after a game exits. With no game process
+        # left in its libraries, wait for that to clear rather than refuse Restore Steam.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            running = _registry("RunningAppID")
+            if not running or str(running) == "0":
+                games = []
+                break
     if games:
         raise LaunchError("A Steam game is running; launch options were left unchanged. Close the game first.")
     running = _steam_running()
