@@ -213,6 +213,7 @@ class WizardFixture(unittest.TestCase):
         game = self.game.parent
         (game / "dxgi.dll").write_bytes(b"the game's own proxy")
         shutil.copy2(self.root / "dxvk/x64/d3d9.dll", game / "d3d9.dll")  # someone's identical copy
+        (game / f"{self.game.stem}_d3d9.log").write_text("that DXVK's own log")
         self.assertIn("dxgi.dll", self.checks(profile)["game_files"]["detail"])
         result = core.install(profile)
         self.assertTrue(result["ok"], result)
@@ -235,7 +236,9 @@ class WizardFixture(unittest.TestCase):
         for name in ("d3d8.dll", "d3d10core.dll", "d3d11.dll", f"{self.game.stem}_dxgi.log"):
             self.assertFalse((game / name).exists(), name)
         self.assertFalse(installed.exists())
-        self.assertEqual(sorted(path.name for path in game.iterdir()), ["d3d9.dll", "dxgi.dll", self.game.name])
+        self.assertEqual((game / f"{self.game.stem}_d3d9.log").read_text(), "that DXVK's own log")
+        self.assertEqual(sorted(path.name for path in game.iterdir()),
+                         sorted(["d3d9.dll", "dxgi.dll", self.game.name, f"{self.game.stem}_d3d9.log"]))
 
     def test_dxvk_placement_failure_puts_the_games_files_back(self):
         profile = replace(self.profile, api="dxvk")

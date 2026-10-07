@@ -744,6 +744,11 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _dxvk_logs(profile):
+    """The logs DXVK writes beside an executable started without DXVK_LOG_PATH."""
+    return [f"{profile.game_exe.stem}_{Path(module).stem}.log" for module in DXVK_FILES]
+
+
 def _game_record(folder):
     """What NR put beside the game, from an installation folder (or its stage)."""
     path = Path(folder) / GAME_FILES
@@ -792,6 +797,9 @@ def _place_game_files(profile, arch, folder):
     folder = Path(folder)
     record = _game_record(folder)
     record["arch"] = arch
+    if "logs_before" not in record:
+        # DXVK's logs already beside the game stay when NR is removed; only later ones go.
+        record["logs_before"] = [name for name in _dxvk_logs(profile) if (game / name).exists()]
     files = record["files"]
     done = []
     try:
@@ -903,9 +911,11 @@ def uninstall(profile, emit=None):
             del record["files"][name]
             _atomic_json(destination / GAME_FILES, record)
         if placed_any:
-            # DXVK's logs from launches outside NR, which write beside the executable.
-            for module in DXVK_FILES:
-                (game / f"{profile.game_exe.stem}_{Path(module).stem}.log").unlink(missing_ok=True)
+            # DXVK's logs from launches outside NR, which write beside the executable; those
+            # that were there before NR stay.
+            for name in _dxvk_logs(profile):
+                if name not in record.get("logs_before", []):
+                    (game / name).unlink(missing_ok=True)
         if kept:
             return {"ok": False, "error": "Changed since NR put them there, so left as they are: "
                     + ", ".join(kept) + ". The dlss-nr folder keeps the game's originals.", "kept": kept}
