@@ -9,6 +9,51 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## On Linux at #9's head: green, no slower than `master`, and the release's library without F16C (2026-10-07, night)
+
+At `ea982d7`: `make test` green (570), CTest 45 of 45, `make test-proton` loads both layers, no
+warnings from make or CMake. Heads unchanged: 320x320 `e62005b80145b97a`, 720p `c217fd2fdbbe6b79`,
+changed input `e7c72789…` / `95f46f67…`. New: 1080p (1920x1152 field) `e20ec4bf628818d5`.
+
+**Speed against `master`'s runtime** (`3d8951c`; `2a5adfb` changes only the release scripts),
+alternating, on a quiet machine on mains:
+- replayed graph: 320x320 23.5-24.9 ms against 23.2-23.9, 720p 141.9-143.6 against 142.0-145.2;
+- `live_rates.py`, four tables a side: the means within 3 % at every size, in both directions;
+  640x360 at 0.5 25.7-26.7 against 26.6-27.7 ms, 1920x1080 at 0.55 109.5-112.1 against
+  110.8-116.3. 1024x768 at 0.55 runs 48-51 ms on both, under the README's 56.5;
+- `daemon_stages.py`, the work beside the graph: 1280x720 at 0.3 4.9-6.9 ms against 4.9-6.4,
+  640x360 at 0.5 2.4-3.6 against 3.0-3.8, fresh or held.
+
+**The packed staged loader on Mesa** (`XMX_STAGED_PACKED=1`; off there by default): the same
+heads at all three sizes. 720p 140.3 ms against 143.6 (medians of 6 and 11 runs), 1080p 276.5
+against 282.6 (4 each, alternating, every packed run the faster), 320x320 no change. About 2 %
+where the graph is large, nothing at the live sizes. One packed process at 320x320 ran 55 ms a
+frame throughout, and three more did not repeat it, a cold shader cache included. Whether Mesa
+takes it too is the owner's call.
+
+**The release, run for real on Linux.** `deploy.sh --release`, then `setup.sh --game` into a folder
+with spaces and parentheses, then its `launch-nr.sh` with `work/test_present` as the game: the
+layer spawned the release's daemon, which answered 124 presents once `nr_trigger` existed (live
+mode runs only while it does). `nr_paths.start_daemon` started it with the layer's variables
+removed, and `nr-ctl report` read `release ea982d7a76a0` from the metadata. Two findings:
+
+1. **The Linux release's `libnr_image.so` has no F16C.** It is built with `NR_IMAGE_ARCH=` empty,
+   so all 263 `_Float16` conversions become calls into libgcc (`__truncsfhf2`, `__extendhfsf2`)
+   and the vectoriser stops at SSE2. Feature assembly takes 1.25-11.5 ms where the native build
+   takes 0.24-1.15, `compose_encode` 2.2-9.8 against 1.6-4.8, and a frame is 5-8 % slower at the
+   live sizes and 13 % on held 1080p frames. Built with `-march=x86-64-v3` (AVX2, FMA, F16C;
+   Haswell and Zen 1 on) it is as fast as the native build and byte-identical
+   (`test_native_image.py`). MSVC's path, halves carried as bits, recovers only part of it on a
+   generic build.
+2. **`deploy.sh --release` leaves the checkout's own `work/libnr_image.so` generic**, and `make -q`
+   then calls it up to date: the developer's daemon runs it until `make -B`.
+
+Neither is a regression: `master`'s `--release` copied the `-march=native` build, which may not
+run on another CPU. Proposed, not done: the release's copy built with `-march=x86-64-v3`, in a
+path of its own. A v3 floor leaves out CPUs without AVX2 (some Pentium and Celeron parts), so that
+is the owner's call. The Linux release also carries no 32-bit layer, as on `master`, so a 32-bit
+game under Proton cannot use it.
+
 ## PR #5 merged, and `windows` proposed for `master` as PR #9 (2026-10-07, evening)
 
 **PR #5 merged.** The owner merged PR #5 with the button (`2a5adfb`), so Paimonshen's five
