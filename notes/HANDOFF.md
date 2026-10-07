@@ -9,7 +9,7 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
-## On Linux at #9's head: green, no slower than `master`, and the release's library without F16C (2026-10-07, night)
+## On Linux at #9's head: green, no slower than `master`; F16C for the host passes, and the packed loader for Mesa (2026-10-07, night)
 
 At `ea982d7`: `make test` green (570), CTest 45 of 45, `make test-proton` loads both layers, no
 warnings from make or CMake. Heads unchanged: 320x320 `e62005b80145b97a`, 720p `c217fd2fdbbe6b79`,
@@ -24,12 +24,13 @@ alternating, on a quiet machine on mains:
 - `daemon_stages.py`, the work beside the graph: 1280x720 at 0.3 4.9-6.9 ms against 4.9-6.4,
   640x360 at 0.5 2.4-3.6 against 3.0-3.8, fresh or held.
 
-**The packed staged loader on Mesa** (`XMX_STAGED_PACKED=1`; off there by default): the same
-heads at all three sizes. 720p 140.3 ms against 143.6 (medians of 6 and 11 runs), 1080p 276.5
-against 282.6 (4 each, alternating, every packed run the faster), 320x320 no change. About 2 %
-where the graph is large, nothing at the live sizes. One packed process at 320x320 ran 55 ms a
-frame throughout, and three more did not repeat it, a cold shader cache included. Whether Mesa
-takes it too is the owner's call.
+**The packed staged loader on Mesa** (`XMX_STAGED_PACKED=1`, then off there by default): the
+same heads at all three sizes. 720p 140.3 ms against 143.6 (medians of 6 and 11 runs), 1080p
+276.5 against 282.6 (4 each, alternating, every packed run the faster), 320x320 no change. About
+2 % where the graph is large, nothing at the live sizes. One packed process at 320x320 ran 55 ms
+a frame throughout, and three more did not repeat it, a cold shader cache included. **By the
+owner's decision it is now on for every driver**: libxmx no longer asks which one, and
+`XMX_STAGED_PACKED=0` keeps the old loader.
 
 **The release, run for real on Linux.** `deploy.sh --release`, then `setup.sh --game` into a folder
 with spaces and parentheses, then its `launch-nr.sh` with `work/test_present` as the game: the
@@ -48,11 +49,27 @@ removed, and `nr-ctl report` read `release ea982d7a76a0` from the metadata. Two 
 2. **`deploy.sh --release` leaves the checkout's own `work/libnr_image.so` generic**, and `make -q`
    then calls it up to date: the developer's daemon runs it until `make -B`.
 
-Neither is a regression: `master`'s `--release` copied the `-march=native` build, which may not
-run on another CPU. Proposed, not done: the release's copy built with `-march=x86-64-v3`, in a
-path of its own. A v3 floor leaves out CPUs without AVX2 (some Pentium and Celeron parts), so that
-is the owner's call. The Linux release also carries no 32-bit layer, as on `master`, so a 32-bit
-game under Proton cannot use it.
+Neither was a regression: `master`'s `--release` copied the `-march=native` build, which may not
+run on another CPU. **By the owner's decision, `x86-64-v3` is now the floor of every build**:
+the Makefile's `NR_IMAGE_ARCH`, CMake and the release alike, and `build_check.py` holds the two
+build systems to it. AVX2 and F16C are on every CPU since Haswell and Zen 1; some Pentium and
+Celeron parts lack them. The Makefile keeps the flags it last built the library with
+(`work/nr_image.arch`), so a library built with other flags is rebuilt rather than called up to
+date, and `deploy.sh --release` asks for the floor instead of clearing the flag. The Linux release
+still carries no 32-bit layer, as on `master`, so a 32-bit game under Proton cannot use it.
+
+**And a bug from PR #3, found by the second memory mode.** `XMX_STAGING=1 make test` had failed
+since `c443fd2`: the daemon's half probe read its results with `view()`, which a buffer in
+device memory the host cannot map refuses. So on such a card the daemon died at its first
+start. It downloads them now, the same counts in both modes.
+
+With all three changes: `make test` green in both memory modes (571, the CPU floor's check the
+new one), CTest 45 of 45, `make test-proton` loads both layers, and the heads above unchanged.
+
+**Next on Windows:** CTest with CMake and MinGW, which now builds the host passes for
+`x86-64-v3` rather than for the machine; on this laptop nothing should move. MSVC has no
+`_Float16`, and with AVX2 the floor, the F16C conversions `docs/PERF-WINDOWS.md` measured at
+4.5-8x are allowed under `/arch:AVX2`: the Windows side's to try.
 
 ## PR #5 merged, and `windows` proposed for `master` as PR #9 (2026-10-07, evening)
 
