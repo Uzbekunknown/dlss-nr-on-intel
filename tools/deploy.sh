@@ -31,11 +31,13 @@
 #    ./deploy.sh --game /path/to/Game --dll /path/to/nvngx_dlssnr.dll
 #                [--name libnr_layer.so] [--exe /path/to/Game/game]
 #                [--skip-weights] [--skip-build]
+#    ./deploy.sh --release dist/dlss-nr-linux [--skip-weights] [--skip-build]
 # ============================================================================
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$REPO/work"
+NR_DEPLOY_PYTHON="${NR_PYTHON:-python3}"
 GAME=""
 DLL=""
 NAME="libnr_layer.so"
@@ -80,7 +82,7 @@ else
   }
   [[ -f "$DLL" ]] || { echo "ERROR: DLL not found: $DLL" >&2; exit 2; }
   echo "[1/3] extracting weights with scripts/get_weights.py ..."
-  python3 "$REPO/scripts/get_weights.py" "$DLL"
+  "$NR_DEPLOY_PYTHON" "$REPO/scripts/get_weights.py" "$DLL"
 fi
 
 # ---- build ----
@@ -89,74 +91,17 @@ if [[ $SKIP_BUILD -eq 1 ]]; then
 else
   echo "[2/3] building the layer ..."
   ( cd "$REPO" && make )
+  if [[ -n "$RELEASE" ]]; then
+    # The release's CPU floor, whatever NR_IMAGE_ARCH this shell carries. It is also the
+    # default, and make rebuilds the library whenever its flags change.
+    ( cd "$REPO" && make work/libnr_image.so NR_IMAGE_ARCH=-march=x86-64-v3 )
+  fi
 fi
 [[ -f "$WORK/libnr_layer.so" ]] || { echo "ERROR: $WORK/libnr_layer.so missing; build it first" >&2; exit 3; }
 
-# ---- release folder, or the game ----
-# A release is the same assembly as a game install without the game: everything
-# dist-tools/setup.sh needs to run on a machine with no compiler and no clone. Two things
-# differ. The layer sits at the top level as nr_layer.so - that is the name setup.sh looks
-# for, and it is not the libnr_layer.so the build produces - and the manifest's
-# library_path is ./, since the release folder is wherever the user unpacks it.
+# ---- checked release assembly, or installation into a game ----
 if [[ -n "$RELEASE" ]]; then
-  echo "[3/3] assembling a release into $RELEASE ..."
-  mkdir -p "$RELEASE/src" "$RELEASE/work" "$RELEASE/scripts"
-
-  cp "$WORK/libnr_layer.so" "$RELEASE/nr_layer.so"
-  echo "  layer:      $RELEASE/nr_layer.so"
-
-  MANIFEST_SRC="$REPO/src/layer/VkLayer_dlss_nr.json"
-  [[ -f "$MANIFEST_SRC" ]] || { echo "ERROR: manifest template not found: $MANIFEST_SRC" >&2; exit 3; }
-  cp "$MANIFEST_SRC" "$RELEASE/VkLayer_dlss_nr.json"
-  echo "  manifest:   $RELEASE/VkLayer_dlss_nr.json  (template, setup.sh fills it in)"
-
-  for d in layer ref gpu bench; do
-    [[ -d "$REPO/src/$d" ]] && cp -r "$REPO/src/$d" "$RELEASE/src/$d"
-  done
-  echo "  src/        layer, ref, gpu, bench (the daemon imports all four)"
-
-  if [[ -d "$WORK/mlx-dlss" ]]; then
-    cp -r "$WORK/mlx-dlss" "$RELEASE/work/mlx-dlss"
-    echo "  work/mlx-dlss"
-  else
-    echo "  WARNING: $WORK/mlx-dlss is missing; the daemon cannot start without it" >&2
-  fi
-  for f in "$WORK"/libxmx.so* "$WORK"/libnr_image.so* "$WORK"/*.spv; do
-    [[ -e "$f" ]] && cp "$f" "$RELEASE/work/" || true
-  done
-  echo "  work/       libxmx, libnr_image, shaders"
-
-  cp "$REPO/dist-tools/setup.sh"  "$RELEASE/setup.sh"
-  cp "$REPO/dist-tools/setup.bat" "$RELEASE/setup.bat" 2>/dev/null || true
-  cp "$REPO/scripts/get_weights.py" "$RELEASE/scripts/get_weights.py"
-  chmod +x "$RELEASE/setup.sh"
-  echo "  setup.sh    the one-click script (finds the DLL, extracts, renames, installs)"
-  echo "  scripts/get_weights.py"
-
-  find "$RELEASE/src" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null
-  find "$RELEASE/src" -name '*.o' -delete 2>/dev/null
-  find "$RELEASE/src" -name '*.so' -delete 2>/dev/null
-
-  # A release must not carry anything NVIDIA's: check rather than trust, because this
-  # folder is the one that gets published.
-  for bad in "$RELEASE/nvngx_dlssnr.dll" "$RELEASE/nvngx_dlssnr.so" "$RELEASE/ref"; do
-    if [[ -e "$bad" ]]; then
-      echo "ERROR: $(basename "$bad") is in the release folder - that cannot be published" >&2
-      exit 3
-    fi
-  done
-  if [[ -e "$RELEASE/work/mlxw" ]]; then
-    echo "ERROR: weights are in the release folder - those cannot be published" >&2
-    exit 3
-  fi
-
-  echo
-  echo "Done. Release folder: $RELEASE"
-  echo
-  echo "Ship that folder as it is. On the user's machine they run ./setup.sh, which asks"
-  echo "for their own nvngx_dlssnr.dll, extracts the weights from it, installs into the"
-  echo "game folder under a name they choose, and writes the launcher. Nothing NVIDIA's"
-  echo "is in this folder - verified above, not assumed."
+  "$NR_DEPLOY_PYTHON" "$REPO/scripts/build_release.py" "$RELEASE" --platform linux
   exit 0
 fi
 

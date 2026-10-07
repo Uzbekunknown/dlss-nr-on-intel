@@ -20,6 +20,39 @@ Read "What to expect" before deciding it is broken.
 
 ---
 
+## How to test it
+
+Start with the current source and the setup for your operating system:
+
+| Platform | Instructions |
+| --- | --- |
+| Windows | [Windows quick start](docs/WINDOWS-QUICKSTART.md): MSVC build, first Vulkan test, game launch and effect on/off. |
+| Linux | [Build](#build), then [Run it in a game](#run-it-in-a-game). Windows games can use the Proton launcher. |
+
+If you received a prebuilt release folder, follow its README or the
+[release quick start](docs/RELEASE-QUICKSTART.md). That route needs Python and
+your own DLL, but no compiler or Vulkan SDK.
+
+You need a supported **Intel Xe2 GPU** and the logical weights extracted from your
+own `nvngx_dlssnr.dll`. The repository supplies code, not the DLL or model weights;
+see [You supply the weights](#you-supply-the-weights) and [What you need](#what-you-need).
+
+For the first live test, use a small game window — **640x360 to 800x450** — and
+start around **render_scale 0.4**. Choose a Vulkan renderer, or a documented
+translation path; loading a Vulkan layer does not enable it in every DirectX game.
+Compare the same scene with the effect off and on.
+
+Confirm that the daemon reports processed frames and check for refused frames.
+An unchanged picture can be the game's fallback after a failed request. On Linux,
+run `src/layer/nr-ctl report`; on Windows, use the report command in the quick start.
+Include the commit, GPU/CPU, OS/driver, game/API, resolution, render scale,
+`min_extent`, and FPS off/on in an [Issue](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues).
+
+The effect adds work to each frame. The optimizations reduce its overhead; the
+rates below describe particular hardware and settings, not a guaranteed FPS increase.
+
+---
+
 ## What it looks like
 
 Stills with the model at full resolution. Left, or on top: the game's own frame. Right, or
@@ -153,6 +186,10 @@ already have. See [Build](#build).
 
 ## Build
 
+**Windows users:** follow the [Windows quick start](docs/WINDOWS-QUICKSTART.md)
+for the MSVC build, first Vulkan launch, effect toggle and diagnostic report.
+The commands below are the Linux setup.
+
 ```sh
 mkdir -p work
 git clone --depth 1 --branch v1.4.321 \
@@ -202,9 +239,9 @@ and reading it as dense FP16 gives values correlating -0.02 with the truth.
 
 `make` also builds `work/libnr_image.so`: the full-frame passes around the network —
 feature assembly, the resizes, the composition, the 8-bit codecs — in C rather than NumPy,
-worth about 2.6x on the host side of a frame. It is built with `-march=native`, so rebuild
-it on the machine that runs it rather than copying it. Everything still works without it;
-`NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
+worth about 2.6x on the host side of a frame. It is built for `x86-64-v3` — AVX2 and F16C,
+every CPU since Haswell and Zen 1 — and `NR_IMAGE_ARCH` changes that. Everything still works
+without it; `NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
 
 ```sh
 make test                                        # about 570 checks, fewer without weights
@@ -229,7 +266,8 @@ checks, the paired benchmark and profiling commands for B570/B580.
 ## Run it in a game
 
 Two processes: a **daemon** that holds the model, and a **Vulkan layer** inside the game
-that hands it each frame. They meet over a unix socket.
+that hands it each frame. They meet over a Unix socket on Linux and a named pipe
+on Windows; Windows users should follow the quick start above.
 
 ```sh
 python3 src/layer/nr_daemon.py --settings /tmp/nr_settings.json

@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-01**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-07**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -8,6 +8,221 @@ original brief; **this file overrides it wherever they disagree**, and after
 you need the evidence behind a line in this file, rather than reading them in order.
 
 ---
+
+## On Windows at #9's head: green, and F16C for MSVC's host passes (2026-10-07, night)
+
+At `5fec502`, on the Arc 140V (101.9033):
+- CMake/MinGW, now built for `x86-64-v3`: CTest 38 of 38.
+- MSVC: `build_win.bat` all six steps, and CTest's 38 against its DLLs (CMake configured
+  without building, so `work/` keeps MSVC's): 38 of 38.
+- The MSVC layer spawning its own daemon under vkcube: 90 frames answered. With
+  `XMX_STAGING=1` (buffers in card memory, unmapped by choice) the spawned daemon passes the
+  half probe and answers its own 90: `7b9caba`'s `download()` holds on Windows too.
+
+**F16C for MSVC (`23a20b0`).** MSVC has no `_Float16`, and `nr_image.c` converted every half
+with its own arithmetic. With `x86-64-v3` the floor, `build_win.bat` defines `NR_F16C`, and the
+MSVC arm uses `vcvtps2ph`/`vcvtph2ps` on lane 0. For all 2^32 floats the half bits and the
+rounded values are the arithmetic's; the way back differs only on the 1022 signalling NaNs,
+which `nr_half_of` never makes. `test_native_image.py` byte-identical (353), MSVC CTest 38 of
+38, the spawn 90 frames, MinGW CTest 38 of 38 at the commit. `daemon_stages.py`, quiet, on
+mains, alternated twice with the old build; ms, the mean of two medians (gcc from two other
+runs):
+
+| case | `features` old / F16C / gcc | the daemon's own time old / F16C / gcc |
+| --- | --- | --- |
+| 1280x720 at 0.3, fresh | 1.0 / 0.4 / 0.3 | 7.1 / 6.5 / 5.8 |
+| 1280x720 at 0.3, held | 1.5 / 0.5 / 0.3 | 8.5 / 7.6 / 6.6 |
+| 1280x720 at 0.5, fresh | 1.9 / 0.7 / 0.5 | 8.8 / 7.5 / 6.3 |
+| 1280x720 at 0.5, held | 2.9 / 0.8 / 0.6 | 11.0 / 9.0 / 7.4 |
+| 1920x1080 at 0.3, fresh | 1.7 / 0.6 / 0.4 | 12.9 / 11.5 / 10.3 |
+| 1920x1080 at 0.3, held | 2.6 / 0.8 / 0.5 | 16.1 / 14.2 / 12.1 |
+
+`/arch:AVX2` was tried first: the same gain in `features`, but the composition, which MSVC
+vectorises in neither build, ran 0.1-0.4 ms slower under it, so it is not used; MSVC takes
+the intrinsics without it. What is left between MSVC and gcc is mostly that composition,
+0.5-1.8 ms (`docs/PERF-WINDOWS.md`, last section).
+
+**Next on Linux:** nothing for this change, which is inside `_MSC_VER` and `build_win.bat`.
+`build_check.py` reads only the Makefile and CMake; if it should hold `build_win.bat` to the
+floor too, `/DNR_F16C` beside `/fp:precise` and `/openmp` is what to look for.
+
+## On Linux at #9's head: green, no slower than `master`; F16C for the host passes, and the packed loader for Mesa (2026-10-07, night)
+
+At `ea982d7`: `make test` green (570), CTest 45 of 45, `make test-proton` loads both layers, no
+warnings from make or CMake. Heads unchanged: 320x320 `e62005b80145b97a`, 720p `c217fd2fdbbe6b79`,
+changed input `e7c72789…` / `95f46f67…`. New: 1080p (1920x1152 field) `e20ec4bf628818d5`.
+
+**Speed against `master`'s runtime** (`3d8951c`; `2a5adfb` changes only the release scripts),
+alternating, on a quiet machine on mains:
+- replayed graph: 320x320 23.5-24.9 ms against 23.2-23.9, 720p 141.9-143.6 against 142.0-145.2;
+- `live_rates.py`, four tables a side: the means within 3 % at every size, in both directions;
+  640x360 at 0.5 25.7-26.7 against 26.6-27.7 ms, 1920x1080 at 0.55 109.5-112.1 against
+  110.8-116.3. 1024x768 at 0.55 runs 48-51 ms on both, under the README's 56.5;
+- `daemon_stages.py`, the work beside the graph: 1280x720 at 0.3 4.9-6.9 ms against 4.9-6.4,
+  640x360 at 0.5 2.4-3.6 against 3.0-3.8, fresh or held.
+
+**The packed staged loader on Mesa** (`XMX_STAGED_PACKED=1`, then off there by default): the
+same heads at all three sizes. 720p 140.3 ms against 143.6 (medians of 6 and 11 runs), 1080p
+276.5 against 282.6 (4 each, alternating, every packed run the faster), 320x320 no change. About
+2 % where the graph is large, nothing at the live sizes. One packed process at 320x320 ran 55 ms
+a frame throughout, and three more did not repeat it, a cold shader cache included. **By the
+owner's decision it is now on for every driver**: libxmx no longer asks which one, and
+`XMX_STAGED_PACKED=0` keeps the old loader.
+
+**The release, run for real on Linux.** `deploy.sh --release`, then `setup.sh --game` into a folder
+with spaces and parentheses, then its `launch-nr.sh` with `work/test_present` as the game: the
+layer spawned the release's daemon, which answered 124 presents once `nr_trigger` existed (live
+mode runs only while it does). `nr_paths.start_daemon` started it with the layer's variables
+removed, and `nr-ctl report` read `release ea982d7a76a0` from the metadata. Two findings:
+
+1. **The Linux release's `libnr_image.so` has no F16C.** It is built with `NR_IMAGE_ARCH=` empty,
+   so all 263 `_Float16` conversions become calls into libgcc (`__truncsfhf2`, `__extendhfsf2`)
+   and the vectoriser stops at SSE2. Feature assembly takes 1.25-11.5 ms where the native build
+   takes 0.24-1.15, `compose_encode` 2.2-9.8 against 1.6-4.8, and a frame is 5-8 % slower at the
+   live sizes and 13 % on held 1080p frames. Built with `-march=x86-64-v3` (AVX2, FMA, F16C;
+   Haswell and Zen 1 on) it is as fast as the native build and byte-identical
+   (`test_native_image.py`). MSVC's path, halves carried as bits, recovers only part of it on a
+   generic build.
+2. **`deploy.sh --release` leaves the checkout's own `work/libnr_image.so` generic**, and `make -q`
+   then calls it up to date: the developer's daemon runs it until `make -B`.
+
+Neither was a regression: `master`'s `--release` copied the `-march=native` build, which may not
+run on another CPU. **By the owner's decision, `x86-64-v3` is now the floor of every build**:
+the Makefile's `NR_IMAGE_ARCH`, CMake and the release alike, and `build_check.py` holds the two
+build systems to it. AVX2 and F16C are on every CPU since Haswell and Zen 1; some Pentium and
+Celeron parts lack them. The Makefile keeps the flags it last built the library with
+(`work/nr_image.arch`), so a library built with other flags is rebuilt rather than called up to
+date, and `deploy.sh --release` asks for the floor instead of clearing the flag. The Linux release
+still carries no 32-bit layer, as on `master`, so a 32-bit game under Proton cannot use it.
+
+**And a bug from PR #3, found by the second memory mode.** `XMX_STAGING=1 make test` had failed
+since `c443fd2`: the daemon's half probe read its results with `view()`, which a buffer in
+device memory the host cannot map refuses. So on such a card the daemon died at its first
+start. It downloads them now, the same counts in both modes.
+
+With all three changes: `make test` green in both memory modes (571, the CPU floor's check the
+new one), CTest 45 of 45, `make test-proton` loads both layers, and the heads above unchanged.
+
+**Next on Windows:** CTest with CMake and MinGW, which now builds the host passes for
+`x86-64-v3` rather than for the machine; on this laptop nothing should move. MSVC has no
+`_Float16`, and with AVX2 the floor, the F16C conversions `docs/PERF-WINDOWS.md` measured at
+4.5-8x are allowed under `/arch:AVX2`: the Windows side's to try.
+
+## PR #5 merged, and `windows` proposed for `master` as PR #9 (2026-10-07, evening)
+
+**PR #5 merged.** The owner merged PR #5 with the button (`2a5adfb`), so Paimonshen's five
+original commits are on `master`. `master` was then merged into `windows` (`2cf5985`) and
+`improve-release` (`b578e68`) with `-s ours`. Both already held those commits, replayed as
+`7ef5f84..11a5b8e` and followed up by `04459d2` and `c1c97b1`, and their trees stayed byte for
+byte the same. **Do not merge `master` that way into a branch without PR #5's content**, such as
+`improve`: a later merge would then undo PR #5.
+
+**PR #9, `windows` -> `master`.** It merges cleanly, and the result is this branch's tree. It
+supersedes #7 and #8: everything in them is here. Close both once #9 is merged.
+
+**`d235d58`, test fixes.** `test_windows_launch` and `test_windows_wizard` resolve their
+temporary root. Under a TEMP in 8.3 form (`C:\Users\NAME~1\...`), 16 tests had compared one
+file's short and long names. `test_release` now compares the names left in the target, because
+MSYS2's Python joins `iterdir()`'s entries with another separator.
+
+**Checked on Windows at this head.**
+- CTest 38 of 38;
+- the six setup suites: 129 tests, 6 skipped;
+- the packed staged loader A/B: 320x320 from 25.9-27.1 to 23.8-24.3 ms, 1344x768 from 183-200
+  to 169-172, heads unchanged.
+
+**Next on Linux, before #9 is merged:** `make test` and CTest at #9's head. Since Linux's last
+run these changes run there:
+- `nr_paths.start_daemon`: `NR_PYTHON`, `--root`, the layer's variables dropped from the
+  daemon's environment, and an early exit reported;
+- `nr-ctl report`, which reads the release metadata;
+- `scripts/build_release.py`, `setup.sh` and `deploy.sh`;
+- `test_release.py`.
+
+## Windows integration ready for the requested publication (2026-10-07)
+
+The owner requested publication of this chat's finished work to `windows` after
+compatibility checks. `e616afc` is an ancestor of `ade823a`, so a separate clean
+checkout at `D:\NRonWindows\windows-publish-20261007` fast-forwarded its `windows`
+branch without conflicts. Required release-builder/deploy/setup and pipe cleanup
+prerequisites are included. Old experiments and the other checkout's uncommitted
+GPU work remain separate. Original working checkouts were not switched or reset.
+
+`notes/windows-release-integration-20261007.md` records the fresh MSVC build,
+123 passed/6 skipped Windows tests, native DLL comparisons, named-pipe checks,
+WPF controls/languages and three actual GPU inference frames with no rejections.
+No native C/shader/ABI changes are introduced relative to `e616afc`; all ten live
+settings use the existing catalogue. The localhost socketpair sandbox timeout was
+resolved by the host test rerun, with no production-code change.
+
+The target is `origin/windows`; a dry-run push was accepted. Final publication
+SHA/result and full command logs are recorded in the local report directory
+`D:\NRonWindows\windows-publish-check-20261007`. Keep the older campaign and
+controls-only reports below as historical evidence, not a new FPS measurement.
+
+## Windows release and setup window (2026-10-06)
+
+The Windows checkout `D:\NRonWindows\release-04459d2` is on
+`codex/windows-setup-wizard`, based on `improve-release` commit `04459d2` and the
+Windows release fixes `c1c97b1`. Commit `e58f729` adds the English/Russian WPF setup
+window, private Python preparation, owned runtime installation, Steam Vulkan EXE
+selection, live effect toggling and diagnostic export. Author and committer use
+`185953089+Uzbekunknown@users.noreply.github.com`. This was the original local
+verification branch; the Windows integration entry above records the delivery.
+
+The x64 MSVC package was tested on Windows 11 25H2, Arc 140V 8GB, driver
+32.0.101.9033 and native CPython 3.12.12. 110 automated tests passed and 6 were
+skipped. The last DOOM Vulkan campaign session processed 3452 frames, with matching
+daemon/layer counts, zero NR rejections/errors, output 800x450 and network 320x320
+at scale 0.4. Off stopped the counts; game exit was 0; original Steam options and
+DOOM settings were restored. B570/B580 and the real DXVK path were unavailable.
+This was a functionality check, not a new controlled FPS benchmark or optimization.
+The complete commands, separate stdout/stderr and exit codes are in
+`D:\NRonWindows\wizard-check-20261006\REPORT.md`. The public ZIP is
+`dlss-nr-windows-wizard-e58f729-x64.zip` in that folder; it excludes NVIDIA DLLs,
+weights, private Python environments and user profiles.
+
+## Windows live controls restored (2026-10-07)
+
+The same branch now provides an English/Russian **NR controls** tab with all ten
+Linux `nr-panel` controls: render_scale, min_extent, profile, intensity,
+detail_strength, colour_strength, temporal, hold, release and cut_limit. The
+catalogue is shared `src/layer/nr_knobs.py`, rather than a second set of ranges.
+There are nine sliders with precise numeric entry, a profile selector, per-control
+defaults, reset all and reload. Configured users open directly on this tab.
+
+Settings changes merge only edited keys into the current root's JSON and replace
+it atomically. Unknown keys and valid advanced values outside a slider's normal
+range survive. Autosave waits 450 ms and for slider drag release. Failed workers
+retain pending changes. The daemon reads settings between frames, so there is no
+game restart; scale/extent can rebuild scratch for the next network frame. Reset
+writes explicit defaults because deleting keys leaves a running daemon's previous
+values. Daemon default scale is **1.0**; a new public package starts at **0.4**.
+Reinstallation now preserves chosen scale/minimum extent instead of forcing 0.4/320.
+
+Checks: 62 targeted Python tests, **56 passed / 6 skipped**; WPF self-test has 64
+named controls, all ten live controls and 140 EN/RU translation keys, exit 0.
+Real GUI drag saved 0.4 -> 0.55, numeric `0,35` saved 0.35, Natural selection,
+single default and all-ten reset each returned exit 0. English/Russian switching
+preserved settings; both the network controls and lower stability controls were
+visually checked. Live-parser tests exercised actual `Settings.refresh` without
+GPU initialization. No new game run or FPS benchmark is claimed for this follow-up.
+
+The configured consumer remains at
+`D:\NRonWindows\wizard-check-20261006\ready package (test)\NR-Setup.exe`.
+At the final check its chosen scale was **1.0**, min_extent **320**, effect off;
+do not overwrite user choices with the first-test recommendation. The last-frame
+320x320 readout is historical until new frames arrive. The follow-up report and
+separate command logs are in `D:\NRonWindows\wizard-controls-check-20261006`.
+Final public package: `dist\windows-controls-final`; ZIP:
+`D:\NRonWindows\wizard-controls-check-20261006\dlss-nr-windows-controls-x64.zip`.
+Its exact source commit is recorded by `release-metadata.json` and `REPORT.md`.
+The validated Windows integration uses the noreply identity stated above.
+
+Next work, only when requested: profile Windows frame time at a fixed scene and
+network size, separating game GPU contention, network execution, transport and
+host passes. Performance optimization is still deferred. Keep the earlier e58f729
+game results separate from this controls-only verification.
 
 ## Planned, not started
 
@@ -23,6 +238,499 @@ you need the evidence behind a line in this file, rather than reading them in or
   game's motion-vector convention); deferred by the owner on 2026-09-26. Tekken 7 and DoA5
   have no upscaler, so it needs a newer game.
 - **A FAQ** in the README, for the questions that keep coming back. Later.
+
+## Release builder integrated on improve-release (2026-10-05)
+
+`improve-release` contains improve `6d23efb` and the changes from PR #5 through
+its original `67b9e03`, replayed with contributor authorship and noreply committers.
+Both deploy scripts now use the common `scripts/build_release.py`, which refuses
+incomplete builds and includes libnr_alloc.dll on Windows. The docs conflict kept
+both Windows game results and the release section. `notes/improve-release-20261005.md`
+records twelve passing release tests, a real Linux package/install, packaged GPU and
+native image checks, and three actual daemon frames with zero rejections.
+Linux release host passes are rebuilt without -march=native. Windows MSVC/setup/game
+validation remains to be done on Windows. Master, improve and PR #5's fork remain unchanged.
+
+## Windows integrated into improve for master review (2026-10-05)
+
+`origin/windows` through `e616afc` is now integrated into improve. This includes
+allocator and named-pipe work, the x86 Windows layer, and packed staged loads
+selected on Intel's Windows driver. Linux retains the old loader by default.
+`notes/improve-windows-integration-20261005.md` records the scope and checks:
+all 44 Linux CTest entries passed, followed by the pipe-handle lifetime correction's
+daemon regressions. The actual Windows build/game sequence remains a Windows check.
+README's **How to test it** now precedes the example pictures.
+
+## Windows user quick start on improve (2026-10-05)
+
+`docs/WINDOWS-QUICKSTART.md` gives one MSVC route for new users: a 64-bit Python
+venv, their own weights, build and GPU check, `vkcube`, a Vulkan game, trigger
+on/off and a diagnostic report. It keeps the runtime in one checkout and explains
+Steam restarts losing the launcher environment. The README and Windows status
+page link it. It targets `improve` until merged into master; the Windows changes through e616afc are now integrated here.
+
+`prepare_layer.py` now accepts `--platform windows` and writes absolute DLL paths
+for the available x64/x86 layers; native Windows selects that platform by default.
+The Linux/Proton launcher and fixture-based Windows manifest tests pass, including
+paths with spaces. The guide's MSVC/game sequence was not run end to end on a
+Windows machine in this change. `.venv/` is ignored.
+## Windows staged operand copies: the interrupted experiment finished (2026-10-03)
+
+Continued the Windows session that stopped after its K-loop knockout measurements at
+6987c02. The allocator and pipe work were already complete. The useful change is now in
+`gemm_staged.comp`: aligned, non-transposed operands are copied to shared memory as raw
+128-bit vectors, instead of two half4 loads followed by individual half stores. The shared
+half view, arithmetic, accumulation order and output passes stay the same.
+
+`libxmx` selects it with specialization constant 2 on Intel's proprietary Windows driver.
+Other drivers keep the previous loader. `XMX_STAGED_PACKED=0` restores the old path;
+`=1` forces the new one, fixed at device creation. Eight-byte-only alignment uses the old
+half4 loader, odd alignment the scalar loader; gathered windows and transposed B retain
+their previous paths. No extra shader files or platform build flags are needed.
+
+**Measured on Arc 140V, Intel 101.9033, AC, quiet-checked before and after.** The final
+implementation, same shaders with the switch off/on/on/off, twelve warm replay samples per
+process (`frame_replay.py`; network-only wall time, not game FPS):
+
+| output / network | old loader | packed loader |
+|---|---:|---:|
+| 320x320 / 320x320 | 25.74-26.60 ms | 24.22-24.69 ms |
+| 1280x720 / 1344x768 | 186.46-199.63 ms | 169.13-170.15 ms |
+
+Comparing the faster median in each pair gives 5.9% and 9.3% less time. Both the original
+and changed-input heads retain their previous hashes: `e62005b8...` / `e7c72789...` at
+320, `c217fd2f...` / `95f46f67...` at 720p. All submission modes agree as well.
+
+`test_staged_packed.py`, registered in Make and CTest, compares 960 output buffers byte
+for byte in separate off/on processes: all simple epilogues, float/half outputs, transpose,
+partial tiles, the three staged builds, changed inputs, masks 0/7, output guards, and
+alignment that changes between batches. The initial standalone candidate also passed 452
+comparisons including fused residuals, QKV and gathered windows. The CMake/MinGW build
+passes all 37 CTest checks (the documented `gpu_window_attention` hang excluded); the
+MSVC runtime also passes the 62-case staged32 regression. Details and limitations are recorded in
+`notes/improve-shared-memory.md`.
+
+**The knockout figures need care.** Its `noglobal` values were `k0 & 7` and `k0 & 3`, both
+always zero for a step of 32; some other variants read uninitialized shared memory or remove
+required barriers. They suggested investigating operand copies, but do not establish an
+exact cost for any individual instruction. The retained implementation was selected from
+correct-output variants and full frames. The complete Windows/Mesa K-loop gap is not closed.
+
+Raw experiments, original interrupted-session logs, generators and the final A/B JSONs are
+local in `work/gemm-windows/`; no weights or captured frames were added to Git.
+**Next:** normal Linux regression after picking up the change; its default loader is unchanged.
+No new Linux timing round is required to finish this Windows investigation. A live game with
+the updated runtime remains unmeasured; existing game launchers may name a separate MSVC tree,
+which must be rebuilt before they can use this change.
+
+## On Linux at 5c8c31c: the kept request buffer, and the K loop Intel loses is the staged kernel's (2026-10-03)
+
+**5c8c31c on Linux.** No warnings, `make test` green (570), CTest 43 of 43. Its one change that
+Linux runs, the request buffer kept between frames, takes the receive at 1280x720 from 0.66-1.01
+to 0.39-0.53 ms (`daemon_stages.py` at 0.3, held, old and new alternated twice). The round trip
+stays within the noise.
+
+**`gemm_epilogues.py --kernel`, `--rounds 5`.** The files are `NRonWindows/linux-gemm-kernel-*.txt`.
+A step of 32 of K at 16128x128, from K = 256 to 1024:
+
+| kernel | Linux | Windows | Windows / Linux |
+|---|---:|---:|---:|
+| staged | 20 us | 43 us | 2.2x |
+| tiled | 33 us | 45 us | 1.35x |
+| resident, the plain 8x16 | 58-67 us | 80 us | 1.2-1.4x |
+
+So Mesa's plain kernel is not as far ahead of Intel's as its staged one is. **What Intel's
+compiler loses is the staged kernel's own loop.** On Mesa, staging the operands through shared
+memory makes a step 1.65x faster than the tiled kernel's. On Intel's it makes the step no faster
+(43 us against 45). Intel reports the staged kernel's shared memory as 8 KB, as Mesa does, so a
+larger declaration halving the workgroups a core holds is not the cause. The candidates are the
+staged loop's shared-memory work on Intel's compiler: the copy into shared memory, the barriers,
+and `coopMatLoad` from shared memory.
+
+At whole shapes on Linux the tiled kernel is slower than the staged one everywhere
+(16128x128x128 half 150 against 90 us, 320x1024x4096 1699 against 469), and the plain kernel
+slower again (254 and 1458). On Windows the tiled kernel wins at the middle shapes. So the
+ranking belongs to the driver, and the Windows entry below measured a rule by shape at no more
+than 2.9 ms of a 1344x768 frame there.
+
+**Next on Windows:** take the staged loop apart the way window attention's was found
+(`notes/improve-shared-memory.md`): each of the copy into shared memory, the barriers and the
+loads from shared memory replaced in turn by a constant (a wrong answer, timed only). Whichever
+one takes the 43 us toward 20 is the part Intel's compiler handles differently.
+
+## On Windows: the pipe without copies, and the request buffer kept between frames (2026-10-03, morning)
+
+**What the pipe did.** `nr_pipe.NamedPipeConnection` had no `recv_into`, so
+`nr_daemon.receive` read a frame a megabyte at a time:
+- each piece into a fresh ctypes buffer;
+- copied out as `bytes`;
+- the pieces joined.
+
+`sendall` copied the answer twice before `WriteFile`. Now `recv_into` reads straight into the
+target, and `sendall` hands `WriteFile` the bytes where they lie: a bytearray through
+`from_buffer`, `bytes` through its own storage. `WriteFile` on this blocking pipe returns once
+the pipe holds the bytes, so the buffer is free again after it.
+
+**`nr_daemon.receive` keeps the request's buffer** (and the interface mask's) for the next frame
+of the same size. That holds because nothing keeps a request past its answer:
+- the daemon answers one frame at a time;
+- decode and encode make arrays of their own;
+- the history keeps decoded floats;
+- the answer written into the request's bytes has been sent before the next frame arrives.
+
+This change runs on Linux too, where the 3.7 MB came from a fresh mmap every frame.
+
+**Tests.**
+- `src/layer/test_pipe.py` (new, CTest on Windows) sends 8 frames from 1 byte to 3.7 MB through a
+  real pipe, one connection each. Every byte comes back. A frame of the same size lands in the
+  same buffer and a new size gets a new one. A status check is still one, and both sends work.
+- `test_alloc.py`'s daemon half now sets the old path against the new one: NumPy's allocator
+  with a fresh request buffer every frame, against the kept blocks, poisoned, with the kept
+  request buffer. The answers are the same bytes.
+- CTest 36 of 36, and vkcube through the MSVC layer answered 90 frames.
+
+**At 1280x720** (`daemon_stages.py`, 0.3 and 0.5, fresh and held, old and new alternated twice;
+ms):
+
+| | old | new | Linux |
+|---|---:|---:|---:|
+| receive | 3.0-3.2 | 0.55-0.59 | 0.9 |
+| send | 2.6-2.8 | 0.46-0.55 | 0.75 |
+| the daemon's rest | 9.4-11.4 | 5.9-7.4 | 7.2-8.2 |
+| round trip at 0.3 | 40.8-41.8 | 34.9-36.0 | 33-40 |
+
+Windows' host side is level with Linux's now. What is left of the gap is the graph: the K loop
+on Intel's compiler (the entry below).
+
+**Next on Linux:**
+- `make test` with this commit: the kept request buffer is its one change that Linux runs;
+- the three `gemm_epilogues.py --kernel` runs, as asked in the entry below.
+
+## On Windows: Linux's two GEMM runs — the stage is not the slow part, the K loop is (2026-10-03, morning)
+
+On mains, quiet-checked before and after, Intel's 101.9033; the first runs 12 minutes after a
+boot. The tables are in `NRonWindows/windows-gemm-kernel-*-9033.txt`.
+
+**(a) The half output stored straight from the accumulators.** In a copy of `gemm_staged.comp`,
+a narrow output with no residual, no QKV, no pooling and no window gather is published on the
+accumulator's own elements, converted to a float16 matrix and stored with `coopMatStore`, with
+no stage and no barrier. The output is the same bytes: 30 outputs, half, E4M3 and gate, B plain
+and transposed, five shapes. It is not faster:
+- the short-K shape that is 2.1x Mesa's time, 64512x128x64, goes from 529-532 to 640-642 us for
+  half, and from 531-534 to 682 for gate;
+- 16128x128x128 and 320x1024x4096 are 4-12 % faster, and the rest move within 5 %.
+
+The stage stays, and the copy is not in the tree.
+
+**(b) The three kernels.** `gemm_epilogues.py --kernel staged|tiled|resident` (new) puts every
+call on one of libxmx's GEMM kernels, and checks it on the device's profile. At 16128x128, from
+K = 256 up, a step of 32 costs:
+
+| kernel | a step of 32 |
+|---|---:|
+| staged | 43-56 us |
+| tiled, no stage | about the same |
+| resident, the plain 8x16 | 77-110 us |
+| staged on Linux | 17-24 us |
+
+So the gap to Mesa is in the loop itself, and staging does not make it.
+- In isolation the tiled kernel beats the staged one at the middle shapes: 16128x128x128 half
+  73-86 against 131-134 us, 4032x128x256, 4032x256x256 and 320x1024x4096. It loses at
+  64512x128x64 and 320x4096x1024.
+- In the graph it does not pay: `frame_profile.py --calls` at 1344x768, two runs each.
+  - Staged: 125.0 ms of GEMM.
+  - Tiled wherever it can run: 131.8.
+  - The faster of the two at every call site: 122.1, at most 2.9 ms for a rule by shape.
+  - The heads are the same either way (`e62005b8`, `c217fd2f`).
+
+  So no kernel choice by driver.
+
+**Next, on Linux:** `python3 src/bench/gemm_epilogues.py --kernel resident --rounds 5`, and the
+same with `tiled` and `staged`, into `NRonWindows/linux-gemm-kernel-*.txt`. If Mesa's plain
+kernel is as far ahead of Intel's as its staged one is, what Intel's compiler loses is the
+loop's own code.
+
+## On Windows: the daemon keeps NumPy's large blocks, and its 1280x720 frame beside Linux's (2026-10-02, after the Linux run)
+
+On mains, quiet-checked before and after, Intel's 101.9033, the CMake/MinGW tree.
+
+**The comparison below this entry set unlike things side by side.** Windows' 27-29 ms of "rest"
+came from the DoA5 log, with the game running beside the daemon. Linux's 7-8 ms came from
+`daemon_stages.py`, with the daemon alone. On Windows the same command (1280x720 at 0.05, 0.3 and
+0.5, 15 frames) gives 17-21 ms on held frames, and 16-20 on fresh ones. So the gap that is
+Windows' own is 10-13 ms, and the other ~8-10 ms of the 27-29 came with the game.
+
+**`src/layer/nr_alloc.c`**, built as `work/libnr_alloc.dll` by `build_win.bat` (step 6) and by
+CMake on Windows, is a NumPy data allocator in front of NumPy's own. It keeps freed blocks of
+1 MB and more, matched by exact size. `serve()` installs it on Windows only, in the thread that
+runs the frames, and marks the end of every connection. A block that a whole frame did not take
+again goes back to the system at the next mark, and a mark with nothing in or out (a status
+check) changes nothing. A cap of 256 MB bounds it in between. `NR_KEEP_BLOCKS=0` turns it off,
+and without the library the daemon runs as before. Linux neither builds nor imports it.
+- What a frame keeps, measured after the sixth frame of one size: 8 MB at 640x360, 40 at
+  1280x720, 97-119 at 1080p, 172 at 1440p. That is one frame's large arrays: 3 of them at
+  640x360, 7-11 above it. Only the warm-up frames and size changes keep more, for a frame. That
+  is why the cap is 256 MB rather than the prototype's 1 GB.
+- `src/layer/test_alloc.py`, in CTest on Windows (35 of 35): the reuse, the zeroing, the marks,
+  the cap, four threads at once. Then the daemon's own frame path runs 22 frames twice:
+  - at 1280x720 and 640x360, fresh and held, letterboxed and with an interface mask;
+  - once on NumPy's allocator, once on this one with every large block it hands out filled with
+    0xff first.
+
+  The answers are the same bytes, so nothing in the frame reads a block before writing it. The
+  MSVC build passes the same test, and vkcube through the spawned daemon answered 90 frames.
+
+**The daemon at 1280x720** (`daemon_stages.py`, held frames, off against on, two alternating
+rounds; ms):
+
+| scale | rest, off | rest, on | Linux |
+|---|---:|---:|---:|
+| 0.05 | 17.1-17.4 | 10.6-11.3 | 7.2 |
+| 0.3 | 18.9-19.1 | 10.8-11.3 | 7.3 |
+| 0.5 | 20.4-20.9 | 11.6-11.7 | 8.2 |
+
+At 0.3, stage by stage, off against on: decode 0.6-0.8 to 0.4-0.5, resample 2.6-2.8 to 1.0-1.1,
+the composition and encode 4.7-5.1 to 1.8-2.0, after the answer 6.4-7.0 to 2.7. The composition
+is now faster than Linux's 2.1. What is left over Linux is mostly the pipe: the send takes
+2.6-2.8 ms against 0.75. The receive takes 3.2-3.7 against 0.9, outside the daemon's clock on
+both. The received frame is also a fresh 3.7 MB `bytearray` every frame, which this allocator
+does not see.
+
+**Round trips** (`work/tools-win/live_rates_win.py`, fresh frames, two alternating rounds):
+
+| case | off | on | page faults a frame, off | on |
+|---|---:|---:|---:|---:|
+| 640x360 at 0.5 | 32.6-32.7 ms | 30.7-31.4 ms | 2 030 | 0-8 |
+| 1280x720 at 0.3 | 46.0-46.6 | 39.0-39.4 | 12 700 | 2 600 |
+| 1280x720 at 0.5 | 65.2-66.0 | 57.5-58.2 | 13 900-14 000 | 2 580 |
+| 1920x1080 at 0.3 | 76.7-85.8 | 64.2-64.7 | 30 260 | 5 860 |
+
+**Not measured yet:** a game. DoA5 at 1280x720 and 0.3 was 60 ms a frame in the daemon's log.
+The steps this changes took ~8 ms less here, on the daemon alone.
+
+**Next:**
+- receive into a buffer kept from frame to frame;
+- what the pipe costs;
+- the two GEMM runs the Linux entry below asks for.
+
+## On Linux at d2381ed: the 1280x720 frame taken apart beside Windows', and the GEMM epilogues (2026-10-02, late night)
+
+> **Corrected by the entry above.** The table below set Windows' DoA5 log, taken with the game
+> running beside the daemon, against Linux's daemon alone. On Windows, `daemon_stages.py` with
+> the daemon alone gives 17-21 ms of rest. So Windows' own gap is 10-13 ms, not the ~20 claimed
+> below, and the game added the rest. The per-stage figures for Linux stand.
+
+**d2381ed on Linux.** Nothing Linux builds changed: `nr_layer.def`, `build_win.bat`, the docs and
+a bench script. `make` gives no warnings, `make test` is green (570) and CTest 43 of 43.
+`make test-proton` loads both layers, the 32-bit one included.
+
+**The frame at 1280x720, stage by stage.** `src/bench/daemon_stages.py` (new) runs the daemon's
+own `main()` in-process, with each stage of `process_connection` timed. It drives the daemon over
+its own transport, one connection a frame, as the layer does. Below, medians of 15 frames of a
+held scene, so the history is kept as in the games' logs. "The rest" is the daemon log's own
+measure on both systems: its time from the decode to the end of the log line, less the graph.
+Windows' columns are the medians of its DoA5 log, whose frame counts in steps of 10 ms.
+
+| scale | network | Linux graph | Linux rest | Linux frame | Windows graph | Windows rest | Windows frame |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 0.05 | 320x320 | 23-26 ms | 7.2 ms | 30-33 ms | 31 ms | 29 ms | 60 ms |
+| 0.3 | 384x320 | 25-36 ms | 7.3 ms | 33-40 ms | 33 ms | 27 ms | 60 ms |
+| 0.5 | 640x384 | 42 ms | 8.2 ms | 51 ms | 52 ms | 29 ms | 80 ms |
+
+- **Every stage on Linux is under 2.2 ms.** At 0.3: decode 0.35, resample 0.57, the history 0.38,
+  the features 0.31, the graph's copies 0.7, the composition and encode 2.1, the send 0.75, and
+  1.9 after the answer (the change figure, the history, the log line). The receive, 0.9, is
+  outside the daemon's clock on both systems. So the pipe's inbound transfer is not in Windows'
+  27-29 ms; its outbound send is.
+- **So Windows spends ~20 ms more in the same steps.** Page faults explain most of it on the
+  agent's own numbers. Scaled by pixels from `phase71`'s 13 887 a frame at 1024x768, this size
+  takes ~16 000 faults a frame. At the 0.7-1 us a fault that 1080p's 36 478 imply, that is
+  11-15 ms. The tool names the stage on Windows too. Its pipe client is written and not yet run
+  there.
+- `live_rates.py`, as asked (fresh frames, so no history): 28.3 / 31.1 / 47.8 ms at
+  0.05 / 0.3 / 0.5.
+- **The graph at 384x320 moves between daemon processes**: 25 ms in some, 31-36 in others, with
+  the same code on a quiet machine, and steady within each. One process run across five scale
+  changes held 24-28 ms, so changing the scale live does not cause it. This file has recorded a
+  10 % spread between processes before, from buffer placement ("IT RENDERS"). On this field it
+  reaches 44 %.
+
+**`gemm_epilogues.py` on Linux.** The results are in `NRonWindows/linux-gemm-epilogues.txt`, and
+the comparison with Windows in `linux-vs-windows-gemm-epilogues.txt`. Every shape is 1.1-2.7x
+slower on Intel's compiler. There are two separate gaps:
+- **The memory path.** On Linux the short-K GEMMs run at the memory ceiling: 93-101 GB/s of A
+  read and C written at K = 64 (64512x128x64: the half output 266 us, the residual with its skip
+  438). On Intel's compiler the same bytes move at 36-62 GB/s through the stage (531 and 1162
+  us). The float32 output, stored straight from the accumulators, moves at 63-91 GB/s. So on
+  Windows the stage and its store loop are the slow part. The E4M3 publish and the gate look free there only because
+  that path already takes twice Mesa's time; on Linux the gate costs 16-25 % over the half store
+  at K = 64-128.
+- **The K loop.** 17-24 us a step of 32 at 16128x128 on Linux (two runs), against 42 on Windows.
+  That is the 2x at 320x1024x4096.
+
+**Next on Windows, to split the two:**
+1. The plain half output stored with `coopMatStore` straight from the accumulators, converted to
+   float16, without the stage. If that moves the float32 path's bytes, the element-wise
+   epilogues (E4M3, gate) could run on the accumulator's own elements (`length()` and `[]`) and
+   stay bit-identical. The residual is harder, because the window residual maps its skip
+   through the crop.
+2. The base kernel without staging (`gemm_coopmat.spv`) on both drivers, for the K loop alone.
+
+## Dead or Alive 5 on Windows, 32-bit, and why the frame stays at 60 ms below scale 0.35 (2026-10-02, night)
+
+**What ran.** DoA5LR is 32-bit D3D9. It ran through DXVK 3.1.1's `x32\d3d9.dll`, with the new
+32-bit layer and the 64-bit daemon on a named pipe. 5 190 frames were answered at 1280x720 with
+no error. Its folder sits in the Steam library Linux's Proton also uses, and it is back as it
+was. The launchers are in `D:\NRonWindows\nr-game`.
+
+**The 32-bit layer needed a fix in `nr_layer.def`.** The file exported `vkGetInstanceProcAddr`
+and `vkGetDeviceProcAddr`, which the layer does not define; its own are `nr_GetInstanceProcAddr`
+and `nr_GetDeviceProcAddr`, handed over in the negotiation. The 64-bit build linked `vulkan-1.lib`,
+which supplied the loader's own functions to export under those names. The 32-bit build has no
+such library to link and failed. Now both names are aliases of the layer's own functions. The
+layer links no Vulkan library at all and depends on `KERNEL32.dll` alone. `build_win.bat`
+builds `nr_layer32.dll` beside `nr_layer.dll`, with the x86 cross tools in a shell of their own.
+- The 64-bit layer: vkcube with the spawn answered 90 frames, and the probe passed.
+- The 32-bit layer: the loader inserts it, and a 32-bit instance comes up through it.
+
+**The first try did nothing, through Steam.** `game.exe` imports `SteamAPI_Init` and not
+`SteamAPI_RestartAppIfNecessary`, and holds no `steam://` and no `ShellExecute`, so no
+`steam_appid.txt` went in. The game came back through Steam all the same, from inside the Steam
+API library beside it, and lost the layer's environment. The sign was DXVK's log, written beside
+the game rather than into `DXVK_LOG_PATH`. A `steam_appid.txt` with 311730 fixed it.
+
+**At 1280x720, per render scale.** The frame is the daemon's log, in steps of 10 ms. The rest is
+the frame less the graph.
+
+| scale | network | frames | frame | daemon fps | graph | the rest |
+|---|---|---:|---:|---:|---:|---:|
+| 0.05-0.15 | 320x320 | 436 | 60 ms | 16.7 | 31-32 ms | 28-29 ms |
+| 0.3 | 384x320 | 257 | 60 ms | 16.7 | 33 ms | 27 ms |
+| 0.35 | 448x320 | 158 | 60 ms | 16.7 | 36 ms | 24 ms |
+| 0.5 | 640x384 | 3 720 | 80 ms | 12.5 | 52 ms | 28 ms |
+| 0.55 | 704x448 | 269 | 90 ms | 11.1 | 63 ms | 27 ms |
+| 0.75 | 960x576 | 339 | 150 ms | 6.7 | 107 ms | 43 ms |
+
+**Why a lower scale stops helping.** The network's field has a floor of 320x320 (`min_extent`,
+the vendor's), so below 0.35 the graph stays at 31-33 ms. The rest, ~28 ms, is the work at the
+window's own resolution: the frame over the pipe, the decode, the composition with the history
+at 1280x720, the encode and the way back. The render scale does not touch it.
+
+On Linux the owner saw close to 30 fps at the same window size and 0.3. Linux's daemon took 33 ms
+a frame at 1280x720 and 0.35 (HANDOFF, 2026-09-26), so its graph and its rest are both smaller.
+The graph's share is the GEMM on Intel's compiler (below, `gemm_epilogues.py`). The rest's is
+mostly Windows' page faults (`phase71`), and the pipe's share has not been measured.
+
+**MK11 without the pass** ran a steady 60 fps, the game's own cap (the owner).
+
+**Next:** the NumPy allocator that keeps large blocks, into the Windows daemon. Measure what the
+pipe costs a frame. `min_extent` below 320 at the low scales, for the owner to judge in a game.
+
+## The first game on Windows: Mortal Kombat 11 through DXVK, live (2026-10-02, evening)
+
+**What ran.** MK11's DX11 executable, 64-bit, with DXVK 3.1.1's `d3d11.dll` and `dxgi.dll`
+beside it. The MSVC build's layer was found through `VK_ADD_IMPLICIT_LAYER_PATH`, in live mode;
+it spawned its own daemon on a named pipe, and the probe read `float16_t 0/90368`. Nothing was
+installed or registered. The game's folder is back as Steam left it: the three files the test
+added are gone, and the daemon is stopped. The recipe is in `docs/WINDOWS.md`. The launchers are
+outside the tree, in `D:\NRonWindows\nr-game`. The owner played; 4 003 frames were answered with
+no error.
+
+At 1280x720, per render scale. The times are the daemon's own: the frame from the log, which
+counts in steps of 10 ms, and the graph from its GPU split. "The rest" is the frame less the
+graph.
+
+| scale | network | frames | frame | daemon fps | graph | the rest |
+|---|---|---:|---:|---:|---:|---:|
+| 0.35 | 448x320 | 790 | 60 ms | 16.7 | 35 ms | 25 ms |
+| **0.5** | 640x384 | 2 988 | 80 ms | 12.5 | 51 ms | 29 ms |
+| 0.55 | 704x448 | 50 | 100 ms | 10.0 | 61 ms | 39 ms |
+| 0.75 | 960x576 | 33 | 150 ms | 6.7 | 107 ms | 43 ms |
+
+**The game's own counter showed 10 fps at 0.5**, against the daemon's 12.5: the layer's copies and
+the game's own rendering are the difference. Tekken 7 on Linux reached 20-22 fps at 1280x720 and
+0.3. That is another game, but it is the same ~1.3x this machine's live rates show against
+Linux's (the page faults and the GEMM, below). The game's frame rate without the layer was not
+recorded.
+
+**One trap.** MK11 calls `SteamAPI_RestartAppIfNecessary`. Started outside Steam, it restarts
+through Steam and drops the environment that loads the layer. A `steam_appid.txt` with its app id
+(976310), beside the executable, keeps it in place.
+
+**Next:** Dead or Alive 5, the game with the most Linux numbers. It is 32-bit D3D9, so it needs a
+32-bit layer, and `build_win.bat` builds 64-bit only.
+
+## On Windows, on mains: MSVC's OpenMP measured, and the staged GEMM taken apart (2026-10-02, later)
+
+On mains, quiet-checked before and after, Intel's 101.9033.
+
+**MSVC's OpenMP holds up.** `work/tools-win/live_rates_win.py` ran the MSVC tree and the
+CMake/MinGW tree in turn, two rounds each, and the first round was warm-up. In the second
+round MSVC was 32.9-34.8 ms at 512x288-640x360 against MinGW's 32.6-33.7, 74.3 against 71.2 at
+1024x768, and 180.3 against 183.5 at 1080p. The host's share of a frame (the frame less the
+daemon's own GPU split) is 4.9-6.3 ms against 4.6-5.7 at the live sizes, and 45 against 41 at
+1080p. Without OpenMP the MSVC build had been about 10 % slower at 720p.
+
+**Intel's instruction counts do not explain the GEMM.** `XMX_PIPELINE_STATS` on 3d8951c,
+pipeline by pipeline against Mesa's (`NRonWindows/windows-vs-linux-stats.txt`):
+
+| kernel | Intel's instructions against Mesa's | speed on Intel |
+|---|---|---|
+| staged GEMM, every specialisation | 0.74-1.07x: fewer, and still slower | slower |
+| window block | 1.2-1.5x | faster |
+| fused feed-forward | 2.2-3.2x | as fast |
+
+Instruction counts say nothing across the two compilers. Intel has no spills anywhere in the
+graph, and the scratch only in the unspecialised builds.
+
+**One shape, each epilogue in turn** (`src/bench/gemm_epilogues.py`, new; on Windows in
+`NRonWindows/windows-gemm-epilogues-9033.txt`):
+- **The E4M3 publish and the gate activation cost nothing on Intel.** They take the time of
+  the plain half store through the stage: 64512x128x64 at 531 / 530 / 533 us, 16128x128x128
+  at 134 / 137 / 141.
+- **The residual costs a lot at a short K.** 64512x128x64 takes 1162 us against 531, and
+  16128x128x128 263 against 134. At K = 256 it is +10 %, and at K = 4096 nothing. The skip it
+  reads, 2 bytes an element, explains a third of that at most.
+- **A float32 output, stored straight from the accumulators, is slower than the half store
+  through the stage**: 659 against 531 us at 64512x128x64, with twice the bytes.
+- **The K loop**: about 41 us for each 32 of K at 16128x128, around 3.2 TFLOP/s.
+
+Tried on Intel's compiler, bit-identical and no faster, so not kept:
+- the residual read four channels at a time, the cosine column found once;
+- every skip loaded before the first store.
+
+The first, written as `branch + skip * cos`, broke `test_gemm_residual`. Intel's compiler did
+not contract it to one fused multiply-add the way it does the scalar form, and 5 % of the
+values came out an ulp apart. With `fma()` written out it was bit-identical. The scalar form
+is safe only because both compilers contract it.
+
+Set beside the frame, the slow part is the short GEMM's common path, not its epilogue. In the
+frame the gate's 64512x128x64 takes ~286 us an item on Mesa. Here it takes 533, the same as
+its plain half store. **Next on Linux: `gemm_epilogues.py` itself**, the same table and K
+sweep, so the K loop, the stage and the store can each be set against Intel's.
+
+## On Windows at 3d8951c: the merge holds, and MSVC's build has OpenMP (2026-10-02)
+
+Linux's list after the merge, run on Intel's 101.9033. Master's history was checked first: the
+download commit `52b3e55` is not in it. Its only authors are the two noreply identities: the
+contributor's, on the squash and on `afb2a65`, and the owner's.
+
+- **CMake/MinGW**, rebuilt from clean: 0 warnings. CTest without `gpu_window_attention`: 34 of
+  34. `ref_native_image` is byte-identical, and `gpu_denorm` keeps 2^-20 on all three forms.
+- **`frame_replay.py`**: heads `e62005b80145b97a` / `c217fd2fdbbe6b79`.
+- **MSVC, `build_win.bat`**: 0 errors.
+  - `libnr_image.dll` depends on `VCOMP140.DLL` and `KERNEL32.dll` (`dumpbin /dependents`), and
+    System32 has `vcomp140.dll` 14.51.36247.
+  - Three C4068 warnings remain: MSVC does not know `_Pragma("GCC ivdep")` in `COMPOSE_ROWS`
+    (`nr_image.c:677`, expanded at 743 and 749). They are harmless. An `NR_IVDEP` macro would
+    silence them: `GCC ivdep` for gcc, `__pragma(loop(ivdep))` for MSVC.
+- **`test_native_image.py` on the MSVC library**, the C++ front end with `/openmp`:
+  byte-identical.
+- **The MSVC layer spawning its own daemon under vkcube** (`NR_LAYER_SPAWN=1`): 89 frames
+  answered, the probe `float16_t 0/90368`, no crash.
+- **Not measured: the live rates with MSVC's OpenMP.** The laptop was on battery (34 %) and was
+  no longer quiet by the end. The numbers taken then are not comparable to the earlier ones on
+  mains, and are not recorded. To redo on mains.
 
 ## PR #3 merged with the button (2026-10-02)
 

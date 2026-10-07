@@ -9,7 +9,7 @@ the suite instead:
 
 - every shader the runtime loads is built by both, from the same source with the same defines;
 - every script `make test` runs is registered with CTest;
-- the native passes get the flags their contract rests on in both.
+- the native passes get the flags their contract rests on in both, and the same CPU floor.
 """
 import pathlib
 import re
@@ -88,6 +88,11 @@ def main():
     for flag in ("-ffp-contract=off", "-fno-fast-math", "-fno-trapping-math"):
         check(f"the native passes get {flag} from both", flag in rule and flag in cmake)
     check("and OpenMP from both", "-fopenmp" in rule and "OpenMP::OpenMP_C" in cmake)
+    # A release copies the library to other machines, so neither may build it for this one.
+    floor = re.search(r"^NR_IMAGE_ARCH \?= (\S+)$", make, re.M)
+    floor = floor.group(1) if floor else None
+    check("and the same CPU floor from both", bool(floor) and "$(NR_IMAGE_ARCH)" in rule
+          and f"PRIVATE {floor})" in cmake and floor != "-march=native", floor or "none")
     if FAILURES:
         print(f"\n{len(FAILURES)} FAILED: " + ", ".join(FAILURES), flush=True)
         return 1
