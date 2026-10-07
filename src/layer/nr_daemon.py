@@ -935,7 +935,9 @@ def half_probe_child():
         want = padded.astype(np.float16).astype(np.float32)
     mismatches = {}
     for name, buf in zip(("bit-twiddled", "packHalf2x16", "float16_t"), outs):
-        got = buf.view()[:n]
+        # download, not view: on a card whose memory the host cannot map (XMX_STAGING=1
+        # here) a graph buffer has no view, and the daemon died at its first start
+        got = buf.download(np.float32, n)
         bad = ~((got == want) | (np.isnan(got) & np.isnan(want)))
         mismatches[name] = int(bad.sum())
     print("half rounding: " + ", ".join(f"{k} {v}/{n}" for k, v in mismatches.items()),
