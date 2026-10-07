@@ -101,8 +101,9 @@ daemon runs as before. Linux does not build it.
 The staged GEMM uses raw 128-bit operand copies on Intel's Windows driver. On Arc 140V
 with driver 101.9033 this reduced warm graph time by about 6% at 320x320 and 9% at 720p,
 with the same output bytes (`notes/improve-shared-memory.md`). Set `XMX_STAGED_PACKED=0`
-before starting the daemon to compare the old loader; `=1` forces the new one. Other
-drivers keep the old loader by default. Rebuild both `libxmx` and the three staged shaders
+before starting the daemon to compare the old loader; `=1` forces the new one. Since
+2026-10-07 Mesa takes it too: about 2 % at 720p and 1080p, nothing at 320x320, the same
+output bytes. Rebuild both `libxmx` and the three staged shaders
 in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
 an already running daemon or a separate MSVC build.
 

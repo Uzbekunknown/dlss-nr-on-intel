@@ -227,7 +227,9 @@ requires 16-byte pointers and the row stride and current batch offset aligned to
 halves. Eight-byte
 alignment keeps the previous half4 path; other alignment keeps the scalar one. Window
 gathers and B transposes are unchanged. `XMX_STAGED_PACKED=0|1`, read once before pipeline
-creation, permits an A/B using the same binaries. Linux defaults to 0.
+creation, permits an A/B using the same binaries. Linux defaulted to 0 until 2026-10-07; it
+is on for every driver since, after Mesa measured the same heads and about 2 % at 720p and
+1080p (`notes/HANDOFF.md`, that day).
 
 **Final implementation, off/on/on/off in separate processes, twelve warm replay samples
 per process.** Arc 140V, Intel 101.9033, AC, performance power mode, quiet checks before

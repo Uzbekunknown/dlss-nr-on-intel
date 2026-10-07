@@ -672,7 +672,7 @@ int xmx_init(const char *spv_path)
 	 * rounding point in the graph silently vanishes. `XMX_HALF_ROUND=pack` or `cast` overrides,
 	 * to measure the other one on either driver. */
 	g.half_by_cast = 0;
-	g.staged_packed = 0;
+	g.staged_packed = 1;
 	if (props.apiVersion >= VK_API_VERSION_1_2) {
 		VkPhysicalDeviceDriverProperties driver = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
@@ -680,7 +680,6 @@ int xmx_init(const char *spv_path)
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &driver };
 		vkGetPhysicalDeviceProperties2(g.pd, &query);
 		g.half_by_cast = driver.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
-		g.staged_packed = driver.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
 	}
 	const char *half = getenv("XMX_HALF_ROUND");
 	if (half && *half) {
@@ -689,9 +688,10 @@ int xmx_init(const char *spv_path)
 		else fprintf(stderr, "libxmx: XMX_HALF_ROUND=%s is neither pack nor cast; keeping %s\n",
 			     half, g.half_by_cast ? "cast" : "pack");
 	}
-	/* Raw 128-bit global/shared copies speed up the staged GEMM on Intel's Windows
-	 * driver. Keep the old loader elsewhere until measured there; the override compares
-	 * both spellings with identical SPIR-V. Fixed before any pipelines are created. */
+	/* Raw 128-bit global/shared copies in the staged GEMM's loader, on every driver: 6-9 %
+	 * of the graph on Intel's Windows driver, about 2 % at 720p and 1080p on Mesa and nothing
+	 * at 320x320, the same bits on both. `XMX_STAGED_PACKED=0` keeps the half-vector loader,
+	 * to compare them with identical SPIR-V. Fixed before any pipelines are created. */
 	const char *packed = getenv("XMX_STAGED_PACKED");
 	if (packed) {
 		if (!strcmp(packed, "1")) g.staged_packed = 1;

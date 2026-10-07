@@ -61,8 +61,9 @@ layout(buffer_reference, scalar, buffer_reference_align = 8)  buffer Half4Buf { 
 layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Float4Buf { vec4     v4[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Packed8Buf { uvec4    v8[]; };
 
-/* Raw 128-bit operand copies help Intel's Windows compiler. The host selects them
- * there at pipeline creation; other drivers retain the measured half-vector loader. */
+/* Raw 128-bit operand copies: faster on Intel's Windows compiler and, where the graph is
+ * large, on Mesa. libxmx sets this on every driver (XMX_STAGED_PACKED=0 to compare); the
+ * loaders below stay for the operands they cannot take. */
 layout(constant_id = 2) const bool STAGED_PACKED = false;
 
 layout(push_constant, scalar) uniform Push {
