@@ -137,9 +137,16 @@ rem parallel for in C mode outright (C3015 on the canonical sample, in /TC), and
 rem it in C++ mode. So this one file goes through the C++ front end. The only C-isms that
 rem costs are explicit casts from malloc, added for it. Without OpenMP every host pass runs
 rem on one core: 212-216 ms of replayed graph at 720p against 191-195 with gcc's OpenMP.
+rem
+rem NR_F16C: MSVC has no _Float16, and with this nr_image.c converts each half with F16C's
+rem one instruction instead of the arithmetic, the same bits for every float. F16C is part of
+rem the x86-64-v3 floor the Makefile and CMake build for, every CPU since Haswell and Zen 1.
+rem On the Arc 140V the features pass goes from 1.0-2.9 ms to 0.4-0.8 at 720p and 1080p.
+rem Not /arch:AVX2: MSVC takes the intrinsics without it, and under it the composition,
+rem which MSVC does not vectorise either way, was 0.1-0.4 ms slower.
 echo [5/6] building libnr_image.dll ...
 powershell -NoProfile -Command "$s = Get-Content '%REPO%\src\ref\nr_image.c' -Raw; $m = [regex]::Matches($s, '(?m)^(?!static)[^\n]*?\b(nr_\w+)\s*\([^;]*\)\s*\{') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique; @('LIBRARY libnr_image','EXPORTS') + ($m | ForEach-Object { '    ' + $_ }) | Set-Content '%WORK%\libnr_image.def'"
-cl /nologo /O2 /TP /D_WIN32 /D_CRT_SECURE_NO_WARNINGS /fp:precise /openmp /Fo:"%WORK%\nr_image.obj" /Fe:"%WORK%\libnr_image.dll" /LD "%REPO%\src\ref\nr_image.c" /link /DEF:"%WORK%\libnr_image.def"
+cl /nologo /O2 /TP /D_WIN32 /D_CRT_SECURE_NO_WARNINGS /fp:precise /openmp /DNR_F16C /Fo:"%WORK%\nr_image.obj" /Fe:"%WORK%\libnr_image.dll" /LD "%REPO%\src\ref\nr_image.c" /link /DEF:"%WORK%\libnr_image.def"
 if errorlevel 1 ( echo ERROR: libnr_image.dll failed & exit /b 1 )
 echo   libnr_image.dll
 

@@ -106,12 +106,15 @@ is *bits*, not values.
   build time, so a symbol added later cannot silently go missing (a missing one only
   shows as `function 'xmx_...' not found` from ctypes, far from the cause).
 - `nr_image.c` uses `_Float16` (GCC/Clang). On MSVC a half is carried as its sixteen
-  bits through the file's own `half_bits`/`half_from_bits` arithmetic — verified against
-  numpy over **all 65536 half values**. The first hand-rolled widening had a wrong
-  subnormal exponent bias (0x8f-shift instead of 113-shift); caught by the file's own
-  test suite, which is 197/197 byte-identical.
-- MSVC `/openmp` refuses `size_t` loop variables (C3015); those loops run serially on
-  Windows. The GPU does the network; these are the passes around it.
+  bits, and F16C's instructions convert them when the build defines `NR_F16C`, as
+  `build_win.bat` does. Without it the file's own `half_bits`/`half_from_bits` arithmetic
+  does, verified against numpy over **all 65536 half values** and against F16C over all
+  2^32 floats. The first hand-rolled widening had a wrong subnormal exponent bias
+  (0x8f-shift instead of 113-shift); caught by the file's own test suite, byte-identical
+  in all of its now 353 checks.
+- MSVC `/openmp` refuses `size_t` loop variables (C3015), and any `parallel for` in C mode;
+  the loops count with `ptrdiff_t` and `build_win.bat` compiles the file as C++ (`/TP`), so
+  they run in parallel on Windows too. The GPU does the network; these are the passes around it.
 - `restrict` → `__restrict`; `__attribute__((always_inline))` → `__forceinline`.
 - `<windows.h>` defines `interface` as `struct` — a Vulkan entry point's parameter named
   `interface` breaks the build 1300 lines later.

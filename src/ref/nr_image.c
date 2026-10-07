@@ -58,9 +58,11 @@
  *
  * GCC and Clang give us `_Float16`, which is the hardware conversion and one
  * instruction. MSVC has no such type, so on Windows a half is carried as its sixteen
- * bits and a float is recovered from them.
+ * bits and a float is recovered from them. `build_win.bat` defines NR_F16C: F16C is part
+ * of the x86-64-v3 floor the other two builds compile for, and its `vcvtps2ph` and
+ * `vcvtph2ps` are that same instruction, one each way.
  *
- * The bits come from `half_bits` further down, which is the arithmetic this file already
+ * Otherwise the bits come from `half_bits` further down, the arithmetic this file already
  * used for CPUs whose vectoriser cannot take a `_Float16` conversion: normal halves keep
  * ten mantissa bits with ties to even, subnormals are multiples of 2^-24, past 65520 is
  * infinity and a NaN keeps its sign and its top payload bits, quieted. It matches the
@@ -99,10 +101,25 @@ static inline float half_from_bits(uint32_t h)
 }
 
 #if defined(_MSC_VER)
-/* No `_Float16`: carry the sixteen bits and shift across the arithmetic above. */
+/* No `_Float16`: carry the sixteen bits, and convert them with F16C where the build says the
+ * CPU has it, or shift across the arithmetic above. The two ways back differ only on a
+ * signalling NaN, which F16C quiets, and `nr_half_of` never makes one. */
 typedef uint16_t nr_half;
+#  if defined(NR_F16C) || defined(__AVX2__)
+#    include <immintrin.h>
+/* MSVC declares only F16C's vector forms, so the scalar is lane 0 of them. */
+static inline nr_half nr_half_of(float x)
+{
+    return (nr_half)_mm_cvtsi128_si32(_mm_cvtps_ph(_mm_set_ss(x), _MM_FROUND_TO_NEAREST_INT));
+}
+static inline float nr_half_to_float(nr_half h)
+{
+    return _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(h)));
+}
+#  else
 static inline nr_half nr_half_of(float x) { return (nr_half)half_bits(x); }
 static inline float nr_half_to_float(nr_half h) { return half_from_bits((uint32_t)h); }
+#  endif
 static float half(float value) { return nr_half_to_float(nr_half_of(value)); }
 #else
 typedef _Float16 nr_half;
