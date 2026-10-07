@@ -746,6 +746,41 @@ def _process_snapshot():
     return parsed if isinstance(parsed, list) else [parsed]
 
 
+def _running_executable(pid):
+    """The executable of the process `pid` while it is still running, else None.
+
+    One handle and two queries. The status check runs every 5 s while the window is in
+    front, and the whole WMI process list it used to take cost 0.45 s of CPU each time, in
+    a PowerShell started for it, while the game played."""
+    if os.name != "nt":
+        raise ValueError("Windows process inspection is required")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.QueryFullProcessImageNameW.argtypes = (
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:  # STILL_ACTIVE
+            return None
+        size = wintypes.DWORD(32768)
+        name = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)):
+            return None
+        return name.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _launch_state(profile):
     path = profile.root / "work/windows-wizard/launch-state.json"
     if not path.exists():
@@ -874,9 +909,8 @@ def set_effect(profile, enabled):
     try:
         launch = _launch_state(profile)
         if launch.get("game_exe") and _canonical(launch["game_exe"]) != _canonical(profile.game_exe):
-            for process in _process_snapshot():
-                if process.get("ProcessId") == launch.get("pid"):
-                    raise ValueError("The active game uses another profile; select it before changing its effect")
+            if _running_executable(launch.get("pid")):
+                raise ValueError("The active game uses another profile; select it before changing its effect")
         if trigger.is_symlink() or (trigger.exists() and not trigger.is_file()):
             raise ValueError("The release trigger path is not an owned regular file")
         if enabled:
@@ -1039,9 +1073,8 @@ def status(profile):
     process_error = None
     if matching_launch and isinstance(launch.get("pid"), int) and launch.get("exit_code") is None:
         try:
-            active = any(process.get("ProcessId") == launch["pid"] and process.get("ExecutablePath")
-                         and _canonical(process["ExecutablePath"]) == _canonical(profile.game_exe)
-                         for process in _process_snapshot())
+            running = _running_executable(launch["pid"])
+            active = bool(running) and _canonical(running) == _canonical(profile.game_exe)
         except (OSError, ValueError):
             process_error = "The launch PID could not be verified"
     result.update(launch=context, active_game=active,

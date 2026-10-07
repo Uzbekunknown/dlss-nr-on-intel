@@ -1,6 +1,9 @@
 ﻿param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+# Drawn by the CPU: the window is text and buttons, and on an integrated GPU the game and the
+# network share the device with it. Hardware rendering held 30 MB of GPU memory and 45 MB of RAM.
+[Windows.Media.RenderOptions]::ProcessRenderMode = [Windows.Interop.RenderMode]::SoftwareOnly
 if (-not $Root) { $Root = [IO.Path]::GetDirectoryName($PSCommandPath) }
 $script:Root = [IO.Path]::GetFullPath($Root)
 $script:Bridge = Join-Path $script:Root 'scripts\windows_wizard.py'
@@ -8,6 +11,7 @@ $script:Work = Join-Path $script:Root 'work\windows-wizard'
 $script:Busy = $null
 $script:StatusJob = $null
 $script:TickCount = 0
+$script:StatusDue = $false
 $script:Ready = $false
 $script:Installed = $false
 $script:LastProfile = $null
@@ -89,7 +93,7 @@ $script:SettingsStateKey = 'SettingsLoading'
     <Border Background="White" CornerRadius="10" Padding="20">
      <StackPanel>
       <DockPanel><Button x:Name="Report" DockPanel.Dock="Right" Content="" Margin="10,0,0,0"/><TextBlock x:Name="Progress" Text="" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
-      <ProgressBar x:Name="Spinner" Height="3" Margin="0,12,0,0" Visibility="Collapsed" IsIndeterminate="True"/>
+      <ProgressBar x:Name="Spinner" Height="3" Margin="0,12,0,0" Visibility="Collapsed" IsIndeterminate="False"/>
       <Expander x:Name="CheckDetails" Header="" Margin="0,10,0,0"><TextBox x:Name="Details" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Height="190" FontFamily="Consolas" FontSize="12" Margin="0,8,0,0"/></Expander>
      </StackPanel>
     </Border>
@@ -511,6 +515,8 @@ function Apply-Profile($Profile) {
 function Set-Busy([bool]$Busy) {
     foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Launch','Toggle','SteamSetup','SteamRestore','Report','ControlsToggle','ControlsLaunch','ReloadSettings','ResetSettings','ApplySettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
+    # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
+    $script:Ui.Spinner.IsIndeterminate=$Busy
     $script:Ui.Spinner.Visibility=$(if($Busy){'Visible'}else{'Collapsed'})
 }
 function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$false, $Extra=$null) {
@@ -718,7 +724,12 @@ $script:Timer.Add_Tick({
             if(-not $dragging) { Save-NrSettings }
         }
         $script:TickCount++
-        if($script:TickCount % 10 -eq 0 -and -not $script:Busy -and -not $script:StatusJob -and $script:Ui.GamePath.Text -and $script:Ui.PythonPath.Text) { Start-Bridge 'status' '' $true }
+        # Status every 5 s while the window is in front, and at once when it comes back. Each
+        # check starts Python, and behind a running game nobody reads the answer. A window that
+        # never had the foreground counts itself active, so minimised is checked as well.
+        $due=$script:StatusDue -or $script:TickCount % 10 -eq 0
+        $front=$script:Window.IsActive -and $script:Window.WindowState -ne 'Minimized'
+        if($due -and $front -and -not $script:Busy -and -not $script:StatusJob -and $script:Ui.GamePath.Text -and $script:Ui.PythonPath.Text) { $script:StatusDue=$false; Start-Bridge 'status' '' $true }
     } catch { $script:Ui.Details.Text=$_.Exception.Message; Restore-SettingsFailure $script:Busy; $script:Busy=$null; $script:StatusJob=$null; Set-Busy $false; Set-Progress 'ActionFailed' }
 })
 $script:Window.Add_Closing({
@@ -729,6 +740,8 @@ $script:Window.Add_Closing({
     elseif($script:PendingSettings.Count) { $eventArgs.Cancel=([Windows.MessageBox]::Show($script:Window,(T 'UnsavedClose'),(T 'Title'),'YesNo','Warning') -ne 'Yes') }
 })
 $script:Window.Add_Closed({ $script:Timer.Stop() })
+$script:Window.Add_Activated({ $script:StatusDue=$true })
+$script:Window.Add_StateChanged({ if($script:Window.WindowState -ne 'Minimized') { $script:StatusDue=$true } })
 $script:Window.Add_ContentRendered({
     if(-not $script:Ready) {
         $script:Ready=$true

@@ -78,6 +78,7 @@ class WizardFixture(unittest.TestCase):
         self.native = patch.object(core, "_python_info", return_value=python_info()).start()
         self.deps = patch.object(core, "_load_dependencies", return_value={"ok": True, "failures": {}}).start()
         self.processes = patch.object(core, "_process_snapshot", return_value=[]).start()
+        self.running = patch.object(core, "_running_executable", return_value=None).start()
         self.addCleanup(patch.stopall)
         core._LOG_STATES.clear()
         self.addCleanup(core._LOG_STATES.clear)
@@ -98,6 +99,7 @@ class WizardFixture(unittest.TestCase):
             "root": str(profile.root), "game_exe": str(profile.game_exe), "pid": pid,
             "daemon_start_bytes": offset, "started_utc": started, "exit_code": None})
         self.processes.return_value = [{"ProcessId": pid, "ExecutablePath": str(profile.game_exe)}]
+        self.running.side_effect = lambda value, pid=pid, path=str(profile.game_exe): path if value == pid else None
 
     def test_profile_defaults_round_trip_and_paths(self):
         minimal = core.Profile.from_dict({"root": str(self.root), "python": str(self.python),
@@ -260,7 +262,8 @@ class WizardFixture(unittest.TestCase):
                          {knob["name"]: actual[knob["name"]] for knob in catalogue})
 
     def test_reading_control_defaults_needs_no_game_profile_or_processes_and_writes_nothing(self):
-        with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")):
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")), \
+                patch.object(core, "_running_executable", side_effect=AssertionError("Controls do not inspect games")):
             result = core.get_settings(self.root)
         self.assertTrue(result["ok"])
         self.assertEqual(result["settings"], result["defaults"])
@@ -283,7 +286,8 @@ class WizardFixture(unittest.TestCase):
         external["detail_strength"] = 1.7
         external["other_tool"]["value"] = "new external value"
         core._atomic_json(path, external)
-        with patch.object(core, "_process_snapshot", side_effect=AssertionError("No game restart")):
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("No game restart")), \
+                patch.object(core, "_running_executable", side_effect=AssertionError("No game restart")):
             result = core.save_settings(self.root, {"render_scale": 0.25})
         saved = core._read_json(path)
         self.assertEqual(saved["render_scale"], 0.25)
@@ -612,6 +616,26 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(result["timed_out"])
         self.assertLess(time.monotonic() - started, 2.8)
         time.sleep(1)  # the finite child finishes before this test process exits
+
+
+@unittest.skipUnless(os.name == "nt", "asks Windows about a process")
+class RunningExecutableTests(unittest.TestCase):
+    """The status check's one query: a live process by its path, a finished one not at all."""
+
+    def test_live_process_reports_its_executable(self):
+        # Not sys.executable: a virtual environment's python.exe starts the base interpreter.
+        import ctypes
+        own = ctypes.create_unicode_buffer(32768)
+        ctypes.windll.kernel32.GetModuleFileNameW(None, own, len(own))
+        self.assertEqual(core._canonical(core._running_executable(os.getpid())),
+                         core._canonical(own.value))
+
+    def test_finished_and_invalid_processes_report_nothing(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=60)
+        self.assertIsNone(core._running_executable(child.pid))
+        for pid in (0, -1, None, True, "12"):
+            self.assertIsNone(core._running_executable(pid))
 
 
 if __name__ == "__main__":
