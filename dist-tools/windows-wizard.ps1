@@ -39,6 +39,7 @@ $script:SettingsStateKey = 'SettingsLoading'
     <ComboBox x:Name="Language" Width="125" ToolTip="">
      <ComboBoxItem Content="English" Tag="en"/>
      <ComboBoxItem Content="Русский" Tag="ru"/>
+     <ComboBoxItem Content="Español" Tag="es"/>
     </ComboBox>
    </StackPanel>
    <StackPanel>
@@ -139,7 +140,8 @@ $script:Window.Width=[Math]::Min(940,[Windows.SystemParameters]::WorkArea.Width-
 
 # Windows UI culture selects the initial language. Switching never edits a profile,
 # runtime setting or Steam option; only app-owned labels and messages change.
-$script:Language=$(if([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ru'){'ru'}else{'en'})
+$script:Language=[Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName
+if($script:Language -notin @('ru','es')) { $script:Language='en' }
 $script:ChangingLanguage=$false
 $script:ProgressKey='ChooseFiles'
 $script:RuntimeKey='RuntimeInitial'
@@ -287,6 +289,77 @@ $script:Strings=@{
   'Hint.release'='Изменение пикселя в уровнях из 255, которое освобождает историю. Начните с 16–24; ноль выключает эту защиту.'
   'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
   'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
+ }
+ es=@{
+  Title='DLSS-NR — instalación e inicio'; LanguageLabel='Idioma'; LanguageTip='Cambie el idioma del instalador.'
+  Subtitle='Instalación y prueba en Intel Xe2'; FilesHeading='1. Elija sus archivos'
+  DllLabel='Su DLL de NVIDIA'; GameLabel='Ejecutable del juego'; PythonLabel='Python de 64 bits'; Browse='Examinar…'
+  DllTip='Elija su propio nvngx_dlssnr.dll. El archivo no se descarga ni se incluye en el paquete.'
+  GameTip='El .exe exacto de 64 bits para Vulkan o para una configuración de DXVK ya existente.'
+  PythonTip='Elija Python nativo de Windows de 64 bits, no el intérprete de MinGW/MSYS2.'
+  FindPython='Buscar Python'; GetPython='Sitio web de Python'
+  PythonHint='Python suele detectarse automáticamente. Si falta, instale Python para Windows x64 desde python.org.'
+  ConnectHeading='2. Conecte NR a su juego'; ApiLabel='API gráfica'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 9–11 con DXVK'
+  ModeLabel='Modo de inicio'; ModeDirect='Directo'; ModeSteam='A través de Steam'; LaunchOptions='Opciones de inicio'
+  ArgsLabel='Argumentos del juego (opcional)'; ArgsTip='Argumentos normales del juego; aquí no se ejecutan comandos de la consola.'
+  SteamIdLabel='Steam App ID'; SteamIdTip='Se detecta a partir del juego instalado; también puede escribirlo a mano.'
+  Fossilize='Solución para la caché de sombreadores de Steam con NR'
+  FossilizeTip='Desactiva Fossilize solo al iniciar con NR. El Steam Overlay sigue disponible.'
+  FirstTestHint='Para la primera prueba, elija en el juego una ventana de 800×450. La red empieza con escala 0.4. DXVK ya debe estar configurado; el instalador no lo instala.'
+  Check='Comprobar'; Dependencies='Preparar Python'; Install='Instalar NR'; CompareHeading='3. Inicie y compare'
+  Launch='Iniciar el juego'; Enable='Activar NR'; Disable='Desactivar NR'; SteamSetup='Configurar Steam'; SteamRestore='Restaurar Steam'
+  EffectOn='Efecto activado'; EffectOff='Efecto desactivado'
+  RuntimeInitial='El juego aún no se ha probado. Después de activar NR, espere a los fotogramas procesados.'
+  FpsHint='NR añade procesamiento a cada fotograma y puede bajar mucho los FPS. Compare la misma escena con el efecto activado y desactivado.'
+  Report='Guardar informe'; CheckDetails='Detalles de la comprobación'; ChooseFiles='Elija su juego y su propia DLL.'
+  PythonMissing='No se encontró Python. Instale Python para Windows x64 o elija python.exe.'
+  ActionFailed='No se pudo completar la acción.'; NoResult='La acción terminó sin resultado. Abra los detalles.'
+  ResultMissing='No se generó ningún resultado.'; FixChecks='Corrija los puntos señalados. Abra los detalles de la comprobación.'
+  StatusUnavailable='El estado no está disponible ahora. Se mantiene el último estado conocido del efecto.'
+  Network='Red: {0}×{1}.'; Frames='Fotogramas'; TailFrames='Fotogramas en la última parte del registro'
+  Processing='El juego se está procesando. {0}: {1}; rechazados: {2}. {3}'
+  Historical='El registro contiene {0} fotogramas procesados; rechazados: {1}. No hay fotogramas recientes confirmados.'
+  WaitingFrames='Todavía no hay fotogramas procesados recientes. Entre en una escena del juego y active NR.'
+  BusyClose='Espere a que termine la acción en curso.'
+  PickDll='Su nvngx_dlssnr.dll'; PickGame='Ejecutable del juego de 64 bits'; PickPython='Python de Windows de 64 bits'
+  DllFilter='DLL de NVIDIA DLSS-NR|nvngx_dlssnr.dll|Archivos DLL|*.dll'; GameFilter='Ejecutable del juego|*.exe'
+  PythonFilter='Intérprete de Python|python.exe;python3.exe|Ejecutable|*.exe'; ReportFilter='Informe JSON|*.json'
+  SteamConfirm='Steam se cerrará normalmente y volverá a abrirse. Cierre antes sus juegos de Steam. Solo cambiarán las opciones de inicio del juego seleccionado; use Restaurar Steam para recuperarlas.'
+  SteamTitle='Configurar el inicio con NR'; ReportTitle='Guardar el informe de diagnóstico'
+  'Loading.discover'='Buscando un Python adecuado…'; 'Loading.check'='Comprobando archivos y dependencias…'
+  'Loading.dependencies'='Preparando el Python local…'; 'Loading.install'='Extrayendo los pesos e instalando NR…'
+  'Loading.launch'='Iniciando el juego…'; 'Loading.steam-setup'='Configurando el inicio en Steam…'
+  'Loading.steam-restore'='Restaurando las opciones de inicio de Steam…'; 'Loading.on'='Activando NR…'; 'Loading.off'='Desactivando NR…'
+  'Loading.report'='Guardando el informe…'; 'Loading.save'='Guardando la configuración…'
+  'Done.discover'='Python encontrado. Elija su juego y su DLL.'; 'Done.check'='Comprobación superada. Ya puede instalar NR.'
+  'Done.dependencies'='Python está listo. Ahora instale NR.'; 'Done.install'='NR instalado. Inicie el juego desde el instalador.'
+  'Done.launch'='Inicio solicitado. Entre en una escena del juego.'; 'Done.steam-setup'='Steam configurado. Inicie el juego desde el instalador.'
+  'Done.steam-restore'='Se restauraron las opciones de inicio originales de Steam.'; 'Done.on'='NR activado. Espere a los primeros fotogramas procesados.'
+  'Done.off'='NR desactivado.'; 'Done.report'='Informe guardado.'; 'Done.save'='Configuración guardada.'
+  SetupTab='Instalación'; ControlsTab='Controles de NR'; ControlsHeading='Controles de NR durante el juego'
+  ControlsHint='Los cambios se guardan solos al terminar de ajustar. El proceso de NR los lee entre fotogramas; no hace falta reiniciar el juego. La escala elegida y el tamaño real de la red con relleno pueden diferir.'
+  ReloadSettings='Recargar'; ResetSettings='Restablecer todo'; ApplySettings='Aplicar ahora'; DefaultKnob='Por defecto'
+  SettingsLoading='Cargando la configuración de NR…'; SettingsReady='Configuración actual cargada.'; SettingsUnsaved='Cambios pendientes de guardar…'
+  SettingsSaved='Guardado. Se usará en el siguiente fotograma procesado.'; SettingsFailed='No se pudo guardar la configuración. Vea Instalación → Detalles de la comprobación.'
+  UnsavedClose='Algunos cambios de NR no se guardaron. ¿Cerrar y descartar esos cambios?'
+  InvalidSetting='Escriba un número finito dentro del rango admitido.'; FrameReadout='Último fotograma neuronal: salida {0}×{1}; red {3}×{4}; procesamiento {2} ms. Esto no son los FPS del juego.'
+  NetworkGroup='Tamaño de la red'; LookGroup='Imagen'; StabilityGroup='Estabilidad'
+  'Loading.settings'='Cargando la configuración de NR…'; 'Loading.settings-save'='Guardando los controles de NR…'; 'Loading.settings-reset'='Restaurando los valores predeterminados de NR…'
+  'Done.settings'='Configuración de NR cargada.'; 'Done.settings-save'='Configuración de NR guardada.'; 'Done.settings-reset'='Se restauraron los valores predeterminados de NR.'
+  'Knob.render_scale'='Escala de renderizado'; 'Knob.min_extent'='Lado mínimo de la red'; 'Knob.profile'='Perfil'; 'Knob.intensity'='Intensidad'
+  'Knob.detail_strength'='Fuerza del detalle'; 'Knob.colour_strength'='Fuerza del color'; 'Knob.temporal'='Historial temporal'
+  'Knob.hold'='Mantener píxeles sin cambios'; 'Knob.release'='Liberar píxeles en movimiento'; 'Knob.cut_limit'='Umbral de cambio de escena'
+  'Hint.render_scale'='Fracción de cada dimensión que procesa la red. Menos es más barato, con detalle más grueso; el relleno mínimo puede limitar la reducción.'
+  'Hint.min_extent'='Lado mínimo de la red con relleno. 320 coincide con NVIDIA; 128 cuesta menos en fotogramas pequeños y cambia el contexto reflejado alrededor.'
+  'Hint.profile'='Estándar añade textura; natural y cinematográfico conservan mejor las luces; neutro reduce mucho el efecto.'
+  'Hint.intensity'='Fuerza de la mezcla: 0 deja la imagen del juego, 1 usa el resultado del modelo y más de 1 exagera el cambio.'
+  'Hint.detail_strength'='Fuerza del detalle fino. Cero deja solo los cambios generales de tono; más de 1 añade más nitidez.'
+  'Hint.colour_strength'='Fuerza de los cambios de tono y color. Los valores altos pueden bajar la saturación; cero conserva el tono del juego.'
+  'Hint.temporal'='Cuánto del resultado anterior vuelve a usarse. Cero olvida el historial y procesa cada fotograma por separado.'
+  'Hint.hold'='Mantiene el resultado anterior donde los píxeles del juego no cambiaron, lo que reduce el parpadeo en las zonas quietas.'
+  'Hint.release'='Cambio de un píxel, en niveles de 255, que libera el historial. 16–24 es un buen punto de partida; cero desactiva esta protección.'
+  'Hint.cut_limit'='Cambio medio del fotograma que descarta el historial en un cambio de escena. Menos reacciona antes; 1 nunca corta.'
+  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.neutral'='Neutro'
  }
 }
 $script:TextBindings=@{
@@ -458,11 +531,11 @@ function Restore-SettingsFailure($Job) {
     }
 }
 function Set-Language([string]$Language) {
-    if($Language -notin @('en','ru')) { throw 'Unsupported setup language' }
+    if(-not $script:Strings.ContainsKey($Language)) { throw 'Unsupported setup language' }
     $script:ChangingLanguage=$true
     try {
         $script:Language=$Language
-        $script:Ui.Language.SelectedIndex=$(if($Language -eq 'ru'){1}else{0})
+        $script:Ui.Language.SelectedIndex=[array]::IndexOf(@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag }), $Language)
         $script:Window.Title=T 'Title'
         foreach($name in $script:TextBindings.Keys) { $script:Ui[$name].Text=T $script:TextBindings[$name] }
         foreach($name in $script:ContentBindings.Keys) { $script:Ui[$name].Content=T $script:ContentBindings[$name] }
@@ -656,13 +729,18 @@ if($SelfTest) {
             if($model.kind -eq 'number' -and ($row.Slider.Minimum -ne $model.low -or $row.Slider.Maximum -ne $model.high -or $row.Slider.TickFrequency -ne $model.step)) { throw "Wrong slider range: $($model.name)" }
         }
     }
-    foreach($key in $script:Strings.en.Keys) {
-        if(-not $script:Strings.ru.ContainsKey($key) -or -not $script:Strings.en[$key] -or -not $script:Strings.ru[$key]) { throw "Incomplete translation: $key" }
-        if($script:Strings.en[$key] -match '[А-Яа-яЁё]') { throw "Russian text in English translation: $key" }
-    }
-    if($script:Strings.en.Count -ne $script:Strings.ru.Count) { throw 'Translation key counts differ' }
+    # Not $language: names ignore case, and at script scope that is $script:Language itself.
     $autoLanguage=$script:Language
-    foreach($language in @('en','ru')) {
+    $languages=@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag })
+    if((($languages | Sort-Object) -join ',') -ne ((@($script:Strings.Keys) | Sort-Object) -join ',')) { throw 'The language list and the translations differ' }
+    foreach($code in $languages) {
+        foreach($key in $script:Strings.en.Keys) {
+            if(-not $script:Strings[$code].ContainsKey($key) -or -not $script:Strings.en[$key] -or -not $script:Strings[$code][$key]) { throw "Incomplete translation ($code): $key" }
+            if($code -ne 'ru' -and $script:Strings[$code][$key] -match '[А-Яа-яЁё]') { throw "Russian text in the $code translation: $key" }
+        }
+        if($script:Strings.en.Count -ne $script:Strings[$code].Count) { throw "Translation key counts differ ($code)" }
+    }
+    foreach($language in $languages) {
         Set-Language $language
         if($script:KnobUi.Count) {
             foreach($name in $script:KnobUi.Keys) { if($script:KnobUi[$name].Label.Text -notlike ((T ('Knob.'+$name))+'*')) { throw "Untranslated control $name" } }
@@ -682,7 +760,7 @@ if($SelfTest) {
         Set-Language $language
         if($script:Ui.Progress.Text -ne (T 'Loading.install') -or $script:Ui.RuntimeState.Text -ne (T 'StatusUnavailable')) { throw 'Dynamic messages did not switch languages' }
     }
-    Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. EN/RU coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
+    Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. '+($languages -join '/').ToUpper()+' coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
     exit 0
 }
 $script:Ui.Language.Add_SelectionChanged({
