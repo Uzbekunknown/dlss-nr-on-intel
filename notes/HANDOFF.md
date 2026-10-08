@@ -9,6 +9,16 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## On Linux at 0513b60: green, the Linux binaries unchanged, and the DXVK pin is DXVK's (2026-10-08)
+
+`make test` green in both memory modes (571), CTest 45 of 45 with no warnings, `make test-proton`
+loads both layers. The five Windows tool suites pass here too (126 tests, 17 skipped for Windows).
+`nr_image.c` and `nr_layer.c` compile to the same machine code as at `5fec502`, so the speeds
+measured there stand. The Linux release, assembled and installed: metadata `"dxvk": null`, the
+host library with F16C, and its layer and daemon answered 124 presents. `dist-tools/dxvk.json`
+matches the archive on DXVK's GitHub release (18 041 512 bytes, the same SHA-256), and
+`fetch_dxvk.py --archive` runs on Linux too.
+
 ## The Windows release, prepared: a lighter setup window, Spanish, DXVK and 32-bit games, Remove NR; no DirectX 12 (2026-10-08)
 
 Seven commits on `windows` after `f1175bb`, for the first GitHub release. Arc 140V, 101.9033.
