@@ -9,6 +9,54 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## The setup window through two games, and a daemon that ends with its game (2026-10-08, evening)
+
+The window clicked through by UI Automation, from a release unpacked from its ZIP (`9f2070c`),
+Steam mode, NR on for 40 s:
+
+| game | API | layer | NR frames | rejected | Restore Steam after the game closed | game folder after Remove NR |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| Mortal Kombat 11 | DX11 through DXVK | x64 | 784 | 0 | at once | as before (10 409 entries) |
+| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 809 | 0 | at once | as before (963 entries) |
+
+Install took the weights from the user's own DLL. Configure Steam and Remove NR went through
+their dialogs. With the game in front and nothing clicked, the window started no process in 40 s.
+
+**Found on the way: Steam kept a closed game running, because of NR's daemon.** The layer starts
+the daemon from inside the game, and Steam counts every process a game starts as the game. After
+MK11 closed, RunningAppID stayed 976310 for as long as the daemon ran, and cleared 2 s after it
+was stopped. So Restore Steam refused ("A Steam game is running"), and the model stayed in memory.
+The backend's game runs never showed it, because their script stopped the daemon first.
+`9f2070c`: on Windows the layer puts the game's process id in `NR_LAYER_SPAWNED`, and the daemon
+ends when that process does (`nr_daemon.end_with_game`). A daemon started by hand runs on as
+before. vkcube through the MSVC layer: 90 frames, and the daemon gone 0.1 s after it. CTest 39 of
+39, on MinGW and on MSVC's DLLs (`layer_spawn_exit` is new).
+
+**Two traps in driving the window this way:**
+- Any UI Automation call into the WPF window brings it to the front, even a tab selected (checked
+  with a stand-in window in front). After "Enable NR" is pressed through UIA, the window is in
+  front and polls, as it is after a user's own click. Only a stretch with nothing clicked shows
+  whether polling stops behind the game.
+- The message boxes' Win32 buttons reach UIA from PowerShell as panes with no patterns, so the
+  test sends the dialog WM_COMMAND IDOK. A screen lock does not stop UIA, but a window that was
+  active when the screen locked stays active, and polls.
+
+**`geladons/DLSS5_INTEL`** (MIT) ported this tree's layer and credits it. It has what we lack on
+Windows:
+- a `dxgi.dll` proxy for DX12, live on GTA V Enhanced. Present is hooked by patching the swapchain's
+  vtable entries in place, because GTA V kills a process whose swapchain vtable pointer changes.
+  BattlEye blocks a `dxgi.dll` beside the game;
+- a PE scan that reads the delay-load directory (UE5 loads `d3d12.dll` that way);
+- a pause hotkey.
+
+Its DX9 install is `d3d9.dll` alone, because DXVK's `dxgi.dll` crashed GTA IV there. The proxy is the
+route to DX12 here, after the release.
+
+**Next on Linux:** nothing runs differently there, since the POSIX layer still marks its child
+with 1. But the Linux release's `launch-nr.sh` sets `NR_LAYER_SPAWN=1` too, and Steam's reaper may
+keep a game running while its daemon lives. Worth a look through Steam. If it does, the marker can
+carry `getpid()` and the daemon watch it with a pidfd, as the Windows side now does.
+
 ## On Linux at 0513b60: green, the Linux binaries unchanged, and the DXVK pin is DXVK's (2026-10-08)
 
 `make test` green in both memory modes (571), CTest 45 of 45 with no warnings, `make test-proton`
