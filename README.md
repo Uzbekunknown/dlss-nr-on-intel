@@ -307,10 +307,13 @@ With `NR_LAYER_SPAWN=1` set next to the variables above, and `NR_LAYER_SOCKET` n
 layer starts the daemon on that socket if nothing is listening there when the game creates
 its instance. Without the variable nothing happens and nothing prints, which is the
 default: `vulkaninfo` and every other Vulkan process that loads the layer must not each
-bring up a model. A daemon started this way **outlives the game** — it keeps its buffers
-and the weights resident, **0.7 GiB at 720p and 1.2 GiB at 1920x1088, weights included**
-— so the next launch connects instead of paying the load again. It ends on its own when
-the GPU is lost, and otherwise runs until you end the process. Its settings and log follow
+bring up a model. On Linux a daemon started this way **outlives the game** — it keeps its
+buffers and the weights resident, **0.7 GiB at 720p and 1.2 GiB at 1920x1088, weights
+included** — so the next launch connects instead of paying the load again. It ends on its
+own when the GPU is lost, and otherwise runs until you end the process. **On Windows it
+ends with the game that started it**: the layer hands it the game's process id. Steam counts
+every process a game starts as part of the game, and a daemon that stayed kept the game
+running for Steam after it had closed. Its settings and log follow
 `src/layer/nr_paths.py` (`/tmp/nr_settings.json`, `NR_LAYER_LOG`), the same files `nr-ctl`
 and `nr-panel` write, so the knobs reach a daemon started this way too.
 

@@ -176,9 +176,9 @@ is started this way, and loses the environment.** The call need not be in the ex
 Dead or Alive 5's imports only `SteamAPI_Init`, and the Steam API library beside it restarted
 the game all the same. The sign is DXVK's log, which then lands beside the game rather than in
 `DXVK_LOG_PATH`. A `steam_appid.txt` holding the game's app id, beside the executable, keeps it
-in place. The daemon the layer starts outlives the game: stop it afterwards. And a game in a
-Steam library that Proton also runs gets its folder back as it was: a DLL left beside the
-executable is found there before Proton's own.
+in place. The daemon the layer starts ends with the game, whose process id the layer hands it.
+And a game in a Steam library that Proton also runs gets its folder back as it was: a DLL left
+beside the executable is found there before Proton's own.
 ## Shipping it to someone without a compiler
 
 Two scripts, and the split between them is the point:
