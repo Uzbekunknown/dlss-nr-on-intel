@@ -25,97 +25,319 @@ $script:SettingsStateKey = 'SettingsLoading'
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="DLSS-NR" Width="940" Height="900" MinWidth="820" MinHeight="690" WindowStartupLocation="CenterScreen"
- FontFamily="Segoe UI" FontSize="14" Background="#F3F6FA">
+ Title="DLSS-NR" Width="780" Height="700" MinWidth="640" MinHeight="480" WindowStartupLocation="CenterScreen"
+ FontFamily="Segoe UI" FontSize="13" Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}">
  <Window.Resources>
-  <Style TargetType="Button"><Setter Property="Padding" Value="14,9"/><Setter Property="Margin" Value="0,0,8,0"/><Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#CDD6E3"/><Setter Property="Cursor" Value="Hand"/></Style>
-  <Style TargetType="TextBox"><Setter Property="Padding" Value="9,7"/><Setter Property="BorderBrush" Value="#CDD6E3"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
-  <Style TargetType="ComboBox"><Setter Property="Padding" Value="7"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+  <!-- The theme's colours. Set-Theme replaces these brushes; everything below refers to them. -->
+  <SolidColorBrush x:Key="Bg" Color="#F3F5F9"/>
+  <SolidColorBrush x:Key="Card" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="CardBorder" Color="#E3E8EF"/>
+  <SolidColorBrush x:Key="Text" Color="#1A2433"/>
+  <SolidColorBrush x:Key="Muted" Color="#5B6B80"/>
+  <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
+  <SolidColorBrush x:Key="AccentText" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="Field" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="FieldBorder" Color="#CBD5E1"/>
+  <SolidColorBrush x:Key="Hover" Color="#EEF2F7"/>
+  <SolidColorBrush x:Key="Selected" Color="#E0E9FB"/>
+  <SolidColorBrush x:Key="Track" Color="#D5DCE6"/>
+  <SolidColorBrush x:Key="Good" Color="#15803D"/>
+  <SolidColorBrush x:Key="Bad" Color="#DC2626"/>
+  <Style x:Key="CardBox" TargetType="Border">
+   <Setter Property="Background" Value="{DynamicResource Card}"/><Setter Property="BorderBrush" Value="{DynamicResource CardBorder}"/>
+   <Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="8"/><Setter Property="Padding" Value="14,12"/><Setter Property="Margin" Value="0,0,0,10"/>
+  </Style>
+  <Style x:Key="Heading" TargetType="TextBlock"><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,8"/></Style>
+  <Style x:Key="Note" TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style x:Key="FieldLabel" TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Margin" Value="0,0,8,6"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/></Style>
+  <Style TargetType="Button">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="Background" Value="{DynamicResource Field}"/><Setter Property="BorderBrush" Value="{DynamicResource FieldBorder}"/>
+   <Setter Property="Padding" Value="12,5"/><Setter Property="Margin" Value="0,0,6,6"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="Foreground" Value="{DynamicResource AccentText}"/><Setter Property="Background" Value="{DynamicResource Accent}"/><Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.88"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Text}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Icon" TargetType="Button">
+   <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="13"/>
+   <Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="Width" Value="28"/><Setter Property="Height" Value="28"/>
+   <Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Bd" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/><Setter Property="Foreground" Value="{DynamicResource Text}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Link" TargetType="Button">
+   <Setter Property="Foreground" Value="{DynamicResource Accent}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Bd" Background="Transparent" Padding="4,2" CornerRadius="4" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter VerticalAlignment="Center"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="TextBox">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="Background" Value="{DynamicResource Field}"/><Setter Property="BorderBrush" Value="{DynamicResource FieldBorder}"/>
+   <Setter Property="CaretBrush" Value="{DynamicResource Text}"/><Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+   <Setter Property="Padding" Value="6,4"/><Setter Property="VerticalContentAlignment" Value="Center"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox">
+    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6">
+     <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="ComboBox">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="MinHeight" Value="28"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+    <Grid>
+     <ToggleButton Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+      <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+       <Border x:Name="Bd" Background="{DynamicResource Field}" BorderBrush="{DynamicResource FieldBorder}" BorderThickness="1" CornerRadius="6">
+        <Path HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" Data="M0,0 L4,4 L8,0" Stroke="{DynamicResource Muted}" StrokeThickness="1.5"/></Border>
+       <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></ToggleButton.Template>
+     </ToggleButton>
+     <Border x:Name="FocusRing" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Visibility="Collapsed" IsHitTestVisible="False"/>
+     <ContentPresenter Margin="9,0,26,0" VerticalAlignment="Center" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+     <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
+      <Border Background="{DynamicResource Card}" BorderBrush="{DynamicResource FieldBorder}" BorderThickness="1" CornerRadius="6" Margin="0,2,0,0" Padding="2" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+       <ScrollViewer MaxHeight="260" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+      </Border>
+     </Popup>
+    </Grid>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="ComboBoxItem">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
+    <Border x:Name="Bd" Background="Transparent" Padding="8,5" CornerRadius="4"><ContentPresenter/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsSelected" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Selected}"/></Trigger>
+     <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="CheckBox">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+    <StackPanel Orientation="Horizontal" Background="Transparent">
+     <Border x:Name="Box" Width="16" Height="16" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource FieldBorder}" Background="{DynamicResource Field}" VerticalAlignment="Center">
+      <Path x:Name="Mark" Data="M3,7.5 L6,10.5 L11.5,4" Stroke="{DynamicResource AccentText}" StrokeThickness="2" Visibility="Collapsed"/></Border>
+     <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
+    </StackPanel>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource Accent}"/><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Accent}"/><Setter TargetName="Mark" Property="Visibility" Value="Visible"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="TrackFill" TargetType="RepeatButton">
+   <Setter Property="Focusable" Value="False"/><Setter Property="IsTabStop" Value="False"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"><Border Height="4" CornerRadius="2" Background="{DynamicResource Accent}"/></Border></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="TrackRest" TargetType="RepeatButton">
+   <Setter Property="Focusable" Value="False"/><Setter Property="IsTabStop" Value="False"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"><Border Height="4" CornerRadius="2" Background="{DynamicResource Track}"/></Border></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <!-- A slider takes the keyboard when clicked: the arrows move it a step, Page Up/Down five. -->
+  <Style TargetType="Slider">
+   <Setter Property="Focusable" Value="True"/><Setter Property="IsMoveToPointEnabled" Value="True"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+    <Grid Height="24" Background="Transparent"><Track x:Name="PART_Track">
+     <Track.DecreaseRepeatButton><RepeatButton Style="{StaticResource TrackFill}" Command="{x:Static Slider.DecreaseLarge}"/></Track.DecreaseRepeatButton>
+     <Track.IncreaseRepeatButton><RepeatButton Style="{StaticResource TrackRest}" Command="{x:Static Slider.IncreaseLarge}"/></Track.IncreaseRepeatButton>
+     <Track.Thumb><Thumb Focusable="False"><Thumb.Template><ControlTemplate TargetType="Thumb">
+      <Grid Width="20" Height="20" Background="Transparent">
+       <Ellipse x:Name="Ring" Fill="{DynamicResource Accent}" Opacity="0"/>
+       <Ellipse Width="14" Height="14" Fill="{DynamicResource Card}" Stroke="{DynamicResource Accent}" StrokeThickness="2"/>
+      </Grid>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.2"/></Trigger>
+       <DataTrigger Binding="{Binding IsKeyboardFocused, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True"><Setter TargetName="Ring" Property="Opacity" Value="0.35"/></DataTrigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+    </Track></Grid>
+    <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="TabControl">
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabControl">
+    <DockPanel><TabPanel DockPanel.Dock="Top" IsItemsHost="True" Margin="0,0,0,10"/><ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent"/></DockPanel>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="TabItem">
+   <Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabItem">
+    <Border x:Name="Bd" Padding="12,5" Margin="0,0,4,0" CornerRadius="6" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter ContentSource="Header"/></Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+     <Trigger Property="IsSelected" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Card}"/><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource CardBorder}"/><Setter Property="Foreground" Value="{DynamicResource Text}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="Expander">
+   <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Expander">
+    <DockPanel>
+     <ToggleButton DockPanel.Dock="Top" Cursor="Hand" FocusVisualStyle="{x:Null}" Foreground="{TemplateBinding Foreground}" Content="{TemplateBinding Header}" IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+      <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+       <Border x:Name="Bd" Background="Transparent" Padding="2,3" CornerRadius="4" BorderThickness="1" BorderBrush="Transparent">
+        <StackPanel Orientation="Horizontal">
+         <Path x:Name="Arrow" Width="8" Height="8" Margin="2,0,8,0" VerticalAlignment="Center" Data="M2,0 L6,4 L2,8" Stroke="{DynamicResource Muted}" StrokeThickness="1.5"/>
+         <ContentPresenter VerticalAlignment="Center"/>
+        </StackPanel>
+       </Border>
+       <ControlTemplate.Triggers>
+        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Arrow" Property="Data" Value="M0,2 L4,6 L8,2"/></Trigger>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+       </ControlTemplate.Triggers>
+      </ControlTemplate></ToggleButton.Template>
+     </ToggleButton>
+     <ContentPresenter x:Name="Body" Visibility="Collapsed" Margin="0,6,0,0"/>
+    </DockPanel>
+    <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Body" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="ScrollBar">
+   <Setter Property="Width" Value="10"/><Setter Property="MinWidth" Value="10"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
+    <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}" IsDirectionReversed="True">
+     <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="{DynamicResource Track}" CornerRadius="4" Margin="2"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+    </Track>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="ToolTip">
+   <Setter Property="Background" Value="{DynamicResource Card}"/><Setter Property="Foreground" Value="{DynamicResource Text}"/><Setter Property="BorderBrush" Value="{DynamicResource FieldBorder}"/><Setter Property="Padding" Value="8,6"/>
+   <Setter Property="ContentTemplate"><Setter.Value><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="380"/></DataTemplate></Setter.Value></Setter>
+  </Style>
  </Window.Resources>
- <DockPanel Margin="28">
-  <DockPanel DockPanel.Dock="Top" Margin="0,0,0,20">
-   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-    <TextBlock x:Name="LanguageLabel" VerticalAlignment="Center" Margin="0,0,10,0"/>
-    <ComboBox x:Name="Language" Width="125" ToolTip="">
+ <DockPanel Margin="16,12,16,10">
+  <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+    <ComboBox x:Name="Language" Width="110" ToolTip="">
      <ComboBoxItem Content="English" Tag="en"/>
      <ComboBoxItem Content="Русский" Tag="ru"/>
      <ComboBoxItem Content="Español" Tag="es"/>
     </ComboBox>
+    <Button x:Name="Theme" Style="{StaticResource Icon}" Margin="6,0,0,0" ToolTip=""/>
    </StackPanel>
-   <StackPanel>
-    <TextBlock Text="DLSS-NR" FontSize="30" FontWeight="SemiBold" Foreground="#14243B"/>
-    <TextBlock x:Name="Subtitle" Text="" Foreground="#53647A" Margin="0,5,0,0" TextWrapping="Wrap"/>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <TextBlock Text="DLSS-NR" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+    <TextBlock x:Name="Subtitle" Text="" Foreground="{DynamicResource Muted}" Margin="10,4,0,0" VerticalAlignment="Center"/>
    </StackPanel>
   </DockPanel>
-  <TabControl x:Name="Pages" Background="Transparent" BorderThickness="0">
+  <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+   <ProgressBar x:Name="Spinner" Height="2" Visibility="Collapsed" IsIndeterminate="False" Foreground="{DynamicResource Accent}" Background="{DynamicResource Track}" BorderThickness="0"/>
+   <TextBlock x:Name="Progress" Text="" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="2,5,0,0"/>
+  </StackPanel>
+  <TabControl x:Name="Pages">
    <TabItem x:Name="SetupTab" Header="">
-  <ScrollViewer x:Name="MainScroll" VerticalScrollBarVisibility="Auto">
-   <StackPanel>
-    <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
+    <ScrollViewer x:Name="MainScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel>
-      <TextBlock x:Name="FilesHeading" Text="" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,14"/>
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="105"/></Grid.ColumnDefinitions>
-       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-       <TextBlock x:Name="DllLabel" Text="" VerticalAlignment="Center"/><TextBox x:Name="DllPath" Grid.Column="1" Margin="0,0,10,10" ToolTip=""/><Button x:Name="BrowseDll" Grid.Column="2" Content="" Margin="0,0,0,10"/>
-       <TextBlock x:Name="GameLabel" Grid.Row="1" Text="" VerticalAlignment="Center"/><TextBox x:Name="GamePath" Grid.Row="1" Grid.Column="1" Margin="0,0,10,10" ToolTip=""/><Button x:Name="BrowseGame" Grid.Row="1" Grid.Column="2" Content="" Margin="0,0,0,10"/>
-       <TextBlock x:Name="PythonLabel" Grid.Row="2" Text="" VerticalAlignment="Center"/><TextBox x:Name="PythonPath" Grid.Row="2" Grid.Column="1" Margin="0,0,10,0"/><Button x:Name="BrowsePython" Grid.Row="2" Grid.Column="2" Content="" Margin="0"/>
-      </Grid>
-      <WrapPanel Margin="155,10,0,0"><Button x:Name="FindPython" Content=""/><Button x:Name="GetPython" Content=""/></WrapPanel>
-      <TextBlock x:Name="PythonHint" Text="" TextWrapping="Wrap" Foreground="#64748B" Margin="0,12,0,0" FontSize="12"/>
-     </StackPanel>
-    </Border>
-    <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
-     <StackPanel>
-      <TextBlock x:Name="ConnectHeading" Text="" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,14"/>
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-       <TextBlock x:Name="ApiLabel" Text="" VerticalAlignment="Center"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0" Margin="0,0,16,0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/></ComboBox>
-       <TextBlock x:Name="ModeLabel" Text="" Grid.Column="2" VerticalAlignment="Center"/><ComboBox x:Name="Mode" Grid.Column="3" SelectedIndex="0"><ComboBoxItem x:Name="ModeDirect" Content=""/><ComboBoxItem x:Name="ModeSteam" Content=""/></ComboBox>
-      </Grid>
-      <Expander x:Name="LaunchOptions" Header="" Margin="0,14,0,0">
-       <StackPanel Margin="0,10,0,0">
-        <TextBlock x:Name="ArgsLabel" Text="" Margin="0,0,0,5"/><TextBox x:Name="GameArgs" ToolTip=""/>
-        <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock x:Name="SteamIdLabel" Text="" VerticalAlignment="Center"/><TextBox x:Name="SteamId" Grid.Column="1" ToolTip=""/></Grid>
-        <CheckBox x:Name="Fossilize" IsChecked="True" Content="" Margin="0,10,0,0" ToolTip=""/>
-       </StackPanel>
-      </Expander>
-      <TextBlock x:Name="FirstTestHint" Text="" TextWrapping="Wrap" Foreground="#64748B" FontSize="12" Margin="0,14,0,14"/>
-      <WrapPanel><Button x:Name="Check" Content=""/><Button x:Name="Dependencies" Content=""/><Button x:Name="Install" Content="" Background="#1D4ED8" Foreground="White" BorderBrush="#1D4ED8"/><Button x:Name="Uninstall" Content=""/></WrapPanel>
-     </StackPanel>
-    </Border>
-    <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
-     <StackPanel>
-      <TextBlock x:Name="CompareHeading" Text="" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,12"/>
-      <WrapPanel><Button x:Name="Launch" Content=""/><Button x:Name="Toggle" Content=""/><Button x:Name="SteamSetup" Content=""/><Button x:Name="SteamRestore" Content=""/></WrapPanel>
-      <TextBlock x:Name="EffectState" Text="" FontWeight="SemiBold" Foreground="#1D4ED8" Margin="0,14,0,4"/>
-      <TextBlock x:Name="RuntimeState" Text="" TextWrapping="Wrap" Foreground="#53647A"/>
-      <TextBlock x:Name="FpsHint" Text="" Foreground="#64748B" TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0"/>
-     </StackPanel>
-    </Border>
-    <Border Background="White" CornerRadius="10" Padding="20">
-     <StackPanel>
-      <DockPanel><Button x:Name="Report" DockPanel.Dock="Right" Content="" Margin="10,0,0,0"/><TextBlock x:Name="Progress" Text="" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
-      <ProgressBar x:Name="Spinner" Height="3" Margin="0,12,0,0" Visibility="Collapsed" IsIndeterminate="False"/>
-      <Expander x:Name="CheckDetails" Header="" Margin="0,10,0,0"><TextBox x:Name="Details" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Height="190" FontFamily="Consolas" FontSize="12" Margin="0,8,0,0"/></Expander>
-     </StackPanel>
-    </Border>
-   </StackPanel>
-  </ScrollViewer>
-   </TabItem>
-   <TabItem x:Name="ControlsTab" Header="">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-     <StackPanel Margin="0,16,0,0">
-      <Border Background="White" CornerRadius="10" Padding="20" Margin="0,0,0,14">
+      <Border Style="{StaticResource CardBox}">
        <StackPanel>
-        <TextBlock x:Name="ControlsHeading" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
-        <WrapPanel><Button x:Name="ControlsToggle"/><Button x:Name="ControlsLaunch"/><Button x:Name="ReloadSettings"/><Button x:Name="ResetSettings"/></WrapPanel>
-        <TextBlock x:Name="ControlsEffectState" FontWeight="SemiBold" Foreground="#1D4ED8" Margin="0,14,0,4"/>
-        <TextBlock x:Name="ControlsRuntimeState" TextWrapping="Wrap" Foreground="#53647A"/>
-        <TextBlock x:Name="FrameReadout" TextWrapping="Wrap" Foreground="#53647A" Margin="0,6,0,0"/>
-        <TextBlock x:Name="ControlsHint" TextWrapping="Wrap" Foreground="#64748B" FontSize="12" Margin="0,10,0,0"/>
-        <DockPanel Margin="0,12,0,0"><Button x:Name="ApplySettings" DockPanel.Dock="Right" Margin="10,0,0,0"/><TextBlock x:Name="SettingsState" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
+        <TextBlock x:Name="FilesHeading" Style="{StaticResource Heading}"/>
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+         <TextBlock x:Name="DllLabel" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DllPath" Grid.Column="1" Margin="0,0,6,6" ToolTip=""/><Button x:Name="BrowseDll" Grid.Column="2" Margin="0,0,0,6"/>
+         <TextBlock x:Name="GameLabel" Grid.Row="1" Style="{StaticResource FieldLabel}"/><TextBox x:Name="GamePath" Grid.Row="1" Grid.Column="1" Margin="0,0,6,6" ToolTip=""/><Button x:Name="BrowseGame" Grid.Row="1" Grid.Column="2" Margin="0,0,0,6"/>
+         <TextBlock x:Name="PythonLabel" Grid.Row="2" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PythonPath" Grid.Row="2" Grid.Column="1" Margin="0,0,6,6"/><Button x:Name="BrowsePython" Grid.Row="2" Grid.Column="2" Margin="0,0,0,6"/>
+        </Grid>
+        <WrapPanel Margin="140,0,0,0"><Button x:Name="FindPython" Margin="0,0,6,0"/><Button x:Name="GetPython" Margin="0"/></WrapPanel>
        </StackPanel>
       </Border>
-      <StackPanel x:Name="KnobRows"/>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <TextBlock x:Name="ConnectHeading" Style="{StaticResource Heading}"/>
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="ApiLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0" Margin="0,0,14,0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/></ComboBox>
+         <TextBlock x:Name="ModeLabel" Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Mode" Grid.Column="3" SelectedIndex="0"><ComboBoxItem x:Name="ModeDirect" Content=""/><ComboBoxItem x:Name="ModeSteam" Content=""/></ComboBox>
+        </Grid>
+        <Expander x:Name="LaunchOptions" Header="" Margin="0,8,0,0">
+         <StackPanel Margin="18,2,0,4">
+          <TextBlock x:Name="ArgsLabel" Text="" Margin="0,0,0,4"/><TextBox x:Name="GameArgs" ToolTip=""/>
+          <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock x:Name="SteamIdLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><TextBox x:Name="SteamId" Grid.Column="1" ToolTip=""/></Grid>
+          <CheckBox x:Name="Fossilize" IsChecked="True" Content="" Margin="0,8,0,0" ToolTip=""/>
+         </StackPanel>
+        </Expander>
+        <TextBlock x:Name="FirstTestHint" Style="{StaticResource Note}" Margin="0,8,0,10"/>
+        <WrapPanel><Button x:Name="Check"/><Button x:Name="Dependencies"/><Button x:Name="Install" Style="{StaticResource Primary}"/><Button x:Name="Uninstall"/></WrapPanel>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <TextBlock x:Name="CompareHeading" Style="{StaticResource Heading}"/>
+        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SteamSetup"/><Button x:Name="SteamRestore"/></WrapPanel>
+        <TextBlock x:Name="EffectState" Text="" FontWeight="SemiBold" Margin="0,4,0,2"/>
+        <TextBlock x:Name="RuntimeState" Text="" Style="{StaticResource Note}" FontSize="13"/>
+        <TextBlock x:Name="FpsHint" Style="{StaticResource Note}" Margin="0,6,0,0"/>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource CardBox}">
+       <DockPanel>
+        <Button x:Name="Report" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="8,0,0,0"/>
+        <Expander x:Name="CheckDetails" Header=""><TextBox x:Name="Details" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Height="160" FontFamily="Consolas" FontSize="12" VerticalContentAlignment="Top"/></Expander>
+       </DockPanel>
+      </Border>
+     </StackPanel>
+    </ScrollViewer>
+   </TabItem>
+   <TabItem x:Name="ControlsTab" Header="">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+     <StackPanel>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <DockPanel>
+         <TextBlock x:Name="ControlsEffectState" DockPanel.Dock="Right" FontWeight="SemiBold" VerticalAlignment="Center" Margin="10,0,0,6"/>
+         <WrapPanel><Button x:Name="ControlsToggle" Style="{StaticResource Primary}"/><Button x:Name="ControlsLaunch"/></WrapPanel>
+        </DockPanel>
+        <TextBlock x:Name="ControlsRuntimeState" Style="{StaticResource Note}" FontSize="13"/>
+        <TextBlock x:Name="FrameReadout" Style="{StaticResource Note}" Margin="0,2,0,0"/>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <DockPanel Margin="0,0,0,4">
+         <Button x:Name="ResetSettings" DockPanel.Dock="Right" Style="{StaticResource Link}"/>
+         <TextBlock x:Name="SettingsState" DockPanel.Dock="Right" Style="{StaticResource Note}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+         <TextBlock x:Name="ControlsHeading" Style="{StaticResource Heading}" Margin="0" VerticalAlignment="Center"/>
+        </DockPanel>
+        <StackPanel x:Name="KnobRows"/>
+        <Expander x:Name="MoreSettings" Header="" Margin="0,6,0,0"><StackPanel x:Name="MoreKnobRows"/></Expander>
+       </StackPanel>
+      </Border>
      </StackPanel>
     </ScrollViewer>
    </TabItem>
@@ -125,18 +347,53 @@ $script:SettingsStateKey = 'SettingsLoading'
 '@
 $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
 $script:Ui = @{}
-foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','Mode','GameArgs','SteamId','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','PythonHint','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ModeLabel','ModeDirect','ModeSteam','LaunchOptions','ArgsLabel','SteamIdLabel','FirstTestHint','CompareHeading','FpsHint','LanguageLabel','Language')) {
+foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','Mode','GameArgs','SteamId','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ModeLabel','ModeDirect','ModeSteam','LaunchOptions','ArgsLabel','SteamIdLabel','FirstTestHint','CompareHeading','FpsHint','Language','Theme')) {
     $script:Ui[$name] = $script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ReloadSettings','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','ControlsHint','ApplySettings','SettingsState','KnobRows')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
-$script:Window.MinHeight=540
-$script:Window.Height=[Math]::Min(900,[Windows.SystemParameters]::WorkArea.Height-36)
-$script:Window.Width=[Math]::Min(940,[Windows.SystemParameters]::WorkArea.Width-36)
+$script:Window.Height=[Math]::Min(700,[Windows.SystemParameters]::WorkArea.Height-36)
+$script:Window.Width=[Math]::Min(780,[Windows.SystemParameters]::WorkArea.Width-36)
 
+# Light or dark: Windows' own setting for apps, unless the theme button chose one, kept in
+# work\windows-wizard\ui.json. Every colour in the window is one of these brushes.
+$script:Themes=@{
+ light=@{Bg='#F3F5F9';Card='#FFFFFF';CardBorder='#E3E8EF';Text='#1A2433';Muted='#5B6B80';Accent='#2563EB';AccentText='#FFFFFF';Field='#FFFFFF';FieldBorder='#CBD5E1';Hover='#EEF2F7';Selected='#E0E9FB';Track='#D5DCE6';Good='#15803D';Bad='#DC2626'}
+ dark=@{Bg='#16191E';Card='#1F2329';CardBorder='#2D333B';Text='#E6E9EE';Muted='#9AA5B4';Accent='#4C8DFF';AccentText='#FFFFFF';Field='#262B32';FieldBorder='#3B424C';Hover='#2B3139';Selected='#233552';Track='#3B424C';Good='#4ADE80';Bad='#F87171'}
+}
+$script:Theme='light'
+$script:UiPrefs=Join-Path $script:Work 'ui.json'
+Add-Type -Namespace NrSetup -Name Native -MemberDefinition @'
+[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+'@
+function Get-SystemTheme {
+    $value=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
+    if($value -eq 0) { 'dark' } else { 'light' }
+}
+function Set-TitleBar {
+    $handle=[Windows.Interop.WindowInteropHelper]::new($script:Window).Handle
+    if($handle -eq [IntPtr]::Zero) { return }
+    $dark=[int]($script:Theme -eq 'dark')
+    # 20 is DWMWA_USE_IMMERSIVE_DARK_MODE; Windows 10 before 20H1 knew it as 19.
+    if([NrSetup.Native]::DwmSetWindowAttribute($handle,20,[ref]$dark,4) -ne 0) { $null=[NrSetup.Native]::DwmSetWindowAttribute($handle,19,[ref]$dark,4) }
+    # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED: the caption repaints at once.
+    $null=[NrSetup.Native]::SetWindowPos($handle,[IntPtr]::Zero,0,0,0,0,0x37)
+}
+function Set-Theme([string]$Name) {
+    $script:Theme=$Name
+    foreach($key in $script:Themes[$Name].Keys) {
+        $brush=[Windows.Media.SolidColorBrush]::new([Windows.Media.ColorConverter]::ConvertFromString($script:Themes[$Name][$key]))
+        $brush.Freeze()
+        $script:Window.Resources[$key]=$brush
+    }
+    # The sun offers the light theme, the moon the dark one.
+    $script:Ui.Theme.Content=[string][char]$(if($Name -eq 'dark'){0xE706}else{0xE708})
+    Set-TitleBar
+}
 
 # Windows UI culture selects the initial language. Switching never edits a profile,
 # runtime setting or Steam option; only app-owned labels and messages change.
@@ -149,7 +406,7 @@ $script:RuntimeValues=@()
 $script:LastStatus=$null
 $script:Strings=@{
  en=@{
-  Title='DLSS-NR — setup and launch'; LanguageLabel='Language'; LanguageTip='Change the setup language.'
+  Title='DLSS-NR — setup and launch'; LanguageTip='Change the setup language.'
   Subtitle='Setup and test launch on Intel Xe2'; FilesHeading='1. Choose your files'
   DllLabel='Your NVIDIA DLL'; GameLabel='Game executable'; PythonLabel='64-bit Python'; Browse='Browse…'
   DllTip='Choose your own nvngx_dlssnr.dll. The file is not downloaded or included in the package.'
@@ -196,12 +453,13 @@ $script:Strings=@{
   'Done.off'='NR disabled.'; 'Done.report'='Report saved.'; 'Done.save'='Settings saved.'
   SetupTab='Setup'; ControlsTab='NR controls'; ControlsHeading='Live NR controls'
   ControlsHint='Changes save automatically after you finish adjusting. The daemon reads them between frames; no game restart is needed. Requested scale and the actual padded network size may differ.'
-  ReloadSettings='Reload'; ResetSettings='Reset all'; ApplySettings='Apply now'; DefaultKnob='Default'
+  ResetSettings='Reset all'; DefaultKnob='Default'; MoreSettings='More settings'; ThemeTip='Light or dark theme'
   SettingsLoading='Loading NR settings…'; SettingsReady='Current settings loaded.'; SettingsUnsaved='Changes waiting to be saved…'
   SettingsSaved='Saved. Used on the next processed frame.'; SettingsFailed='Settings could not be saved. See Setup → Check details.'
   UnsavedClose='Some NR changes were not saved. Close and discard those changes?'
   InvalidSetting='Enter a finite number within the supported range.'; FrameReadout='Last neural frame: output {0}×{1}; network {3}×{4}; processing {2} ms. This is not game FPS.'
-  NetworkGroup='Network size'; LookGroup='Look'; StabilityGroup='Stability'
+  PackagesLater='Python works. Install NR adds numpy and safetensors to a Python of its own.'
+  GameWithoutNr='The game is running, but NR did not start it, so NR cannot reach it. Close the game and press Launch game.'
   'Loading.settings'='Loading NR settings…'; 'Loading.settings-save'='Saving NR controls…'; 'Loading.settings-reset'='Restoring NR defaults…'
   'Done.settings'='NR settings loaded.'; 'Done.settings-save'='NR settings saved.'; 'Done.settings-reset'='NR defaults restored.'
   'Knob.render_scale'='Render scale'; 'Knob.min_extent'='Minimum network side'; 'Knob.profile'='Profile'; 'Knob.intensity'='Intensity'
@@ -218,11 +476,12 @@ $script:Strings=@{
   'Hint.release'='Pixel change in levels of 255 that releases history. 16–24 is a useful starting range; zero disables this protection.'
   'Hint.cut_limit'='Average frame change that discards history for a scene cut. Lower reacts sooner; 1 never cuts.'
   Uninstall='Remove NR'; 'Loading.uninstall'='Removing NR from the game…'; 'Done.uninstall'='NR removed. The game folder is as it was before installation.'
-  UninstallConfirm='Remove NR from this game? Setup deletes the dlss-nr folder and the DXVK files it added, and puts back the game files it set aside. Your weights and settings stay in the DLSS-NR folder.'
+  'Done.uninstall-steam'='Steam''s launch options restored and NR removed. The game folder is as it was before installation.'
+  UninstallConfirm='Remove NR from this game? If Steam still starts it through NR, setup first returns its launch options, and Steam restarts. Then it deletes the dlss-nr folder and the DXVK files it added, and puts back the game files it set aside. Your weights and settings stay in the DLSS-NR folder.'
   'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.neutral'='Neutral'
  }
  ru=@{
-  Title='DLSS-NR — установка и запуск'; LanguageLabel='Язык'; LanguageTip='Выберите язык мастера.'
+  Title='DLSS-NR — установка и запуск'; LanguageTip='Выберите язык мастера.'
   Subtitle='Установка и пробный запуск на Intel Xe2'; FilesHeading='1. Выберите файлы'
   DllLabel='Ваша NVIDIA DLL'; GameLabel='Программа игры'; PythonLabel='64-битный Python'; Browse='Обзор…'
   DllTip='Выберите собственную nvngx_dlssnr.dll. Файл не скачивается и не входит в пакет.'
@@ -269,12 +528,13 @@ $script:Strings=@{
   'Done.off'='NR выключен.'; 'Done.report'='Отчёт сохранён.'; 'Done.save'='Параметры сохранены.'
   SetupTab='Установка'; ControlsTab='Настройки NR'; ControlsHeading='Настройки NR во время игры'
   ControlsHint='Изменения сохраняются автоматически после регулировки. Демон читает их между кадрами; перезапуск игры не нужен. Выбранный масштаб и фактический размер сети с дополнением могут различаться.'
-  ReloadSettings='Перечитать'; ResetSettings='Сбросить всё'; ApplySettings='Применить'; DefaultKnob='Сброс'
+  ResetSettings='Сбросить всё'; DefaultKnob='По умолчанию'; MoreSettings='Дополнительно'; ThemeTip='Светлая или тёмная тема'
   SettingsLoading='Загружаем настройки NR…'; SettingsReady='Текущие настройки загружены.'; SettingsUnsaved='Изменения ожидают сохранения…'
   SettingsSaved='Сохранено. Используется со следующего обработанного кадра.'; SettingsFailed='Не удалось сохранить. См. «Установка» → «Подробности проверки».'
   UnsavedClose='Некоторые изменения NR не сохранены. Закрыть окно и отбросить эти изменения?'
   InvalidSetting='Введите конечное число в допустимом диапазоне.'; FrameReadout='Последний нейронный кадр: выход {0}×{1}; сеть {3}×{4}; обработка {2} мс. Это не FPS игры.'
-  NetworkGroup='Размер сети'; LookGroup='Изображение'; StabilityGroup='Стабилизация'
+  PackagesLater='Python подходит. «Установить NR» сам поставит numpy и safetensors в свою копию Python.'
+  GameWithoutNr='Игра запущена не через NR, поэтому NR до неё не достаёт. Закройте игру и нажмите «Запустить игру».'
   'Loading.settings'='Загружаем настройки NR…'; 'Loading.settings-save'='Сохраняем настройки NR…'; 'Loading.settings-reset'='Возвращаем настройки NR…'
   'Done.settings'='Настройки NR загружены.'; 'Done.settings-save'='Настройки NR сохранены.'; 'Done.settings-reset'='Настройки NR сброшены.'
   'Knob.render_scale'='Масштаб сети'; 'Knob.min_extent'='Минимальная сторона сети'; 'Knob.profile'='Профиль'; 'Knob.intensity'='Интенсивность'
@@ -291,11 +551,12 @@ $script:Strings=@{
   'Hint.release'='Изменение пикселя в уровнях из 255, которое освобождает историю. Начните с 16–24; ноль выключает эту защиту.'
   'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
   Uninstall='Удалить NR'; 'Loading.uninstall'='Удаляем NR из игры…'; 'Done.uninstall'='NR удалён. Папка игры такая же, как до установки.'
-  UninstallConfirm='Удалить NR из этой игры? Мастер удалит папку dlss-nr и добавленные им файлы DXVK и вернёт отложенные файлы игры. Веса и настройки останутся в папке DLSS-NR.'
+  'Done.uninstall-steam'='Параметры запуска Steam возвращены, NR удалён. Папка игры такая же, как до установки.'
+  UninstallConfirm='Удалить NR из этой игры? Если Steam ещё запускает её через NR, мастер сначала вернёт её параметры запуска, и Steam перезапустится. Затем удалит папку dlss-nr и добавленные им файлы DXVK и вернёт отложенные файлы игры. Веса и настройки останутся в папке DLSS-NR.'
   'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
  }
  es=@{
-  Title='DLSS-NR — instalación e inicio'; LanguageLabel='Idioma'; LanguageTip='Cambie el idioma del instalador.'
+  Title='DLSS-NR — instalación e inicio'; LanguageTip='Cambie el idioma del instalador.'
   Subtitle='Instalación y prueba en Intel Xe2'; FilesHeading='1. Elija sus archivos'
   DllLabel='Su DLL de NVIDIA'; GameLabel='Ejecutable del juego'; PythonLabel='Python de 64 bits'; Browse='Examinar…'
   DllTip='Elija su propio nvngx_dlssnr.dll. El archivo no se descarga ni se incluye en el paquete.'
@@ -342,12 +603,13 @@ $script:Strings=@{
   'Done.off'='NR desactivado.'; 'Done.report'='Informe guardado.'; 'Done.save'='Configuración guardada.'
   SetupTab='Instalación'; ControlsTab='Controles de NR'; ControlsHeading='Controles de NR durante el juego'
   ControlsHint='Los cambios se guardan solos al terminar de ajustar. El proceso de NR los lee entre fotogramas; no hace falta reiniciar el juego. La escala elegida y el tamaño real de la red con relleno pueden diferir.'
-  ReloadSettings='Recargar'; ResetSettings='Restablecer todo'; ApplySettings='Aplicar ahora'; DefaultKnob='Por defecto'
+  ResetSettings='Restablecer todo'; DefaultKnob='Por defecto'; MoreSettings='Más ajustes'; ThemeTip='Tema claro u oscuro'
   SettingsLoading='Cargando la configuración de NR…'; SettingsReady='Configuración actual cargada.'; SettingsUnsaved='Cambios pendientes de guardar…'
   SettingsSaved='Guardado. Se usará en el siguiente fotograma procesado.'; SettingsFailed='No se pudo guardar la configuración. Vea Instalación → Detalles de la comprobación.'
   UnsavedClose='Algunos cambios de NR no se guardaron. ¿Cerrar y descartar esos cambios?'
   InvalidSetting='Escriba un número finito dentro del rango admitido.'; FrameReadout='Último fotograma neuronal: salida {0}×{1}; red {3}×{4}; procesamiento {2} ms. Esto no son los FPS del juego.'
-  NetworkGroup='Tamaño de la red'; LookGroup='Imagen'; StabilityGroup='Estabilidad'
+  PackagesLater='Python sirve. Instalar NR añade numpy y safetensors a una copia propia de Python.'
+  GameWithoutNr='El juego se inició sin NR, así que NR no puede llegar a él. Cierre el juego y pulse Iniciar el juego.'
   'Loading.settings'='Cargando la configuración de NR…'; 'Loading.settings-save'='Guardando los controles de NR…'; 'Loading.settings-reset'='Restaurando los valores predeterminados de NR…'
   'Done.settings'='Configuración de NR cargada.'; 'Done.settings-save'='Configuración de NR guardada.'; 'Done.settings-reset'='Se restauraron los valores predeterminados de NR.'
   'Knob.render_scale'='Escala de renderizado'; 'Knob.min_extent'='Lado mínimo de la red'; 'Knob.profile'='Perfil'; 'Knob.intensity'='Intensidad'
@@ -364,24 +626,26 @@ $script:Strings=@{
   'Hint.release'='Cambio de un píxel, en niveles de 255, que libera el historial. 16–24 es un buen punto de partida; cero desactiva esta protección.'
   'Hint.cut_limit'='Cambio medio del fotograma que descarta el historial en un cambio de escena. Menos reacciona antes; 1 nunca corta.'
   Uninstall='Quitar NR'; 'Loading.uninstall'='Quitando NR del juego…'; 'Done.uninstall'='NR quitado. La carpeta del juego está como antes de la instalación.'
-  UninstallConfirm='¿Quitar NR de este juego? El instalador borra la carpeta dlss-nr y los archivos de DXVK que añadió, y devuelve los archivos del juego que guardó aparte. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
+  'Done.uninstall-steam'='Se restauraron las opciones de inicio de Steam y se quitó NR. La carpeta del juego está como antes de la instalación.'
+  UninstallConfirm='¿Quitar NR de este juego? Si Steam todavía lo inicia a través de NR, el instalador primero restaura sus opciones de inicio, y Steam se reinicia. Después borra la carpeta dlss-nr y los archivos de DXVK que añadió, y devuelve los archivos del juego que guardó aparte. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
   'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.neutral'='Neutro'
  }
 }
 $script:TextBindings=@{
  Subtitle='Subtitle'; FilesHeading='FilesHeading'; DllLabel='DllLabel'; GameLabel='GameLabel'; PythonLabel='PythonLabel'
- PythonHint='PythonHint'; ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'; ModeLabel='ModeLabel'
+ ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'; ModeLabel='ModeLabel'
  ArgsLabel='ArgsLabel'; SteamIdLabel='SteamIdLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
- FpsHint='FpsHint'; LanguageLabel='LanguageLabel'; ControlsHeading='ControlsHeading'; ControlsHint='ControlsHint'
+ FpsHint='FpsHint'; ControlsHeading='ControlsHeading'
 }
 $script:ContentBindings=@{
  BrowseDll='Browse'; BrowseGame='Browse'; BrowsePython='Browse'; FindPython='FindPython'; GetPython='GetPython'
  ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ModeDirect='ModeDirect'; ModeSteam='ModeSteam'; Fossilize='Fossilize'
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'; SteamSetup='SteamSetup'
- SteamRestore='SteamRestore'; Report='Report'; ControlsLaunch='Launch'; ReloadSettings='ReloadSettings'; ResetSettings='ResetSettings'; ApplySettings='ApplySettings'
+ SteamRestore='SteamRestore'; Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'
 }
-$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab'}
-$script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; SteamId='SteamIdTip'; Fossilize='FossilizeTip'; Language='LanguageTip'}
+$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings'}
+$script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; SteamId='SteamIdTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
+ PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'}
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
     return [string]$script:Strings[$script:Language][$Key]
@@ -413,7 +677,7 @@ function Set-KnobDisplay([string]$Name,$Value) {
             foreach($item in $row.Choice.Items) { if([string]$item.Tag -eq [string]$Value) { $row.Choice.SelectedItem=$item; break } }
         } else {
             $row.Input.Text=Format-KnobValue $Value
-            $row.Input.BorderBrush=[Windows.Media.Brushes]::LightGray
+            $row.Input.SetResourceReference([Windows.Controls.Control]::BorderBrushProperty,'FieldBorder')
             $row.Slider.Value=[Math]::Min([Math]::Max([double]$Value,[double]$row.Model.low),[double]$row.Model.high)
         }
     } finally { $script:LoadingSettings=$wasLoading }
@@ -433,7 +697,7 @@ function Commit-KnobInput($InputControl) {
     $name=[string]$InputControl.Tag; $row=$script:KnobUi[$name]; $number=0.0
     $valid=[double]::TryParse($InputControl.Text.Trim().Replace(',','.'),[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$number)
     if(-not $valid -or [double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $row.Model.runtime_low -or $number -gt $row.Model.runtime_high) {
-        $InputControl.BorderBrush=[Windows.Media.Brushes]::IndianRed
+        $InputControl.SetResourceReference([Windows.Controls.Control]::BorderBrushProperty,'Bad')
         Set-SettingsState 'InvalidSetting'
         return
     }
@@ -446,63 +710,58 @@ function Commit-FocusedKnob {
 function Update-KnobLanguage {
     foreach($name in $script:KnobUi.Keys) {
         $row=$script:KnobUi[$name]
-        $row.Label.Text=(T ('Knob.'+$name))+' ('+$name+')'
-        $row.Hint.Text=T ('Hint.'+$name)
+        $row.Label.Text=T ('Knob.'+$name)
+        # The description once, on the name: it was printed under the slider and was the
+        # slider's tooltip as well.
+        $row.Label.ToolTip=T ('Hint.'+$name)
         $defaultLabel=$(if($row.Model.kind -eq 'choice'){T ('Profile.'+[string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
-        $row.Default.Content=(T 'DefaultKnob')+' '+$defaultLabel
-        $row.Default.ToolTip=T ('Hint.'+$name)
+        $row.Default.ToolTip=(T 'DefaultKnob')+': '+$defaultLabel
+        [Windows.Automation.AutomationProperties]::SetName($row.Default,(T 'DefaultKnob')+' '+$defaultLabel)
         if($row.Choice) {
             [Windows.Automation.AutomationProperties]::SetName($row.Choice,(T ('Knob.'+$name)))
             foreach($item in $row.Choice.Items) { $item.Content=T ('Profile.'+[string]$item.Tag) }
         } else {
-            $range=''+$row.Model.runtime_low+' – '+$row.Model.runtime_high
-            $row.Input.ToolTip=(T ('Knob.'+$name))+' ['+$range+']'
-            $row.Slider.ToolTip=T ('Hint.'+$name)
+            $row.Input.ToolTip=(T ('Knob.'+$name))+' ['+$row.Model.runtime_low+' – '+$row.Model.runtime_high+']'
             [Windows.Automation.AutomationProperties]::SetName($row.Input,(T ('Knob.'+$name)))
             [Windows.Automation.AutomationProperties]::SetName($row.Slider,(T ('Knob.'+$name)))
         }
     }
-    foreach($group in @($script:Ui.KnobRows.Children)) { $group.Child.Children[0].Text=T ([string]$group.Tag) }
 }
+# The three a first game needs; the other seven wait under More settings.
+$script:MainKnobs=@('render_scale','profile','intensity')
 function Create-KnobControls($Schema) {
-    $script:KnobUi=@{}; $script:Ui.KnobRows.Children.Clear()
+    $script:KnobUi=@{}; $script:Ui.KnobRows.Children.Clear(); $script:Ui.MoreKnobRows.Children.Clear()
     $script:LoadingSettings=$true
     try {
-        $currentGroup=''; $groupPanel=$null
         foreach($model in $Schema.knobs) {
             $name=[string]$model.name
-            $group=$(if($name -in @('render_scale','min_extent')){'NetworkGroup'}elseif($name -in @('profile','intensity','detail_strength','colour_strength')){'LookGroup'}else{'StabilityGroup'})
-            if($group -ne $currentGroup) {
-                $card=[Windows.Controls.Border]::new(); $card.Background=[Windows.Media.Brushes]::White; $card.CornerRadius=[Windows.CornerRadius]::new(10); $card.Padding=[Windows.Thickness]::new(20); $card.Margin=[Windows.Thickness]::new(0,0,0,14); $card.Tag=$group
-                $groupPanel=[Windows.Controls.StackPanel]::new(); $card.Child=$groupPanel
-                $heading=[Windows.Controls.TextBlock]::new(); $heading.FontSize=18; $heading.FontWeight=[Windows.FontWeights]::SemiBold; $heading.Margin=[Windows.Thickness]::new(0,0,0,12)
-                $null=$groupPanel.Children.Add($heading); $null=$script:Ui.KnobRows.Children.Add($card); $currentGroup=$group
-            }
-            $container=[Windows.Controls.StackPanel]::new(); $container.Margin=[Windows.Thickness]::new(0,0,0,15)
-            $grid=[Windows.Controls.Grid]::new()
-            foreach($width in @('245','*','76','155')) { $column=[Windows.Controls.ColumnDefinition]::new(); $column.Width=[Windows.GridLengthConverter]::new().ConvertFromString($width); $null=$grid.ColumnDefinitions.Add($column) }
-            $label=[Windows.Controls.TextBlock]::new(); $label.TextWrapping='Wrap'; $label.VerticalAlignment='Center'; $label.FontSize=13; $null=$grid.Children.Add($label)
-            $defaultButton=[Windows.Controls.Button]::new(); $defaultButton.Tag=$name; $defaultButton.FontSize=12; $defaultButton.Padding=[Windows.Thickness]::new(6,7,6,7); $defaultButton.Margin=[Windows.Thickness]::new(10,0,0,0); [Windows.Controls.Grid]::SetColumn($defaultButton,3); $null=$grid.Children.Add($defaultButton)
-            $defaultButton.Add_Click({param($sender,$eventArgs); Reset-NrSettings @([string]$sender.Tag)})
-            $row=@{Model=$model;Label=$label;Default=$defaultButton;Input=$null;Slider=$null;Choice=$null}
+            $grid=[Windows.Controls.Grid]::new(); $grid.Margin=[Windows.Thickness]::new(0,2,0,2)
+            foreach($width in @('170','*','62','30')) { $column=[Windows.Controls.ColumnDefinition]::new(); $column.Width=[Windows.GridLengthConverter]::new().ConvertFromString($width); $null=$grid.ColumnDefinitions.Add($column) }
+            $label=[Windows.Controls.TextBlock]::new(); $label.VerticalAlignment='Center'; $label.TextTrimming='CharacterEllipsis'; $null=$grid.Children.Add($label)
+            $reset=[Windows.Controls.Button]::new(); $reset.Tag=$name; $reset.Style=$script:Window.FindResource('Icon'); $reset.Content=[string][char]0xE7A7; $reset.Margin=[Windows.Thickness]::new(2,0,0,0); [Windows.Controls.Grid]::SetColumn($reset,3); $null=$grid.Children.Add($reset)
+            [Windows.Automation.AutomationProperties]::SetAutomationId($reset,'NrReset_'+$name)
+            $reset.Add_Click({param($sender,$eventArgs); Reset-NrSettings @([string]$sender.Tag)})
+            $row=@{Model=$model;Label=$label;Default=$reset;Input=$null;Slider=$null;Choice=$null}
             if($model.kind -eq 'choice') {
-                $choice=[Windows.Controls.ComboBox]::new(); $choice.Tag=$name
+                $choice=[Windows.Controls.ComboBox]::new(); $choice.Tag=$name; $choice.Margin=[Windows.Thickness]::new(8,0,0,0)
                 foreach($value in $model.choices) { $item=[Windows.Controls.ComboBoxItem]::new(); $item.Tag=[string]$value; $null=$choice.Items.Add($item) }
                 [Windows.Controls.Grid]::SetColumn($choice,1); [Windows.Controls.Grid]::SetColumnSpan($choice,2); $null=$grid.Children.Add($choice); $row.Choice=$choice
                 [Windows.Automation.AutomationProperties]::SetAutomationId($choice,'NrChoice_'+$name)
                 $choice.Add_SelectionChanged({param($sender,$eventArgs); if($sender.SelectedItem) { Change-Knob ([string]$sender.Tag) ([string]$sender.SelectedItem.Tag) }})
             } else {
-                $slider=[Windows.Controls.Slider]::new(); $slider.Tag=$name; $slider.Minimum=[double]$model.low; $slider.Maximum=[double]$model.high; $slider.TickFrequency=[double]$model.step; $slider.SmallChange=[double]$model.step; $slider.LargeChange=[double]$model.step*5; $slider.IsSnapToTickEnabled=$true; $slider.VerticalAlignment='Center'; $slider.Margin=[Windows.Thickness]::new(8,0,14,0)
+                $slider=[Windows.Controls.Slider]::new(); $slider.Tag=$name; $slider.Minimum=[double]$model.low; $slider.Maximum=[double]$model.high; $slider.TickFrequency=[double]$model.step; $slider.SmallChange=[double]$model.step; $slider.LargeChange=[double]$model.step*5; $slider.IsSnapToTickEnabled=$true; $slider.VerticalAlignment='Center'; $slider.Margin=[Windows.Thickness]::new(8,0,10,0)
                 [Windows.Controls.Grid]::SetColumn($slider,1); $null=$grid.Children.Add($slider); $row.Slider=$slider
                 [Windows.Automation.AutomationProperties]::SetAutomationId($slider,'NrSlider_'+$name)
-                $inputBox=[Windows.Controls.TextBox]::new(); $inputBox.Tag=$name; $inputBox.Padding=[Windows.Thickness]::new(6); $inputBox.HorizontalContentAlignment='Right'; [Windows.Controls.Grid]::SetColumn($inputBox,2); $null=$grid.Children.Add($inputBox); $row.Input=$inputBox
+                $inputBox=[Windows.Controls.TextBox]::new(); $inputBox.Tag=$name; $inputBox.Padding=[Windows.Thickness]::new(4,3,4,3); $inputBox.HorizontalContentAlignment='Right'; [Windows.Controls.Grid]::SetColumn($inputBox,2); $null=$grid.Children.Add($inputBox); $row.Input=$inputBox
                 [Windows.Automation.AutomationProperties]::SetAutomationId($inputBox,'NrInput_'+$name)
                 $slider.Add_ValueChanged({param($sender,$eventArgs); Change-Knob ([string]$sender.Tag) $sender.Value})
+                # A click gives the slider the keyboard, so the arrows move the one just touched.
+                $slider.Add_PreviewMouseLeftButtonDown({param($sender,$eventArgs); $null=$sender.Focus()})
                 $inputBox.Add_LostKeyboardFocus({param($sender,$eventArgs); Commit-KnobInput $sender})
                 $inputBox.Add_KeyDown({param($sender,$eventArgs); if($eventArgs.Key -eq [Windows.Input.Key]::Enter) { Commit-KnobInput $sender; $eventArgs.Handled=$true }})
             }
-            $hint=[Windows.Controls.TextBlock]::new(); $hint.TextWrapping='Wrap'; $hint.FontSize=12; $hint.Foreground=[Windows.Media.Brushes]::SlateGray; $hint.Margin=[Windows.Thickness]::new(0,5,0,0); $row.Hint=$hint
-            $null=$container.Children.Add($grid); $null=$container.Children.Add($hint); $null=$groupPanel.Children.Add($container); $script:KnobUi[$name]=$row
+            $target=$(if($name -in $script:MainKnobs){$script:Ui.KnobRows}else{$script:Ui.MoreKnobRows})
+            $null=$target.Children.Add($grid); $script:KnobUi[$name]=$row
         }
         Update-KnobLanguage
     } finally { $script:LoadingSettings=$false }
@@ -559,6 +818,7 @@ function Set-Language([string]$Language) {
             $script:Ui.Toggle.Content=T 'Enable'
             $script:Ui.ControlsToggle.Content=T 'Enable'
             $script:Ui.ControlsEffectState.Text=T 'EffectOff'
+            Set-EffectColour $false
             Set-RuntimeText $runtimeKey $script:RuntimeValues
         }
     } finally { $script:ChangingLanguage=$false }
@@ -592,7 +852,7 @@ function Apply-Profile($Profile) {
     if($Profile.game_args) { $script:Ui.GameArgs.Text=(@($Profile.game_args | ForEach-Object { Quote-Argument ([string]$_) }) -join ' ') }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','Report','ControlsToggle','ControlsLaunch','ReloadSettings','ResetSettings','ApplySettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','Report','ControlsToggle','ControlsLaunch','ResetSettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
     $script:Ui.Spinner.IsIndeterminate=$Busy
@@ -629,6 +889,10 @@ function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$fal
         }
     } catch { if(-not $Quiet) { Set-Progress 'ActionFailed'; $script:Ui.Details.Text=$_.Exception.Message; Set-Busy $false } }
 }
+function Set-EffectColour([bool]$Enabled) {
+    $key=$(if($Enabled){'Good'}else{'Muted'})
+    foreach($name in 'EffectState','ControlsEffectState') { $script:Ui[$name].SetResourceReference([Windows.Controls.TextBlock]::ForegroundProperty,$key) }
+}
 function Show-Status($Value) {
     $enabled=[bool]$Value.trigger_exists
     if($null -ne $Value.effect_on) { $enabled=[bool]$Value.effect_on }
@@ -637,6 +901,7 @@ function Show-Status($Value) {
     $script:Ui.Toggle.Content=$(if($enabled){T 'Disable'}else{T 'Enable'})
     $script:Ui.ControlsToggle.Content=$script:Ui.Toggle.Content
     $script:Ui.ControlsEffectState.Text=$script:Ui.EffectState.Text
+    Set-EffectColour $enabled
     $count=$Value.processed
     if($null -eq $count -and $Value.counts) { $count=$Value.counts.processed }
     $refused=$Value.rejected
@@ -681,6 +946,8 @@ function Finish-Bridge($Job,[bool]$Quiet) {
         $script:Ui.Details.Text=($value | ConvertTo-Json -Depth 10)
         if($value.ok) {
             Set-Progress ('Done.'+$Job.Action)
+            if($Job.Action -eq 'uninstall' -and $value.steam_restored) { Set-Progress 'Done.uninstall-steam' }
+            if($Job.Action -eq 'on' -and $value.warning -eq 'game_without_nr') { Set-Progress 'GameWithoutNr' }
             if($value.profile -and $Job.Action -in @('discover','dependencies','install','steam-setup')) { Apply-Profile $value.profile }
             if($Job.Action -eq 'discover' -and -not $value.profile -and $value.candidates.Count) { $script:Ui.PythonPath.Text=[string]$value.candidates[0] }
             if($Job.Action -eq 'install') { $script:Installed=$true }
@@ -695,8 +962,18 @@ function Finish-Bridge($Job,[bool]$Quiet) {
             }
             if($Job.Action -in @('on','off','status')) { Show-Status $value }
         } else {
-            Set-Progress 'FixChecks'
-            $script:Ui.CheckDetails.IsExpanded=$true
+            $failed=@($value.checks | Where-Object { -not $_.ok } | ForEach-Object { [string]$_.name })
+            if($Job.Action -eq 'check' -and $failed.Count -eq 1 -and $failed[0] -eq 'python_packages') {
+                # Install prepares a Python of its own when only the packages are missing.
+                Set-Progress 'PackagesLater'
+            } elseif($failed.Count -or -not $value.error) {
+                Set-Progress 'FixChecks'
+                $script:Ui.CheckDetails.IsExpanded=$true
+            } else {
+                # The backend's own sentence after ours: it names the game, Steam or file at fault.
+                Set-Progress 'ActionFailed'
+                $script:Ui.Progress.Text=(T 'ActionFailed')+' '+[string]$value.error
+            }
             Restore-SettingsFailure $Job
         }
     }
@@ -725,6 +1002,8 @@ function Find-BootPython {
 }
 
 
+try { $prefs=Read-Json $script:UiPrefs } catch { $prefs=$null }
+Set-Theme $(if($prefs -and $prefs.theme -in @('light','dark')){[string]$prefs.theme}else{Get-SystemTheme})
 Set-Language $script:Language
 if($SelfTest) {
     if($ControlSchema) {
@@ -735,6 +1014,25 @@ if($SelfTest) {
             $row=$script:KnobUi[[string]$model.name]
             if($model.kind -eq 'number' -and ($row.Slider.Minimum -ne $model.low -or $row.Slider.Maximum -ne $model.high -or $row.Slider.TickFrequency -ne $model.step)) { throw "Wrong slider range: $($model.name)" }
         }
+        # The keyboard on a slider: an arrow is one step, Page Up five. The window is shown
+        # off screen for it, since keys need a presentation source; the change is not kept.
+        $script:Window.WindowStartupLocation='Manual'; $script:Window.Left=-20000; $script:Window.Top=-20000; $script:Window.ShowActivated=$false
+        $script:Window.Show(); $script:Ui.Pages.SelectedItem=$script:Ui.ControlsTab; $script:Window.UpdateLayout()
+        $row=$script:KnobUi['intensity']; $start=$row.Slider.Value
+        $source=[Windows.PresentationSource]::FromVisual($row.Slider)
+        foreach($key in 'Right','Right','PageUp','Left') {
+            $press=[Windows.Input.KeyEventArgs]::new([Windows.Input.Keyboard]::PrimaryDevice,$source,0,[Windows.Input.Key]$key)
+            $press.RoutedEvent=[Windows.Input.Keyboard]::KeyDownEvent
+            $row.Slider.RaiseEvent($press)
+        }
+        $expected=$start+6*[double]$row.Model.step
+        if([Math]::Abs($row.Slider.Value-$expected) -gt 1e-9) { throw "Slider keys gave $($row.Slider.Value), expected $expected" }
+        Set-KnobDisplay 'intensity' $start; $script:PendingSettings=@{}
+        $script:Window.Hide()
+    }
+    foreach($theme in 'dark','light') {
+        Set-Theme $theme
+        if($script:Window.Resources['Text'].Color.ToString() -ne $script:Themes[$theme].Text.Replace('#','#FF')) { throw "Theme $theme was not applied" }
     }
     # Not $language: names ignore case, and at script scope that is $script:Language itself.
     $autoLanguage=$script:Language
@@ -789,9 +1087,12 @@ $script:Ui.Launch.Add_Click({ Start-Bridge 'launch' })
 $script:Ui.Toggle.Add_Click({ $action=$(if($script:Ui.Toggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsToggle.Add_Click({ $action=$(if($script:Ui.ControlsToggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsLaunch.Add_Click({ Start-Bridge 'launch' })
-$script:Ui.ReloadSettings.Add_Click({ $script:PendingSettings=@{}; $script:SettingsDue=[DateTime]::MaxValue; Start-Bridge 'settings' })
 $script:Ui.ResetSettings.Add_Click({ Reset-NrSettings })
-$script:Ui.ApplySettings.Add_Click({ Commit-FocusedKnob; Save-NrSettings })
+$script:Ui.Theme.Add_Click({
+    Set-Theme $(if($script:Theme -eq 'dark'){'light'}else{'dark'})
+    try { [IO.Directory]::CreateDirectory($script:Work) | Out-Null; Write-Json $script:UiPrefs @{theme=$script:Theme} } catch { }
+})
+$script:Window.Add_SourceInitialized({ Set-TitleBar })
 $script:Ui.SteamSetup.Add_Click({
     if([Windows.MessageBox]::Show($script:Window,(T 'SteamConfirm'),(T 'SteamTitle'),'OKCancel','Information') -eq 'OK') { Start-Bridge 'steam-setup' }
 })
