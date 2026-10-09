@@ -9,6 +9,82 @@ you need the evidence behind a line in this file, rather than reading them in or
 
 ---
 
+## The first Windows releases, and a tester's game that got the proxy but never the layer (2026-10-09, later)
+
+**Released at the owner's word**, under versions the owner named; neither carries the NVIDIA DLL
+or weights:
+- **v0.0.1**, tagged at `7f9c364`: `dlss-nr-windows-0.0.1-x64.zip`, 19 445 355 bytes, SHA-256
+  `b9f5af1b…6437`.
+- **v0.0.1.1**, tagged at `f9ec5f1`, the latest: `dlss-nr-windows-0.0.1.1-x64.zip`,
+  19 448 154 bytes, SHA-256 `bbcee183…fda2`. Against 0.0.1 only `release-metadata.json`,
+  `scripts/windows_wizard_core.py` and `windows-wizard.ps1` differ; the DLLs are the same. From
+  the unpacked ZIP: the window's self-test, Check (the DLL as 310.8.0.0), Install NR on Dead or
+  Alive 5 with the weights extracted, Save report (19 checks, the DLL tested, the extractor's
+  log) and Remove NR, the folder as before. The game was not started.
+
+`master` is `windows` again, at `f9ec5f1`. `2cba658` (the README: Windows beside Linux, and what
+differs between them) went through PR #11; the rest went straight to `master`, which the owner
+prefers to a pull request to oneself. `137fa78` is the issue form, `.github/ISSUE_TEMPLATE/problem.yml`:
+platform, release, step, the window's words and its report.
+
+**`a243ef8`, from the first tester's report.** An Arc B580 (issue #12) failed to install 0.0.1
+twice, and its report said neither which check failed nor what the weight extractor printed. Now:
+- the window names each failed check and why;
+- Save report carries the checks, the DLL's version and SHA-256 and whether it is the tested
+  310.8.0.0, and the tail of `work/logs/get-weights.log`, where install now writes the extractor's
+  output;
+- the Python and DLL probes wait 30 s, not 4, which a fresh environment's first NumPy import can
+  need;
+- a `VCOMP140.DLL` that does not load is named, with the Visual C++ Redistributable's link.
+
+With 0.0.1.1 the B580 installed: its DLL is 310.8.0.0, 649 tensors, every check passed. Which
+change did it is not known.
+
+**Then no effect, in Need for Speed Heat (DX11 through DXVK) or in DOOM (2016).** The report from
+the first: the proxy's launch record for `NeedForSpeedHeat.exe`, still running; the trigger on;
+and **no `nr_daemon.log` at all**. The layer opens that log and spawns the daemon in
+`nr_CreateInstance`. So the proxy loaded and set the variables, and the layer never made an
+instance in the game. The window cannot tell: the launch record is there, so Enable NR's warning
+stays silent.
+
+**The likely reason: Windows' Vulkan loader ignores `VK_LAYER_PATH` in an elevated process.** In
+Vulkan-Loader's source (`main`, read on 10-09):
+- `VK_LAYER_PATH`, `VK_ADD_LAYER_PATH` and the implicit-layer and driver variables go through
+  `loader_secure_getenv`, which on Windows returns nothing in a process at High integrity or above
+  (`is_high_integrity`);
+- HKCU's layer keys are skipped then too (`use_secondary_hive`), and only HKLM is read;
+- `VK_INSTANCE_LAYERS` is plain `loader_getenv`, so the layer is still asked for. Its absence is
+  one error line in the loader's debug output, and the instance is made without it.
+
+So a game run as administrator gets the proxy and never the layer. So does every game when UAC is
+off, and every game started by a launcher that runs as administrator. The tester's account is
+named "Admin", on Windows 11 Pro build 28000. Not confirmed yet: asked in the issue at 11:40 UTC,
+with Task Manager's Elevated column to check. On Linux `secure_getenv` refuses only setuid and
+setgid processes, and games are neither.
+
+**And DOOM is set up through `DOOMx64vk.exe`**, with the game's API on Vulkan. The proxy acts only
+in the executable setup names, and Steam's `DOOMx64.exe` starts `DOOMx64vk.exe` only for Vulkan.
+Setup does not say so. Asked as well.
+
+**The owner's call (10-09): a warning, no registry for now.** Setup is to say when a game runs as
+administrator, and to say to start it, and the launcher that starts it, without administrator
+rights. Next on Windows, with it:
+1. The proxy puts the game's integrity level in its launch record, and Enable NR and Save report
+   say when a game runs elevated.
+2. For Vulkan, setup warns when the chosen executable does not import `vulkan-1.dll` itself, as a
+   launcher like `DOOMx64.exe` does not.
+3. Save report carries DXVK's logs, which would show whether DXVK drew the game at all. Need for
+   Speed Heat could have run DirectX 12, or loaded System32's `d3d11.dll`; nothing in its report
+   says which.
+
+Kept for later: the layer's manifest under `HKLM\SOFTWARE\Khronos\Vulkan\ExplicitLayers`, removed
+by Remove NR, the one place an elevated process's loader still looks. An explicit layer loads only
+where it is asked for, but the key is machine-wide, needs administrator rights to write, and would
+load a file a user can change into elevated games: what the loader's check is there to prevent.
+
+**Next on Linux:** the Windows tool suites at the head. `test_windows_wizard.py` changed again in
+`a243ef8`; its `_file_version` test skips off Windows. Nothing Linux builds or runs changed.
+
 ## NR whatever starts the game: a vulkan-1.dll beside it, and the setup window without Steam (2026-10-09)
 
 The owner could not install NR for Mortal Kombat Komplete Edition, a game outside Steam: a Steam
@@ -80,8 +156,8 @@ compact, with a dark theme, sliders on the arrow keys, and each control's descri
 its name's tooltip.
 
 The ZIP is `D:\NRonWindows\rel\dlss-nr-windows-7f9c364-x64.zip` (256 files, 18.5 MB, SHA-256
-`0172a087…2aa2`), with no weights and no NVIDIA DLL. Not pushed: `9f2070c` to `7f9c364` are
-local on `windows`.
+`0172a087…2aa2`), with no weights and no NVIDIA DLL. `9f2070c` to `7f9c364` were pushed the same
+day, and `7f9c364` is v0.0.1 (the entry above).
 
 **Next on Linux:** the Windows tool suites at the head: `test_windows_wizard.py` and
 `test_release.py` changed, and `test_vulkan_proxy.py` is new (it skips off Windows). Nothing
