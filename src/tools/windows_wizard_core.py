@@ -44,6 +44,11 @@ LAYERS = {"x64": "nr_layer.dll", "x86": "nr_layer32.dll"}
 # DXVK as its release lays it out, x64/ and x32/, and the files it puts beside a game.
 DXVK_DIRS = {"x64": "x64", "x86": "x32"}
 DXVK_FILES = ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
+# Beside every game as vulkan-1.dll: it gives the game NR's environment however the game is
+# started (nr_vulkan_proxy.c), from ENV_FILE in the installation.
+PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
+PROXY_NAME = "vulkan-1.dll"
+ENV_FILE = "nr-env.txt"
 # In the game's dlss-nr folder: what NR put beside the game, and the game's own files it set
 # aside to do so, which Remove NR puts back.
 GAME_FILES = "game-files.json"
@@ -323,11 +328,11 @@ def _clean_environment():
     return values
 
 
-def runtime_env(profile):
-    values = _clean_environment()
+def layer_environment(profile):
+    """NR's own variables: what a launch adds to the environment, and what the proxy sets."""
     token = hashlib.sha256(_canonical(profile.root).encode("utf-8")).hexdigest()[:8]
     work = profile.root / "work"
-    values.update({
+    values = {
         "NR_ROOT": str(profile.root), "NR_PYTHON": str(profile.python),
         "NR_DAEMON": str(profile.root / "src/layer/nr_daemon.py"),
         "NR_SETTINGS": str(work / "nr_settings.json"),
@@ -340,9 +345,15 @@ def runtime_env(profile):
         "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1",
         # DXVK logs beside the game's executable unless told otherwise.
         "DXVK_LOG_PATH": str(work / "logs"),
-    })
+    }
     if profile.disable_fossilize:
         values["DISABLE_VK_LAYER_VALVE_steam_fossilize_1"] = "1"
+    return values
+
+
+def runtime_env(profile):
+    values = _clean_environment()
+    values.update(layer_environment(profile))
     return values
 
 
@@ -624,16 +635,18 @@ def validate(profile):
     check("game_architecture", arch in LAYERS,
           f"{profile.game_exe}: {arch or 'not a PE executable'}; 64-bit and 32-bit games are supported")
     layer = LAYERS.get(arch, LAYERS["x64"])
+    proxy = PROXIES.get(arch, PROXIES["x64"])
     shader_names = _shader_names(profile.root)
-    required = [layer, *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
+    required = [layer, proxy, *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
     missing = [name for name in required if not (profile.root / name).is_file()]
     missing.extend("src/" + name for name in SOURCE_DIRS if not (profile.root / "src" / name).is_dir())
     check("runtime_files", not missing, "Missing: " + ", ".join(missing) if missing else "Complete local release runtime and extractors")
     bad_arch = ["work/" + value for value in LIBRARIES if pe_architecture(profile.root / "work" / value) != "x64"]
-    if arch in LAYERS and (profile.root / layer).is_file() and pe_architecture(profile.root / layer) != arch:
-        bad_arch.append(layer)
+    for name in (layer, proxy):
+        if arch in LAYERS and (profile.root / name).is_file() and pe_architecture(profile.root / name) != arch:
+            bad_arch.append(name)
     check("runtime_architecture", not bad_arch, "Wrong architecture: " + ", ".join(bad_arch) if bad_arch
-          else f"Native libraries are x64; {layer} for this {arch or 'unidentified'} game")
+          else f"Native libraries are x64; {layer} and {proxy} for this {arch or 'unidentified'} game")
     dependency = _load_dependencies(profile) if _native_python(info) and not bad_arch else {"ok": False, "failures": {"probe": "Requires native x64 Python and x64 runtime"}}
     check("runtime_dependencies", dependency.get("ok"), dependency.get("failures") or "Vulkan loader and native DLL dependencies load; no GPU work performed")
     weights = _weights_state(profile)
@@ -760,40 +773,51 @@ def _game_record(folder):
     return record
 
 
+def _game_sources(profile, arch):
+    """What goes beside the game, by name: the proxy for every game, and DXVK for DirectX 8-11."""
+    sources = {PROXY_NAME: profile.root / PROXIES[arch]}
+    if profile.api == "dxvk":
+        folder = profile.root / "dxvk" / DXVK_DIRS[arch]
+        sources.update((name, folder / name) for name in DXVK_FILES)
+    return sources
+
+
 def _game_files_check(profile, arch):
     """Whether installing may touch the game's folder, and which of its files it would set aside."""
     try:
         record = _game_record(installed_path(profile))
     except (OSError, ValueError) as error:
         return False, str(error)
-    placed = [name for name, entry in record["files"].items() if entry.get("placed")]
-    if placed and (profile.api != "dxvk" or record.get("arch") != arch):
-        return False, "Remove NR from this game before changing its graphics API or executable"
-    if profile.api != "dxvk" or arch not in LAYERS:
+    if arch not in LAYERS:
         return True, "Nothing is put beside the game"
-    source = profile.root / "dxvk" / DXVK_DIRS[arch]
+    sources = _game_sources(profile, arch)
+    placed = [name for name, entry in record["files"].items() if entry.get("placed")]
+    # An installation from before the proxy has fewer files placed, and gains it; one with
+    # DXVK's files placed for DirectX cannot become a Vulkan one without Remove NR first.
+    if placed and (not set(placed) <= set(sources) or record.get("arch") != arch):
+        return False, "Remove NR from this game before changing its graphics API or executable"
     aside = []
-    for name in DXVK_FILES:
+    for name, source in sources.items():
         target = profile.game_exe.parent / name
         entry = record["files"].get(name, {})
         if target.is_symlink() or (target.exists() and not target.is_file()):
             return False, f"{target} is not a regular file"
-        if target.is_file() and not entry.get("placed") and (source / name).is_file() \
-                and _sha256(target) != _sha256(source / name):
+        if target.is_file() and not entry.get("placed") and source.is_file() \
+                and _sha256(target) != _sha256(source):
             aside.append(name)
     return True, ("Set aside, and put back by Remove NR: " + ", ".join(aside) if aside
                   else "No file of the game's is replaced")
 
 
 def _place_game_files(profile, arch, folder):
-    """Put DXVK beside the game, recording each step in `folder`'s GAME_FILES first.
+    """Put the proxy, and DXVK for DirectX 8-11, beside the game, each step recorded in
+    `folder`'s GAME_FILES first.
 
     A file of the same name that NR did not put there is moved into `folder`'s GAME_BACKUP
     and comes back with Remove NR; an identical copy someone else put there is left alone.
     `folder` is the installation's stage, in the game's own folder, so every move is a
     rename. Returns what was done, for _undo_game_files; undoes its own part if it fails."""
     game = profile.game_exe.parent
-    source = profile.root / "dxvk" / DXVK_DIRS[arch]
     folder = Path(folder)
     record = _game_record(folder)
     record["arch"] = arch
@@ -803,9 +827,9 @@ def _place_game_files(profile, arch, folder):
     files = record["files"]
     done = []
     try:
-        for name in DXVK_FILES:
+        for name, source in _game_sources(profile, arch).items():
             target = game / name
-            ours = _sha256(source / name)
+            ours = _sha256(source)
             entry = files.get(name, {})
             if target.is_symlink() or (target.exists() and not target.is_file()):
                 raise ValueError(f"{target} is not a regular file")
@@ -833,7 +857,7 @@ def _place_game_files(profile, arch, folder):
             else:
                 done.append((name, "added", None))
             temporary = game / (name + ".dlss-nr-new")
-            shutil.copy2(source / name, temporary)
+            shutil.copy2(source, temporary)
             os.replace(temporary, target)
             files[name] = {"placed": True, "sha256": ours, "backup": bool(entry.get("backup")),
                            "previous_sha256": entry.get("previous_sha256")}
@@ -842,6 +866,18 @@ def _place_game_files(profile, arch, folder):
         _undo_game_files(profile, folder, done)
         raise
     return done
+
+
+def _write_proxy_environment(profile, stage, destination):
+    """ENV_FILE, which the proxy reads in the game's process: the layer's environment, the game
+    it is for, where to record a launch, and the game's own loader if one was set aside."""
+    lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process.",
+             "NR_GAME_EXE=" + str(profile.game_exe),
+             "NR_LAUNCH_STATE=" + str(profile.root / "work/windows-wizard/launch-state.json")]
+    if _game_record(stage)["files"].get(PROXY_NAME, {}).get("backup"):
+        lines.append("NR_REAL_VULKAN=" + str(destination / GAME_BACKUP / PROXY_NAME))
+    lines += [f"{name}={value}" for name, value in layer_environment(profile).items()]
+    (stage / ENV_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def _undo_game_files(profile, folder, done):
@@ -1053,8 +1089,8 @@ def install(profile, emit=None):
         if destination.exists():
             shutil.copytree(destination, stage, dirs_exist_ok=True)
         _copy_runtime(profile, stage, destination)
-        if profile.api == "dxvk":
-            placed = _place_game_files(profile, pe_architecture(profile.game_exe), stage)
+        placed = _place_game_files(profile, pe_architecture(profile.game_exe), stage)
+        _write_proxy_environment(profile, stage, destination)
         (work / "logs").mkdir(parents=True, exist_ok=True)
         allowed, detail = _install_process_guard(profile)
         if not allowed:

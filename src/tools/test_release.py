@@ -47,6 +47,8 @@ class ReleaseTests(unittest.TestCase):
             self.write("work/" + name, name)
         self.write("work/NR-Setup.exe", "own x64 GUI host fixture")
         self.write("work/nr_layer32.dll", "nr_layer32.dll")
+        for name in release.PROXIES:
+            self.write("work/" + name, name)
         for name in release.DXVK:
             self.write(name, "dxvk:" + name)
         self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
@@ -75,6 +77,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual((self.target / "work/libnr_alloc.dll").read_text(), "libnr_alloc.dll")
         self.assertTrue((self.target / "nr_layer.dll").is_file())
         self.assertEqual((self.target / "nr_layer32.dll").read_text(), "nr_layer32.dll")
+        for name in release.PROXIES:
+            self.assertEqual((self.target / name).read_text(), name)
         self.assertEqual((self.target / "dxvk/x32/d3d9.dll").read_text(), "dxvk:work/dxvk/x32/d3d9.dll")
         self.assertTrue((self.target / "dxvk/LICENSE").is_file())
         self.assertEqual(json.loads((self.target / "release-metadata.json").read_text())["dxvk"], "3.1.1")
@@ -115,7 +119,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse((self.target / "work/windows-wizard").exists())
 
     def test_windows_release_needs_dxvk_and_the_32bit_layer(self):
-        for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE"):
+        for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE",
+                     "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll"):
             path = self.root / name
             saved = path.read_bytes()
             path.unlink()

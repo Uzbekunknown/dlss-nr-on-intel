@@ -65,6 +65,8 @@ class WizardFixture(unittest.TestCase):
             (self.root / "src" / directory).mkdir(parents=True, exist_ok=True)
         write_pe(self.root / "nr_layer.dll")
         write_pe(self.root / "nr_layer32.dll", x64=False)
+        write_pe(self.root / "nr_vulkan_proxy.dll", suffix=b"proxy x64")
+        write_pe(self.root / "nr_vulkan_proxy32.dll", x64=False, suffix=b"proxy x32")
         for directory, x64 in (("x64", True), ("x32", False)):
             for name in core.DXVK_FILES:
                 write_pe(self.root / "dxvk" / directory / name, x64=x64, suffix=f"DXVK {directory} {name}".encode())
@@ -274,6 +276,42 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(Path(manifest["layer"]["library_path"]), installed / "nr_layer32.dll")
         self.assertEqual(core.pe_architecture(installed / "nr_layer32.dll"), "x86")
         self.assertEqual((self.game.parent / "d3d9.dll").read_bytes(), (self.root / "dxvk/x32/d3d9.dll").read_bytes())
+        self.assertEqual((self.game.parent / core.PROXY_NAME).read_bytes(),
+                         (self.root / "nr_vulkan_proxy32.dll").read_bytes())
+
+    def test_every_game_gets_the_proxy_and_its_environment(self):
+        game = self.game.parent
+        result = core.install(self.profile)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual((game / core.PROXY_NAME).read_bytes(), (self.root / "nr_vulkan_proxy.dll").read_bytes())
+        installed = core.installed_path(self.profile)
+        lines = (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines()
+        values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+        self.assertEqual(Path(values["NR_GAME_EXE"]), self.game)
+        self.assertEqual(Path(values["NR_LAUNCH_STATE"]), self.root / "work/windows-wizard/launch-state.json")
+        self.assertNotIn("NR_REAL_VULKAN", values)
+        for name, value in core.layer_environment(self.profile).items():
+            self.assertEqual(values[name], value, name)
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), [self.game.name])
+
+    def test_a_games_own_vulkan_loader_is_set_aside_and_used(self):
+        game = self.game.parent
+        (game / core.PROXY_NAME).write_bytes(b"the game's own Vulkan loader")
+        self.assertIn(core.PROXY_NAME, self.checks()["game_files"]["detail"])
+        self.assertTrue(core.install(self.profile)["ok"])
+        installed = core.installed_path(self.profile)
+        aside = installed / core.GAME_BACKUP / core.PROXY_NAME
+        self.assertEqual(aside.read_bytes(), b"the game's own Vulkan loader")
+        self.assertIn("NR_REAL_VULKAN=" + str(aside),
+                      (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines())
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+        self.assertEqual((game / core.PROXY_NAME).read_bytes(), b"the game's own Vulkan loader")
+
+    def test_the_proxy_must_match_the_games_architecture(self):
+        self.assertTrue(self.checks()["runtime_architecture"]["ok"])
+        write_pe(self.root / "nr_vulkan_proxy.dll", x64=False)
+        self.assertFalse(self.checks()["runtime_architecture"]["ok"])
 
     def test_changing_the_api_after_dxvk_needs_remove_first(self):
         dxvk = replace(self.profile, api="dxvk")
