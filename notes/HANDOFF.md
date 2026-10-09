@@ -12,10 +12,10 @@ you need the evidence behind a line in this file, rather than reading them in or
 ## NR whatever starts the game: a vulkan-1.dll beside it, and the setup window without Steam (2026-10-09)
 
 The owner could not install NR for Mortal Kombat Komplete Edition, a game outside Steam: a Steam
-configuration left by an earlier test locked the profile (`steam_profile_lock`). He asked for
-every game started outside Steam or from another store. The layer is found and configured
-through environment variables, and only setup's own Launch game, or Steam launch options naming
-its wrapper, used to give them.
+configuration left by an earlier test locked the profile (`steam_profile_lock`). The request
+that followed was for every game started outside Steam or from another store. The layer is
+found and configured through environment variables, and only setup's own Launch game, or Steam
+launch options naming its wrapper, used to give them.
 
 **`598ccbc`: a `vulkan-1.dll` beside every game** (`src/layer/nr_vulkan_proxy.c`). Windows looks
 for `vulkan-1.dll` in the executable's folder before System32, for a game's own import and for
