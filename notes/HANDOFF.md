@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-08**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-09**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -8,6 +8,84 @@ original brief; **this file overrides it wherever they disagree**, and after
 you need the evidence behind a line in this file, rather than reading them in order.
 
 ---
+
+## NR whatever starts the game: a vulkan-1.dll beside it, and the setup window without Steam (2026-10-09)
+
+The owner could not install NR for Mortal Kombat Komplete Edition, a game outside Steam: a Steam
+configuration left by an earlier test locked the profile (`steam_profile_lock`). He asked for
+every game started outside Steam or from another store. The layer is found and configured
+through environment variables, and only setup's own Launch game, or Steam launch options naming
+its wrapper, used to give them.
+
+**`598ccbc`: a `vulkan-1.dll` beside every game** (`src/layer/nr_vulkan_proxy.c`). Windows looks
+for `vulkan-1.dll` in the executable's folder before System32, for a game's own import and for
+DXVK's `LoadLibrary` alike. In `DllMain` the proxy reads `dlss-nr\nr-env.txt` and, in the process
+of the executable named there (compared by volume and file index, not by spelling), sets those
+variables and records the launch in setup's `launch-state.json`. Every one of the loader's 265
+exports goes on to System32's loader, loaded on the first call and outside `DllMain`, or to the
+game's own copy, which install sets aside. `vulkan_proxy_gen.py` writes the wrappers from
+`vulkan-1.exports` and the SDK's prototypes; x86 exports undecorated stdcall names through a
+`.def`. `DISABLE_NR_PROXY=1` turns it off. `build_win.bat` builds both architectures, releases
+carry them, and `layer_vulkan_proxy` is in CTest (Windows).
+
+**Games through the proxy, nothing set in Steam**, setup's backend as its buttons call it, NR on
+for 40 s (release built from `cd150e7`):
+
+| game | started by | API | layer | NR frames | rejected | folder after Remove NR |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| Mortal Kombat 11 | Steam's Play button | DX11 through DXVK | x64 | 370 | 0 | as before |
+| Dead or Alive 5 Last Round | Steam's Play button | DX9 through DXVK | x86 | 783 | 0 | as before |
+| Mortal Kombat Komplete Edition | its own executable | DX9 through DXVK | x86 | 586 | 0 | as before |
+| DOOM (2016) | Steam's Play button | Vulkan | x64 | 388 | 0 | as before |
+
+Every daemon ended with its game, and Steam's RunningAppID was 0 after each. Through the window
+itself, from the unpacked `7f9c364` ZIP and clicked by UI Automation: Komplete Edition from its
+executable 1256 frames, Mortal Kombat 11 from Steam's Play button 766, none rejected. With the
+game in front and nothing clicked, the window started no process in 40 s. Komplete Edition's own
+ASI loader rewrites `asiloader.log` at every start; it was put back from a copy.
+
+**Found on the way, `cd150e7`:**
+- Status never saw the game: the proxy writes its launch record into `work/windows-wizard` and
+  makes no folder, and nothing had made it yet. Install makes it now.
+- DXVK opens its first log before it loads `vulkan-1.dll`, so before `DXVK_LOG_PATH` is set, and
+  in the folder the game was started in. Steam starts Mortal Kombat 11 in its root, above the
+  executable, and Remove NR left `MK11_dxgi.log` there. The proxy lists that folder in
+  `dlss-nr\start-folders.txt`, and Remove NR deletes the DXVK logs written there after the
+  installation (by time, with 2 s for FAT).
+
+**Two more things the games showed:**
+- Once DXVK frees its first instance the proxy can be unloaded, and a later
+  `LoadLibrary("vulkan-1.dll")` gets the loader of that name already in the process, System32's
+  (MK11's module list, and a probe with the DLL search path). So all the proxy does, it does at
+  its first load.
+- Steam starts DOOM's `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the game's renderer is
+  Vulkan (`r_renderAPI 1`); the proxy works in the second.
+
+A game that loads System32's loader by its path, or keeps its DLL search to System32, never loads
+the proxy; Enable NR then warns that the game runs without the layer, and Launch game still
+starts it with the variables. A game with anti-cheat may refuse a DLL beside it: the quick start
+says to test single-player games offline.
+
+**`7f9c364`: the setup window without Launch mode, Steam App ID, Configure Steam and Restore
+Steam.** Launch game starts the game directly. Install NR now returns Steam launch options an
+earlier setup left, as Remove NR does, and they no longer lock the profile.
+`configure_steam`, `restore_steam` and the wrapper stay in `windows_launch.py` for those leftovers;
+they can go, with their tests, once no release with Configure Steam is in testers' hands. The
+window's self-test: 55 named controls, 131 keys in English, Russian and Spanish. Docs: the release
+quick start says to start the game as usual, and `docs/WINDOWS.md` records the proxy.
+
+Before these, from the owner's own session with the window: `925c21f`, Remove NR returns Steam's
+launch options itself and Enable NR says when NR cannot reach the game; `9d472ba`, the window
+compact, with a dark theme, sliders on the arrow keys, and each control's description once, as
+its name's tooltip.
+
+The ZIP is `D:\NRonWindows\rel\dlss-nr-windows-7f9c364-x64.zip` (256 files, 18.5 MB, SHA-256
+`0172a087…2aa2`), with no weights and no NVIDIA DLL. Not pushed: `9f2070c` to `7f9c364` are
+local on `windows`.
+
+**Next on Linux:** the Windows tool suites at the head: `test_windows_wizard.py` and
+`test_release.py` changed, and `test_vulkan_proxy.py` is new (it skips off Windows). Nothing
+Linux builds or runs changed: the proxy, `build_release.py`'s part and the window are Windows'.
 
 ## The setup window through two games, and a daemon that ends with its game (2026-10-08, evening)
 
