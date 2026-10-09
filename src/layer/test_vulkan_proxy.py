@@ -4,7 +4,7 @@
 Each case loads it in a Python of its own, since its DllMain runs once a process, and the
 Python stands in for the game:
 - named in nr-env.txt, however spelt, the process gets the variables, the launch is recorded with its pid
-  and the daemon log's size, and Vulkan calls reach the loader;
+  and the daemon log's size, the folder it was started in is listed once, and Vulkan calls reach the loader;
 - another executable in the same folder gets nothing, and Vulkan still works;
 - DISABLE_NR_PROXY=1 turns it all off;
 - NR_REAL_VULKAN sends the calls to the loader it names (a game's own copy, set aside).
@@ -80,7 +80,9 @@ def check(name, ok, detail=""):
         FAILURES.append(name)
 
 
-def run(proxy, case, environment=None):
+def run(proxy, case, environment=None, runs=1):
+    """What the last of `runs` processes saw, its launch record, and for each folder listed in
+    start-folders.txt whether it is the one they were started in (None without the file)."""
     folder = pathlib.Path(tempfile.mkdtemp(prefix="nr proxy (test) "))
     try:
         shutil.copyfile(proxy, folder / "vulkan-1.dll")
@@ -89,15 +91,23 @@ def run(proxy, case, environment=None):
             (folder / "own").mkdir()
             shutil.copyfile(pathlib.Path(os.environ["SystemRoot"]) / "System32" / "vulkan-1.dll",
                             folder / "own" / "vulkan-1.dll")
+        started = folder / "started here"
+        started.mkdir()
         env = dict(os.environ, **(environment or {}))
         env.pop("NR_TEST_VALUE", None)
-        done = subprocess.run([sys.executable, "-c", CHILD, str(folder), case], env=env,
-                              capture_output=True, text=True, timeout=60)
-        if done.returncode:
-            return {"error": done.stderr.strip()[-400:]}, None
+        for _ in range(runs):
+            done = subprocess.run([sys.executable, "-c", CHILD, str(folder), case], env=env, cwd=started,
+                                  capture_output=True, text=True, timeout=60)
+            if done.returncode:
+                return {"error": done.stderr.strip()[-400:]}, None, None
         state = folder / "launch-state.json"
         record = json.loads(state.read_text(encoding="utf-8")) if state.exists() else None
-        return json.loads(done.stdout.strip().splitlines()[-1]), record
+        listed = folder / "dlss-nr" / "start-folders.txt"
+        # Compared as files while they exist: MSYS2's Python joins paths with /.
+        folders = ([os.path.isdir(line) and os.path.samefile(line, started)
+                    for line in listed.read_text(encoding="utf-8").splitlines()]
+                   if listed.exists() else None)
+        return json.loads(done.stdout.strip().splitlines()[-1]), record, folders
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -111,8 +121,8 @@ def main():
         print(f"skipped: no {proxy} (tools\\build_win.bat builds it)")
         return 77
 
-    print("the game's own process:")
-    seen, record = run(proxy, "game")
+    print("the game's own process, started twice:")
+    seen, record, folders = run(proxy, "game", runs=2)
     check("it ran", "error" not in seen, seen.get("error", ""))
     check("the variable is set, UTF-8 read right", seen.get("value") == "it works été", repr(seen.get("value")))
     check("a Vulkan call reaches the loader", seen.get("result") == 0 and seen.get("version", 0) >= (1 << 22),
@@ -122,25 +132,27 @@ def main():
     check("the launch is recorded", record is not None and record.get("pid") == seen.get("pid")
           and record.get("daemon_start_bytes") == 1234 and record.get("exit_code") is None
           and record.get("game_exe") == seen.get("exe"), str(record))
+    check("the folder it was started in is listed, once", folders == [True], str(folders))
 
     print("the game's path spelt otherwise (upper case):")
-    seen, record = run(proxy, "spelling")
+    seen, record, folders = run(proxy, "spelling")
     check("it is still the game", seen.get("value") == "it works été" and record is not None,
           repr(seen.get("value")))
 
     print("another executable in the folder:")
-    seen, record = run(proxy, "other")
+    seen, record, folders = run(proxy, "other")
     check("nothing is set", "error" not in seen and seen.get("value") is None, str(seen.get("value")))
     check("Vulkan still works", seen.get("result") == 0)
-    check("no launch is recorded", record is None)
+    check("no launch is recorded, no folder listed", record is None and folders is None)
 
     print("DISABLE_NR_PROXY=1:")
-    seen, record = run(proxy, "game", {"DISABLE_NR_PROXY": "1"})
-    check("nothing is set, nothing recorded", seen.get("value") is None and record is None)
+    seen, record, folders = run(proxy, "game", {"DISABLE_NR_PROXY": "1"})
+    check("nothing is set, nothing recorded", seen.get("value") is None and record is None
+          and folders is None)
     check("Vulkan still works", seen.get("result") == 0)
 
     print("the game's own loader, set aside:")
-    seen, record = run(proxy, "real")
+    seen, record, folders = run(proxy, "real")
     check("calls go to the loader NR_REAL_VULKAN names",
           seen.get("result") == 0 and any(path.lower().endswith("\\own\\vulkan-1.dll") for path in seen.get("loaded", [])),
           str(seen.get("loaded")))

@@ -18,6 +18,9 @@
  *   NR_GAME_EXE      the executable whose process this is for
  *   NR_REAL_VULKAN   the loader to pass calls to, when not System32's
  *   NR_LAUNCH_STATE  where to record the launch (setup's launch-state.json)
+ *
+ * The folder the game was started in goes into dlss-nr\start-folders.txt, for Remove NR: DXVK
+ * opens its first log there before it loads this DLL, so before DXVK_LOG_PATH is set.
  */
 #define WIN32_LEAN_AND_MEAN
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -148,6 +151,40 @@ static void record_launch(const wchar_t *path, const wchar_t *root, const wchar_
 	else DeleteFileW(temporary);
 }
 
+/* The folder this process was started in, added to dlss-nr\start-folders.txt (UTF-8, a line a
+ * folder) unless it is there already. */
+static void record_start_folder(const wchar_t *folder)
+{
+	static char bytes[16384];
+	static wchar_t text[16384];
+	wchar_t current[MAX_PATH * 2], path[MAX_PATH * 2 + 40];
+	DWORD length = GetCurrentDirectoryW(MAX_PATH * 2, current);
+	if (!length || length >= MAX_PATH * 2) return;
+	swprintf(path, MAX_PATH * 2 + 40, L"%ls\\dlss-nr\\start-folders.txt", folder);
+	/* Without FILE_WRITE_DATA every write lands at the end. */
+	HANDLE file = CreateFileW(path, GENERIC_READ | FILE_APPEND_DATA, FILE_SHARE_READ, NULL,
+				  OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (file == INVALID_HANDLE_VALUE) return;
+	DWORD read = 0;
+	int known = !ReadFile(file, bytes, sizeof bytes - 1, &read, NULL) || read == sizeof bytes - 1;
+	int count = read ? MultiByteToWideChar(CP_UTF8, 0, bytes, (int)read, text, 16383) : 0;
+	text[count > 0 ? count : 0] = 0;
+	for (wchar_t *line = text, *next; !known && line && *line; line = next) {
+		next = wcschr(line, L'\n');
+		if (next) *next++ = 0;
+		known = CompareStringOrdinal(line, -1, current, -1, TRUE) == CSTR_EQUAL;
+	}
+	char line[MAX_PATH * 6 + 1];
+	int size = known ? 0 : WideCharToMultiByte(CP_UTF8, 0, current, -1, line, (int)sizeof line - 1,
+						   NULL, NULL);
+	if (size > 1) {
+		DWORD written;
+		line[size - 1] = '\n';
+		WriteFile(file, line, (DWORD)size, &written, NULL);
+	}
+	CloseHandle(file);
+}
+
 static void apply_environment(HINSTANCE self)
 {
 	wchar_t folder[MAX_PATH * 2], file[MAX_PATH * 2 + 32], game[MAX_PATH * 2];
@@ -200,6 +237,7 @@ static void apply_environment(HINSTANCE self)
 			continue;
 		SetEnvironmentVariableW(names[i], values[i]);
 	}
+	record_start_folder(folder);
 	/* The game as setup's profile spells it, so its status matches the record. */
 	const wchar_t *state = lookup(names, values, lines, L"NR_LAUNCH_STATE");
 	if (state && *state)

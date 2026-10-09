@@ -289,11 +289,39 @@ class WizardFixture(unittest.TestCase):
         values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
         self.assertEqual(Path(values["NR_GAME_EXE"]), self.game)
         self.assertEqual(Path(values["NR_LAUNCH_STATE"]), self.root / "work/windows-wizard/launch-state.json")
+        # The proxy makes no folder for its record: without one, status never saw the game.
+        self.assertTrue((self.root / "work/windows-wizard").is_dir())
         self.assertNotIn("NR_REAL_VULKAN", values)
         for name, value in core.layer_environment(self.profile).items():
             self.assertEqual(values[name], value, name)
         self.assertTrue(core.uninstall(self.profile)["ok"])
         self.assertEqual(sorted(path.name for path in game.iterdir()), [self.game.name])
+
+    def test_remove_takes_dxvks_first_log_from_the_folders_the_game_started_in(self):
+        # DXVK opens its first log before it loads the proxy, so in the folder the game was
+        # started in: Steam starts Mortal Kombat 11 in its root, above the executable.
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        started = self.base / "started (here)"
+        started.mkdir()
+        old = started / f"{self.game.stem}_d3d9.log"
+        old.write_text("a log from before NR")
+        own = game / f"{self.game.stem}_d3d11.log"
+        own.write_text("beside the game before NR")
+        self.assertTrue(core.install(profile)["ok"])
+        installed = core.installed_path(profile)
+        since = json.loads((installed / core.GAME_FILES).read_text(encoding="utf-8"))["installed_time"]
+        os.utime(old, (since - 60, since - 60))
+        (started / f"{self.game.stem}_dxgi.log").write_text("NR's DXVK, before DXVK_LOG_PATH")
+        (started / "notes.txt").write_text("not DXVK's")
+        own.write_text("beside the game before NR, written again")
+        (installed / core.START_FOLDERS).write_text("\n".join(
+            [str(started), str(started), str(game), str(self.base / "gone"), "relative", ""]),
+            encoding="utf-8")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(sorted(path.name for path in started.iterdir()), sorted([old.name, "notes.txt"]))
+        self.assertEqual(sorted(path.name for path in game.iterdir()), sorted([own.name, self.game.name]))
 
     def test_a_games_own_vulkan_loader_is_set_aside_and_used(self):
         game = self.game.parent

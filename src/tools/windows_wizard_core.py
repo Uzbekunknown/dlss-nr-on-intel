@@ -49,6 +49,8 @@ DXVK_FILES = ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
 PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
 PROXY_NAME = "vulkan-1.dll"
 ENV_FILE = "nr-env.txt"
+# Where the proxy lists the folders the game was started in, for DXVK's first log there.
+START_FOLDERS = "start-folders.txt"
 # In the game's dlss-nr folder: what NR put beside the game, and the game's own files it set
 # aside to do so, which Remove NR puts back.
 GAME_FILES = "game-files.json"
@@ -343,7 +345,8 @@ def layer_environment(profile):
         "ENABLE_NR_LAYER": "1", "VK_LAYER_PATH": str(installed_path(profile)),
         "VK_INSTANCE_LAYERS": "VK_LAYER_dlssnr_intel",
         "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1",
-        # DXVK logs beside the game's executable unless told otherwise.
+        # DXVK logs into the folder the game was started in unless told otherwise. Through
+        # the proxy its first log still goes there (_remove_dxvk_logs).
         "DXVK_LOG_PATH": str(work / "logs"),
     }
     if profile.disable_fossilize:
@@ -758,7 +761,7 @@ def _sha256(path):
 
 
 def _dxvk_logs(profile):
-    """The logs DXVK writes beside an executable started without DXVK_LOG_PATH."""
+    """The logs DXVK writes into the folder a game was started in, without DXVK_LOG_PATH."""
     return [f"{profile.game_exe.stem}_{Path(module).stem}.log" for module in DXVK_FILES]
 
 
@@ -824,6 +827,8 @@ def _place_game_files(profile, arch, folder):
     if "logs_before" not in record:
         # DXVK's logs already beside the game stay when NR is removed; only later ones go.
         record["logs_before"] = [name for name in _dxvk_logs(profile) if (game / name).exists()]
+    # And in the folders the game is started in, those written before this.
+    record.setdefault("installed_time", time.time())
     files = record["files"]
     done = []
     try:
@@ -947,11 +952,7 @@ def uninstall(profile, emit=None):
             del record["files"][name]
             _atomic_json(destination / GAME_FILES, record)
         if placed_any:
-            # DXVK's logs from launches outside NR, which write beside the executable; those
-            # that were there before NR stay.
-            for name in _dxvk_logs(profile):
-                if name not in record.get("logs_before", []):
-                    (game / name).unlink(missing_ok=True)
+            _remove_dxvk_logs(profile, destination, record)
         if kept:
             return {"ok": False, "error": "Changed since NR put them there, so left as they are: "
                     + ", ".join(kept) + ". The dlss-nr folder keeps the game's originals.", "kept": kept}
@@ -966,6 +967,36 @@ def uninstall(profile, emit=None):
         # The set-aside copies were deleted from dlss-nr by hand; Steam's file check restores them.
         result["missing_originals"] = lost
     return result
+
+
+def _remove_dxvk_logs(profile, destination, record):
+    """The logs NR's DXVK wrote into the game's folders.
+
+    DXVK logs into the folder the game was started in, as <game>_<module>.log, until
+    DXVK_LOG_PATH is set. The proxy sets it when DXVK loads vulkan-1.dll, after DXVK's first
+    log is open, and lists that folder in START_FOLDERS. Beside the executable, the logs that
+    were there before NR stay; in the other folders, those last written before it."""
+    game = profile.game_exe.parent
+    for name in _dxvk_logs(profile):
+        if name not in record.get("logs_before", []):
+            (game / name).unlink(missing_ok=True)
+    since = record.get("installed_time")
+    started = destination / START_FOLDERS
+    if not isinstance(since, (int, float)) or not started.is_file():
+        return
+    for line in started.read_text(encoding="utf-8", errors="replace").splitlines():
+        folder = Path(line.strip())
+        # A folder that cannot be reached keeps its log, not NR.
+        try:
+            if not folder.is_absolute() or _canonical(folder) == _canonical(game):
+                continue
+            for name in _dxvk_logs(profile):
+                log = folder / name
+                # A file's time can be coarser than this clock: 2 s on FAT.
+                if log.is_file() and not log.is_symlink() and log.stat().st_mtime >= since - 2:
+                    log.unlink()
+        except OSError:
+            continue
 
 
 def _process_snapshot():
@@ -1091,7 +1122,10 @@ def install(profile, emit=None):
         _copy_runtime(profile, stage, destination)
         placed = _place_game_files(profile, pe_architecture(profile.game_exe), stage)
         _write_proxy_environment(profile, stage, destination)
+        # What the game's process writes into: DXVK's logs, and the proxy's launch record,
+        # for which it makes no folder.
         (work / "logs").mkdir(parents=True, exist_ok=True)
+        (work / "windows-wizard").mkdir(parents=True, exist_ok=True)
         allowed, detail = _install_process_guard(profile)
         if not allowed:
             raise ValueError(detail)
