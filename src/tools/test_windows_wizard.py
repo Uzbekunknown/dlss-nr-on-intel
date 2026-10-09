@@ -308,6 +308,40 @@ class WizardFixture(unittest.TestCase):
         self.assertTrue(core.uninstall(profile)["ok"])
         self.assertFalse((self.game.parent / "dxgi.dll").exists())
 
+    def test_remove_nr_returns_steams_launch_options_first(self):
+        import windows_launch as launch
+        import windows_wizard as bridge
+        with patch.object(launch, "restore_steam", return_value={"ok": False, "error": "A Steam game is running"}), \
+                patch.object(core, "uninstall") as uninstall:
+            result = bridge.remove_nr(self.profile, None)
+        self.assertEqual(result["error"], "A Steam game is running")
+        uninstall.assert_not_called()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "changed": True}) as restore, \
+                patch.object(core, "uninstall", return_value={"ok": True, "removed": True}) as uninstall:
+            result = bridge.remove_nr(self.profile, None)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["steam_restored"])
+        self.assertEqual(restore.call_args.args[0], self.profile)
+        uninstall.assert_called_once()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "already_restored": True, "changed": False}), \
+                patch.object(core, "uninstall", return_value={"ok": True, "removed": True}):
+            self.assertNotIn("steam_restored", bridge.remove_nr(self.profile, None))
+
+    def test_enabling_warns_when_the_game_runs_without_nr(self):
+        self.own()
+        # Started by Steam's own button: no launch of NR's runs, the game does.
+        self.processes.return_value = [{"ProcessId": 77, "ExecutablePath": str(self.game)}]
+        result = core.set_effect(self.profile, True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result.get("warning"), "game_without_nr")
+        self.assertNotIn("warning", core.set_effect(self.profile, False))
+        # Started through NR, it is not warned about; nor is a game that is not running.
+        self.launch_state(pid=77)
+        self.assertNotIn("warning", core.set_effect(self.profile, True))
+        self.running.side_effect = None
+        self.processes.return_value = []
+        self.assertNotIn("warning", core.set_effect(self.profile, True))
+
     def test_remove_refuses_while_the_game_runs_and_without_an_installation(self):
         profile = replace(self.profile, api="dxvk")
         result = core.uninstall(profile)

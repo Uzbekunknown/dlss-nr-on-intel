@@ -1123,11 +1123,35 @@ def set_effect(profile, enabled):
             trigger.touch()
         else:
             trigger.unlink(missing_ok=True)
-        return {"ok": True, "error": None, "trigger_exists": bool(enabled),
-                "trigger": str(trigger), "processing_confirmed": False,
-                "detail": "Trigger changed; fresh processed frames must confirm processing"}
+        result = {"ok": True, "error": None, "trigger_exists": bool(enabled),
+                  "trigger": str(trigger), "processing_confirmed": False,
+                  "detail": "Trigger changed; fresh processed frames must confirm processing"}
+        if enabled and _game_running_without_nr(profile, launch):
+            result.update(warning="game_without_nr",
+                          detail="The game is running, but NR did not start it, so its layer is "
+                                 "not loaded there. Close the game and use Launch game.")
+        return result
     except (OSError, ValueError) as error:
         return {"ok": False, "error": str(error)}
+
+
+def _game_running_without_nr(profile, launch):
+    """Whether the selected game runs, though not from NR's own launch.
+
+    Steam's Play button after Restore Steam starts it so: the layer is not loaded there, and
+    switching the effect on changes nothing in it. One process list, taken only when the
+    effect is switched on, not by the status check that runs every 5 s."""
+    target = _canonical(profile.game_exe)
+    if launch.get("game_exe") and _canonical(launch["game_exe"]) == target and launch.get("exit_code") is None:
+        running = _running_executable(launch.get("pid"))
+        if running and _canonical(running) == target:
+            return False
+    try:
+        processes = _process_snapshot()
+    except ValueError:
+        return False
+    return any(item.get("ExecutablePath") and _canonical(item["ExecutablePath"]) == target
+               for item in processes)
 
 
 def _new_log_state(complete=True):

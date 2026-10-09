@@ -41,6 +41,22 @@ def windows_arguments(text: str) -> list[str]:
         kernel.LocalFree(array)
 
 
+def remove_nr(profile, emit):
+    """Remove NR as one step: Steam's launch options for the game go back first.
+
+    With them still pointing at NR's wrapper the game would not start once the layer is gone,
+    which is why core.uninstall refuses while they are set. In the window that refusal left
+    the user pressing Remove NR again and again; Restore Steam was a button they had to find."""
+    import windows_launch as launch
+    restored = launch.restore_steam(profile, emit=emit)
+    if not restored.get('ok'):
+        return restored
+    result = core.uninstall(profile, emit=emit)
+    if restored.get('changed'):
+        result['steam_restored'] = True
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('discover', 'check', 'dependencies', 'install', 'uninstall',
@@ -95,7 +111,7 @@ def main() -> int:
             elif args.action == 'install':
                 result = core.install(profile, emit=emit)
             elif args.action == 'uninstall':
-                result = core.uninstall(profile, emit=emit)
+                result = remove_nr(profile, emit)
             elif args.action in ('launch', 'steam-setup', 'steam-restore'):
                 import windows_launch as launch
                 method = {'launch': launch.launch, 'steam-setup': launch.configure_steam,
