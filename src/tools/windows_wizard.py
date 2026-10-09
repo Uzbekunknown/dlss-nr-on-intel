@@ -41,27 +41,41 @@ def windows_arguments(text: str) -> list[str]:
         kernel.LocalFree(array)
 
 
+def _steam_first(action, profile, emit):
+    """`action`, once Steam's launch options are back, where a setup from before the proxy
+    left them starting a game through NR's wrapper.
+
+    Setup no longer sets them: vulkan-1.dll beside the game gives it NR's environment whatever
+    starts it. The window has no Restore Steam button for what is left of them."""
+    import windows_launch as launch
+    restored = launch.restore_steam(profile, emit=emit)
+    if not restored.get('ok'):
+        return restored
+    result = action(profile, emit=emit)
+    if restored.get('changed'):
+        result['steam_restored'] = True
+    return result
+
+
 def remove_nr(profile, emit):
     """Remove NR as one step: Steam's launch options for the game go back first.
 
     With them still pointing at NR's wrapper the game would not start once the layer is gone,
     which is why core.uninstall refuses while they are set. In the window that refusal left
     the user pressing Remove NR again and again; Restore Steam was a button they had to find."""
-    import windows_launch as launch
-    restored = launch.restore_steam(profile, emit=emit)
-    if not restored.get('ok'):
-        return restored
-    result = core.uninstall(profile, emit=emit)
-    if restored.get('changed'):
-        result['steam_restored'] = True
-    return result
+    return _steam_first(core.uninstall, profile, emit)
+
+
+def install_nr(profile, emit):
+    """Install NR, Steam's launch options first. NR's wrapper in them does nothing the proxy
+    does not, and Install and Remove NR are the only places they still go back."""
+    return _steam_first(core.install, profile, emit)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('discover', 'check', 'dependencies', 'install', 'uninstall',
-        'launch', 'steam-setup', 'steam-restore', 'on', 'off', 'status', 'report', 'save',
-        'settings', 'settings-save', 'settings-reset'))
+        'launch', 'on', 'off', 'status', 'report', 'save', 'settings', 'settings-save', 'settings-reset'))
     parser.add_argument('--root', type=Path, default=release_root())
     parser.add_argument('--input', type=Path)
     parser.add_argument('--output', type=Path, required=True)
@@ -109,14 +123,12 @@ def main() -> int:
             elif args.action == 'dependencies':
                 result = core.ensure_dependencies(profile, emit=emit)
             elif args.action == 'install':
-                result = core.install(profile, emit=emit)
+                result = install_nr(profile, emit)
             elif args.action == 'uninstall':
                 result = remove_nr(profile, emit)
-            elif args.action in ('launch', 'steam-setup', 'steam-restore'):
+            elif args.action == 'launch':
                 import windows_launch as launch
-                method = {'launch': launch.launch, 'steam-setup': launch.configure_steam,
-                          'steam-restore': launch.restore_steam}[args.action]
-                result = method(profile, emit=emit)
+                result = launch.launch(profile, emit=emit)
             elif args.action in ('on', 'off'):
                 result = core.set_effect(profile, args.action == 'on')
             elif args.action == 'status':

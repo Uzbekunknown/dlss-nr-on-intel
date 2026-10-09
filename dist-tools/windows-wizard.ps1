@@ -281,14 +281,12 @@ $script:SettingsStateKey = 'SettingsLoading'
       <Border Style="{StaticResource CardBox}">
        <StackPanel>
         <TextBlock x:Name="ConnectHeading" Style="{StaticResource Heading}"/>
-        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-         <TextBlock x:Name="ApiLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0" Margin="0,0,14,0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/></ComboBox>
-         <TextBlock x:Name="ModeLabel" Grid.Column="2" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Mode" Grid.Column="3" SelectedIndex="0"><ComboBoxItem x:Name="ModeDirect" Content=""/><ComboBoxItem x:Name="ModeSteam" Content=""/></ComboBox>
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="ApiLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/></ComboBox>
         </Grid>
         <Expander x:Name="LaunchOptions" Header="" Margin="0,8,0,0">
          <StackPanel Margin="18,2,0,4">
           <TextBlock x:Name="ArgsLabel" Text="" Margin="0,0,0,4"/><TextBox x:Name="GameArgs" ToolTip=""/>
-          <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock x:Name="SteamIdLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><TextBox x:Name="SteamId" Grid.Column="1" ToolTip=""/></Grid>
           <CheckBox x:Name="Fossilize" IsChecked="True" Content="" Margin="0,8,0,0" ToolTip=""/>
          </StackPanel>
         </Expander>
@@ -299,7 +297,7 @@ $script:SettingsStateKey = 'SettingsLoading'
       <Border Style="{StaticResource CardBox}">
        <StackPanel>
         <TextBlock x:Name="CompareHeading" Style="{StaticResource Heading}"/>
-        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SteamSetup"/><Button x:Name="SteamRestore"/></WrapPanel>
+        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/></WrapPanel>
         <TextBlock x:Name="EffectState" Text="" FontWeight="SemiBold" Margin="0,4,0,2"/>
         <TextBlock x:Name="RuntimeState" Text="" Style="{StaticResource Note}" FontSize="13"/>
         <TextBlock x:Name="FpsHint" Style="{StaticResource Note}" Margin="0,6,0,0"/>
@@ -347,7 +345,7 @@ $script:SettingsStateKey = 'SettingsLoading'
 '@
 $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
 $script:Ui = @{}
-foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','Mode','GameArgs','SteamId','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ModeLabel','ModeDirect','ModeSteam','LaunchOptions','ArgsLabel','SteamIdLabel','FirstTestHint','CompareHeading','FpsHint','Language','Theme')) {
+foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','Language','Theme')) {
     $script:Ui[$name] = $script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -415,14 +413,13 @@ $script:Strings=@{
   FindPython='Find Python'; GetPython='Python website'
   PythonHint='Python is usually detected automatically. If it is missing, install Windows x64 Python from python.org.'
   ConnectHeading='2. Connect NR to your game'; ApiLabel='Graphics API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (setup adds DXVK)'
-  ModeLabel='Launch mode'; ModeDirect='Direct'; ModeSteam='Through Steam'; LaunchOptions='Launch options'
+  LaunchOptions='Launch options'
   ArgsLabel='Game arguments (optional)'; ArgsTip='Ordinary game arguments; shell commands are not executed here.'
-  SteamIdLabel='Steam App ID'; SteamIdTip='Detected from the installed game; you can also enter it manually.'
   Fossilize='Steam shader-cache workaround for NR'
-  FossilizeTip='Disables Fossilize only for the NR launch. Steam Overlay remains available.'
-  FirstTestHint='For the first test, choose an 800×450 game window. The network starts at scale 0.4. For DirectX 8–11 games setup puts DXVK beside the game and sets aside any file it replaces; Remove NR puts everything back. DirectX 12 games do not work on Windows yet.'
+  FossilizeTip='Install NR turns off Steam''s Fossilize layer in this game. Steam Overlay remains available.'
+  FirstTestHint='For the first test, choose an 800×450 game window; the network starts at scale 0.4. Setup puts its vulkan-1.dll beside the game, and DXVK for DirectX 8–11, setting aside any file it replaces; Remove NR puts everything back. Start the game as you usually do. DirectX 12 games do not work on Windows yet.'
   Check='Check'; Dependencies='Prepare Python'; Install='Install NR'; CompareHeading='3. Launch and compare'
-  Launch='Launch game'; Enable='Enable NR'; Disable='Disable NR'; SteamSetup='Configure Steam'; SteamRestore='Restore Steam'
+  Launch='Launch game'; Enable='Enable NR'; Disable='Disable NR'
   EffectOn='Effect enabled'; EffectOff='Effect disabled'
   RuntimeInitial='The game has not been tested yet. After enabling NR, wait for processed frames.'
   FpsHint='NR adds processing to every frame and can reduce FPS substantially. Compare the same scene with the effect enabled and disabled.'
@@ -439,17 +436,16 @@ $script:Strings=@{
   PickDll='Your nvngx_dlssnr.dll'; PickGame='Game executable'; PickPython='64-bit Windows Python'
   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|DLL files|*.dll'; GameFilter='Game executable|*.exe'
   PythonFilter='Python interpreter|python.exe;python3.exe|Executable|*.exe'; ReportFilter='JSON report|*.json'
-  SteamConfirm='Steam will exit normally and reopen. Close your Steam games first. Only the selected game''s launch options will change; use Restore Steam to return them.'
-  SteamTitle='Configure NR launch'; ReportTitle='Save diagnostic report'
+  ReportTitle='Save diagnostic report'
   'Loading.discover'='Looking for suitable Python…'; 'Loading.check'='Checking files and dependencies…'
   'Loading.dependencies'='Preparing local Python…'; 'Loading.install'='Extracting weights and installing NR…'
-  'Loading.launch'='Launching the game…'; 'Loading.steam-setup'='Configuring Steam launch…'
-  'Loading.steam-restore'='Restoring Steam launch options…'; 'Loading.on'='Enabling NR…'; 'Loading.off'='Disabling NR…'
+  'Loading.launch'='Launching the game…'
+  'Loading.on'='Enabling NR…'; 'Loading.off'='Disabling NR…'
   'Loading.report'='Saving report…'; 'Loading.save'='Saving settings…'
   'Done.discover'='Python found. Choose your game and DLL.'; 'Done.check'='Checks passed. You can install NR.'
-  'Done.dependencies'='Python is ready. Now install NR.'; 'Done.install'='NR installed. Launch the game through setup.'
-  'Done.launch'='Launch requested. Enter a game scene.'; 'Done.steam-setup'='Steam configured. Launch the game through setup.'
-  'Done.steam-restore'='Original Steam launch options restored.'; 'Done.on'='NR enabled. Wait for the first processed frames.'
+  'Done.dependencies'='Python is ready. Now install NR.'; 'Done.install'='NR installed. Start the game as you usually do, or with Launch game.'
+  'Done.launch'='Launch requested. Enter a game scene.'; 'Done.install-steam'='Steam''s launch options from an earlier setup returned, and NR installed. Start the game as you usually do.'
+  'Done.on'='NR enabled. Wait for the first processed frames.'
   'Done.off'='NR disabled.'; 'Done.report'='Report saved.'; 'Done.save'='Settings saved.'
   SetupTab='Setup'; ControlsTab='NR controls'; ControlsHeading='Live NR controls'
   ControlsHint='Changes save automatically after you finish adjusting. The daemon reads them between frames; no game restart is needed. Requested scale and the actual padded network size may differ.'
@@ -459,7 +455,7 @@ $script:Strings=@{
   UnsavedClose='Some NR changes were not saved. Close and discard those changes?'
   InvalidSetting='Enter a finite number within the supported range.'; FrameReadout='Last neural frame: output {0}×{1}; network {3}×{4}; processing {2} ms. This is not game FPS.'
   PackagesLater='Python works. Install NR adds numpy and safetensors to a Python of its own.'
-  GameWithoutNr='The game is running, but NR did not start it, so NR cannot reach it. Close the game and press Launch game.'
+  GameWithoutNr='The game is running without NR. Restart it; if NR still does not appear, start it with Launch game.'
   'Loading.settings'='Loading NR settings…'; 'Loading.settings-save'='Saving NR controls…'; 'Loading.settings-reset'='Restoring NR defaults…'
   'Done.settings'='NR settings loaded.'; 'Done.settings-save'='NR settings saved.'; 'Done.settings-reset'='NR defaults restored.'
   'Knob.render_scale'='Render scale'; 'Knob.min_extent'='Minimum network side'; 'Knob.profile'='Profile'; 'Knob.intensity'='Intensity'
@@ -477,7 +473,7 @@ $script:Strings=@{
   'Hint.cut_limit'='Average frame change that discards history for a scene cut. Lower reacts sooner; 1 never cuts.'
   Uninstall='Remove NR'; 'Loading.uninstall'='Removing NR from the game…'; 'Done.uninstall'='NR removed. The game folder is as it was before installation.'
   'Done.uninstall-steam'='Steam''s launch options restored and NR removed. The game folder is as it was before installation.'
-  UninstallConfirm='Remove NR from this game? If Steam still starts it through NR, setup first returns its launch options, and Steam restarts. Then it deletes the dlss-nr folder and the DXVK files it added, and puts back the game files it set aside. Your weights and settings stay in the DLSS-NR folder.'
+  UninstallConfirm='Remove NR from this game? Setup deletes the dlss-nr folder and the files it put beside the game, and puts back the game files it set aside. If Steam still starts the game through an earlier setup''s launch options, they go back first, and Steam restarts. Your weights and settings stay in the DLSS-NR folder.'
   'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.neutral'='Neutral'
  }
  ru=@{
@@ -490,14 +486,13 @@ $script:Strings=@{
   FindPython='Найти Python'; GetPython='Сайт Python'
   PythonHint='Python обычно определяется автоматически. Если его нет, установите Windows x64 Python с python.org.'
   ConnectHeading='2. Подключите NR к игре'; ApiLabel='Графический API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (мастер добавит DXVK)'
-  ModeLabel='Запуск'; ModeDirect='Напрямую'; ModeSteam='Через Steam'; LaunchOptions='Параметры запуска'
+  LaunchOptions='Параметры запуска'
   ArgsLabel='Аргументы игры (необязательно)'; ArgsTip='Обычные аргументы игры; команды оболочки здесь не выполняются.'
-  SteamIdLabel='Steam App ID'; SteamIdTip='Определяется по установленной игре; можно указать вручную.'
   Fossilize='Обход Steam shader-cache для NR'
-  FossilizeTip='Отключает Fossilize только для запуска с NR. Steam Overlay остаётся доступен.'
-  FirstTestHint='Для первого теста выберите в игре окно 800×450. Сеть начнёт с масштаба 0.4. Для игр на DirectX 8–11 мастер положит рядом с игрой DXVK и отложит файлы, которые заменит; «Удалить NR» всё вернёт. Игры на DirectX 12 в Windows пока не работают.'
+  FossilizeTip='«Установить NR» отключит в этой игре слой Fossilize от Steam. Steam Overlay остаётся доступен.'
+  FirstTestHint='Для первого теста выберите в игре окно 800×450; сеть начнёт с масштаба 0.4. Мастер положит рядом с игрой свою vulkan-1.dll, а для DirectX 8–11 ещё и DXVK, и отложит файлы, которые заменит; «Удалить NR» всё вернёт. Запускайте игру как обычно. Игры на DirectX 12 в Windows пока не работают.'
   Check='Проверить'; Dependencies='Подготовить Python'; Install='Установить NR'; CompareHeading='3. Запустите и сравните'
-  Launch='Запустить игру'; Enable='Включить NR'; Disable='Выключить NR'; SteamSetup='Настроить Steam'; SteamRestore='Вернуть Steam'
+  Launch='Запустить игру'; Enable='Включить NR'; Disable='Выключить NR'
   EffectOn='Эффект включён'; EffectOff='Эффект выключен'
   RuntimeInitial='Игра ещё не проверена. После включения NR дождитесь обработанных кадров.'
   FpsHint='NR добавляет обработку каждого кадра и может заметно снизить FPS. Сравните одну сцену с эффектом и без него.'
@@ -514,17 +509,16 @@ $script:Strings=@{
   PickDll='Ваша nvngx_dlssnr.dll'; PickGame='Программа игры'; PickPython='64-битный Windows Python'
   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|Файлы DLL|*.dll'; GameFilter='Программа игры|*.exe'
   PythonFilter='Интерпретатор Python|python.exe;python3.exe|Программа|*.exe'; ReportFilter='Отчёт JSON|*.json'
-  SteamConfirm='Steam будет закрыт обычным способом и снова открыт. Перед этим завершите игры Steam. Изменятся только параметры запуска выбранной игры; их можно вернуть кнопкой «Вернуть Steam».'
-  SteamTitle='Настройка запуска NR'; ReportTitle='Сохранить диагностический отчёт'
+  ReportTitle='Сохранить диагностический отчёт'
   'Loading.discover'='Ищем подходящий Python…'; 'Loading.check'='Проверяем файлы и зависимости…'
   'Loading.dependencies'='Готовим локальный Python…'; 'Loading.install'='Извлекаем веса и устанавливаем NR…'
-  'Loading.launch'='Запускаем игру…'; 'Loading.steam-setup'='Настраиваем запуск в Steam…'
-  'Loading.steam-restore'='Возвращаем параметры Steam…'; 'Loading.on'='Включаем NR…'; 'Loading.off'='Выключаем NR…'
+  'Loading.launch'='Запускаем игру…'
+  'Loading.on'='Включаем NR…'; 'Loading.off'='Выключаем NR…'
   'Loading.report'='Сохраняем отчёт…'; 'Loading.save'='Сохраняем параметры…'
   'Done.discover'='Python найден. Выберите игру и DLL.'; 'Done.check'='Проверка пройдена. Можно установить NR.'
-  'Done.dependencies'='Python подготовлен. Теперь установите NR.'; 'Done.install'='NR установлен. Запустите игру через мастер.'
-  'Done.launch'='Запуск запрошен. Войдите в игровую сцену.'; 'Done.steam-setup'='Steam настроен. Запустите игру через мастер.'
-  'Done.steam-restore'='Обычные параметры Steam восстановлены.'; 'Done.on'='NR включён. Дождитесь первых обработанных кадров.'
+  'Done.dependencies'='Python подготовлен. Теперь установите NR.'; 'Done.install'='NR установлен. Запускайте игру как обычно или кнопкой «Запустить игру».'
+  'Done.launch'='Запуск запрошен. Войдите в игровую сцену.'; 'Done.install-steam'='Параметры запуска Steam от прежней версии мастера возвращены, NR установлен. Запускайте игру как обычно.'
+  'Done.on'='NR включён. Дождитесь первых обработанных кадров.'
   'Done.off'='NR выключен.'; 'Done.report'='Отчёт сохранён.'; 'Done.save'='Параметры сохранены.'
   SetupTab='Установка'; ControlsTab='Настройки NR'; ControlsHeading='Настройки NR во время игры'
   ControlsHint='Изменения сохраняются автоматически после регулировки. Демон читает их между кадрами; перезапуск игры не нужен. Выбранный масштаб и фактический размер сети с дополнением могут различаться.'
@@ -534,7 +528,7 @@ $script:Strings=@{
   UnsavedClose='Некоторые изменения NR не сохранены. Закрыть окно и отбросить эти изменения?'
   InvalidSetting='Введите конечное число в допустимом диапазоне.'; FrameReadout='Последний нейронный кадр: выход {0}×{1}; сеть {3}×{4}; обработка {2} мс. Это не FPS игры.'
   PackagesLater='Python подходит. «Установить NR» сам поставит numpy и safetensors в свою копию Python.'
-  GameWithoutNr='Игра запущена не через NR, поэтому NR до неё не достаёт. Закройте игру и нажмите «Запустить игру».'
+  GameWithoutNr='Игра запущена без NR. Перезапустите её; если NR так и не появится, запустите её кнопкой «Запустить игру».'
   'Loading.settings'='Загружаем настройки NR…'; 'Loading.settings-save'='Сохраняем настройки NR…'; 'Loading.settings-reset'='Возвращаем настройки NR…'
   'Done.settings'='Настройки NR загружены.'; 'Done.settings-save'='Настройки NR сохранены.'; 'Done.settings-reset'='Настройки NR сброшены.'
   'Knob.render_scale'='Масштаб сети'; 'Knob.min_extent'='Минимальная сторона сети'; 'Knob.profile'='Профиль'; 'Knob.intensity'='Интенсивность'
@@ -552,7 +546,7 @@ $script:Strings=@{
   'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
   Uninstall='Удалить NR'; 'Loading.uninstall'='Удаляем NR из игры…'; 'Done.uninstall'='NR удалён. Папка игры такая же, как до установки.'
   'Done.uninstall-steam'='Параметры запуска Steam возвращены, NR удалён. Папка игры такая же, как до установки.'
-  UninstallConfirm='Удалить NR из этой игры? Если Steam ещё запускает её через NR, мастер сначала вернёт её параметры запуска, и Steam перезапустится. Затем удалит папку dlss-nr и добавленные им файлы DXVK и вернёт отложенные файлы игры. Веса и настройки останутся в папке DLSS-NR.'
+  UninstallConfirm='Удалить NR из этой игры? Мастер удалит папку dlss-nr и файлы, которые положил рядом с игрой, и вернёт отложенные файлы игры. Если Steam ещё запускает игру с параметрами от прежней версии мастера, сначала вернутся они, и Steam перезапустится. Веса и настройки останутся в папке DLSS-NR.'
   'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
  }
  es=@{
@@ -565,14 +559,13 @@ $script:Strings=@{
   FindPython='Buscar Python'; GetPython='Sitio web de Python'
   PythonHint='Python suele detectarse automáticamente. Si falta, instale Python para Windows x64 desde python.org.'
   ConnectHeading='2. Conecte NR a su juego'; ApiLabel='API gráfica'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (el instalador añade DXVK)'
-  ModeLabel='Modo de inicio'; ModeDirect='Directo'; ModeSteam='A través de Steam'; LaunchOptions='Opciones de inicio'
+  LaunchOptions='Opciones de inicio'
   ArgsLabel='Argumentos del juego (opcional)'; ArgsTip='Argumentos normales del juego; aquí no se ejecutan comandos de la consola.'
-  SteamIdLabel='Steam App ID'; SteamIdTip='Se detecta a partir del juego instalado; también puede escribirlo a mano.'
   Fossilize='Solución para la caché de sombreadores de Steam con NR'
-  FossilizeTip='Desactiva Fossilize solo al iniciar con NR. El Steam Overlay sigue disponible.'
-  FirstTestHint='Para la primera prueba, elija en el juego una ventana de 800×450. La red empieza con escala 0.4. En los juegos DirectX 8–11, el instalador pone DXVK junto al juego y guarda aparte los archivos que reemplaza; Quitar NR lo devuelve todo. Los juegos DirectX 12 todavía no funcionan en Windows.'
+  FossilizeTip='Instalar NR desactiva la capa Fossilize de Steam en este juego. El Steam Overlay sigue disponible.'
+  FirstTestHint='Para la primera prueba, elija en el juego una ventana de 800×450; la red empieza con escala 0.4. El instalador pone su vulkan-1.dll junto al juego, y DXVK para DirectX 8–11, y guarda aparte los archivos que reemplaza; Quitar NR lo devuelve todo. Inicie el juego como siempre. Los juegos DirectX 12 todavía no funcionan en Windows.'
   Check='Comprobar'; Dependencies='Preparar Python'; Install='Instalar NR'; CompareHeading='3. Inicie y compare'
-  Launch='Iniciar el juego'; Enable='Activar NR'; Disable='Desactivar NR'; SteamSetup='Configurar Steam'; SteamRestore='Restaurar Steam'
+  Launch='Iniciar el juego'; Enable='Activar NR'; Disable='Desactivar NR'
   EffectOn='Efecto activado'; EffectOff='Efecto desactivado'
   RuntimeInitial='El juego aún no se ha probado. Después de activar NR, espere a los fotogramas procesados.'
   FpsHint='NR añade procesamiento a cada fotograma y puede bajar mucho los FPS. Compare la misma escena con el efecto activado y desactivado.'
@@ -589,17 +582,16 @@ $script:Strings=@{
   PickDll='Su nvngx_dlssnr.dll'; PickGame='Ejecutable del juego'; PickPython='Python de Windows de 64 bits'
   DllFilter='DLL de NVIDIA DLSS-NR|nvngx_dlssnr.dll|Archivos DLL|*.dll'; GameFilter='Ejecutable del juego|*.exe'
   PythonFilter='Intérprete de Python|python.exe;python3.exe|Ejecutable|*.exe'; ReportFilter='Informe JSON|*.json'
-  SteamConfirm='Steam se cerrará normalmente y volverá a abrirse. Cierre antes sus juegos de Steam. Solo cambiarán las opciones de inicio del juego seleccionado; use Restaurar Steam para recuperarlas.'
-  SteamTitle='Configurar el inicio con NR'; ReportTitle='Guardar el informe de diagnóstico'
+  ReportTitle='Guardar el informe de diagnóstico'
   'Loading.discover'='Buscando un Python adecuado…'; 'Loading.check'='Comprobando archivos y dependencias…'
   'Loading.dependencies'='Preparando el Python local…'; 'Loading.install'='Extrayendo los pesos e instalando NR…'
-  'Loading.launch'='Iniciando el juego…'; 'Loading.steam-setup'='Configurando el inicio en Steam…'
-  'Loading.steam-restore'='Restaurando las opciones de inicio de Steam…'; 'Loading.on'='Activando NR…'; 'Loading.off'='Desactivando NR…'
+  'Loading.launch'='Iniciando el juego…'
+  'Loading.on'='Activando NR…'; 'Loading.off'='Desactivando NR…'
   'Loading.report'='Guardando el informe…'; 'Loading.save'='Guardando la configuración…'
   'Done.discover'='Python encontrado. Elija su juego y su DLL.'; 'Done.check'='Comprobación superada. Ya puede instalar NR.'
-  'Done.dependencies'='Python está listo. Ahora instale NR.'; 'Done.install'='NR instalado. Inicie el juego desde el instalador.'
-  'Done.launch'='Inicio solicitado. Entre en una escena del juego.'; 'Done.steam-setup'='Steam configurado. Inicie el juego desde el instalador.'
-  'Done.steam-restore'='Se restauraron las opciones de inicio originales de Steam.'; 'Done.on'='NR activado. Espere a los primeros fotogramas procesados.'
+  'Done.dependencies'='Python está listo. Ahora instale NR.'; 'Done.install'='NR instalado. Inicie el juego como siempre, o con Iniciar el juego.'
+  'Done.launch'='Inicio solicitado. Entre en una escena del juego.'; 'Done.install-steam'='Se restauraron las opciones de inicio de Steam de un instalador anterior y se instaló NR. Inicie el juego como siempre.'
+  'Done.on'='NR activado. Espere a los primeros fotogramas procesados.'
   'Done.off'='NR desactivado.'; 'Done.report'='Informe guardado.'; 'Done.save'='Configuración guardada.'
   SetupTab='Instalación'; ControlsTab='Controles de NR'; ControlsHeading='Controles de NR durante el juego'
   ControlsHint='Los cambios se guardan solos al terminar de ajustar. El proceso de NR los lee entre fotogramas; no hace falta reiniciar el juego. La escala elegida y el tamaño real de la red con relleno pueden diferir.'
@@ -609,7 +601,7 @@ $script:Strings=@{
   UnsavedClose='Algunos cambios de NR no se guardaron. ¿Cerrar y descartar esos cambios?'
   InvalidSetting='Escriba un número finito dentro del rango admitido.'; FrameReadout='Último fotograma neuronal: salida {0}×{1}; red {3}×{4}; procesamiento {2} ms. Esto no son los FPS del juego.'
   PackagesLater='Python sirve. Instalar NR añade numpy y safetensors a una copia propia de Python.'
-  GameWithoutNr='El juego se inició sin NR, así que NR no puede llegar a él. Cierre el juego y pulse Iniciar el juego.'
+  GameWithoutNr='El juego se está ejecutando sin NR. Reinícielo; si NR sigue sin aparecer, inícielo con Iniciar el juego.'
   'Loading.settings'='Cargando la configuración de NR…'; 'Loading.settings-save'='Guardando los controles de NR…'; 'Loading.settings-reset'='Restaurando los valores predeterminados de NR…'
   'Done.settings'='Configuración de NR cargada.'; 'Done.settings-save'='Configuración de NR guardada.'; 'Done.settings-reset'='Se restauraron los valores predeterminados de NR.'
   'Knob.render_scale'='Escala de renderizado'; 'Knob.min_extent'='Lado mínimo de la red'; 'Knob.profile'='Perfil'; 'Knob.intensity'='Intensidad'
@@ -627,24 +619,24 @@ $script:Strings=@{
   'Hint.cut_limit'='Cambio medio del fotograma que descarta el historial en un cambio de escena. Menos reacciona antes; 1 nunca corta.'
   Uninstall='Quitar NR'; 'Loading.uninstall'='Quitando NR del juego…'; 'Done.uninstall'='NR quitado. La carpeta del juego está como antes de la instalación.'
   'Done.uninstall-steam'='Se restauraron las opciones de inicio de Steam y se quitó NR. La carpeta del juego está como antes de la instalación.'
-  UninstallConfirm='¿Quitar NR de este juego? Si Steam todavía lo inicia a través de NR, el instalador primero restaura sus opciones de inicio, y Steam se reinicia. Después borra la carpeta dlss-nr y los archivos de DXVK que añadió, y devuelve los archivos del juego que guardó aparte. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
+  UninstallConfirm='¿Quitar NR de este juego? El instalador borra la carpeta dlss-nr y los archivos que puso junto al juego, y devuelve los archivos del juego que guardó aparte. Si Steam todavía inicia el juego con las opciones de un instalador anterior, primero se restauran, y Steam se reinicia. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
   'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.neutral'='Neutro'
  }
 }
 $script:TextBindings=@{
  Subtitle='Subtitle'; FilesHeading='FilesHeading'; DllLabel='DllLabel'; GameLabel='GameLabel'; PythonLabel='PythonLabel'
- ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'; ModeLabel='ModeLabel'
- ArgsLabel='ArgsLabel'; SteamIdLabel='SteamIdLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
+ ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'
+ ArgsLabel='ArgsLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
  FpsHint='FpsHint'; ControlsHeading='ControlsHeading'
 }
 $script:ContentBindings=@{
  BrowseDll='Browse'; BrowseGame='Browse'; BrowsePython='Browse'; FindPython='FindPython'; GetPython='GetPython'
- ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ModeDirect='ModeDirect'; ModeSteam='ModeSteam'; Fossilize='Fossilize'
- Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'; SteamSetup='SteamSetup'
- SteamRestore='SteamRestore'; Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'
+ ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; Fossilize='Fossilize'
+ Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
+ Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'
 }
 $script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings'}
-$script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; SteamId='SteamIdTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
+$script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
  PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'}
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
@@ -837,7 +829,7 @@ function Write-Json([string]$Path, $Value) {
 }
 function Profile-FromWindow {
     $dll = $script:Ui.DllPath.Text.Trim()
-    return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(if($script:Ui.Api.SelectedIndex -eq 1){'dxvk'}else{'vulkan'}); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked; launch_mode=$(if($script:Ui.Mode.SelectedIndex -eq 1){'steam'}else{'direct'}); steam_app_id=$script:Ui.SteamId.Text.Trim()}
+    return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(if($script:Ui.Api.SelectedIndex -eq 1){'dxvk'}else{'vulkan'}); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked}
 }
 function Apply-Profile($Profile) {
     if($null -eq $Profile) { return }
@@ -846,13 +838,11 @@ function Apply-Profile($Profile) {
     $script:Ui.GamePath.Text=[string]$Profile.game_exe
     $script:Ui.DllPath.Text=[string]$Profile.dll
     $script:Ui.Api.SelectedIndex=$(if($Profile.api -eq 'dxvk'){1}else{0})
-    $script:Ui.Mode.SelectedIndex=$(if($Profile.launch_mode -eq 'steam'){1}else{0})
-    $script:Ui.SteamId.Text=[string]$Profile.steam_app_id
     $script:Ui.Fossilize.IsChecked=[bool]$Profile.disable_fossilize
     if($Profile.game_args) { $script:Ui.GameArgs.Text=(@($Profile.game_args | ForEach-Object { Quote-Argument ([string]$_) }) -join ' ') }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','Mode','GameArgs','SteamId','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SteamSetup','SteamRestore','Report','ControlsToggle','ControlsLaunch','ResetSettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','Report','ControlsToggle','ControlsLaunch','ResetSettings')) { $script:Ui[$name].IsEnabled=-not $Busy }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
     $script:Ui.Spinner.IsIndeterminate=$Busy
@@ -946,9 +936,9 @@ function Finish-Bridge($Job,[bool]$Quiet) {
         $script:Ui.Details.Text=($value | ConvertTo-Json -Depth 10)
         if($value.ok) {
             Set-Progress ('Done.'+$Job.Action)
-            if($Job.Action -eq 'uninstall' -and $value.steam_restored) { Set-Progress 'Done.uninstall-steam' }
+            if($Job.Action -in @('install','uninstall') -and $value.steam_restored) { Set-Progress ('Done.'+$Job.Action+'-steam') }
             if($Job.Action -eq 'on' -and $value.warning -eq 'game_without_nr') { Set-Progress 'GameWithoutNr' }
-            if($value.profile -and $Job.Action -in @('discover','dependencies','install','steam-setup')) { Apply-Profile $value.profile }
+            if($value.profile -and $Job.Action -in @('discover','dependencies','install')) { Apply-Profile $value.profile }
             if($Job.Action -eq 'discover' -and -not $value.profile -and $value.candidates.Count) { $script:Ui.PythonPath.Text=[string]$value.candidates[0] }
             if($Job.Action -eq 'install') { $script:Installed=$true }
             if($Job.Action -eq 'uninstall') { $script:Installed=$false }
@@ -1093,10 +1083,6 @@ $script:Ui.Theme.Add_Click({
     try { [IO.Directory]::CreateDirectory($script:Work) | Out-Null; Write-Json $script:UiPrefs @{theme=$script:Theme} } catch { }
 })
 $script:Window.Add_SourceInitialized({ Set-TitleBar })
-$script:Ui.SteamSetup.Add_Click({
-    if([Windows.MessageBox]::Show($script:Window,(T 'SteamConfirm'),(T 'SteamTitle'),'OKCancel','Information') -eq 'OK') { Start-Bridge 'steam-setup' }
-})
-$script:Ui.SteamRestore.Add_Click({ Start-Bridge 'steam-restore' })
 $script:Ui.Report.Add_Click({
     $dialog=[Microsoft.Win32.SaveFileDialog]::new(); $dialog.Title=T 'ReportTitle'; $dialog.Filter=T 'ReportFilter'; $dialog.FileName='DLSS-NR-report.json'
     if($dialog.ShowDialog($script:Window)) { Start-Bridge 'report' $dialog.FileName }

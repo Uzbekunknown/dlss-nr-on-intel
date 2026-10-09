@@ -395,7 +395,7 @@ class WizardFixture(unittest.TestCase):
 
     def test_enabling_warns_when_the_game_runs_without_nr(self):
         self.own()
-        # Started by Steam's own button: no launch of NR's runs, the game does.
+        # Started before NR was installed: no launch record names it, the game runs.
         self.processes.return_value = [{"ProcessId": 77, "ExecutablePath": str(self.game)}]
         result = core.set_effect(self.profile, True)
         self.assertTrue(result["ok"])
@@ -675,16 +675,26 @@ class WizardFixture(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(sentinel.read_bytes(), b"preserve")
 
-    def test_pending_steam_configuration_locks_profile_and_installation(self):
+    def test_install_nr_returns_steams_launch_options_first(self):
+        # An earlier setup could leave Steam starting a game through NR's wrapper. That no
+        # longer holds the profile; Install NR returns those options before it installs.
+        import windows_launch as launch
+        import windows_wizard as bridge
         core.save_profile(self.profile)
-        original = core.profile_path(self.root).read_bytes()
         core._atomic_json(self.root / "work/windows-wizard/steam-backup.json", {"restored": False})
         other = replace(self.profile, game_exe=write_pe(self.base / "other game" / "other.exe"))
-        with self.assertRaises(ValueError):
-            core.save_profile(other)
-        self.assertFalse(core.install(other)["ok"])
-        self.assertEqual(core.profile_path(self.root).read_bytes(), original)
-        self.assertFalse(core.installed_path(other).exists())
+        core.save_profile(other)
+        self.assertEqual(core.load_profile(self.root), other)
+        with patch.object(launch, "restore_steam", return_value={"ok": False, "error": "A Steam game is running"}), \
+                patch.object(core, "install") as install:
+            self.assertEqual(bridge.install_nr(other, None)["error"], "A Steam game is running")
+        install.assert_not_called()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "changed": True}) as restore:
+            result = bridge.install_nr(other, None)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["steam_restored"])
+        self.assertEqual(restore.call_args.args[0], other)
+        self.assertTrue(core.installed_path(other).exists())
 
     def test_install_blocks_active_selected_game_and_other_root_session(self):
         self.launch_state()

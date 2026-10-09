@@ -27,44 +27,50 @@ not install packages globally. A missing Python installation still needs to be
 installed from [python.org](https://www.python.org/downloads/windows/).
 
 Choose **Vulkan** for a game with its own Vulkan renderer, and **DirectX 8–11** for the
-rest. For DirectX 8–11, installation puts DXVK 3.1.1 (in `dxvk\`, with its zlib licence)
-beside the game, for the game's architecture, and sets aside any game file of the same
-name. **Remove NR** deletes the game's `dlss-nr` folder and the DXVK files and puts the
-set-aside files back; a file that changed since, for example in a game update, is left
-as it is and named. Until then the game runs through DXVK even when started without NR.
+rest. Installation puts a `vulkan-1.dll` beside every game, and for DirectX 8–11 DXVK
+3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
+file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
+these files and puts the set-aside ones back; a file that changed since, for example in a
+game update, is left as it is and named.
 DirectX 12 games do not work on Windows yet: DXVK covers DirectX 8–11, and VKD3D-Proton,
 tried with Mortal Kombat 1, stopped the game at startup.
-Set the game itself to an 800×450 window for the first comparison. **Launch game**
-starts with NR off; **Enable/disable NR** changes it during the same session.
-The status distinguishes a model that is loaded from fresh processed game frames;
-processed-frame throughput is not a game FPS measurement.
+
+**Start the game the way you usually do.** That `vulkan-1.dll` is a small proxy: loaded
+into the game, it gives the game's own process NR's settings and passes every Vulkan call
+on to Windows' Vulkan loader, or to the game's own copy if it brought one. So Steam's Play
+button, a desktop shortcut, Epic, GOG or any other launcher start the game with NR, and
+setup changes none of them. **Launch game** starts it from setup. If an earlier setup set
+Steam's launch options for NR, **Install NR** and **Remove NR** return them, and Steam
+restarts once. A game with anti-cheat may refuse a DLL beside it, or count it as
+tampering: test single-player games, offline.
+
+Set the game itself to an 800×450 window for the first comparison. NR starts off;
+**Enable/disable NR** changes it while the game runs. If the game was already running
+when NR was installed, restart it. The status distinguishes a model that is loaded from
+fresh processed game frames; processed-frame throughput is not a game FPS measurement.
 
 Open **NR controls** for the same ten live settings as Linux `nr-panel`: render
 scale, minimum network side, profile, intensity, detail strength, colour strength,
 temporal history, hold, release and scene-cut threshold. Numeric settings have
-sliders and editable values. Changes save automatically after adjusting; **Apply
-now** also saves immediately. The daemon reads them between frames without a
-game restart. Changing scale can rebuild the network's working buffers, so a drag
-is saved after release. The readout shows actual network dimensions separately
+sliders and editable values; a slider you have clicked also takes the arrow keys.
+Changes save automatically after adjusting, and the daemon reads them between frames
+without a game restart. Changing scale can rebuild the network's working buffers, so
+a drag is saved after release. The readout shows actual network dimensions separately
 from requested scale; minimum padding may keep the same size at several scales.
 
-**Default** resets one control; **Reset all** writes the daemon's defaults,
-including render scale **1.0**. The release starts at **0.4** for a lighter first
-test. **Reload** discards pending edits and reads the current settings file.
-Reinstallation preserves chosen settings. Existing advanced values beyond a
-slider's normal range remain visible in the editable value and are preserved.
+The button beside a control returns it to its default; **Reset all** writes the
+daemon's defaults, including render scale **1.0**. The release starts at **0.4** for
+a lighter first test. Reinstallation preserves chosen settings. Existing advanced
+values beyond a slider's normal range remain visible in the editable value and are
+preserved. The button beside the language switches the light and dark themes.
 
-For Steam, choose **Through Steam** and **Configure Steam**. The wizard keeps a
-backup of this game's launch options, closes Steam normally only when no Steam
-game is running, applies a wrapper for the selected executable, and reopens Steam.
-Complex existing launch wrappers and ambiguous accounts are preserved and require
-manual configuration. **Restore Steam** restores the original launch options.
-The optional Fossilize workaround applies only to launches through the NR wrapper;
-it does not disable Steam Overlay or modify the global shader-cache setting.
+Under **Launch options**, the optional Fossilize workaround turns off Steam's Fossilize
+layer in this game while NR is installed; it does not disable Steam Overlay or modify the
+global shader-cache setting. The game arguments there are for **Launch game**.
 
 **Save report** exports settings, version/driver information and diagnostic log
-data without NVIDIA DLLs or weights. The release's private profile, extracted
-weights and Steam backups stay on this PC and must not be added to a distributable.
+data without NVIDIA DLLs or weights. The release's private profile and extracted
+weights stay on this PC and must not be added to a distributable.
 The window supports English, Russian and Spanish, chooses its initial language from
 Windows, and has a language selector at the top. The manual setup below remains available.
 

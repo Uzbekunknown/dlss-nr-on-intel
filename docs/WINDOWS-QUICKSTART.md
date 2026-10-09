@@ -189,7 +189,9 @@ start "" "C:\Program Files (x86)\Steam\steam.exe"
 Use Steam's actual install path if it differs. Keep only the test game running:
 these variables also apply to Vulkan applications started by this Steam session.
 After testing, remove the trigger and restart Steam normally to clear that session's
-layer environment.
+layer environment. A release's setup window needs none of this: the `vulkan-1.dll` it
+puts beside the game gives the game's own process these variables, however the game
+is started ([RELEASE-QUICKSTART.md](RELEASE-QUICKSTART.md)).
 
 Turning NR on/off uses the same trigger commands as the cube. Use the reported
 frame timings and refusal messages to confirm it is active, not only a change in FPS.

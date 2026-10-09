@@ -283,9 +283,8 @@ def load_profile(root):
 
 
 def save_profile(profile):
-    allowed, detail = _profile_change_allowed(profile)
-    if not allowed:
-        raise ValueError(detail)
+    # A Steam configuration an earlier setup left does not hold the profile: its wrapper
+    # starts the game from a snapshot of its own (windows_launch._ensure_steam_profile).
     _atomic_json(profile_path(profile.root), profile.to_dict())
     return {"ok": True, "error": None, "path": str(profile_path(profile.root)),
             "profile": profile.to_dict()}
@@ -293,27 +292,6 @@ def save_profile(profile):
 
 def _canonical(path):
     return os.path.normcase(str(Path(path).resolve())).replace("\\", "/").rstrip("/")
-
-
-def _profile_change_allowed(profile):
-    backup = profile.root / "work/windows-wizard/steam-backup.json"
-    if not backup.exists():
-        return True, "No pending Steam configuration"
-    try:
-        state = _read_json(backup, limit=64 * 1024)
-        if state.get("restored"):
-            return True, "Steam configuration was restored"
-        existing = load_profile(profile.root)
-        if existing is None:
-            return False, "Restore the pending Steam configuration before replacing its missing profile"
-        before, after = existing.to_dict(), profile.to_dict()
-        before.pop("dll", None)
-        after.pop("dll", None)
-        if before != after:
-            return False, "Restore Steam launch options before changing the selected game or launch profile"
-        return True, "The pending Steam configuration uses this unchanged profile"
-    except (OSError, ValueError, AttributeError):
-        return False, "The pending Steam backup could not be verified; restore it before changing the profile"
 
 
 def installed_path(profile):
@@ -659,8 +637,6 @@ def validate(profile):
           weights["detail"] if weights["ready"] else "Supply your own x64 nvngx_dlssnr.dll or 649-tensor local logical weights")
     owns, detail = _owned_installation(profile)
     check("installation_target", owns, detail)
-    allowed, detail = _profile_change_allowed(profile)
-    check("steam_profile_lock", allowed, detail)
     for name in ("windows-profile.json", "nr_settings.json", "nr_trigger"):
         path = profile.root / "work" / name
         check("state_path_" + name, not path.exists() or (path.is_file() and not path.is_symlink()), path)
@@ -919,8 +895,8 @@ def uninstall(profile, emit=None):
     owns, detail = _owned_installation(profile)
     if not owns:
         return {"ok": False, "error": detail}
-    # Not _profile_change_allowed, which lets an unchanged profile through: Steam would go on
-    # starting the game through a wrapper whose layer is gone, and the game would not start.
+    # Launch options an earlier setup gave Steam would go on starting the game through a
+    # wrapper whose layer is gone, and the game would not start. The bridge returns them first.
     steam = profile.root / "work/windows-wizard/steam-backup.json"
     if steam.exists():
         try:
@@ -1198,19 +1174,21 @@ def set_effect(profile, enabled):
                   "detail": "Trigger changed; fresh processed frames must confirm processing"}
         if enabled and _game_running_without_nr(profile, launch):
             result.update(warning="game_without_nr",
-                          detail="The game is running, but NR did not start it, so its layer is "
-                                 "not loaded there. Close the game and use Launch game.")
+                          detail="The game is running without NR's layer: it was started before NR "
+                                 "was installed, or it does not load the Vulkan loader from its own "
+                                 "folder. Restart it; if that does not help, use Launch game.")
         return result
     except (OSError, ValueError) as error:
         return {"ok": False, "error": str(error)}
 
 
 def _game_running_without_nr(profile, launch):
-    """Whether the selected game runs, though not from NR's own launch.
+    """Whether the selected game runs without NR's layer: a process of it that no launch names.
 
-    Steam's Play button after Restore Steam starts it so: the layer is not loaded there, and
-    switching the effect on changes nothing in it. One process list, taken only when the
-    effect is switched on, not by the status check that runs every 5 s."""
+    One started before NR was installed is such a process, and so is a game that loads Windows'
+    own vulkan-1.dll by its path, past the proxy. Switching the effect on changes nothing in
+    it. One process list, taken only when the effect is switched on, not by the status check
+    that runs every 5 s."""
     target = _canonical(profile.game_exe)
     if launch.get("game_exe") and _canonical(launch["game_exe"]) == target and launch.get("exit_code") is None:
         running = _running_executable(launch.get("pid"))
