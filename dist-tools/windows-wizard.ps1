@@ -958,6 +958,10 @@ function Finish-Bridge($Job,[bool]$Quiet) {
                 Set-Progress 'PackagesLater'
             } elseif($failed.Count -or -not $value.error) {
                 Set-Progress 'FixChecks'
+                # The items themselves after ours, as the backend words them: a user who saw
+                # only "fix the reported items" had a JSON to read to learn which (issue #12).
+                $items=@($value.checks | Where-Object { -not $_.ok } | ForEach-Object { [string]$_.name+': '+[string]$_.detail })
+                if($items.Count) { $script:Ui.Progress.Text=(T 'FixChecks')+' '+($items -join ' | ') }
                 $script:Ui.CheckDetails.IsExpanded=$true
             } else {
                 # The backend's own sentence after ours: it names the game, Steam or file at fault.

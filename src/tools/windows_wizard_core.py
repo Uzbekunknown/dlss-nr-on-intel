@@ -429,7 +429,10 @@ print(json.dumps(result))
 """
 
 
-def _python_info(python, timeout=4):
+def _python_info(python, timeout=30):
+    # Long enough for numpy's first import, while Windows' scanner reads its 30 MB OpenBLAS for
+    # the first time: at 4 s a fresh environment failed Python, its packages and the DLLs at
+    # once (issue #12), and the same Python answered at once a minute later.
     got = _run([python, "-I", "-c", _PYTHON_PROBE], timeout=timeout)
     try:
         value = json.loads(got["stdout"].strip().splitlines()[-1])
@@ -437,6 +440,9 @@ def _python_info(python, timeout=4):
         value = {}
     value["probe_ok"] = got["returncode"] == 0 and not got["timed_out"]
     value["output"] = got["output"]
+    if not value["probe_ok"]:
+        value["probe_error"] = (f"no answer in {timeout} s" if got["timed_out"]
+                                else got["output"].strip()[-300:] or f"exit code {got['returncode']}")
     return value
 
 
@@ -570,7 +576,54 @@ def _owned_installation(profile):
     return matches, "Owned by this release" if matches else "Existing dlss-nr directory is not owned by this release"
 
 
-def _load_dependencies(profile):
+VC_REDIST = "https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist"
+# The DLL every test here extracted its weights from (notes/CLAUDE.md, Phase 0).
+TESTED_DLL_VERSION = "310.8.0.0"
+TESTED_DLL_SHA256 = "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e"
+WEIGHTS_LOG = "work/logs/get-weights.log"
+
+
+def _file_version(path):
+    """The file version Windows' Properties shows, from the version resource, or None.
+
+    GetFileVersionInfoW maps the file as data; no code in it runs."""
+    if os.name != "nt" or not path or not Path(path).is_file():
+        return None
+    import ctypes
+    from ctypes import wintypes
+    version = ctypes.WinDLL("version")
+    version.GetFileVersionInfoSizeW.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD))
+    version.GetFileVersionInfoW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p)
+    version.VerQueryValueW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p),
+                                       ctypes.POINTER(wintypes.UINT))
+    size = version.GetFileVersionInfoSizeW(str(path), None)
+    if not size:
+        return None
+    data = ctypes.create_string_buffer(size)
+    pointer, length = ctypes.c_void_p(), wintypes.UINT()
+    if (not version.GetFileVersionInfoW(str(path), 0, size, data)
+            or not version.VerQueryValueW(data, "\\", ctypes.byref(pointer), ctypes.byref(length))
+            or length.value < 52):
+        return None
+    # VS_FIXEDFILEINFO: its signature, the structure's version, then the file's as two DWORDs.
+    fixed = ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD * 4)).contents
+    if fixed[0] != 0xFEEF04BD:
+        return None
+    return f"{fixed[2] >> 16}.{fixed[2] & 0xFFFF}.{fixed[3] >> 16}.{fixed[3] & 0xFFFF}"
+
+
+def _dll_info(path):
+    """The user's DLL as a report gives it: its version and whether it is the one tested."""
+    if not path or not Path(path).is_file():
+        return {"present": False}
+    digest = _sha256(path)
+    return {"present": True, "size": Path(path).stat().st_size, "version": _file_version(path),
+            "sha256": digest, "tested": digest == TESTED_DLL_SHA256}
+
+
+def _load_dependencies(profile, timeout=30):
+    # libnr_image.dll's one dependency outside Windows is VCOMP140.DLL, MSVC's OpenMP, which
+    # the Visual C++ Redistributable installs: asked for by name, so its absence says so.
     code = """
 import ctypes, json, os, sys
 paths = json.loads(sys.argv[1]); result = {'loaded': [], 'failures': {}}
@@ -581,14 +634,22 @@ for path in ['vulkan-1.dll'] + paths:
         result['loaded'].append(path)
     except OSError as error:
         result['failures'][path] = str(error)
+if result['failures']:
+    try:
+        ctypes.WinDLL('vcomp140.dll')
+    except OSError:
+        result['failures']['VCOMP140.DLL'] = 'missing'
 print(json.dumps(result))
 """
     got = _run([profile.python, "-I", "-c", code,
-                json.dumps([str(profile.root / "work" / name) for name in LIBRARIES])], timeout=4)
+                json.dumps([str(profile.root / "work" / name) for name in LIBRARIES])], timeout=timeout)
     try:
         result = json.loads(got["stdout"].strip().splitlines()[-1])
     except (ValueError, IndexError):
-        result = {"failures": {"dependency_probe": got["output"] or "No probe output"}}
+        result = {"failures": {"dependency_probe": f"no answer in {timeout} s" if got["timed_out"]
+                               else got["output"] or "No probe output"}}
+    if "VCOMP140.DLL" in result.get("failures", {}):
+        result["failures"]["VCOMP140.DLL"] = "missing: install the Microsoft Visual C++ x64 Redistributable, " + VC_REDIST
     result["ok"] = got["returncode"] == 0 and not got["timed_out"] and not result.get("failures")
     return result
 
@@ -608,7 +669,8 @@ def validate(profile):
     check("python_file", profile.python.is_file(), profile.python)
     info = _python_info(profile.python) if profile.python.is_file() else {}
     check("python_native_x64", _native_python(info),
-          f"{info.get('platform', 'unknown')} / {info.get('bits', '?')} bit; {info.get('version', '')}")
+          "This Python did not answer: " + info["probe_error"] if info.get("probe_error")
+          else f"{info.get('platform', 'unknown')} / {info.get('bits', '?')} bit; {info.get('version', '')}")
     check("python_packages", not info.get("package_errors") and all(
         name in info.get("packages", {}) for name in ("numpy", "safetensors")),
         info.get("package_errors") or info.get("packages") or "NumPy and safetensors are required")
@@ -629,12 +691,22 @@ def validate(profile):
     check("runtime_architecture", not bad_arch, "Wrong architecture: " + ", ".join(bad_arch) if bad_arch
           else f"Native libraries are x64; {layer} and {proxy} for this {arch or 'unidentified'} game")
     dependency = _load_dependencies(profile) if _native_python(info) and not bad_arch else {"ok": False, "failures": {"probe": "Requires native x64 Python and x64 runtime"}}
-    check("runtime_dependencies", dependency.get("ok"), dependency.get("failures") or "Vulkan loader and native DLL dependencies load; no GPU work performed")
+    failures = dependency.get("failures") or {}
+    check("runtime_dependencies", dependency.get("ok"),
+          "; ".join(f"{Path(name).name}: {why}" for name, why in failures.items())
+          or "Vulkan loader and native DLL dependencies load; no GPU work performed")
     weights = _weights_state(profile)
     dll_ok = bool(profile.dll and profile.dll.is_file() and profile.dll.name.lower() == "nvngx_dlssnr.dll"
                   and pe_architecture(profile.dll) == "x64")
-    check("local_model_input", weights["ready"] or dll_ok,
-          weights["detail"] if weights["ready"] else "Supply your own x64 nvngx_dlssnr.dll or 649-tensor local logical weights")
+    if weights["ready"]:
+        model_detail = weights["detail"]
+    elif dll_ok:
+        version = _file_version(profile.dll)
+        model_detail = (f"Install extracts the weights from {profile.dll}, version {version or 'unknown'}"
+                        + ("" if version == TESTED_DLL_VERSION else f"; tested with {TESTED_DLL_VERSION}"))
+    else:
+        model_detail = "Supply your own x64 nvngx_dlssnr.dll or 649-tensor local logical weights"
+    check("local_model_input", weights["ready"] or dll_ok, model_detail)
     owns, detail = _owned_installation(profile)
     check("installation_target", owns, detail)
     for name in ("windows-profile.json", "nr_settings.json", "nr_trigger"):
@@ -1073,8 +1145,17 @@ def install(profile, emit=None):
                           profile.dll, "--work-dir", str(profile.root / "work")],
                          timeout=900, cwd=profile.root, emit=emit)
         commands.append(extracted)
+        # Kept for Save report: the window shows it only until the next action (issue #12).
+        try:
+            (profile.root / "work/logs").mkdir(parents=True, exist_ok=True)
+            (profile.root / WEIGHTS_LOG).write_text(extracted["output"], encoding="utf-8")
+        except OSError:
+            pass
         if extracted["returncode"] != 0 or extracted["timed_out"] or not _weights_state(profile)["ready"]:
-            return {"ok": False, "error": "Weight extraction failed or did not produce 649 logical tensors",
+            version = _file_version(profile.dll)
+            return {"ok": False, "error": "Weight extraction failed or did not produce 649 logical tensors, "
+                    f"from nvngx_dlssnr.dll version {version or 'unknown'} (tested: {TESTED_DLL_VERSION}). "
+                    "The extractor's output is in Check details and in Save report.",
                     "commands": commands, "output": extracted["output"]}
     # Recheck every input and destination after extraction, before any game write.
     checked = validate(profile)
@@ -1417,10 +1498,20 @@ def export_report(profile, destination):
         except (OSError, ValueError) as error:
             settings = None
             settings_error = str(error)
+        # What Check says, so a report of a failed installation names the item that failed; the
+        # DLL's version, and what the weight extractor said last (issue #12).
+        try:
+            checks = validate(profile)["checks"]
+        except (OSError, ValueError) as error:
+            checks = [{"name": "validate", "ok": False, "detail": str(error)}]
+        weights_log = profile.root / WEIGHTS_LOG
+        weights_tail = (weights_log.read_bytes()[-MAX_LOG_TAIL:].decode("utf-8", errors="replace")
+                        if weights_log.is_file() else "")
         report = {"schema_version": SCHEMA_VERSION, "created_utc": datetime.now(timezone.utc).isoformat(),
                   "release": metadata, "release_metadata_error": metadata_error,
                   "root": str(profile.root), "profile": profile.to_dict(),
                   "system": _system_metadata(), "python": _python_info(profile.python),
+                  "checks": checks, "dll": _dll_info(profile.dll), "weights_log_tail": weights_tail,
                   "settings": settings, "settings_error": settings_error,
                   "status": observation, "daemon_log_tail": tail,
                   "note": "Daemon timings and observed frame counts are not game FPS. No DLL or weights are included."}

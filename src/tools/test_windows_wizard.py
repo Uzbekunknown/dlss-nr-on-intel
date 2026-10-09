@@ -629,12 +629,16 @@ class WizardFixture(unittest.TestCase):
         self.weights.unlink()
         dll = write_pe(self.base / "owned DLL (fixture)" / "nvngx_dlssnr.dll")
         profile = replace(self.profile, dll=dll)
+        self.assertIn("version unknown; tested with 310.8.0.0", self.checks(profile)["local_model_input"]["detail"])
         with patch.object(core, "_run", return_value={"returncode": 0, "timed_out": False,
                          "output": "Done without usable weights"}) as run:
             result = core.install(profile)
         self.assertFalse(result["ok"])
+        self.assertIn("version unknown (tested: 310.8.0.0)", result["error"])
         self.assertEqual(run.call_args.args[0][3], dll)
         self.assertFalse(core.installed_path(profile).exists())
+        # What the extractor said outlives the window's next action, for Save report.
+        self.assertEqual((self.root / core.WEIGHTS_LOG).read_text(encoding="utf-8"), "Done without usable weights")
 
     def test_missing_packages_only_uses_prepared_local_interpreter_consistently(self):
         local = write_pe(self.root / "work/windows-python/Scripts/python.exe")
@@ -825,8 +829,58 @@ class WizardFixture(unittest.TestCase):
         self.assertTrue(saved["settings_error"])
         self.assertEqual(saved["release"]["source_commit"], "04459d2")
         self.assertIn("fixture daemon output", saved["daemon_log_tail"])
+        # What Check says, so a report of a failed installation names the item (issue #12).
+        self.assertIn("runtime_dependencies", {item["name"] for item in saved["checks"]})
+        self.assertEqual(saved["dll"], {"present": False})
+        self.assertEqual(saved["weights_log_tail"], "")
         self.assertNotIn("fixture_648", report.read_text(encoding="utf-8"))
         self.assertFalse(core.export_report(self.profile, self.base / "report.dll")["ok"])
+
+    def test_a_python_or_a_library_that_fails_says_why_in_its_check(self):
+        self.native.return_value = python_info(probe_ok=False, probe_error="no answer in 30 s")
+        self.assertIn("did not answer: no answer in 30 s", self.checks()["python_native_x64"]["detail"])
+        self.native.return_value = python_info()
+        self.deps.return_value = {"ok": False, "failures": {
+            str(self.root / "work/libnr_image.dll"): "Could not find module",
+            "VCOMP140.DLL": "missing: install the Microsoft Visual C++ x64 Redistributable"}}
+        detail = self.checks()["runtime_dependencies"]["detail"]
+        self.assertIn("libnr_image.dll: Could not find module", detail)
+        self.assertIn("VCOMP140.DLL: missing: install the Microsoft Visual C++ x64 Redistributable", detail)
+
+
+class ProbeTests(unittest.TestCase):
+    """What the Python and library probes say when they fail; the probe's process stood in for."""
+
+    def answering(self, **got):
+        result = {"command": [], "returncode": 0, "stdout": "", "stderr": "", "output": "", "timed_out": False}
+        result.update(got)
+        return patch.object(core, "_run", return_value=result)
+
+    def test_a_missing_openmp_runtime_is_named_with_its_installer(self):
+        profile = SimpleNamespace(python=Path("python.exe"), root=Path("release"))
+        answer = json.dumps({"loaded": ["vulkan-1.dll"], "failures": {
+            "release/work/libnr_image.dll": "Could not find module", "VCOMP140.DLL": "missing"}})
+        with self.answering(stdout=answer):
+            result = core._load_dependencies(profile)
+        self.assertFalse(result["ok"])
+        self.assertIn("Visual C++ x64 Redistributable", result["failures"]["VCOMP140.DLL"])
+        self.assertIn(core.VC_REDIST, result["failures"]["VCOMP140.DLL"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows' version resource")
+    def test_a_files_version_is_read_from_its_resource(self):
+        kernel = Path(os.environ["SystemRoot"]) / "System32" / "kernel32.dll"
+        self.assertRegex(core._file_version(kernel) or "", r"^\d+\.\d+\.\d+\.\d+$")
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertIsNone(core._file_version(write_pe(Path(folder) / "no version.dll")))
+            self.assertIsNone(core._file_version(Path(folder) / "absent.dll"))
+
+    def test_probes_that_do_not_answer_say_so(self):
+        profile = SimpleNamespace(python=Path("python.exe"), root=Path("release"))
+        with self.answering(returncode=None, timed_out=True):
+            self.assertEqual(core._load_dependencies(profile)["failures"], {"dependency_probe": "no answer in 30 s"})
+            info = core._python_info(Path("python.exe"))
+        self.assertFalse(info["probe_ok"])
+        self.assertEqual(info["probe_error"], "no answer in 30 s")
 
 
 class CommandTests(unittest.TestCase):
