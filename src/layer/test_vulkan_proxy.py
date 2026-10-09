@@ -64,7 +64,12 @@ for module in modules[:needed.value // ctypes.sizeof(wintypes.HMODULE)]:
     kernel32.GetModuleFileNameW(module, name, 32768)
     if name.value.lower().endswith("vulkan-1.dll"):
         loaded.append(name.value)
+# Where the proxy looks for the real loader: SysWOW64 for a 32-bit process, by redirection.
+system = ctypes.create_unicode_buffer(32768)
+kernel32.GetSystemDirectoryW(system, 32768)
 print(json.dumps({"exe": me, "pid": os.getpid(), "value": value.value if got else None,
+                  "from_system": any(os.path.samefile(path, os.path.join(system.value, "vulkan-1.dll"))
+                                     for path in loaded),
                   "result": result, "version": version.value, "loaded": loaded}))
 '''
 
@@ -112,9 +117,8 @@ def main():
     check("the variable is set, UTF-8 read right", seen.get("value") == "it works été", repr(seen.get("value")))
     check("a Vulkan call reaches the loader", seen.get("result") == 0 and seen.get("version", 0) >= (1 << 22),
           f"result {seen.get('result')}, version {seen.get('version')}")
-    system = str(pathlib.Path(os.environ["SystemRoot"]) / "System32" / "vulkan-1.dll").lower()
-    check("System32's loader is the one behind it", any(path.lower() == system for path in seen.get("loaded", [])),
-          str(seen.get("loaded")))
+    # Compared as files, in the child while they exist: MSYS2's Python joins paths with /.
+    check("System32's loader is the one behind it", seen.get("from_system") is True, str(seen.get("loaded")))
     check("the launch is recorded", record is not None and record.get("pid") == seen.get("pid")
           and record.get("daemon_start_bytes") == 1234 and record.get("exit_code") is None
           and record.get("game_exe") == seen.get("exe"), str(record))
