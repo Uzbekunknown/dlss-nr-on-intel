@@ -960,6 +960,55 @@ def half_probe_child():
     return 0
 
 
+def end_with_game():
+    """End this daemon when the game that started it exits.
+
+    On Windows the layer starts the daemon from inside the game and puts the game's process
+    id in NR_LAYER_SPAWNED. Steam counts every process a game starts as the game, so a daemon
+    that outlived it kept the game running for Steam: Restore Steam refused, and the model
+    stayed in memory until something killed the daemon. A daemon started any other way has
+    no id there and runs until it is stopped, as before; so does Linux's, whose layer marks
+    its child with 1.
+    """
+    try:
+        pid = int(os.environ.get("NR_LAYER_SPAWNED", ""))
+    except ValueError:
+        return None
+    if os.name != "nt" or pid <= 1:
+        return None
+    import ctypes
+    import threading
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    synchronize, infinite, no_such_process = 0x00100000, 0xFFFFFFFF, 87
+    # The handle is held from here on, so the id cannot be reused under it.
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == no_such_process:
+            print(f"the game that started this daemon (process {pid}) has already exited; "
+                  "stopping", flush=True)
+            os._exit(0)
+        print(f"cannot watch the game that started this daemon (process {pid}, WinError "
+              f"{error}); it runs until it is stopped", flush=True)
+        return None
+
+    def wait():
+        kernel32.WaitForSingleObject(handle, infinite)
+        print(f"the game that started this daemon (process {pid}) has exited; stopping",
+              flush=True)
+        os._exit(0)
+
+    print(f"ends with the game that started it (process {pid})", flush=True)
+    thread = threading.Thread(target=wait, name="end-with-game", daemon=True)
+    thread.start()
+    return thread
+
+
 def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--half-probe":
         sys.exit(half_probe_child())
@@ -1015,6 +1064,8 @@ def main():
         parser.error("--release must be between 0 and 255")
     if not 128.0 <= args.min_extent <= 4096.0:
         parser.error("--min-extent must be between 128 and 4096")
+    # Before the model loads: a game that is closed during the load takes the daemon with it.
+    end_with_game()
     args.live = Settings(args)
     args.history = History()
     args.letterbox = Letterbox()

@@ -458,6 +458,16 @@ def _steam_running(timeout=15):
 
 def _stop_steam(steam_exe, profile, emit):
     games = _steam_games(steam_exe, profile)
+    if games and all(game.get("ProcessId") is None for game in games):
+        # Steam keeps RunningAppID for a few seconds after a game exits. With no game process
+        # left in its libraries, wait for that to clear rather than refuse Restore Steam.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            running = _registry("RunningAppID")
+            if not running or str(running) == "0":
+                games = []
+                break
     if games:
         raise LaunchError("A Steam game is running; launch options were left unchanged. Close the game first.")
     running = _steam_running()
@@ -566,6 +576,11 @@ def _manual(profile, reason):
 
 
 def configure_steam(profile, steam_exe=None, emit=None):
+    """Steam's launch options for the game set to start it through main() below.
+
+    Setup no longer offers this: vulkan-1.dll beside the game (nr_vulkan_proxy.c) gives it
+    NR's environment however it is started. Kept with restore_steam and main() for the
+    launch options earlier setups left, which Install and Remove NR return."""
     restarted = False
     executable = None
     result = {}
@@ -768,20 +783,9 @@ def _launch_direct(profile, emit=None, original_command=None):
 
 
 def launch(profile, emit=None):
+    """The game started by setup itself, with the effect off, whatever the profile's
+    launch_mode says: Steam's Play button and any other launcher get NR through the proxy."""
     try:
-        if getattr(profile, "launch_mode", "direct") == "steam":
-            _ready(profile)
-            configured = configure_steam(profile, emit=emit)
-            if not configured.get("ok"):
-                return configured
-            steam = _steam_exe()
-            command = [str(steam), "-applaunch", configured["app_id"]]
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return {"ok": True, "mode": "steam", "pid": process.pid, "command": command,
-                    "launch_options": configured["launch_options"],
-                    "note": "Steam wrapper will record the actual game PID and logs in launch-state.json."}
         return _launch_direct(profile, emit)[0]
     except (OSError, ValueError, LaunchError, subprocess.SubprocessError) as error:
         return {"ok": False, "error": str(error)}

@@ -176,9 +176,30 @@ is started this way, and loses the environment.** The call need not be in the ex
 Dead or Alive 5's imports only `SteamAPI_Init`, and the Steam API library beside it restarted
 the game all the same. The sign is DXVK's log, which then lands beside the game rather than in
 `DXVK_LOG_PATH`. A `steam_appid.txt` holding the game's app id, beside the executable, keeps it
-in place. The daemon the layer starts outlives the game: stop it afterwards. And a game in a
-Steam library that Proton also runs gets its folder back as it was: a DLL left beside the
-executable is found there before Proton's own.
+in place. The daemon the layer starts ends with the game, whose process id the layer hands it.
+And a game in a Steam library that Proton also runs gets its folder back as it was: a DLL left
+beside the executable is found there before Proton's own.
+
+**A release's setup needs none of that: it puts a `vulkan-1.dll` beside the game**
+(`src/layer/nr_vulkan_proxy.c`). Windows looks for `vulkan-1.dll` in the executable's folder
+before System32, for a game's own import and for DXVK's `LoadLibrary` alike. The proxy reads
+`dlss-nr\nr-env.txt`, and in the process of the executable named there, compared as a file and
+not by its spelling, it sets those variables, records the launch for setup's status and lists
+the folder the game was started in. All 265 of the loader's exports go on to System32's loader,
+or to the game's own copy, set aside. `DISABLE_NR_PROXY=1` turns it off. On 2026-10-09 these
+ran with NR, with nothing set in Steam: Mortal Kombat 11 and Dead or Alive 5 from Steam's Play
+button, Mortal Kombat Komplete Edition from its own executable, and DOOM through Steam's
+`DOOMx64.exe`, which starts `DOOMx64vk.exe`. Three things they showed:
+
+- DXVK opens its first log before it loads `vulkan-1.dll`, so before `DXVK_LOG_PATH` is set,
+  and in the folder the game was started in: Steam starts Mortal Kombat 11 in its root, above
+  the executable. Remove NR deletes the DXVK logs written there since the installation.
+- Once DXVK frees its first instance the proxy can be unloaded, and a later
+  `LoadLibrary("vulkan-1.dll")` gets the loader of that name already in the process, System32's.
+  So everything the proxy does, it does at its first load.
+- A game that loads System32's loader by its path, or keeps its DLL search to System32, never
+  loads the proxy. Setup's **Launch game** still starts such a game with the variables.
+
 ## Shipping it to someone without a compiler
 
 Two scripts, and the split between them is the point:

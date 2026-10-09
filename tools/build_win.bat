@@ -111,6 +111,11 @@ echo [3/6] building nr_layer.dll ...
 cl /nologo /O2 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%WORK%\nr_layer.obj" /Fe:"%WORK%\nr_layer.dll" /LD "%REPO%\src\layer\nr_layer.c" /link /DEF:"%REPO%\src\layer\nr_layer.def"
 if errorlevel 1 ( echo ERROR: nr_layer.dll failed & exit /b 1 )
 echo   nr_layer.dll
+rem What setup puts beside a game as vulkan-1.dll: it sets the layer's environment in the
+rem game's own process, so NR is there however the game is started (nr_vulkan_proxy.c).
+cl /nologo /O2 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%WORK%\nr_vulkan_proxy.obj" /Fe:"%WORK%\nr_vulkan_proxy.dll" /LD "%REPO%\src\layer\nr_vulkan_proxy.c" /link /DEF:"%REPO%\src\layer\nr_vulkan_proxy.def"
+if errorlevel 1 ( echo ERROR: nr_vulkan_proxy.dll failed & exit /b 1 )
+echo   nr_vulkan_proxy.dll
 
 rem A 32-bit game - Dead or Alive 5, through DXVK's 32-bit d3d9.dll - loads a 32-bit layer;
 rem the daemon it talks to stays 64-bit, on the same pipe. The x86 cross tools come with the
@@ -124,6 +129,9 @@ if not exist "%VCX86%" (
 cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%WORK%\nr_layer32.obj" /Fe:"%WORK%\nr_layer32.dll" /LD "%REPO%\src\layer\nr_layer.c" /link /DEF:"%REPO%\src\layer\nr_layer.def" /MACHINE:X86"
 if errorlevel 1 ( echo ERROR: nr_layer32.dll failed & exit /b 1 )
 echo   nr_layer32.dll
+cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%WORK%\nr_vulkan_proxy32.obj" /Fe:"%WORK%\nr_vulkan_proxy32.dll" /LD "%REPO%\src\layer\nr_vulkan_proxy.c" /link /DEF:"%REPO%\src\layer\nr_vulkan_proxy.def" /MACHINE:X86"
+if errorlevel 1 ( echo ERROR: nr_vulkan_proxy32.dll failed & exit /b 1 )
+echo   nr_vulkan_proxy32.dll
 
 :image
 

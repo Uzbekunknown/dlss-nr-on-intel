@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Exercise release assembly and first-time setup without a compiler or GPU."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -44,6 +46,13 @@ class ReleaseTests(unittest.TestCase):
                      "libnr_layer.so", "libxmx.so", "libnr_image.so"):
             self.write("work/" + name, name)
         self.write("work/NR-Setup.exe", "own x64 GUI host fixture")
+        self.write("work/nr_layer32.dll", "nr_layer32.dll")
+        for name in release.PROXIES:
+            self.write("work/" + name, name)
+        for name in release.DXVK:
+            self.write(name, "dxvk:" + name)
+        self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
+        self.write("work/dxvk/VERSION", "3.1.1\n")
         for name in release.required_shaders(self.root):
             self.write("work/" + name, "shader:" + name)
 
@@ -67,6 +76,12 @@ class ReleaseTests(unittest.TestCase):
         release.assemble(self.root, self.target, "windows")
         self.assertEqual((self.target / "work/libnr_alloc.dll").read_text(), "libnr_alloc.dll")
         self.assertTrue((self.target / "nr_layer.dll").is_file())
+        self.assertEqual((self.target / "nr_layer32.dll").read_text(), "nr_layer32.dll")
+        for name in release.PROXIES:
+            self.assertEqual((self.target / name).read_text(), name)
+        self.assertEqual((self.target / "dxvk/x32/d3d9.dll").read_text(), "dxvk:work/dxvk/x32/d3d9.dll")
+        self.assertTrue((self.target / "dxvk/LICENSE").is_file())
+        self.assertEqual(json.loads((self.target / "release-metadata.json").read_text())["dxvk"], "3.1.1")
         self.assertTrue((self.target / "work/half_probe.spv").is_file())
         self.assertTrue((self.target / "work/mlx-dlss/LICENSE").is_file())
         self.assertTrue((self.target / "work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py").is_file())
@@ -102,6 +117,47 @@ class ReleaseTests(unittest.TestCase):
         self.assertIsNone(metadata["source_commit"])
         self.assertFalse((self.target / "work/windows-profile.json").exists())
         self.assertFalse((self.target / "work/windows-wizard").exists())
+
+    def test_windows_release_needs_dxvk_and_the_32bit_layer(self):
+        for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE",
+                     "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll"):
+            path = self.root / name
+            saved = path.read_bytes()
+            path.unlink()
+            with self.assertRaises(ValueError) as caught:
+                release.assemble(self.root, self.target, "windows")
+            self.assertIn(str(Path(name)), str(caught.exception))
+            self.assertFalse(self.target.exists())
+            path.write_bytes(saved)
+        release.assemble(self.root, self.target, "linux")
+        self.assertFalse((self.target / "dxvk").exists())
+        self.assertIsNone(json.loads((self.target / "release-metadata.json").read_text())["dxvk"])
+
+    def test_fetch_dxvk_takes_only_the_pinned_archive(self):
+        spec = importlib.util.spec_from_file_location("fetch_dxvk", ROOT / "scripts/fetch_dxvk.py")
+        fetch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fetch)
+        archive = self.base / "dxvk-9.9.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            for directory in fetch.DIRECTORIES:
+                for name in fetch.FILES:
+                    data = f"{directory}/{name}".encode()
+                    info = tarfile.TarInfo(f"dxvk-9.9/{directory}/{name}")
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+        pin = self.base / "dxvk.json"
+        pin.write_text(json.dumps({"version": "9.9", "url": "https://example.invalid/dxvk-9.9.tar.gz",
+                                   "sha256": fetch.sha256(archive)}))
+        target = self.base / "work/dxvk"
+        fetch.fetch(target, archive, pin)
+        self.assertEqual((target / "x32/d3d9.dll").read_bytes(), b"x32/d3d9.dll")
+        self.assertEqual((target / "VERSION").read_text().strip(), "9.9")
+        self.assertTrue((target / "LICENSE").is_file())
+        fetch.fetch(target, self.base / "absent.tar.gz", pin)  # current: the archive is not read
+        pin.write_text(json.dumps({"version": "9.8", "url": "unused", "sha256": "0" * 64}))
+        with self.assertRaises(ValueError):
+            fetch.fetch(target, archive, pin)
+        self.assertEqual((target / "VERSION").read_text().strip(), "9.9")
 
     def test_missing_runtime_fails_before_creating_a_release(self):
         for name in ("work/libxmx.dll", "work/libnr_image.dll", "work/libnr_alloc.dll",

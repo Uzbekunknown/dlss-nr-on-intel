@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -63,6 +64,12 @@ class WizardFixture(unittest.TestCase):
         for directory in core.SOURCE_DIRS:
             (self.root / "src" / directory).mkdir(parents=True, exist_ok=True)
         write_pe(self.root / "nr_layer.dll")
+        write_pe(self.root / "nr_layer32.dll", x64=False)
+        write_pe(self.root / "nr_vulkan_proxy.dll", suffix=b"proxy x64")
+        write_pe(self.root / "nr_vulkan_proxy32.dll", x64=False, suffix=b"proxy x32")
+        for directory, x64 in (("x64", True), ("x32", False)):
+            for name in core.DXVK_FILES:
+                write_pe(self.root / "dxvk" / directory / name, x64=x64, suffix=f"DXVK {directory} {name}".encode())
         for name in core.LIBRARIES:
             write_pe(self.root / "work" / name)
         for name in core.SHADERS:
@@ -78,6 +85,7 @@ class WizardFixture(unittest.TestCase):
         self.native = patch.object(core, "_python_info", return_value=python_info()).start()
         self.deps = patch.object(core, "_load_dependencies", return_value={"ok": True, "failures": {}}).start()
         self.processes = patch.object(core, "_process_snapshot", return_value=[]).start()
+        self.running = patch.object(core, "_running_executable", return_value=None).start()
         self.addCleanup(patch.stopall)
         core._LOG_STATES.clear()
         self.addCleanup(core._LOG_STATES.clear)
@@ -98,6 +106,7 @@ class WizardFixture(unittest.TestCase):
             "root": str(profile.root), "game_exe": str(profile.game_exe), "pid": pid,
             "daemon_start_bytes": offset, "started_utc": started, "exit_code": None})
         self.processes.return_value = [{"ProcessId": pid, "ExecutablePath": str(profile.game_exe)}]
+        self.running.side_effect = lambda value, pid=pid, path=str(profile.game_exe): path if value == pid else None
 
     def test_profile_defaults_round_trip_and_paths(self):
         minimal = core.Profile.from_dict({"root": str(self.root), "python": str(self.python),
@@ -140,9 +149,13 @@ class WizardFixture(unittest.TestCase):
         self.assertNotIn("DISABLE_VK_LAYER_VALVE_steam_overlay_1", env)
         self.assertNotIn("DISABLE_VK_LAYER_VALVE_steam_fossilize_1", core.runtime_env(replace(self.profile, disable_fossilize=False)))
 
-    def test_pe32_game_and_python_rejected_before_installation(self):
+    def test_32bit_game_accepted_and_other_machines_and_32bit_python_rejected(self):
         write_pe(self.game, x64=False)
-        self.assertFalse(self.checks()["game_x64"]["ok"])
+        self.assertTrue(self.checks()["game_architecture"]["ok"])
+        arm64 = bytearray(write_pe(self.game).read_bytes())
+        struct.pack_into("<H", arm64, 68, 0xAA64)
+        self.game.write_bytes(bytes(arm64))
+        self.assertFalse(self.checks()["game_architecture"]["ok"])
         write_pe(self.game)
         self.native.return_value = python_info(bits=32, abi_platform="win32")
         self.assertFalse(self.checks()["python_native_x64"]["ok"])
@@ -189,14 +202,222 @@ class WizardFixture(unittest.TestCase):
         with patch.object(core.tempfile, "mkdtemp", side_effect=AssertionError("No game writes after failed preflight")):
             self.assertFalse(core.install(self.profile)["ok"])
 
-    def test_dxvk_requires_existing_x64_pair_or_d3d9(self):
+    def test_dxvk_comes_from_the_release_for_the_games_architecture(self):
         profile = replace(self.profile, api="dxvk")
-        self.assertFalse(self.checks(profile)["existing_dxvk"]["ok"])
-        write_pe(self.game.parent / "d3d11.dll", suffix=b"DXVK fixture")
-        write_pe(self.game.parent / "dxgi.dll", x64=False, suffix=b"DXVK fixture")
-        self.assertFalse(self.checks(profile)["existing_dxvk"]["ok"])
-        write_pe(self.game.parent / "dxgi.dll", suffix=b"DXVK fixture")
-        self.assertTrue(self.checks(profile)["existing_dxvk"]["ok"])
+        self.assertTrue(self.checks(profile)["dxvk_files"]["ok"])
+        write_pe(self.root / "dxvk/x64/dxgi.dll", x64=False)
+        self.assertFalse(self.checks(profile)["dxvk_files"]["ok"])
+        write_pe(self.game, x64=False)
+        self.assertTrue(self.checks(profile)["dxvk_files"]["ok"])
+
+    def test_dxvk_install_sets_the_games_files_aside_and_remove_puts_them_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"the game's own proxy")
+        shutil.copy2(self.root / "dxvk/x64/d3d9.dll", game / "d3d9.dll")  # someone's identical copy
+        (game / f"{self.game.stem}_d3d9.log").write_text("that DXVK's own log")
+        self.assertIn("dxgi.dll", self.checks(profile)["game_files"]["detail"])
+        result = core.install(profile)
+        self.assertTrue(result["ok"], result)
+        for name in core.DXVK_FILES:
+            self.assertEqual((game / name).read_bytes(), (self.root / "dxvk/x64" / name).read_bytes())
+        installed = core.installed_path(profile)
+        self.assertEqual((installed / core.GAME_BACKUP / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        manifest = json.loads((installed / "VkLayer_dlss_nr.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["layer"]["library_arch"], "64")
+        self.assertEqual(Path(core.runtime_env(profile)["DXVK_LOG_PATH"]), self.root / "work/logs")
+        # Installed again, the game's original is still the one set aside, once.
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((installed / core.GAME_BACKUP / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        self.assertFalse((installed / ".undo").exists())
+        (game / f"{self.game.stem}_dxgi.log").write_text("a DXVK log from a launch outside NR")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"the game's own proxy")
+        self.assertEqual((game / "d3d9.dll").read_bytes(), (self.root / "dxvk/x64/d3d9.dll").read_bytes())
+        for name in ("d3d8.dll", "d3d10core.dll", "d3d11.dll", f"{self.game.stem}_dxgi.log"):
+            self.assertFalse((game / name).exists(), name)
+        self.assertFalse(installed.exists())
+        self.assertEqual((game / f"{self.game.stem}_d3d9.log").read_text(), "that DXVK's own log")
+        self.assertEqual(sorted(path.name for path in game.iterdir()),
+                         sorted(["d3d9.dll", "dxgi.dll", self.game.name, f"{self.game.stem}_d3d9.log"]))
+
+    def test_dxvk_placement_failure_puts_the_games_files_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"original")
+        copy = shutil.copy2
+
+        def failing(source, target, *args, **kwargs):
+            if Path(source).name == "dxgi.dll":
+                raise OSError("disk full")
+            return copy(source, target, *args, **kwargs)
+        with patch.object(core.shutil, "copy2", side_effect=failing):
+            self.assertFalse(core.install(profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), ["dxgi.dll", self.game.name])
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"original")
+
+    def test_late_failure_after_dxvk_commit_puts_the_games_files_back(self):
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        (game / "dxgi.dll").write_bytes(b"original")
+        with patch.object(core, "save_profile", side_effect=OSError("profile write failed")):
+            self.assertFalse(core.install(profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), ["dxgi.dll", self.game.name])
+        self.assertEqual((game / "dxgi.dll").read_bytes(), b"original")
+
+    def test_32bit_game_gets_the_32bit_layer_and_dxvk(self):
+        write_pe(self.game, x64=False)
+        profile = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(profile)["ok"])
+        installed = core.installed_path(profile)
+        manifest = json.loads((installed / "VkLayer_dlss_nr.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["layer"]["library_arch"], "32")
+        self.assertEqual(Path(manifest["layer"]["library_path"]), installed / "nr_layer32.dll")
+        self.assertEqual(core.pe_architecture(installed / "nr_layer32.dll"), "x86")
+        self.assertEqual((self.game.parent / "d3d9.dll").read_bytes(), (self.root / "dxvk/x32/d3d9.dll").read_bytes())
+        self.assertEqual((self.game.parent / core.PROXY_NAME).read_bytes(),
+                         (self.root / "nr_vulkan_proxy32.dll").read_bytes())
+
+    def test_every_game_gets_the_proxy_and_its_environment(self):
+        game = self.game.parent
+        result = core.install(self.profile)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual((game / core.PROXY_NAME).read_bytes(), (self.root / "nr_vulkan_proxy.dll").read_bytes())
+        installed = core.installed_path(self.profile)
+        lines = (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines()
+        values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+        self.assertEqual(Path(values["NR_GAME_EXE"]), self.game)
+        self.assertEqual(Path(values["NR_LAUNCH_STATE"]), self.root / "work/windows-wizard/launch-state.json")
+        # The proxy makes no folder for its record: without one, status never saw the game.
+        self.assertTrue((self.root / "work/windows-wizard").is_dir())
+        self.assertNotIn("NR_REAL_VULKAN", values)
+        for name, value in core.layer_environment(self.profile).items():
+            self.assertEqual(values[name], value, name)
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+        self.assertEqual(sorted(path.name for path in game.iterdir()), [self.game.name])
+
+    def test_remove_takes_dxvks_first_log_from_the_folders_the_game_started_in(self):
+        # DXVK opens its first log before it loads the proxy, so in the folder the game was
+        # started in: Steam starts Mortal Kombat 11 in its root, above the executable.
+        profile = replace(self.profile, api="dxvk")
+        game = self.game.parent
+        started = self.base / "started (here)"
+        started.mkdir()
+        old = started / f"{self.game.stem}_d3d9.log"
+        old.write_text("a log from before NR")
+        own = game / f"{self.game.stem}_d3d11.log"
+        own.write_text("beside the game before NR")
+        self.assertTrue(core.install(profile)["ok"])
+        installed = core.installed_path(profile)
+        since = json.loads((installed / core.GAME_FILES).read_text(encoding="utf-8"))["installed_time"]
+        os.utime(old, (since - 60, since - 60))
+        (started / f"{self.game.stem}_dxgi.log").write_text("NR's DXVK, before DXVK_LOG_PATH")
+        (started / "notes.txt").write_text("not DXVK's")
+        own.write_text("beside the game before NR, written again")
+        (installed / core.START_FOLDERS).write_text("\n".join(
+            [str(started), str(started), str(game), str(self.base / "gone"), "relative", ""]),
+            encoding="utf-8")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(sorted(path.name for path in started.iterdir()), sorted([old.name, "notes.txt"]))
+        self.assertEqual(sorted(path.name for path in game.iterdir()), sorted([own.name, self.game.name]))
+
+    def test_a_games_own_vulkan_loader_is_set_aside_and_used(self):
+        game = self.game.parent
+        (game / core.PROXY_NAME).write_bytes(b"the game's own Vulkan loader")
+        self.assertIn(core.PROXY_NAME, self.checks()["game_files"]["detail"])
+        self.assertTrue(core.install(self.profile)["ok"])
+        installed = core.installed_path(self.profile)
+        aside = installed / core.GAME_BACKUP / core.PROXY_NAME
+        self.assertEqual(aside.read_bytes(), b"the game's own Vulkan loader")
+        self.assertIn("NR_REAL_VULKAN=" + str(aside),
+                      (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines())
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+        self.assertEqual((game / core.PROXY_NAME).read_bytes(), b"the game's own Vulkan loader")
+
+    def test_the_proxy_must_match_the_games_architecture(self):
+        self.assertTrue(self.checks()["runtime_architecture"]["ok"])
+        write_pe(self.root / "nr_vulkan_proxy.dll", x64=False)
+        self.assertFalse(self.checks()["runtime_architecture"]["ok"])
+
+    def test_changing_the_api_after_dxvk_needs_remove_first(self):
+        dxvk = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(dxvk)["ok"])
+        self.assertFalse(self.checks(self.profile)["game_files"]["ok"])
+        self.assertFalse(core.install(self.profile)["ok"])
+        self.assertTrue(core.uninstall(dxvk)["ok"])
+        self.assertTrue(core.install(self.profile)["ok"])
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+
+    def test_remove_leaves_files_changed_since_and_keeps_the_originals(self):
+        profile = replace(self.profile, api="dxvk")
+        (self.game.parent / "d3d11.dll").write_bytes(b"the game's d3d11")
+        self.assertTrue(core.install(profile)["ok"])
+        (self.game.parent / "d3d11.dll").write_bytes(b"a game update")
+        result = core.uninstall(profile)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["kept"], ["d3d11.dll"])
+        self.assertEqual((self.game.parent / "d3d11.dll").read_bytes(), b"a game update")
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+        backup = core.installed_path(profile) / core.GAME_BACKUP / "d3d11.dll"
+        self.assertEqual(backup.read_bytes(), b"the game's d3d11")
+
+    def test_remove_waits_for_steams_launch_options_to_be_restored(self):
+        profile = replace(self.profile, api="dxvk")
+        self.assertTrue(core.install(profile)["ok"])
+        steam = self.root / "work/windows-wizard/steam-backup.json"
+        core._atomic_json(steam, {"restored": False})  # the same, unchanged profile
+        self.assertFalse(core.uninstall(profile)["ok"])
+        self.assertTrue((self.game.parent / "dxgi.dll").exists())
+        core._atomic_json(steam, {"restored": True})
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertFalse((self.game.parent / "dxgi.dll").exists())
+
+    def test_remove_nr_returns_steams_launch_options_first(self):
+        import windows_launch as launch
+        import windows_wizard as bridge
+        with patch.object(launch, "restore_steam", return_value={"ok": False, "error": "A Steam game is running"}), \
+                patch.object(core, "uninstall") as uninstall:
+            result = bridge.remove_nr(self.profile, None)
+        self.assertEqual(result["error"], "A Steam game is running")
+        uninstall.assert_not_called()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "changed": True}) as restore, \
+                patch.object(core, "uninstall", return_value={"ok": True, "removed": True}) as uninstall:
+            result = bridge.remove_nr(self.profile, None)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["steam_restored"])
+        self.assertEqual(restore.call_args.args[0], self.profile)
+        uninstall.assert_called_once()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "already_restored": True, "changed": False}), \
+                patch.object(core, "uninstall", return_value={"ok": True, "removed": True}):
+            self.assertNotIn("steam_restored", bridge.remove_nr(self.profile, None))
+
+    def test_enabling_warns_when_the_game_runs_without_nr(self):
+        self.own()
+        # Started before NR was installed: no launch record names it, the game runs.
+        self.processes.return_value = [{"ProcessId": 77, "ExecutablePath": str(self.game)}]
+        result = core.set_effect(self.profile, True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result.get("warning"), "game_without_nr")
+        self.assertNotIn("warning", core.set_effect(self.profile, False))
+        # Started through NR, it is not warned about; nor is a game that is not running.
+        self.launch_state(pid=77)
+        self.assertNotIn("warning", core.set_effect(self.profile, True))
+        self.running.side_effect = None
+        self.processes.return_value = []
+        self.assertNotIn("warning", core.set_effect(self.profile, True))
+
+    def test_remove_refuses_while_the_game_runs_and_without_an_installation(self):
+        profile = replace(self.profile, api="dxvk")
+        result = core.uninstall(profile)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["removed"])
+        self.assertTrue(core.install(profile)["ok"])
+        self.launch_state()
+        self.assertFalse(core.uninstall(profile)["ok"])
+        self.assertTrue((self.game.parent / "dxgi.dll").exists())
+        self.assertTrue(core.installed_path(profile).exists())
 
     def test_foreign_existing_installation_is_preserved(self):
         destination = core.installed_path(self.profile)
@@ -260,7 +481,8 @@ class WizardFixture(unittest.TestCase):
                          {knob["name"]: actual[knob["name"]] for knob in catalogue})
 
     def test_reading_control_defaults_needs_no_game_profile_or_processes_and_writes_nothing(self):
-        with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")):
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")), \
+                patch.object(core, "_running_executable", side_effect=AssertionError("Controls do not inspect games")):
             result = core.get_settings(self.root)
         self.assertTrue(result["ok"])
         self.assertEqual(result["settings"], result["defaults"])
@@ -283,7 +505,8 @@ class WizardFixture(unittest.TestCase):
         external["detail_strength"] = 1.7
         external["other_tool"]["value"] = "new external value"
         core._atomic_json(path, external)
-        with patch.object(core, "_process_snapshot", side_effect=AssertionError("No game restart")):
+        with patch.object(core, "_process_snapshot", side_effect=AssertionError("No game restart")), \
+                patch.object(core, "_running_executable", side_effect=AssertionError("No game restart")):
             result = core.save_settings(self.root, {"render_scale": 0.25})
         saved = core._read_json(path)
         self.assertEqual(saved["render_scale"], 0.25)
@@ -452,16 +675,26 @@ class WizardFixture(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(sentinel.read_bytes(), b"preserve")
 
-    def test_pending_steam_configuration_locks_profile_and_installation(self):
+    def test_install_nr_returns_steams_launch_options_first(self):
+        # An earlier setup could leave Steam starting a game through NR's wrapper. That no
+        # longer holds the profile; Install NR returns those options before it installs.
+        import windows_launch as launch
+        import windows_wizard as bridge
         core.save_profile(self.profile)
-        original = core.profile_path(self.root).read_bytes()
         core._atomic_json(self.root / "work/windows-wizard/steam-backup.json", {"restored": False})
         other = replace(self.profile, game_exe=write_pe(self.base / "other game" / "other.exe"))
-        with self.assertRaises(ValueError):
-            core.save_profile(other)
-        self.assertFalse(core.install(other)["ok"])
-        self.assertEqual(core.profile_path(self.root).read_bytes(), original)
-        self.assertFalse(core.installed_path(other).exists())
+        core.save_profile(other)
+        self.assertEqual(core.load_profile(self.root), other)
+        with patch.object(launch, "restore_steam", return_value={"ok": False, "error": "A Steam game is running"}), \
+                patch.object(core, "install") as install:
+            self.assertEqual(bridge.install_nr(other, None)["error"], "A Steam game is running")
+        install.assert_not_called()
+        with patch.object(launch, "restore_steam", return_value={"ok": True, "changed": True}) as restore:
+            result = bridge.install_nr(other, None)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["steam_restored"])
+        self.assertEqual(restore.call_args.args[0], other)
+        self.assertTrue(core.installed_path(other).exists())
 
     def test_install_blocks_active_selected_game_and_other_root_session(self):
         self.launch_state()
@@ -612,6 +845,26 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(result["timed_out"])
         self.assertLess(time.monotonic() - started, 2.8)
         time.sleep(1)  # the finite child finishes before this test process exits
+
+
+@unittest.skipUnless(os.name == "nt", "asks Windows about a process")
+class RunningExecutableTests(unittest.TestCase):
+    """The status check's one query: a live process by its path, a finished one not at all."""
+
+    def test_live_process_reports_its_executable(self):
+        # Not sys.executable: a virtual environment's python.exe starts the base interpreter.
+        import ctypes
+        own = ctypes.create_unicode_buffer(32768)
+        ctypes.windll.kernel32.GetModuleFileNameW(None, own, len(own))
+        self.assertEqual(core._canonical(core._running_executable(os.getpid())),
+                         core._canonical(own.value))
+
+    def test_finished_and_invalid_processes_report_nothing(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=60)
+        self.assertIsNone(core._running_executable(child.pid))
+        for pid in (0, -1, None, True, "12"):
+            self.assertIsNone(core._running_executable(pid))
 
 
 if __name__ == "__main__":

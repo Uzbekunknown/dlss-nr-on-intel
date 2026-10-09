@@ -39,6 +39,22 @@ SHADERS = frozenset((
     "window_attention.spv", "window_block.spv",
 ))
 SOURCE_DIRS = ("layer", "ref", "gpu", "bench")
+# The layer the game's own architecture loads; the daemon and its libraries are always x64.
+LAYERS = {"x64": "nr_layer.dll", "x86": "nr_layer32.dll"}
+# DXVK as its release lays it out, x64/ and x32/, and the files it puts beside a game.
+DXVK_DIRS = {"x64": "x64", "x86": "x32"}
+DXVK_FILES = ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
+# Beside every game as vulkan-1.dll: it gives the game NR's environment however the game is
+# started (nr_vulkan_proxy.c), from ENV_FILE in the installation.
+PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
+PROXY_NAME = "vulkan-1.dll"
+ENV_FILE = "nr-env.txt"
+# Where the proxy lists the folders the game was started in, for DXVK's first log there.
+START_FOLDERS = "start-folders.txt"
+# In the game's dlss-nr folder: what NR put beside the game, and the game's own files it set
+# aside to do so, which Remove NR puts back.
+GAME_FILES = "game-files.json"
+GAME_BACKUP = "game-backup"
 RUNTIME_MODULES = (
     "src/layer/nr_daemon.py", "src/layer/nr_alloc.py", "src/layer/nr_pipe.py",
     "src/layer/nr_paths.py", "src/layer/nr_knobs.py", "src/ref/nr_frame.py",
@@ -267,9 +283,8 @@ def load_profile(root):
 
 
 def save_profile(profile):
-    allowed, detail = _profile_change_allowed(profile)
-    if not allowed:
-        raise ValueError(detail)
+    # A Steam configuration an earlier setup left does not hold the profile: its wrapper
+    # starts the game from a snapshot of its own (windows_launch._ensure_steam_profile).
     _atomic_json(profile_path(profile.root), profile.to_dict())
     return {"ok": True, "error": None, "path": str(profile_path(profile.root)),
             "profile": profile.to_dict()}
@@ -277,27 +292,6 @@ def save_profile(profile):
 
 def _canonical(path):
     return os.path.normcase(str(Path(path).resolve())).replace("\\", "/").rstrip("/")
-
-
-def _profile_change_allowed(profile):
-    backup = profile.root / "work/windows-wizard/steam-backup.json"
-    if not backup.exists():
-        return True, "No pending Steam configuration"
-    try:
-        state = _read_json(backup, limit=64 * 1024)
-        if state.get("restored"):
-            return True, "Steam configuration was restored"
-        existing = load_profile(profile.root)
-        if existing is None:
-            return False, "Restore the pending Steam configuration before replacing its missing profile"
-        before, after = existing.to_dict(), profile.to_dict()
-        before.pop("dll", None)
-        after.pop("dll", None)
-        if before != after:
-            return False, "Restore Steam launch options before changing the selected game or launch profile"
-        return True, "The pending Steam configuration uses this unchanged profile"
-    except (OSError, ValueError, AttributeError):
-        return False, "The pending Steam backup could not be verified; restore it before changing the profile"
 
 
 def installed_path(profile):
@@ -314,11 +308,11 @@ def _clean_environment():
     return values
 
 
-def runtime_env(profile):
-    values = _clean_environment()
+def layer_environment(profile):
+    """NR's own variables: what a launch adds to the environment, and what the proxy sets."""
     token = hashlib.sha256(_canonical(profile.root).encode("utf-8")).hexdigest()[:8]
     work = profile.root / "work"
-    values.update({
+    values = {
         "NR_ROOT": str(profile.root), "NR_PYTHON": str(profile.python),
         "NR_DAEMON": str(profile.root / "src/layer/nr_daemon.py"),
         "NR_SETTINGS": str(work / "nr_settings.json"),
@@ -329,9 +323,18 @@ def runtime_env(profile):
         "ENABLE_NR_LAYER": "1", "VK_LAYER_PATH": str(installed_path(profile)),
         "VK_INSTANCE_LAYERS": "VK_LAYER_dlssnr_intel",
         "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1",
-    })
+        # DXVK logs into the folder the game was started in unless told otherwise. Through
+        # the proxy its first log still goes there (_remove_dxvk_logs).
+        "DXVK_LOG_PATH": str(work / "logs"),
+    }
     if profile.disable_fossilize:
         values["DISABLE_VK_LAYER_VALVE_steam_fossilize_1"] = "1"
+    return values
+
+
+def runtime_env(profile):
+    values = _clean_environment()
+    values.update(layer_environment(profile))
     return values
 
 
@@ -590,22 +593,6 @@ print(json.dumps(result))
     return result
 
 
-def _has_dxvk(path):
-    try:
-        with path.open("rb") as handle:
-            overlap = b""
-            for _ in range(256):
-                chunk = handle.read(256 * 1024)
-                if not chunk:
-                    break
-                if b"DXVK" in overlap + chunk:
-                    return True
-                overlap = chunk[-3:]
-    except OSError:
-        pass
-    return False
-
-
 def validate(profile):
     checks = []
 
@@ -625,16 +612,22 @@ def validate(profile):
     check("python_packages", not info.get("package_errors") and all(
         name in info.get("packages", {}) for name in ("numpy", "safetensors")),
         info.get("package_errors") or info.get("packages") or "NumPy and safetensors are required")
-    check("game_x64", profile.game_exe.is_file() and pe_architecture(profile.game_exe) == "x64",
-          f"{profile.game_exe}: {pe_architecture(profile.game_exe) or 'not a PE executable'}")
+    arch = pe_architecture(profile.game_exe) if profile.game_exe.is_file() else None
+    check("game_architecture", arch in LAYERS,
+          f"{profile.game_exe}: {arch or 'not a PE executable'}; 64-bit and 32-bit games are supported")
+    layer = LAYERS.get(arch, LAYERS["x64"])
+    proxy = PROXIES.get(arch, PROXIES["x64"])
     shader_names = _shader_names(profile.root)
-    required = ["nr_layer.dll", *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
+    required = [layer, proxy, *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
     missing = [name for name in required if not (profile.root / name).is_file()]
     missing.extend("src/" + name for name in SOURCE_DIRS if not (profile.root / "src" / name).is_dir())
     check("runtime_files", not missing, "Missing: " + ", ".join(missing) if missing else "Complete local release runtime and extractors")
-    bad_arch = [name for name in ("nr_layer.dll", *["work/" + value for value in LIBRARIES])
-                if pe_architecture(profile.root / name) != "x64"]
-    check("runtime_x64", not bad_arch, "Not x64 PE: " + ", ".join(bad_arch) if bad_arch else "Layer and native libraries are x64")
+    bad_arch = ["work/" + value for value in LIBRARIES if pe_architecture(profile.root / "work" / value) != "x64"]
+    for name in (layer, proxy):
+        if arch in LAYERS and (profile.root / name).is_file() and pe_architecture(profile.root / name) != arch:
+            bad_arch.append(name)
+    check("runtime_architecture", not bad_arch, "Wrong architecture: " + ", ".join(bad_arch) if bad_arch
+          else f"Native libraries are x64; {layer} and {proxy} for this {arch or 'unidentified'} game")
     dependency = _load_dependencies(profile) if _native_python(info) and not bad_arch else {"ok": False, "failures": {"probe": "Requires native x64 Python and x64 runtime"}}
     check("runtime_dependencies", dependency.get("ok"), dependency.get("failures") or "Vulkan loader and native DLL dependencies load; no GPU work performed")
     weights = _weights_state(profile)
@@ -644,8 +637,6 @@ def validate(profile):
           weights["detail"] if weights["ready"] else "Supply your own x64 nvngx_dlssnr.dll or 649-tensor local logical weights")
     owns, detail = _owned_installation(profile)
     check("installation_target", owns, detail)
-    allowed, detail = _profile_change_allowed(profile)
-    check("steam_profile_lock", allowed, detail)
     for name in ("windows-profile.json", "nr_settings.json", "nr_trigger"):
         path = profile.root / "work" / name
         check("state_path_" + name, not path.exists() or (path.is_file() and not path.is_symlink()), path)
@@ -665,12 +656,13 @@ def validate(profile):
         manifest_ok = False
     check("manifest", manifest_ok, "A valid layer manifest must be present before installation")
     if profile.api == "dxvk":
-        candidates = (("d3d11.dll", "dxgi.dll"), ("d3d9.dll",))
-        valid = [names for names in candidates if all(
-            pe_architecture(profile.game_exe.parent / name) == "x64" and _has_dxvk(profile.game_exe.parent / name)
-            for name in names)]
-        check("existing_dxvk", bool(valid),
-              "Existing x64 DXVK: " + ", ".join(valid[0]) if valid else "No complete existing x64 DXVK d3d11/dxgi or d3d9 pair; the wizard does not install DXVK")
+        folder = profile.root / "dxvk" / DXVK_DIRS.get(arch, "x64")
+        wrong = [name for name in DXVK_FILES if pe_architecture(folder / name) != arch]
+        check("dxvk_files", arch in LAYERS and not wrong,
+              f"DXVK for this {arch} game, from {folder}" if arch in LAYERS and not wrong
+              else "The release's DXVK is missing or of another architecture: " + ", ".join(wrong))
+    files_ok, files_detail = _game_files_check(profile, arch)
+    check("game_files", files_ok, files_detail)
     ok = all(item["ok"] for item in checks)
     return {"ok": ok, "error": None if ok else "Preflight checks failed", "checks": checks,
             "python_info": info, "weights": weights, "runtime_dependencies": dependency}
@@ -720,18 +712,267 @@ def _copy_runtime(profile, stage, destination):
                         dirs_exist_ok=True, ignore=ignore)
     shutil.copytree(profile.root / "work/mlx-dlss", stage / "work/mlx-dlss",
                     dirs_exist_ok=True, ignore=ignore)
-    shutil.copy2(profile.root / "nr_layer.dll", stage / "nr_layer.dll")
+    arch = pe_architecture(profile.game_exe)
+    layer = LAYERS[arch]
+    shutil.copy2(profile.root / layer, stage / layer)
     for name in (*LIBRARIES, *_shader_names(profile.root)):
         shutil.copy2(profile.root / "work" / name, stage / "work" / name)
     template = profile.root / "VkLayer_dlss_nr.json"
     if not template.is_file():
         template = profile.root / "src/layer/VkLayer_dlss_nr.json"
     manifest = _read_json(template)
-    manifest["layer"]["library_path"] = str(destination / "nr_layer.dll")
-    manifest["layer"]["library_arch"] = "64"
+    manifest["layer"]["library_path"] = str(destination / layer)
+    manifest["layer"]["library_arch"] = "64" if arch == "x64" else "32"
     _atomic_json(stage / "VkLayer_dlss_nr.json", manifest)
     _atomic_json(stage / OWNER_NAME, {"schema_version": SCHEMA_VERSION, "root": str(profile.root),
                                     "game_exe": str(profile.game_exe)})
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _dxvk_logs(profile):
+    """The logs DXVK writes into the folder a game was started in, without DXVK_LOG_PATH."""
+    return [f"{profile.game_exe.stem}_{Path(module).stem}.log" for module in DXVK_FILES]
+
+
+def _game_record(folder):
+    """What NR put beside the game, from an installation folder (or its stage)."""
+    path = Path(folder) / GAME_FILES
+    if not path.exists():
+        return {"schema_version": SCHEMA_VERSION, "arch": None, "files": {}}
+    record = _read_json(path, limit=64 * 1024)
+    if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+        raise ValueError(f"{path} is not a record of placed game files")
+    return record
+
+
+def _game_sources(profile, arch):
+    """What goes beside the game, by name: the proxy for every game, and DXVK for DirectX 8-11."""
+    sources = {PROXY_NAME: profile.root / PROXIES[arch]}
+    if profile.api == "dxvk":
+        folder = profile.root / "dxvk" / DXVK_DIRS[arch]
+        sources.update((name, folder / name) for name in DXVK_FILES)
+    return sources
+
+
+def _game_files_check(profile, arch):
+    """Whether installing may touch the game's folder, and which of its files it would set aside."""
+    try:
+        record = _game_record(installed_path(profile))
+    except (OSError, ValueError) as error:
+        return False, str(error)
+    if arch not in LAYERS:
+        return True, "Nothing is put beside the game"
+    sources = _game_sources(profile, arch)
+    placed = [name for name, entry in record["files"].items() if entry.get("placed")]
+    # An installation from before the proxy has fewer files placed, and gains it; one with
+    # DXVK's files placed for DirectX cannot become a Vulkan one without Remove NR first.
+    if placed and (not set(placed) <= set(sources) or record.get("arch") != arch):
+        return False, "Remove NR from this game before changing its graphics API or executable"
+    aside = []
+    for name, source in sources.items():
+        target = profile.game_exe.parent / name
+        entry = record["files"].get(name, {})
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            return False, f"{target} is not a regular file"
+        if target.is_file() and not entry.get("placed") and source.is_file() \
+                and _sha256(target) != _sha256(source):
+            aside.append(name)
+    return True, ("Set aside, and put back by Remove NR: " + ", ".join(aside) if aside
+                  else "No file of the game's is replaced")
+
+
+def _place_game_files(profile, arch, folder):
+    """Put the proxy, and DXVK for DirectX 8-11, beside the game, each step recorded in
+    `folder`'s GAME_FILES first.
+
+    A file of the same name that NR did not put there is moved into `folder`'s GAME_BACKUP
+    and comes back with Remove NR; an identical copy someone else put there is left alone.
+    `folder` is the installation's stage, in the game's own folder, so every move is a
+    rename. Returns what was done, for _undo_game_files; undoes its own part if it fails."""
+    game = profile.game_exe.parent
+    folder = Path(folder)
+    record = _game_record(folder)
+    record["arch"] = arch
+    if "logs_before" not in record:
+        # DXVK's logs already beside the game stay when NR is removed; only later ones go.
+        record["logs_before"] = [name for name in _dxvk_logs(profile) if (game / name).exists()]
+    # And in the folders the game is started in, those written before this.
+    record.setdefault("installed_time", time.time())
+    files = record["files"]
+    done = []
+    try:
+        for name, source in _game_sources(profile, arch).items():
+            target = game / name
+            ours = _sha256(source)
+            entry = files.get(name, {})
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError(f"{target} is not a regular file")
+            if target.is_file():
+                current = _sha256(target)
+                if current == ours:
+                    if not entry.get("placed"):
+                        files[name] = {"placed": False, "sha256": ours}
+                        _atomic_json(folder / GAME_FILES, record)
+                    continue
+                if entry.get("placed") and current == entry.get("sha256"):
+                    # NR's own copy from an earlier release: kept aside until this one commits.
+                    undo = folder / ".undo"
+                    undo.mkdir(exist_ok=True)
+                    os.replace(target, undo / name)
+                    done.append((name, "replaced", dict(entry)))
+                else:
+                    backup = folder / GAME_BACKUP
+                    backup.mkdir(exist_ok=True)
+                    if (backup / name).exists():
+                        raise ValueError(f"{backup / name} already holds a set-aside file")
+                    os.replace(target, backup / name)
+                    entry = {"backup": True, "previous_sha256": current}
+                    done.append((name, "set-aside", None))
+            else:
+                done.append((name, "added", None))
+            temporary = game / (name + ".dlss-nr-new")
+            shutil.copy2(source, temporary)
+            os.replace(temporary, target)
+            files[name] = {"placed": True, "sha256": ours, "backup": bool(entry.get("backup")),
+                           "previous_sha256": entry.get("previous_sha256")}
+            _atomic_json(folder / GAME_FILES, record)
+    except BaseException:
+        _undo_game_files(profile, folder, done)
+        raise
+    return done
+
+
+def _write_proxy_environment(profile, stage, destination):
+    """ENV_FILE, which the proxy reads in the game's process: the layer's environment, the game
+    it is for, where to record a launch, and the game's own loader if one was set aside."""
+    lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process.",
+             "NR_GAME_EXE=" + str(profile.game_exe),
+             "NR_LAUNCH_STATE=" + str(profile.root / "work/windows-wizard/launch-state.json")]
+    if _game_record(stage)["files"].get(PROXY_NAME, {}).get("backup"):
+        lines.append("NR_REAL_VULKAN=" + str(destination / GAME_BACKUP / PROXY_NAME))
+    lines += [f"{name}={value}" for name, value in layer_environment(profile).items()]
+    (stage / ENV_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def _undo_game_files(profile, folder, done):
+    """Reverse _place_game_files' steps, last first, with the record where `folder` now is."""
+    game = profile.game_exe.parent
+    folder = Path(folder)
+    for name, kind, entry in reversed(done):
+        target = game / name
+        target.unlink(missing_ok=True)
+        if kind == "set-aside" and (folder / GAME_BACKUP / name).is_file():
+            os.replace(folder / GAME_BACKUP / name, target)
+        elif kind == "replaced" and (folder / ".undo" / name).is_file():
+            os.replace(folder / ".undo" / name, target)
+    try:
+        record = _game_record(folder)
+        for name, kind, entry in done:
+            if kind == "replaced":
+                record["files"][name] = entry
+            else:
+                record["files"].pop(name, None)
+        _atomic_json(folder / GAME_FILES, record)
+    except (OSError, ValueError):
+        pass
+
+
+def uninstall(profile, emit=None):
+    """Take NR out of the game's folder: the files it put there go, the game's own come back."""
+    allowed, detail = _install_process_guard(profile)
+    if not allowed:
+        return {"ok": False, "error": detail}
+    destination = installed_path(profile)
+    if not destination.exists():
+        return {"ok": True, "error": None, "removed": False, "detail": "NR is not installed beside this game"}
+    owns, detail = _owned_installation(profile)
+    if not owns:
+        return {"ok": False, "error": detail}
+    # Launch options an earlier setup gave Steam would go on starting the game through a
+    # wrapper whose layer is gone, and the game would not start. The bridge returns them first.
+    steam = profile.root / "work/windows-wizard/steam-backup.json"
+    if steam.exists():
+        try:
+            pending = not _read_json(steam, limit=64 * 1024).get("restored")
+        except (OSError, ValueError, AttributeError):
+            pending = True
+        if pending:
+            return {"ok": False, "error": "Restore Steam's launch options before removing NR"}
+    game = profile.game_exe.parent
+    kept, lost = [], []
+    try:
+        record = _game_record(destination)
+        placed_any = any(entry.get("placed") for entry in record["files"].values())
+        for name in sorted(record["files"]):
+            entry = record["files"][name]
+            if entry.get("placed"):
+                target = game / name
+                if target.is_file() and _sha256(target) != entry.get("sha256"):
+                    kept.append(name)
+                    continue
+                target.unlink(missing_ok=True)
+                backup = destination / GAME_BACKUP / name
+                if entry.get("backup") and backup.is_file():
+                    os.replace(backup, target)
+                    if emit:
+                        emit(f"Put back the game's own {name}\n")
+                elif entry.get("backup"):
+                    lost.append(name)
+            del record["files"][name]
+            _atomic_json(destination / GAME_FILES, record)
+        if placed_any:
+            _remove_dxvk_logs(profile, destination, record)
+        if kept:
+            return {"ok": False, "error": "Changed since NR put them there, so left as they are: "
+                    + ", ".join(kept) + ". The dlss-nr folder keeps the game's originals.", "kept": kept}
+        shutil.rmtree(destination)
+        (profile.root / "work" / "nr_trigger").unlink(missing_ok=True)
+    except (OSError, ValueError) as error:
+        return {"ok": False, "error": str(error)}
+    if emit:
+        emit("NR removed from the game\n")
+    result = {"ok": True, "error": None, "removed": True, "trigger_exists": False}
+    if lost:
+        # The set-aside copies were deleted from dlss-nr by hand; Steam's file check restores them.
+        result["missing_originals"] = lost
+    return result
+
+
+def _remove_dxvk_logs(profile, destination, record):
+    """The logs NR's DXVK wrote into the game's folders.
+
+    DXVK logs into the folder the game was started in, as <game>_<module>.log, until
+    DXVK_LOG_PATH is set. The proxy sets it when DXVK loads vulkan-1.dll, after DXVK's first
+    log is open, and lists that folder in START_FOLDERS. Beside the executable, the logs that
+    were there before NR stay; in the other folders, those last written before it."""
+    game = profile.game_exe.parent
+    for name in _dxvk_logs(profile):
+        if name not in record.get("logs_before", []):
+            (game / name).unlink(missing_ok=True)
+    since = record.get("installed_time")
+    started = destination / START_FOLDERS
+    if not isinstance(since, (int, float)) or not started.is_file():
+        return
+    for line in started.read_text(encoding="utf-8", errors="replace").splitlines():
+        folder = Path(line.strip())
+        # A folder that cannot be reached keeps its log, not NR.
+        try:
+            if not folder.is_absolute() or _canonical(folder) == _canonical(game):
+                continue
+            for name in _dxvk_logs(profile):
+                log = folder / name
+                # A file's time can be coarser than this clock: 2 s on FAT.
+                if log.is_file() and not log.is_symlink() and log.stat().st_mtime >= since - 2:
+                    log.unlink()
+        except OSError:
+            continue
 
 
 def _process_snapshot():
@@ -744,6 +985,41 @@ def _process_snapshot():
         raise ValueError("Could not safely inspect running games: " + got["output"])
     parsed = json.loads(got["stdout"] or "[]")
     return parsed if isinstance(parsed, list) else [parsed]
+
+
+def _running_executable(pid):
+    """The executable of the process `pid` while it is still running, else None.
+
+    One handle and two queries. The status check runs every 5 s while the window is in
+    front, and the whole WMI process list it used to take cost 0.45 s of CPU each time, in
+    a PowerShell started for it, while the game played."""
+    if os.name != "nt":
+        raise ValueError("Windows process inspection is required")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.QueryFullProcessImageNameW.argtypes = (
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:  # STILL_ACTIVE
+            return None
+        size = wintypes.DWORD(32768)
+        name = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)):
+            return None
+        return name.value
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _launch_state(profile):
@@ -813,12 +1089,19 @@ def install(profile, emit=None):
     work = profile.root / "work"
     state_files = [profile_path(profile.root), work / "nr_settings.json", work / "nr_trigger"]
     saved = {}
+    placed = []
     try:
         saved = {path: path.read_bytes() if path.exists() else None for path in state_files}
         stage = Path(tempfile.mkdtemp(prefix=".dlss-nr-stage-", dir=destination.parent))
         if destination.exists():
             shutil.copytree(destination, stage, dirs_exist_ok=True)
         _copy_runtime(profile, stage, destination)
+        placed = _place_game_files(profile, pe_architecture(profile.game_exe), stage)
+        _write_proxy_environment(profile, stage, destination)
+        # What the game's process writes into: DXVK's logs, and the proxy's launch record,
+        # for which it makes no folder.
+        (work / "logs").mkdir(parents=True, exist_ok=True)
+        (work / "windows-wizard").mkdir(parents=True, exist_ok=True)
         allowed, detail = _install_process_guard(profile)
         if not allowed:
             raise ValueError(detail)
@@ -843,6 +1126,8 @@ def install(profile, emit=None):
         (work / "nr_trigger").unlink(missing_ok=True)
         save_profile(profile)
     except (OSError, ValueError, TypeError, KeyError) as error:
+        if placed:
+            _undo_game_files(profile, destination if committed else stage, placed)
         if committed:
             shutil.rmtree(destination)
         if backup and backup.exists():
@@ -860,6 +1145,7 @@ def install(profile, emit=None):
             shutil.rmtree(stage)
     if backup and backup.exists():
         shutil.rmtree(backup)
+    shutil.rmtree(destination / ".undo", ignore_errors=True)
     if emit:
         emit("Installation complete; the effect is off\n")
     return {"ok": True, "error": None, "installed": str(destination), "root": str(profile.root),
@@ -874,9 +1160,8 @@ def set_effect(profile, enabled):
     try:
         launch = _launch_state(profile)
         if launch.get("game_exe") and _canonical(launch["game_exe"]) != _canonical(profile.game_exe):
-            for process in _process_snapshot():
-                if process.get("ProcessId") == launch.get("pid"):
-                    raise ValueError("The active game uses another profile; select it before changing its effect")
+            if _running_executable(launch.get("pid")):
+                raise ValueError("The active game uses another profile; select it before changing its effect")
         if trigger.is_symlink() or (trigger.exists() and not trigger.is_file()):
             raise ValueError("The release trigger path is not an owned regular file")
         if enabled:
@@ -884,11 +1169,37 @@ def set_effect(profile, enabled):
             trigger.touch()
         else:
             trigger.unlink(missing_ok=True)
-        return {"ok": True, "error": None, "trigger_exists": bool(enabled),
-                "trigger": str(trigger), "processing_confirmed": False,
-                "detail": "Trigger changed; fresh processed frames must confirm processing"}
+        result = {"ok": True, "error": None, "trigger_exists": bool(enabled),
+                  "trigger": str(trigger), "processing_confirmed": False,
+                  "detail": "Trigger changed; fresh processed frames must confirm processing"}
+        if enabled and _game_running_without_nr(profile, launch):
+            result.update(warning="game_without_nr",
+                          detail="The game is running without NR's layer: it was started before NR "
+                                 "was installed, or it does not load the Vulkan loader from its own "
+                                 "folder. Restart it; if that does not help, use Launch game.")
+        return result
     except (OSError, ValueError) as error:
         return {"ok": False, "error": str(error)}
+
+
+def _game_running_without_nr(profile, launch):
+    """Whether the selected game runs without NR's layer: a process of it that no launch names.
+
+    One started before NR was installed is such a process, and so is a game that loads Windows'
+    own vulkan-1.dll by its path, past the proxy. Switching the effect on changes nothing in
+    it. One process list, taken only when the effect is switched on, not by the status check
+    that runs every 5 s."""
+    target = _canonical(profile.game_exe)
+    if launch.get("game_exe") and _canonical(launch["game_exe"]) == target and launch.get("exit_code") is None:
+        running = _running_executable(launch.get("pid"))
+        if running and _canonical(running) == target:
+            return False
+    try:
+        processes = _process_snapshot()
+    except ValueError:
+        return False
+    return any(item.get("ExecutablePath") and _canonical(item["ExecutablePath"]) == target
+               for item in processes)
 
 
 def _new_log_state(complete=True):
@@ -1039,9 +1350,8 @@ def status(profile):
     process_error = None
     if matching_launch and isinstance(launch.get("pid"), int) and launch.get("exit_code") is None:
         try:
-            active = any(process.get("ProcessId") == launch["pid"] and process.get("ExecutablePath")
-                         and _canonical(process["ExecutablePath"]) == _canonical(profile.game_exe)
-                         for process in _process_snapshot())
+            running = _running_executable(launch["pid"])
+            active = bool(running) and _canonical(running) == _canonical(profile.game_exe)
         except (OSError, ValueError):
             process_error = "The launch PID could not be verified"
     result.update(launch=context, active_game=active,

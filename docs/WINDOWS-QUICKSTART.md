@@ -189,7 +189,9 @@ start "" "C:\Program Files (x86)\Steam\steam.exe"
 Use Steam's actual install path if it differs. Keep only the test game running:
 these variables also apply to Vulkan applications started by this Steam session.
 After testing, remove the trigger and restart Steam normally to clear that session's
-layer environment.
+layer environment. A release's setup window needs none of this: the `vulkan-1.dll` it
+puts beside the game gives the game's own process these variables, however the game
+is started ([RELEASE-QUICKSTART.md](RELEASE-QUICKSTART.md)).
 
 Turning NR on/off uses the same trigger commands as the cube. Use the reported
 frame timings and refusal messages to confirm it is active, not only a change in FPS.
@@ -203,13 +205,16 @@ Some D3D9/10/11 games can render through [DXVK](https://github.com/doitsujin/dxv
 Its DLLs must match the game's API and executable architecture. The **game's**
 architecture decides this; a 64-bit Windows installation can run a 32-bit game.
 Back up existing game-local DLLs before replacing any, and start with an offline
-single-player test. This quick start does not install DXVK into a game for you.
+single-player test. This quick start does not install DXVK into a game for you;
+a release's setup window does, for 64-bit and 32-bit games, and takes it out again
+with **Remove NR** ([RELEASE-QUICKSTART.md](RELEASE-QUICKSTART.md)).
 
 This integrated build can also prepare an x86 manifest when `nr_layer32.dll` is
 available. Games such as Dead or Alive 5 need that x86 layer and matching DXVK
 DLLs; follow the [Windows status page](WINDOWS.md) for the 32-bit route. Do not load
 an x64 NR layer into a 32-bit game. The Python daemon remains 64-bit.
-There is no universal setup here for every D3D12 game or an integrated OptiScaler
+There is no D3D12 route on Windows yet: VKD3D-Proton, with DXVK's DXGI and D3D11 beside
+it, stopped Mortal Kombat 1 at startup on 101.9033. Nor is there an OptiScaler
 motion-vector path.
 
 ## Common problems

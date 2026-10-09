@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-07**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-09**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -8,6 +8,203 @@ original brief; **this file overrides it wherever they disagree**, and after
 you need the evidence behind a line in this file, rather than reading them in order.
 
 ---
+
+## NR whatever starts the game: a vulkan-1.dll beside it, and the setup window without Steam (2026-10-09)
+
+The owner could not install NR for Mortal Kombat Komplete Edition, a game outside Steam: a Steam
+configuration left by an earlier test locked the profile (`steam_profile_lock`). The request
+that followed was for every game started outside Steam or from another store. The layer is
+found and configured through environment variables, and only setup's own Launch game, or Steam
+launch options naming its wrapper, used to give them.
+
+**`598ccbc`: a `vulkan-1.dll` beside every game** (`src/layer/nr_vulkan_proxy.c`). Windows looks
+for `vulkan-1.dll` in the executable's folder before System32, for a game's own import and for
+DXVK's `LoadLibrary` alike. In `DllMain` the proxy reads `dlss-nr\nr-env.txt` and, in the process
+of the executable named there (compared by volume and file index, not by spelling), sets those
+variables and records the launch in setup's `launch-state.json`. Every one of the loader's 265
+exports goes on to System32's loader, loaded on the first call and outside `DllMain`, or to the
+game's own copy, which install sets aside. `vulkan_proxy_gen.py` writes the wrappers from
+`vulkan-1.exports` and the SDK's prototypes; x86 exports undecorated stdcall names through a
+`.def`. `DISABLE_NR_PROXY=1` turns it off. `build_win.bat` builds both architectures, releases
+carry them, and `layer_vulkan_proxy` is in CTest (Windows).
+
+**Games through the proxy, nothing set in Steam**, setup's backend as its buttons call it, NR on
+for 40 s (release built from `cd150e7`):
+
+| game | started by | API | layer | NR frames | rejected | folder after Remove NR |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| Mortal Kombat 11 | Steam's Play button | DX11 through DXVK | x64 | 370 | 0 | as before |
+| Dead or Alive 5 Last Round | Steam's Play button | DX9 through DXVK | x86 | 783 | 0 | as before |
+| Mortal Kombat Komplete Edition | its own executable | DX9 through DXVK | x86 | 586 | 0 | as before |
+| DOOM (2016) | Steam's Play button | Vulkan | x64 | 388 | 0 | as before |
+
+Every daemon ended with its game, and Steam's RunningAppID was 0 after each. Through the window
+itself, from the unpacked `7f9c364` ZIP and clicked by UI Automation: Komplete Edition from its
+executable 1256 frames, Mortal Kombat 11 from Steam's Play button 766, none rejected. With the
+game in front and nothing clicked, the window started no process in 40 s. Komplete Edition's own
+ASI loader rewrites `asiloader.log` at every start; it was put back from a copy.
+
+**Found on the way, `cd150e7`:**
+- Status never saw the game: the proxy writes its launch record into `work/windows-wizard` and
+  makes no folder, and nothing had made it yet. Install makes it now.
+- DXVK opens its first log before it loads `vulkan-1.dll`, so before `DXVK_LOG_PATH` is set, and
+  in the folder the game was started in. Steam starts Mortal Kombat 11 in its root, above the
+  executable, and Remove NR left `MK11_dxgi.log` there. The proxy lists that folder in
+  `dlss-nr\start-folders.txt`, and Remove NR deletes the DXVK logs written there after the
+  installation (by time, with 2 s for FAT).
+
+**Two more things the games showed:**
+- Once DXVK frees its first instance the proxy can be unloaded, and a later
+  `LoadLibrary("vulkan-1.dll")` gets the loader of that name already in the process, System32's
+  (MK11's module list, and a probe with the DLL search path). So all the proxy does, it does at
+  its first load.
+- Steam starts DOOM's `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the game's renderer is
+  Vulkan (`r_renderAPI 1`); the proxy works in the second.
+
+A game that loads System32's loader by its path, or keeps its DLL search to System32, never loads
+the proxy; Enable NR then warns that the game runs without the layer, and Launch game still
+starts it with the variables. A game with anti-cheat may refuse a DLL beside it: the quick start
+says to test single-player games offline.
+
+**`7f9c364`: the setup window without Launch mode, Steam App ID, Configure Steam and Restore
+Steam.** Launch game starts the game directly. Install NR now returns Steam launch options an
+earlier setup left, as Remove NR does, and they no longer lock the profile.
+`configure_steam`, `restore_steam` and the wrapper stay in `windows_launch.py` for those leftovers;
+they can go, with their tests, once no release with Configure Steam is in testers' hands. The
+window's self-test: 55 named controls, 131 keys in English, Russian and Spanish. Docs: the release
+quick start says to start the game as usual, and `docs/WINDOWS.md` records the proxy.
+
+Before these, from the owner's own session with the window: `925c21f`, Remove NR returns Steam's
+launch options itself and Enable NR says when NR cannot reach the game; `9d472ba`, the window
+compact, with a dark theme, sliders on the arrow keys, and each control's description once, as
+its name's tooltip.
+
+The ZIP is `D:\NRonWindows\rel\dlss-nr-windows-7f9c364-x64.zip` (256 files, 18.5 MB, SHA-256
+`0172a087…2aa2`), with no weights and no NVIDIA DLL. Not pushed: `9f2070c` to `7f9c364` are
+local on `windows`.
+
+**Next on Linux:** the Windows tool suites at the head: `test_windows_wizard.py` and
+`test_release.py` changed, and `test_vulkan_proxy.py` is new (it skips off Windows). Nothing
+Linux builds or runs changed: the proxy, `build_release.py`'s part and the window are Windows'.
+
+## The setup window through two games, and a daemon that ends with its game (2026-10-08, evening)
+
+The window clicked through by UI Automation, from a release unpacked from its ZIP (`9f2070c`),
+Steam mode, NR on for 40 s:
+
+| game | API | layer | NR frames | rejected | Restore Steam after the game closed | game folder after Remove NR |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| Mortal Kombat 11 | DX11 through DXVK | x64 | 784 | 0 | at once | as before (10 409 entries) |
+| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 809 | 0 | at once | as before (963 entries) |
+
+Install took the weights from the user's own DLL. Configure Steam and Remove NR went through
+their dialogs. With the game in front and nothing clicked, the window started no process in 40 s.
+
+**Found on the way: Steam kept a closed game running, because of NR's daemon.** The layer starts
+the daemon from inside the game, and Steam counts every process a game starts as the game. After
+MK11 closed, RunningAppID stayed 976310 for as long as the daemon ran, and cleared 2 s after it
+was stopped. So Restore Steam refused ("A Steam game is running"), and the model stayed in memory.
+The backend's game runs never showed it, because their script stopped the daemon first.
+`9f2070c`: on Windows the layer puts the game's process id in `NR_LAYER_SPAWNED`, and the daemon
+ends when that process does (`nr_daemon.end_with_game`). A daemon started by hand runs on as
+before. vkcube through the MSVC layer: 90 frames, and the daemon gone 0.1 s after it. CTest 39 of
+39, on MinGW and on MSVC's DLLs (`layer_spawn_exit` is new).
+
+**Two traps in driving the window this way:**
+- Any UI Automation call into the WPF window brings it to the front, even a tab selected (checked
+  with a stand-in window in front). After "Enable NR" is pressed through UIA, the window is in
+  front and polls, as it is after a user's own click. Only a stretch with nothing clicked shows
+  whether polling stops behind the game.
+- The message boxes' Win32 buttons reach UIA from PowerShell as panes with no patterns, so the
+  test sends the dialog WM_COMMAND IDOK. A screen lock does not stop UIA, but a window that was
+  active when the screen locked stays active, and polls.
+
+**`geladons/DLSS5_INTEL`** (MIT) ported this tree's layer and credits it. It has what we lack on
+Windows:
+- a `dxgi.dll` proxy for DX12, live on GTA V Enhanced. Present is hooked by patching the swapchain's
+  vtable entries in place, because GTA V kills a process whose swapchain vtable pointer changes.
+  BattlEye blocks a `dxgi.dll` beside the game;
+- a PE scan that reads the delay-load directory (UE5 loads `d3d12.dll` that way);
+- a pause hotkey.
+
+Its DX9 install is `d3d9.dll` alone, because DXVK's `dxgi.dll` crashed GTA IV there. The proxy is the
+route to DX12 here, after the release.
+
+**Next on Linux:** nothing runs differently there, since the POSIX layer still marks its child
+with 1. But the Linux release's `launch-nr.sh` sets `NR_LAYER_SPAWN=1` too, and Steam's reaper may
+keep a game running while its daemon lives. Worth a look through Steam. If it does, the marker can
+carry `getpid()` and the daemon watch it with a pidfd, as the Windows side now does.
+
+## On Linux at 0513b60: green, the Linux binaries unchanged, and the DXVK pin is DXVK's (2026-10-08)
+
+`make test` green in both memory modes (571), CTest 45 of 45 with no warnings, `make test-proton`
+loads both layers. The five Windows tool suites pass here too (126 tests, 17 skipped for Windows).
+`nr_image.c` and `nr_layer.c` compile to the same machine code as at `5fec502`, so the speeds
+measured there stand. The Linux release, assembled and installed: metadata `"dxvk": null`, the
+host library with F16C, and its layer and daemon answered 124 presents. `dist-tools/dxvk.json`
+matches the archive on DXVK's GitHub release (18 041 512 bytes, the same SHA-256), and
+`fetch_dxvk.py --archive` runs on Linux too.
+
+## The Windows release, prepared: a lighter setup window, Spanish, DXVK and 32-bit games, Remove NR; no DirectX 12 (2026-10-08)
+
+Seven commits on `windows` after `f1175bb`, for the first GitHub release. Arc 140V, 101.9033.
+
+**The setup window's load** (`aed08e5`), measured with a stand-in process as the launched game:
+- The hidden busy bar's indeterminate animation never stopped: 5.9 % of a core with the window
+  idle. It animates only while an action runs: 0.2 %.
+- WPF draws in software: 30 MB of GPU memory and 45 MB of RAM less (179 -> 130 MB).
+- The status check every 5 s started Python, and once a game was launched Python started a
+  PowerShell for WMI's whole process list: 0.45 s of CPU in four processes each time. The game is
+  found by its PID now (0.11 s in two), and the window checks only while it is in front.
+
+**Spanish** (`8a50654`): the third language, every string; the self-test takes its languages
+from the window's list.
+
+**DXVK and 32-bit games, and Remove NR** (`1980e5e`, `2bf9d6f`, `4d21118`, `b8a8a65`):
+- A release carries `nr_layer32.dll` and DXVK 3.1.1, pinned by version and SHA-256 in
+  `dist-tools/dxvk.json` and fetched by `scripts/fetch_dxvk.py` (`deploy.bat --release` runs it);
+  its zlib licence is `dxvk/LICENSE` and in NOTICE.
+- The window takes a 64- or a 32-bit game and installs the layer for its architecture. For
+  DirectX 8-11 it puts DXVK beside the game; a game file of the same name is set aside in
+  `dlss-nr/game-backup`, recorded in `dlss-nr/game-files.json`.
+- **Remove NR** deletes NR's files and puts the set-aside ones back; a file changed since is left
+  and named; it waits for Restore Steam. DXVK logs into the release's `work/logs` for NR
+  launches; Remove NR deletes only the DXVK logs that appeared after the installation.
+- The layer started its daemon with `DETACHED_PROCESS`. With a virtual environment's python.exe,
+  which Prepare Python makes, that put a console window over the game: DOOM, full screen, lost
+  the focus and stopped after 16 frames. `CREATE_NO_WINDOW` now.
+- Restore Steam waits up to 15 s for Steam's RunningAppID to clear after the game has gone; it
+  refused right after every exit before.
+
+**DirectX 12 is not offered.** VKD3D-Proton 3.0.1 with Mortal Kombat 1: Windows' DXGI gave
+E_NOTIMPL creating the swap chain; DXVK's DXGI with Windows' D3D11 crashed in d3d11; all of DXVK
+crashed in the game after it asked its D3D11 device for ID3D12Device. Intel's Vulkan driver has
+the extensions VKD3D-Proton needs (mutable descriptors, descriptor buffers, GPL), so the stop is
+in the D3D11/DXGI interplay, not in the driver.
+
+**Games, through the release, launched by Steam, NR on for 60 s:**
+
+| game | API | layer | NR frames | rejected | game folder after Remove NR |
+| --- | --- | --- | ---: | ---: | --- |
+| DOOM (2016) | Vulkan | x64 | 423 | 0 | as before |
+| Mortal Kombat 11 | DX11 through DXVK | x64 | 942 | 0 | as before |
+| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 1040 | 0 | as before |
+
+These ran the setup window's backend as its buttons call it (`scripts/windows_wizard.py`).
+Through the window itself, clicked by UI Automation with Mortal Kombat 11, the fields, the API and
+launch-mode choices and Install NR worked and put DXVK beside the game; the screen locked (04:25)
+before Configure Steam, so that run stopped there and the installation was removed through the
+backend. The window's polling behind a real game is still to be watched; with a stand-in it
+started nothing while minimised. Captures of DOOM and MK11 with NR on are in
+`D:\NRonWindows\nr-game\release-tests` (local, not for publishing).
+
+**Cleaned up on the way:** Codex's DOOM installation of 10-06 (`DOOM\dlss-nr`, from before there
+was a Remove) is in `D:\NRonWindows\nr-game\backups`; Dead or Alive 5's Steam launch options still
+ran Codex's test wrapper of 10-04 and are empty again, as before that test. The DirectX 12 test
+overwrote Mortal Kombat 1's `vkd3d-proton.cache` (13.5 MB from Proton); Proton rebuilds it.
+
+**Next on Linux:** `make test` and CTest at the head. `scripts/build_release.py` and
+`test_release.py` changed; the Linux release path is untouched, and the rest is Windows-only.
 
 ## On Windows at #9's head: green, and F16C for MSVC's host passes (2026-10-07, night)
 
