@@ -3,6 +3,7 @@
 import contextlib
 import io
 import importlib.util
+import os
 import pathlib
 import socket
 import struct
@@ -15,6 +16,50 @@ import numpy as np
 import nr_daemon as daemon
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# One name space per run, so two copies of this file cannot collide on a pipe.
+PIPE_ROOT = r'\\.\pipe\nr-test-%d-' % os.getpid()
+
+
+# --- the endpoint, on either platform -------------------------------------------------------
+#
+# These tests used `socket.socket(socket.AF_UNIX, ...)` in three places, which CPython on Windows
+# does not have at all, so the whole native half of this file - the daemon's early bounds, the
+# truncation and masked cases, the device-lost exit - never ran there. On Windows the daemon's
+# transport IS a named pipe (`nr_pipe`), which makes the pipe the subject rather than a stand-in;
+# on POSIX it is still the socket. Only the endpoint changes; the bytes and the assertions do not.
+
+def endpoint_path(directory, name):
+    if os.name == 'nt':
+        return PIPE_ROOT + name
+    return str(pathlib.Path(directory) / name)
+
+
+def endpoint_server(path, backlog=1, timeout=5, instances=1):
+    """A listening endpoint shaped like `socket.socket`: `.accept()` yields `(connection, _)`.
+
+    `instances` matters only on Windows and only when clients connect before anything is
+    accepted: a pipe refuses a second `CreateFile` until a second instance exists.
+    """
+    if os.name == 'nt':
+        import nr_pipe
+        return nr_pipe.server(path, backlog=backlog, timeout=timeout, instances=instances)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen(backlog)
+    server.settimeout(timeout)
+    return server
+
+
+def endpoint_client(path, timeout=None):
+    if os.name == 'nt':
+        import nr_pipe
+        return nr_pipe.client(path, timeout=timeout)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(path)
+    if timeout is not None:
+        client.settimeout(timeout)
+    return client
 
 
 def pipe_handle_tests():
@@ -83,10 +128,10 @@ class Request:
 
 
 def request_tests():
-    args = SimpleNamespace(max_pixels=1024, profile='standard', intensity=1,
+    args = SimpleNamespace(profile='standard', intensity=1,
                            detail_strength=1, colour_strength=1, dump=None)
     for magic, width, height in ((0, 1, 1), (daemon.MAGIC, 0, 8),
-                                 (daemon.MAGIC, 8, 0), (daemon.MAGIC, 1024, 1024)):
+                                 (daemon.MAGIC, 8, 0)):
         request = Request(struct.pack('<4I', magic, width, height, 44))
         try:
             daemon.process_connection(request, None, args)
@@ -94,6 +139,16 @@ def request_tests():
             assert request.reads == 1 and request.reply is None
         else:
             raise AssertionError('invalid header accepted')
+    # A large extent is NOT one of the invalid headers. 3360x2100 is a real 3.5K swapchain and a
+    # pixel ceiling used to refuse it, which silently turned NR off for every frame of that game.
+    # What fails here is the body read: there is no 28 MB payload behind this header.
+    request = Request(struct.pack('<4I', daemon.MAGIC, 3360, 2100, 44), b'')
+    try:
+        daemon.process_connection(request, None, args)
+    except EOFError:
+        assert request.reply is None
+    else:
+        raise AssertionError('a frame header with no payload was accepted')
     raw = bytes(range(64))
     request = Request(struct.pack('<4I', daemon.MAGIC, 4, 4, 999), raw)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -211,13 +266,10 @@ def letterbox_tests():
 def native_exchange_tests():
     with tempfile.TemporaryDirectory(prefix='nr-exchange-') as temporary:
         for mode in ('echo', 'reject', 'partial', 'masked'):
-            path = str(pathlib.Path(temporary) / mode)
+            path = endpoint_path(temporary, mode)
             errors = []
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-                server.bind(path)
-                server.listen(1)
-                server.settimeout(5)
-
+            server = endpoint_server(path, backlog=1, timeout=5)
+            try:
                 def serve():
                     try:
                         connection, _ = server.accept()
@@ -247,6 +299,8 @@ def native_exchange_tests():
                 thread.join(timeout=6)
                 assert not thread.is_alive() and not errors, errors
                 assert result.returncode == 0, (mode, result.returncode, result.stderr)
+            finally:
+                server.close()
     print('daemon/layer: early bounds, HDR/alpha round trips, truncation, a masked\n  request whose answer is smaller, and a SIGPIPE-safe exchange OK')
 
 
@@ -281,28 +335,28 @@ def device_lost_tests():
     original = daemon.process_connection
     output = io.StringIO()
     with tempfile.TemporaryDirectory() as directory:
-        path = str(pathlib.Path(directory) / 'lost.sock')
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(path)
-        server.listen(4)
+        path = endpoint_path(directory, 'lost')
         # if the loss were swallowed the loop would wait for a third frame: fail, not hang
-        server.settimeout(5)
+        server = endpoint_server(path, backlog=4, timeout=5, instances=len(failures))
         clients = []
         for _ in failures:
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.connect(path)                 # queued in the backlog until accepted
+            client = endpoint_client(path, timeout=1)   # queued until accepted
             clients.append(client)
         daemon.process_connection = failing
-        try:
-            with contextlib.redirect_stdout(output):
-                daemon.serve(server, None, SimpleNamespace(timeout=1))
-        except SystemExit as stop:
-            assert stop.code == 1, stop.code
-        else:
-            raise AssertionError('serve returned after a lost device')
-        finally:
-            daemon.process_connection = original
-            server.close()
+        # The Windows frame loop announces that it is keeping NumPy's large blocks between frames
+        # (nr_alloc), and that banner is not one of the two lines this test counts. Turned off here
+        # rather than filtered out, so a stray third line still fails.
+        with mock.patch.dict(os.environ, {'NR_KEEP_BLOCKS': '0'}):
+            try:
+                with contextlib.redirect_stdout(output):
+                    daemon.serve(server, None, SimpleNamespace(timeout=1))
+            except SystemExit as stop:
+                assert stop.code == 1, stop.code
+            else:
+                raise AssertionError('serve returned after a lost device')
+            finally:
+                daemon.process_connection = original
+                server.close()
         for client in clients:
             client.settimeout(1)
             assert client.recv(1) == b'', "closed, so the layer keeps the game's frame"

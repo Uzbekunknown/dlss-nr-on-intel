@@ -101,7 +101,7 @@ def main():
             daemon = subprocess.Popen(
                 [sys.executable, str(ROOT / "src" / "layer" / "nr_daemon.py"),
                  "--socket", str(daemon_socket), "--settings", str(settings_file),
-                 "--max-pixels", str(1920 * 1200), "--dump", str(args.out)],
+                 "--dump", str(args.out)],
                 stdout=sink, stderr=subprocess.STDOUT)
         try:
             for _ in range(600):

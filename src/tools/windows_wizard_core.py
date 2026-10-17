@@ -185,13 +185,19 @@ def _runtime_knobs():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     knobs = []
+    per_knob_choices = getattr(module, "CHOICES", {})
     for knob in module.KNOBS:
         high = {"min_extent": 4096.0, "release": 255.0}.get(knob.name, knob.high)
+        choices = None
+        if knob.kind == "choice":
+            # `profile` is the profile table; `weights` names a model. One map in the catalogue
+            # keeps both the wizard and the panel reading the same list.
+            choices = list(per_knob_choices.get(knob.name, module.PROFILES))
         knobs.append({"name": knob.name, "label": knob.label, "kind": knob.kind,
                       "low": knob.low, "high": knob.high, "step": knob.step,
                       "default": knob.default, "summary": knob.summary, "detail": knob.detail,
                       "runtime_low": knob.low, "runtime_high": high,
-                      "choices": list(module.PROFILES) if knob.kind == "choice" else None})
+                      "choices": choices})
     return knobs
 
 
@@ -646,8 +652,25 @@ def discover_python():
 
 
 def _shader_names(root):
+    """Every shader the installed runtime has to carry, from the sources that name them.
+
+    `src/gpu` was the whole list, and that left the panel's two shaders out: `menu.spv` and
+    `menu_rgb10a2.spv` are named in `src/layer/nr_menu.c` and nowhere else. A release carried
+    them - `scripts/build_release.py` scans `src/layer` whole for exactly this reason - but an
+    install copied only this list, so the game got a layer whose menu could not load its shader
+    and silently drew nothing. The log said it plainly: "no settings menu: the menu's shader was
+    not found beside the layer", and INS did nothing.
+
+    `src/layer` is scanned whole rather than by filename, as the release builder does, so a
+    shader named in the layer's own sources cannot be forgotten here again.
+    """
     names = set(SHADERS)
-    for name in ("src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"):
+    sources = ["src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"]
+    sources += [str(path.relative_to(root)).replace("\\", "/")
+                for path in sorted((root / "src" / "layer").glob("*.c"))]
+    sources += [str(path.relative_to(root)).replace("\\", "/")
+                for path in sorted((root / "src" / "layer").glob("*.h"))]
+    for name in sources:
         path = root / name
         if path.is_file():
             names.update(re.findall(r"([A-Za-z0-9_]+\.spv)", path.read_text(encoding="utf-8")))

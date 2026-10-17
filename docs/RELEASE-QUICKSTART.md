@@ -98,7 +98,9 @@ preserved. The button beside the language switches the light and dark themes.
 
 Under **Launch options**, the optional Fossilize workaround turns off Steam's Fossilize
 layer in this game while NR is installed; it does not disable Steam Overlay or modify the
-global shader-cache setting. The game arguments there are for **Launch game**.
+global shader-cache setting. The game arguments there are for **Launch game**, which also
+passes the switches the game's own Steam launch options carry — a game that chooses Vulkan
+with one, such as `-VULKAN`, needs it there as well.
 
 **Save report** exports settings, version/driver information, what **Check** says, the speed
 test, the game's DXVK logs and diagnostic log data without NVIDIA DLLs or weights. The release's private profile and extracted

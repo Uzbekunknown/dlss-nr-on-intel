@@ -4,6 +4,11 @@
 
 GLSL    := glslangValidator --target-env vulkan1.3 -Isrc/gpu
 CFLAGS  := -O2 -fPIC -Wall -Wextra -Wno-unused-parameter -Iwork/vulkan-headers/include
+# The one test that has to be C++: it drives ImGui, which is a C++ library. Everything else in this
+# file is C. `-fno-exceptions` matches how the layer itself is compiled.
+CXX     ?= c++
+CXXFLAGS := -O2 -fPIC -Wall -Wextra -Wno-unused-parameter -fno-exceptions \
+            -Iwork/vulkan-headers/include
 # The CPU the host passes are built for, here and in a release alike: x86-64-v3, every CPU
 # since Haswell and Zen 1. F16C makes each `_Float16` conversion one instruction; without it
 # each is a call into libgcc, and a frame was 5-13 % slower. On Lunar Lake v3 is as fast as
@@ -65,9 +70,69 @@ work/libnr_image.so: src/ref/nr_image.c Makefile work/nr_image.arch | work
 
 # The Vulkan layer that puts the pass inside a running game.
 LAYER_HEADERS := src/layer/nr_transport.h src/layer/nr_surface_policy.h src/layer/nr_layer_stats.h \
-                 src/layer/nr_gpu_bridge.h src/layer/nr_gpu_rpc.h
+                 src/layer/nr_gpu_bridge.h src/layer/nr_gpu_rpc.h \
+                 src/layer/nr_menu.h src/layer/nr_menu_bridge.h src/layer/nr_menu_strings.h \
+                 src/layer/nr_menu_font.h src/layer/nr_file.h
+
+# What the menu needs from the platform, and only on the platform that has it. The overlay is
+# Windows-only by construction - `GetAsyncKeyState` for the keys, `GetGlyphOutlineW` for the
+# glyphs - and on Linux the same settings are driven by `nr-panel`, which already exists. So the
+# sources compile everywhere (their Windows arms are no-ops elsewhere) and these libraries are
+# linked only where they exist, which is what keeps a Linux `make` working.
+MENU_LIBS :=
+ifeq ($(OS),Windows_NT)
+MENU_LIBS := -luser32 -lgdi32
+endif
+
 work/libnr_layer.so: src/layer/nr_layer.c $(LAYER_HEADERS)
 	$(CC) $(CFLAGS) -shared -o $@ $< -lvulkan
+
+# The in-game menu, as sources the layer links.
+MENU_SOURCES := src/layer/nr_menu.c src/layer/nr_menu_font.c src/layer/nr_menu_strings.c \
+                src/layer/nr_menu_strings_lookup.c src/layer/nr_menu_bridge.c src/layer/nr_file.c
+
+# The knob table against `nr_knobs.py`, which is the definition. The author asked for this after
+# `render_scale`'s default drifted between three copies of the same fact.
+work/test_menu_rows: src/layer/test_menu_rows.c src/layer/nr_menu_bridge.c \
+                     src/layer/nr_menu_strings.c src/layer/nr_menu_strings_lookup.c
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_rows.c src/layer/nr_menu_bridge.c \
+	      src/layer/nr_menu_strings.c src/layer/nr_menu_strings_lookup.c $(MENU_LIBS)
+
+# What the settings file does when the menu touches it: unrelated fields survive, opening changes
+# nothing, render scale is not reset, a moved knob survives a reopen, and the result is valid JSON.
+# No Vulkan - the bridge is attached headless, so this runs anywhere.
+work/test_menu_persist: src/layer/test_menu_persist.c $(MENU_SOURCES)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_persist.c $(MENU_SOURCES) $(MENU_LIBS)
+
+# Whether the fallback pointer is actually drawn. It was not: ImGui refuses to draw its own cursor
+# without a position, and the layer reports "no position" whenever the pointer is off the panel - so
+# the arrow appeared only over the panel, the one place nobody needs it. Counts the vertices in a
+# rendered frame, which is a fact about the draw data rather than about this file's intent.
+IMGUI_SOURCES := third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp \
+                 third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
+# Which window in front means "the user is here". The panel reads the system-wide cursor and
+# key state, so without this it is driven by whatever the user is doing in ANY window - the
+# reported bug, where a drag in another application moved a slider.
+# Every knob explained, in every language. The overlay's tooltip reads this table
+# positionally, so a reordered knob or a language index off by one pairs every knob with the
+# wrong explanation - and a tooltip that confidently describes the wrong control is worse than
+# none. The strings come from the same generated table the installer uses.
+# A save leaves valid JSON, and a file that is not a JSON object is replaced rather than
+# left broken. The writer's clamp is here too: `nr_json_put` refuses to write an object it
+# knows is short, because a truncated one would make the daemon log a parse error and keep its
+# old values - a save that looks like it worked and did nothing.
+work/test_settings_writer: src/layer/test_settings_writer.c $(MENU_SOURCES)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_settings_writer.c $(MENU_SOURCES) $(MENU_LIBS)
+
+work/test_menu_hints: src/layer/test_menu_hints.c $(MENU_SOURCES)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_hints.c $(MENU_SOURCES) $(MENU_LIBS)
+
+work/test_focus_gate: src/layer/test_focus_gate.c src/layer/nr_focus.c
+	$(CC) $(CFLAGS) -o $@ src/layer/test_focus_gate.c src/layer/nr_focus.c $(MENU_LIBS)
+
+work/test_soft_cursor: src/layer/test_soft_cursor.cpp $(IMGUI_SOURCES)
+	$(CXX) $(CXXFLAGS) -Ithird_party/imgui -Isrc/layer -o $@ src/layer/test_soft_cursor.cpp \
+	       $(IMGUI_SOURCES) $(MENU_LIBS)
 
 work/libnr_layer32.so: src/layer/nr_layer.c $(LAYER_HEADERS)
 	$(CC) $(CFLAGS) -m32 -shared -o $@ $< -lvulkan
@@ -168,7 +233,7 @@ bench: all work/half_probe.spv
 	python3 src/bench/half_probe.py
 	python3 src/bench/split_cost.py
 
-test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_present work/test_surface_policy work/test_transfer_resources
+test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_present work/test_surface_policy work/test_transfer_resources work/test_menu_rows work/test_menu_persist work/test_soft_cursor work/test_focus_gate work/test_menu_hints
 	python3 src/gpu/test_ffn_batch.py --gpu
 	python3 src/gpu/test_device_pick.py
 	python3 src/gpu/test_gemm_contract.py
@@ -176,6 +241,10 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/gpu/test_input_fp16.py
 	python3 src/gpu/test_compact_head.py
 	python3 src/gpu/test_joint_qkv.py
+	work/test_soft_cursor
+	work/test_focus_gate
+	work/test_settings_writer
+	work/test_menu_hints
 	python3 src/layer/test_daemon.py
 	python3 src/layer/test_daemon_owner.py
 	python3 src/layer/test_gpu_only.py
@@ -183,6 +252,9 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	work/test_surface_policy
 	work/test_transfer_resources
 	work/test_settled
+	work/test_menu_rows
+	python3 src/layer/test_menu_rows.py
+	work/test_menu_persist
 	python3 src/layer/test_ui_mask.py
 	python3 src/layer/test_present.py
 	python3 src/layer/test_temporal.py

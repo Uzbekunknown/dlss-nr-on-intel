@@ -420,9 +420,9 @@ The network's frame is padded, by mirroring the picture, to at least this many p
 
 ### `profile` — which way to trade skin texture against highlights, and its colour grade
 
-`standard` / `natural` / `cinematic` / `neutral`
+`standard` / `natural` / `cinematic`
 
-The style the network is asked for, and the colour grade that comes with it. The profiles are a trade, not a quality ladder: what one adds to skin and surface texture it takes from highlights. `standard` is the default and adds the most texture; `natural` and `cinematic` keep more of the highlights, and on very bright scenes `cinematic` can smooth fine detail rather than add it. After the network, as NVIDIA grades them, `natural` comes out a little darker, flatter and less saturated and `cinematic` less saturated. `neutral` all but switches the effect off. The profile is an input to the network, so it takes effect on the next frame the network draws; the knobs below act after it.
+The style the network is asked for, and the colour grade that comes with it. The profiles are a trade, not a quality ladder: what one adds to skin and surface texture it takes from highlights. `standard` is the default and adds the most texture; `natural` and `cinematic` keep more of the highlights, and on very bright scenes `cinematic` can smooth fine detail rather than add it. After the network, as NVIDIA grades them, `natural` comes out a little darker, flatter and less saturated and `cinematic` less saturated. The profile is an input to the network, so it takes effect on the next frame the network draws; the knobs below act after it.
 
 ### `intensity` — how far to go towards the model's picture, or past it
 
@@ -465,6 +465,12 @@ The other side of `hold`. Where the game's own pixel changed by this many levels
 `0` to `1`, step `0.01`, default `0.15`
 
 The average change between two frames above which the scene is taken to have cut — a camera cut, a menu, a replay — and the previous frame is dropped entirely instead of pixel by pixel. Lower cuts more readily; 1 never cuts.
+
+### `weights` — which weight model the daemon runs
+
+`standard` / `natural` / `cinematic`
+
+Which model the network runs, by name. `ht` is the model this project reproduces, extracted from the `WEIGHTS_HT` resource of the NVIDIA DLL, and it is the only one that can be loaded today. A 310.9.16 DLL also carries `WEIGHTS_CC_SMALL_FP8`, a smaller model of a different shape: it is detected and extracted so nothing is hidden about what a DLL holds, but its block layout is not one the loader can read, so selecting it keeps `ht` and says so once. A change here reloads the model in the daemon without restarting the game; expect one present to wait for that load.
 
 <!-- knobs:end -->
 

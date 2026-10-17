@@ -171,6 +171,10 @@ def test_composition():
           values["normalized_style"] == 2 / 128.0
           and values["local_tone_strength"] == 0.5
           and values["local_structure_strength"] == 1.0)
+    # `neutral` is still in the engine's table and is checked here, but the MENU no longer offers
+    # it: it was `standard` with tone and structure zeroed, which is what the `intensity` knob
+    # already does, so two controls reached one outcome and this one looked inert. The engine
+    # keeping it costs nothing and `nr_knobs.PROFILES` is the list the UI shows.
     check("the neutral profile zeroes tone and structure",
           frame.PROFILES["neutral"]["local_tone_strength"] == 0
           and frame.PROFILES["neutral"]["local_structure_strength"] == 0)

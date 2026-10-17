@@ -54,7 +54,7 @@ class PolicyTests(unittest.TestCase):
                     os.environ.pop("NR_GPU_ONLY", None)
                 else:
                     os.environ["NR_GPU_ONLY"] = value
-                D.process_connection(request, None, SimpleNamespace(max_pixels=64))
+                D.process_connection(request, None, SimpleNamespace())
             self.assertEqual(request.reads, [16, 64])
             self.assertEqual(request.reply, bytes(range(64)))
 

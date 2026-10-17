@@ -175,7 +175,7 @@ class ProtocolTests(unittest.TestCase):
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)
-        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), 4096 * 4096, enabled=True)
+        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), enabled=True)
 
     def process(self, pid):
         value = Process(pid, self.events)
@@ -203,7 +203,7 @@ class ProtocolTests(unittest.TestCase):
     def test_memory_indices_and_packet_layout(self):
         p = packet()
         self.assertEqual(T.PACKET.size, 128)
-        got = T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)
+        got = T.unpack_packet(encoded(p), 1280, 720, 44)
         self.assertEqual(got["input_memory_type"], 1)
         self.assertEqual(got["output_memory_type"], 2)
         connection, result = self.request(p)
@@ -231,7 +231,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_v2_fence_protocol_imports_memory_without_semaphores(self):
         p = packet(version=2, ready_sem=0, done_sem=0)
-        parsed = T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)
+        parsed = T.unpack_packet(encoded(p), 1280, 720, 44)
         self.assertEqual(parsed["version"], 2)
         connection, _ = self.request(p)
         self.assertEqual(connection.replies[-1][0], 0)
@@ -351,7 +351,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn((p["pid"], p["session"]), self.transport.contexts)
 
     def test_disabled_transport_is_opt_in_and_allocates_no_gpu_pipeline(self):
-        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), 4096 * 4096)
+        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events))
         connection, result = self.request(packet())
         self.assertIsNone(result)
         self.assertEqual(connection.replies[-1][0], 1)

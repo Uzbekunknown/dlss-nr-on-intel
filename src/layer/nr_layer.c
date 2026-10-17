@@ -39,6 +39,38 @@
 #include "nr_surface_policy.h"
 #include "nr_gpu_bridge.h"
 #include "nr_gpu_rpc.h"
+/* The in-game settings menu. Windows-only by construction: on Linux the same settings are driven
+ * by `nr-panel`, which already exists, so these headers bring their own no-op arm and the layer
+ * compiles unchanged on both. */
+#include "nr_menu.h"
+#include "nr_menu_bridge.h"
+#include "nr_menu_ui.h"
+#include "nr_focus.h"
+/* The string tables and the codepoint collector: the UI's font atlas is built from the menu's own
+ * text, so this file needs to reach them. */
+#include "nr_menu_strings.h"
+#include "nr_menu_font.h"
+
+/* ------------------------------------------------------------------ diagnostics
+ *
+ * Two kinds of message, on the same rule nr_menu_ui.cpp follows.
+ *
+ * LAYER_ERROR is a real failure worth reporting to whoever is running the game. It always prints.
+ *
+ * LAYER_TRACE is development chatter - which of the menu's guards shut, a window handle, a swapchain
+ * pointer, how many rows were built. It compiles to nothing unless LAYER_TRACE_LOGGING is defined.
+ * These were written while the pointer conversion and the composite were being worked out, and they
+ * were `fprintf`s into the game's stderr: a released layer should not narrate itself into somebody
+ * else's process, and a handle plus a PID is not something to hand out for no reason.
+ *
+ * The per-frame ones matter most. `[mouse] x=... y=...` fired on every pointer move, unthrottled,
+ * while the user was playing. */
+#ifndef LAYER_TRACE_LOGGING
+#define LAYER_TRACE(...) ((void)0)
+#else
+#define LAYER_TRACE(...) fprintf(stderr, __VA_ARGS__)
+#endif
+#define LAYER_ERROR(...) fprintf(stderr, __VA_ARGS__)
 
 #ifdef _WIN32
 #  include <io.h>
@@ -51,8 +83,7 @@
 #  ifndef F_OK
 #    define F_OK 0
 #  endif
-#  ifndef access
-#    define access(p, m) _access(p, m)
+#  ifndef access#    define access(p, m) _access(p, m)
 #  endif
 #else
 #  include <pthread.h>
@@ -109,6 +140,12 @@ struct device_data {
 	VkPhysicalDevice physical;
 	VkQueue queue;
 	uint32_t queue_family;
+	/* A queue family the APPLICATION created, for the UI's own submissions. It is not necessarily
+	 * the presenting one - a submission there can sit behind a semaphore wait this layer has
+	 * already consumed - and it is not "the other number": a device may have been created with one
+	 * family only, which is what the present fixture does. Equal to `queue_family` when there is no
+	 * other family to use. See where it is filled in `nr_CreateDevice`. */
+	uint32_t ui_queue_family;
 	nr_mutex_t present_lock;
 	unsigned long frame_counter;
 	VkResult transfer_error, device_error;
@@ -165,6 +202,37 @@ struct device_data {
 	PFN_vkGetDeviceQueue2 get_device_queue2;
 	PFN_vkGetSwapchainImagesKHR get_swapchain_images;
 	PFN_vkDestroyDevice destroy_device;
+
+	/* The in-game settings menu, built on the first present of a swapchain that took STORAGE.
+	 * `menu_state` is 0 until it has been tried, 1 when it exists, -1 when it cannot be built
+	 * here - so a surface that cannot carry it is decided once rather than every frame.
+	 *
+	 * `menu_rows` and the strings behind them are the bridge's, refreshed once a frame while the
+	 * menu is open: the knob list lives in Python and this file must not keep a second copy. */
+	nr_menu *menu;
+	nr_menu_bridge *menu_bridge;
+	int menu_state;
+	const char *menu_reason;
+	int menu_language;
+	/* The menu's own recording, reused like `transfer_commands`. The fence is what makes reuse
+	 * safe: the wait completes the previous frame's menu before the next resets the buffer. */
+	VkCommandPool menu_pool;
+	uint32_t menu_pool_family;      /* the family menu_pool was created for */
+	VkCommandBuffer menu_commands;
+	VkFence menu_fence;
+	nrex_ui *menu_ui;               /* the ImGui UI, when it started; NULL means the quad path */
+	int menu_ui_l_was_down;         /* L's previous state: the language key is level-polled, so
+	                                 * cycling it needs an edge of its own */
+	int menu_ui_ins_was_down;       /* the same, for INS: the panel's only way in */
+	/* When this device's panel was last drawn, in seconds from the same clock `nrex_repeat`
+	 * uses, so ImGui's keyboard repeat is timed on the real interval between presents.
+	 *
+	 * Per device, not a file static: the layer runs several devices in one process (the
+	 * Vulkan loader hands a game's devices to the same layer), and two devices presenting
+	 * alternately would otherwise make each one's delta the time since the OTHER one drew
+	 * a panel - a value with nothing to do with its own present rate. Zero means "not drawn
+	 * yet", which is what makes the first frame fall back to the fixed step. */
+	double menu_ui_last_draw;
 };
 
 struct swapchain_data {
@@ -174,6 +242,10 @@ struct swapchain_data {
 	uint32_t image_count;
 	VkFormat format;
 	VkExtent2D extent;
+	/* The surface accepted VK_IMAGE_USAGE_STORAGE_BIT, so the in-game menu may write into
+	 * these images with a compute pass. Zero when it did not: the menu is then not built,
+	 * which is what keeps an unsupported surface usable without one. */
+	int storage_ok;
 	struct nr_surface_record surface;
 };
 
@@ -943,6 +1015,18 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 		data->destroy_device = (PFN_vkDestroyDevice)next_device(*device, "vkDestroyDevice");
 		data->queue_family = info->queueCreateInfoCount
 			? info->pQueueCreateInfos[0].queueFamilyIndex : 0;
+		/* The UI's queue comes from a family the application actually created. It used to be
+		 * `queue_family == 0 ? 1 : 0` - a guess that family 1 exists, which held for the game
+		 * (both families are created there) and not for anything that creates one. Validation
+		 * named it twice: vkGetDeviceQueue(1) and the UI's command pool, on a device created with
+		 * family 0 alone. Picking from the create infos costs nothing and is the thing the spec
+		 * asks for. */
+		data->ui_queue_family = data->queue_family;
+		for (uint32_t i = 0; i < info->queueCreateInfoCount; i++)
+			if (info->pQueueCreateInfos[i].queueFamilyIndex != data->queue_family) {
+				data->ui_queue_family = info->pQueueCreateInfos[i].queueFamilyIndex;
+				break;
+			}
 	}
 	nr_mutex_unlock(&lock);
 	return r;
@@ -950,7 +1034,19 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 
 /* The swapchain images are the frame we want, so they have to be copyable. The loader
  * lets a layer edit the create info on the way down; without TRANSFER_SRC the copy
- * below is invalid, and this is the one place it can be added. */
+ * below is invalid, and this is the one place it can be added.
+ *
+ * STORAGE goes on with it, for the in-game menu. The menu writes into the swapchain image
+ * with a compute pass, which needs the image to be a storage image - and a surface that
+ * refuses STORAGE must leave the menu switched off rather than fail on the first
+ * dispatch. So the two flags are asked for together but tracked apart: a surface that
+ * takes TRANSFER and not STORAGE keeps capture and loses the menu, which is the right way
+ * round because capture is what the daemon needs.
+ *
+ * What must NOT happen is writing a storage image the surface never agreed to: on the
+ * Intel driver that is a device loss, and on any driver a validation error. The menu
+ * refuses to build when the format cannot be one - see `format_supports_storage` in
+ * nr_menu.c, which asks the physical device the same question from the other side. */
 VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 						     const VkSwapchainCreateInfoKHR *info,
 						     const VkAllocationCallbacks *allocator,
@@ -962,6 +1058,28 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 				       | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	VkSwapchainCreateInfoKHR patched = *info;
 	patched.imageUsage |= copies;
+	/* The caps say whether the surface supports STORAGE; asking for a flag the surface does not
+	 * advertise makes vkCreateSwapchainKHR fail, and the fallback below would then lose the
+	 * transfer flags too and turn capture off. So STORAGE is only requested when the caps offer
+	 * it, and the menu is only built when it was. */
+	int storage_ok = 0;
+	{
+		/* Resolved here rather than cached: a swapchain is created a handful of times in a
+		 * session, and a pointer stored on the device would need invalidating when the instance
+		 * goes away - which this file has been bitten by before. */
+		PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR caps_fn =
+			(PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+			next_instance_proc(layer_instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+		if (caps_fn && data->physical) {
+			VkSurfaceCapabilitiesKHR caps;
+			memset(&caps, 0, sizeof caps);
+			if (caps_fn(data->physical, info->surface, &caps) == VK_SUCCESS
+			    && (caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT)) {
+				patched.imageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+				storage_ok = 1;
+			}
+		}
+	}
 	int copyable = 1;
 	VkResult r = data->create_swapchain(device, &patched, allocator, swapchain);
 	if (r != VK_SUCCESS) {
@@ -972,6 +1090,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 		 * the parallel ProjectsCodex tree checks the flags and we did not. */
 		copyable = (info->imageUsage & copies) == copies;
 		r = data->create_swapchain(device, info, allocator, swapchain);
+		storage_ok = 0;
 	}
 	if (r != VK_SUCCESS) return r;
 	if (!copyable) {
@@ -1004,6 +1123,10 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 		entry->device = device;
 		entry->format = info->imageFormat;
 		entry->extent = info->imageExtent;
+		/* Whether this surface took VK_IMAGE_USAGE_STORAGE_BIT, so the menu knows whether it
+		 * may write into these images. A surface that took transfer and not storage keeps
+		 * capture and loses the menu - see the comment above nr_CreateSwapchainKHR. */
+		entry->storage_ok = storage_ok;
 		entry->surface.handle = (uint64_t)*swapchain;
 		entry->surface.width = info->imageExtent.width;
 		entry->surface.height = info->imageExtent.height;
@@ -1308,6 +1431,33 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroyDevice(VkDevice device,
 			if (queues[i].device == device)
 				memset(&queues[i], 0, sizeof queues[i]);
 		nr_mutex_unlock(&lock);
+		/* Before the memset, which would otherwise drop the pointer and leak the menu.
+		 *
+		 * `nr_menu_bridge_destroy` is what removes the live preview, and the preview is the
+		 * daemon's view of what the user is trying RIGHT NOW - it has no meaning once this process
+		 * is gone. Leaving it behind is what made a Save look like it had not happened: a Reset
+		 * wrote the defaults there, the game exited with the panel open, and the next launch
+		 * overrode the saved settings with those stale defaults. The destroy call was reachable
+		 * only from the tests, so none of that cleanup ran in a real game - and the zeroing below
+		 * threw the pointer away, so nothing could have run it afterwards either. */
+		if (data->menu_bridge) {
+			nr_menu_bridge_destroy(data->menu_bridge);
+			data->menu_bridge = NULL;
+		}
+		/* The panel's Vulkan objects belong to this device and outlive every swapchain: its image,
+		 * view and memory, the atlas and quad buffers with theirs, the backend's command buffer,
+		 * and the two shader modules. NOTHING destroyed them - `nr_menu_create` and `nrex_create`
+		 * had no matching call in the tree, and the `memset` below dropped both pointers - so
+		 * validation's Object Tracking listed all fifteen at vkDestroyDevice. The bridge goes
+		 * first because the panel reads its rows through it. */
+		if (data->menu_ui) {
+			nrex_destroy(data->menu_ui);
+			data->menu_ui = NULL;
+		}
+		if (data->menu) {
+			nr_menu_destroy(data->menu);
+			data->menu = NULL;
+		}
 		memset(data, 0, sizeof *data);
 	}
 	if (next) next(device, allocator);
@@ -1737,6 +1887,969 @@ static int process_frame_async(struct device_data *data, struct swapchain_data *
 	return 0;
 }
 
+/* Where the settings file is. The same resolution the daemon spawn uses, in one place so the menu
+ * and the spawn cannot disagree about which file they mean - a menu writing a file the daemon is
+ * not reading would be silent, and it is the kind of split this project has already paid for.
+ *
+ * `NR_SETTINGS` first, then the platform default directory, which is what `nr_paths.SETTINGS`
+ * itself defaults to: `tempfile.gettempdir()` on Windows. */
+static void menu_settings_path(char *out, size_t size)
+{
+	const char *explicit = getenv("NR_SETTINGS");
+	if (explicit && *explicit) {
+		snprintf(out, size, "%s", explicit);
+		return;
+	}
+	char dir[1024];
+	nr_default_dir(dir, sizeof dir);
+	snprintf(out, size, "%s/nr_settings.json", dir);
+}
+
+/* The menu's resolver for instance-level functions.
+ *
+ * `next_instance_proc` is `vkGetInstanceProcAddr`, whose first argument is the INSTANCE. The menu
+ * has no instance - it is handed a device and a physical device and nothing else - so passing that
+ * function straight through meant the menu called it with a `VkPhysicalDevice` where a `VkInstance`
+ * belongs. Both are opaque 64-bit handles, so it compiled and then faulted inside the loader.
+ *
+ * This wrapper ignores whatever handle the menu passes and uses the layer's own instance, which is
+ * the one `next_instance_proc` was resolved against in the first place. The menu's contract stays
+ * "call the resolver with the handle you were given" and the layer decides what that means. */
+static void *menu_instance_resolver(void *handle, const char *name)
+{
+	(void)handle;
+	if (!next_instance_proc) return NULL;
+	return (void *)next_instance_proc(layer_instance, name);
+}
+
+/* The chain this device is presenting on. A device has one or two; the first is the one the
+ * game is drawing to, and the menu only ever needs the extent and the image to write. */
+static struct swapchain_data *chain_for(struct device_data *data)
+{
+	for (int i = 0; i < MAX_SWAPCHAINS; ++i)
+		if (swapchains[i].swapchain && swapchains[i].device == data->device)
+			return &swapchains[i];
+	return NULL;
+}
+
+/* The menu is opt-out: NR_MENU=0 for a game where even one GetAsyncKeyState a frame is unwelcome,
+ * and for anyone bisecting a problem they suspect is ours. Read once. */
+static int menu_enabled(void)
+{
+	const char *off = getenv("NR_MENU");
+	return !(off && strcmp(off, "0") == 0);
+}
+
+/* Build the menu and its bridge, on the first present that can carry them.
+ *
+ * Fails soft in every direction: a swapchain that did not take STORAGE, a format that cannot be a
+ * storage image, no font, no shader - each sets `menu_state` to -1 with a reason, the message goes
+ * to stderr once, and every later call returns on the first branch. A game with no menu is the
+ * game it was. */
+
+/* The image count the UI's backend wants. A swapchain's minimum is not tracked separately - the
+ * actual count is always >= it - so the one number this file has is the one it hands over. */
+static void *g_instance_for_ui(void) { return (void *)layer_instance; }
+
+/* The font the menu draws with, and the codepoints it has to cover.
+ *
+ * Read from the system font directory rather than shipped: Microsoft YaHei's regular face carries
+ * Latin, Cyrillic, Greek and the Chinese the menu's strings use, and a layer that reads the fonts
+ * Windows already has adds nothing to the repository or to a redistribution.
+ *
+ * The ranges are the ones the menu's own four languages need - Latin with the accents Spanish uses,
+ * Cyrillic, and the CJK block - computed once, not a blanket 0x20-0xFFFF: that would bake tens of
+ * thousands of glyphs into the atlas and it would take a visible moment to build. */
+static char *menu_ui_font_bytes(size_t *size_out)
+{
+	static const char *candidates[] = {
+		"C:\\Windows\\Fonts\\msyh.ttc",     /* Microsoft YaHei: Latin + Cyrillic + CJK */
+		"C:\\Windows\\Fonts\\simhei.ttf",   /* SimHei: a solid fallback for CJK */
+		"C:\\Windows\\Fonts\\segoeui.ttf",  /* Latin and Cyrillic, no CJK */
+		"C:\\Windows\\Fonts\\arial.ttf",
+	};
+	*size_out = 0;
+	for (size_t i = 0; i < sizeof candidates / sizeof candidates[0]; ++i) {
+		FILE *f = fopen(candidates[i], "rb");
+		if (!f) continue;
+		if (fseek(f, 0, SEEK_END) != 0) { fclose(f); continue; }
+		long len = ftell(f);
+		if (len <= 0) { fclose(f); continue; }
+		rewind(f);
+		char *buf = (char *)malloc((size_t)len);
+		if (!buf) { fclose(f); continue; }
+		if (fread(buf, 1, (size_t)len, f) != (size_t)len) { free(buf); fclose(f); continue; }
+		fclose(f);
+		*size_out = (size_t)len;
+		return buf;
+	}
+	return NULL;
+}
+
+/* Every codepoint the menu can draw, sorted and deduplicated.
+ *
+ * The three string tables are walked directly - labels, comparison names and hints, in every
+ * language - so the set is derived from the text that will actually be drawn rather than from a
+ * guess about which blocks it might need. Baking whole blocks instead is what blanked the text
+ * completely: the CJK block alone is 20992 glyphs, an atlas cannot hold them, and a font whose
+ * atlas fails to build leaves EVERY glyph empty rather than only the Chinese ones. */
+static int menu_ui_collect_codepoints(int *out, int max)
+{
+	int n = 0;
+	for (int lang = 0; lang < NR_MENU_LANG_COUNT; ++lang) {
+		for (int key = 0; key < NR_MENU_KEY_COUNT; ++key)
+			n = nr_font_collect_cjk(nr_menu_strings[lang][key], out, n, max);
+		for (int mode = 0; mode < NR_MENU_COMPARE_COUNT; ++mode)
+			n = nr_font_collect_cjk(nr_menu_compare_names[lang][mode], out, n, max);
+		for (int knob = 0; knob < NR_MENU_KNOB_COUNT; ++knob)
+			n = nr_font_collect_cjk(nr_menu_hints[lang][knob], out, n, max);
+	}
+	/* Sort, then drop duplicates: the UI turns each run of consecutive values into one range pair,
+	 * so an unsorted list would produce a range per codepoint and no packing at all. */
+	for (int i = 1; i < n; ++i) {
+		int v = out[i], j = i - 1;
+		while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; --j; }
+		out[j + 1] = v;
+	}
+	int unique = 0;
+	for (int i = 0; i < n; ++i)
+		if (i == 0 || out[i] != out[i - 1]) out[unique++] = out[i];
+	return unique;
+}
+
+static uint32_t chain_image_count(struct swapchain_data *c)
+{
+	return c && c->image_count ? c->image_count : 2;
+}
+
+static void menu_build(struct device_data *data, struct swapchain_data *chain)
+{
+	if (data->menu_state) return;
+	data->menu_state = -1;
+
+	/* The surface's own answer, from when the swapchain was created. Without STORAGE the images
+	 * cannot be written by a compute pass, and asking anyway is a device loss. */
+	if (!chain->storage_ok) {
+		data->menu_reason = "this surface does not support storage images";
+		fprintf(stderr, "[nr_layer] no settings menu: %s\n", data->menu_reason);
+		return;
+	}
+
+	/* Two resolvers, because Vulkan splits them: the physical-device queries come through the
+	 * instance, everything else through the device. The layer has both already, and passing them
+	 * keeps the menu from linking a loader of its own. */
+	data->menu = nr_menu_create(data->device, data->physical, data->queue_family,
+				    (uint32_t)chain->format,
+				    (nr_menu_resolve_fn)data->get_device_proc,
+				    (nr_menu_resolve_fn)menu_instance_resolver,
+				    &data->menu_reason);
+	if (!data->menu) {
+		fprintf(stderr, "[nr_layer] no settings menu: %s\n",
+			data->menu_reason ? data->menu_reason : "unknown");
+		return;
+	}
+
+	data->menu_state = 1;
+
+	/* The ImGui UI. Created here because this is the first moment the device, the queue family and
+	 * the swapchain's image counts are all in hand; it borrows the layer's device and owns its own
+	 * images. A failure leaves `menu_ui` NULL and the quad path serves the frame instead, which is
+	 * the same "the menu is a feature, not a dependency" rule the rest of this file follows. */
+	{
+		const char *ui_why = NULL;
+		size_t font_size = 0;
+		char *font = menu_ui_font_bytes(&font_size);
+		static int codepoints[NR_FONT_MAX_CODEPOINTS];
+		int codepoint_count = menu_ui_collect_codepoints(codepoints, NR_FONT_MAX_CODEPOINTS);
+		uint32_t ui_family_out = data->queue_family;
+		/* One queue of the presenting family, for the backend's own submissions. Leaving this
+		 * NULL makes the backend resolve a queue itself and wait forever on the font upload:
+		 * the game hung inside its present exactly there. */
+		VkQueue ui_queue = VK_NULL_HANDLE;
+		/* A queue from a family the device was created with, OTHER than the presenting family when
+		 * there is one. The presenting family is the one this layer binds its semaphore contract
+		 * to - a submission that lands there can sit forever behind a wait the layer has already
+		 * consumed - and the device hands out one queue per family, which is what 'families {0,1}'
+		 * in the log means. The copy family has no such contract, so the backend's font upload goes
+		 * there, and the backend is told that family too, so its command pool matches the queue it
+		 * submits to. When the device has only one family there is no such choice, and the
+		 * presenting one is used rather than a number that was never created. */
+		uint32_t ui_family = data->ui_queue_family;
+		data->get_device_queue(data->device, ui_family, 0, &ui_queue);
+		ui_family_out = ui_family;
+		data->menu_ui = nrex_create(data->device, data->physical, (void *)layer_instance,
+					    (void *)ui_queue, ui_family_out,
+					    (uint32_t)chain->format, 420u << 12,
+					    chain_image_count(chain), chain_image_count(chain),
+					    (void *)(uintptr_t)data->get_device_proc,
+					    (void *)(uintptr_t)next_instance_proc,
+					    font, font_size, codepoints, codepoint_count, &ui_why);
+		/* NOT freed here. AddFontFromMemoryTTF adopts the buffer (FontData with
+		 * FontDataOwnedByAtlas left true) and frees it when the atlas is destroyed - freeing it
+		 * on this side too was a double free, which is the access violation this menu hit the
+		 * moment a font was supplied. Ownership transferred, so the pointer is not touched again;
+		 * if the UI never asked for it, the buffer is freed here instead. */
+		if (!data->menu_ui) free(font);
+		/* next_instance_proc needs the instance; g_instance_for_ui hands it over inside the
+		 * resolver the UI was given, so the two together reach the instance-level commands. */
+		if (data->menu_ui) {
+			/* ImGui owns the panel now, so this file stops reading the panel's keys. Leaving both
+			 * readers on is what made one keypress act twice - Enter opening a combo while the
+			 * bridge stepped the value, INS toggling the panel twice per press. */
+			nr_menu_set_key_reading(data->menu, 0);
+		} else {
+			fprintf(stderr, "[nr_layer] no ImGui UI (%s); the quad menu serves instead\n",
+				ui_why ? ui_why : "unknown");
+		}
+	}
+
+	/* A documented test hook: open the panel as soon as it exists, so the draw path can be
+	 * exercised without a keyboard. Off unless asked for. */
+	{
+		const char *forced = getenv("NR_MENU_OPEN");
+		if (forced && *forced && strcmp(forced, "0") != 0)
+			nr_menu_inject_open(data->menu, 1);
+	}
+
+	char settings[1088];
+	menu_settings_path(settings, sizeof settings);
+	data->menu_bridge = nr_menu_bridge_create(data->menu, settings, data->menu_language);
+	if (data->menu_bridge)
+		fprintf(stderr, "[nr_layer] settings menu ready; INS opens it (%s)\n", settings);
+	else
+		fprintf(stderr, "[nr_layer] settings menu ready; INS opens it\n");
+}
+
+
+
+/* Read the keyboard and act on it. No GPU work, no allocation, no submit: a handful of
+ * `GetAsyncKeyState` calls.
+ *
+ * Separate from drawing because the two have different costs and different frequencies. The keys
+ * have to be read every frame - the NR toggle and the compare key act with the menu closed, and a
+ * toggle that only worked while the menu was open would be useless. Drawing only has to happen
+ * when something is on screen.
+ *
+ * Returns 1 when the frame needs a composite. */
+/* The rows the bridge already produces, in the shape the ImGui UI wants.
+ *
+ * A conversion, not a second source of truth: `nr_menu_bridge_row_label/value` are the same strings
+ * the hand-drawn menu drew, built from `nr_menu_text` and the live knob values. The bridge keeps
+ * ownership; this fills a stack array of views into it for the duration of the frame. */
+#define MENU_UI_MAX_ROWS 24
+/* The widest option list any knob has, with room to spare. */
+#define MENU_UI_MAX_CHOICES 8
+
+static int menu_ui_rows(struct device_data *data, nrex_row *out, int capacity)
+{
+	int n = 0;
+	if (!data->menu_bridge) return 0;
+	/* One option-name array and one set of name buffers per row, so two choice knobs cannot
+	 * overwrite each other's list and no entry is a pointer into shared scratch. */
+	static const char *names[MENU_UI_MAX_ROWS][MENU_UI_MAX_CHOICES];
+	static char name_storage[MENU_UI_MAX_ROWS][MENU_UI_MAX_CHOICES][NR_KNOB_CHOICE_NAME_SIZE];
+	int language = nr_menu_bridge_language(data->menu_bridge);
+	int count = nr_menu_bridge_row_count(data->menu_bridge);
+	for (int i = 0; i < count && n < capacity && i < MENU_UI_MAX_ROWS; ++i) {
+		nrex_row *r = &out[n];
+		memset(r, 0, sizeof *r);
+		r->label = nr_menu_bridge_row_label(data->menu_bridge, i, language);
+		r->value = nr_menu_bridge_row_value(data->menu_bridge, i);
+		/* What the row means, shown when the pointer rests on it. Same source as the installer's
+		 * tooltip, so the two cannot explain a knob differently. */
+		r->hint = nr_menu_bridge_row_hint(data->menu_bridge, i, language);
+
+		/* The knob's own kind decides the control. Every row used to be built as a float, which is
+		 * why `profile` - the one choice knob - drew as a slider reading 0.000 and could not be
+		 * switched: its value is a word, not a number. */
+		int choice_count = nr_menu_bridge_knob_choice_count(i);
+		if (choice_count > 0) {
+			r->kind = NREX_KIND_CHOICE;
+			r->choice_count = choice_count;
+			r->choice_index = nr_menu_bridge_knob_choice_index(data->menu_bridge, i);
+			/* ImGui wants `const char* const*`, one array per row and the strings themselves
+			 * alongside: a single shared array would be overwritten by the next choice row, and a
+			 * shared name buffer would make every entry the same string. */
+			for (int c = 0; c < choice_count && c < MENU_UI_MAX_CHOICES; ++c) {
+				nr_menu_bridge_knob_choice_name(i, c, name_storage[i][c],
+								sizeof name_storage[i][c]);
+				names[i][c] = name_storage[i][c];
+			}
+			names[i][choice_count < MENU_UI_MAX_CHOICES ? choice_count : MENU_UI_MAX_CHOICES - 1] = NULL;
+			r->choices = (const char *const *)names[i];
+		} else {
+			float low = 0.0f, high = 1.0f, step = 0.01f;
+			if (nr_menu_bridge_knob_range(i, &low, &high, &step, NULL) == 0) {
+				low = 0.0f; high = 1.0f; step = 0.01f;
+			}
+			r->kind = NREX_KIND_FLOAT;
+			r->min = low;
+			r->max = high;
+			r->step = step;
+		}
+		n++;
+	}
+	return n;
+}
+
+/* The keyboard, swept whole.
+ *
+ * This walked a hand-written list - the arrows, Enter, Escape and the five letters the old menu
+ * bound. Digits were not in it, so `nrex_key` was never called for `0`..`9`, `ToUnicode` never ran
+ * for them, and the field the panel offers showed a caret and refused every keystroke. A platform
+ * backend receives every key and lets the UI decide; a key ImGui has no use for is dropped inside
+ * `nrex_key`, which costs one dispatch per key and nothing else. */
+static void menu_ui_keys(struct device_data *data)
+{
+	if (!data->menu_ui) return;
+	for (int vk = 0; vk < 256; ++vk)
+		nrex_key(data->menu_ui, vk, (GetAsyncKeyState(vk) & 0x8000) != 0);
+}
+
+/* Whether the game's window is the one the user is actually working in.
+ *
+ * This is the gate OptiScaler puts in front of its whole input feed, and it is the thing this layer
+ * was missing. Without it the panel read the SYSTEM-WIDE cursor position and button state every
+ * frame, so using any other window while the game sat behind it drove the menu: dragging a
+ * progress bar elsewhere moved a slider, selecting text elsewhere selected a row, clicking a title
+ * bar elsewhere moved the panel. The user's report was exactly that, and it is not a subtle bug -
+ * it makes the panel unusable whenever the game is not in front, which is most of the time on a
+ * desktop.
+ *
+ * OptiScaler learns this from `WM_SETFOCUS`/`WM_KILLFOCUS` because it subclasses the game's
+ * `WndProc` (menu/input/input_system_messages.cpp). A Vulkan layer has no window procedure to
+ * subclass, so the same fact is asked for directly: the foreground window is compared against the
+ * one this process owns. `GetForegroundWindow` is system-wide and needs no message pump, which is
+ * the same reason the key reading uses `GetAsyncKeyState`.
+ *
+ * The comparison is by process, not by handle, because a game can present from a child or a
+ * sibling window - the same reason `window_is_ours` exists. */
+static int window_is_foreground(HWND hwnd)
+{
+	return nr_window_is_foreground((void *)hwnd);
+}
+
+/* The game's window, for the pointer conversion.
+ *
+ * The layer has no window and no message pump - it lives inside the game's process - so the handle
+ * comes from the GUI thread's active window, which is the one the user is looking at. */
+/* Our own process's window: the process, not the thread.
+ *
+ * `GetWindowThreadProcessId(h, NULL)` returns a THREAD id and it was being compared against
+ * `GetCurrentThreadId()`. Those agree only when the window was created by the calling thread - and
+ * this layer's present runs on the game's rendering thread while the window belongs to whichever
+ * thread the game created it on. Almost every game has those be different, so every window was
+ * rejected and the panel never received a pointer position. The question the check means to ask is
+ * "is this our process's window", which is a process comparison. */
+static int window_is_ours(HWND h)
+{
+	return nr_window_is_ours((void *)h);
+}
+
+/* Enumerate this process's own top-level windows, for the fallback below. */
+static BOOL CALLBACK nr_window_enum_proc(HWND h, LPARAM param)
+{
+	HWND *found = (HWND *)param;
+	if (!found) return FALSE;
+	if (!IsWindowVisible(h)) return TRUE;
+	/* The client area has to be big enough to be a game.
+	 *
+	 * `GetClientRect` on a hidden or not-yet-realised helper returns 1x1, and the first version of
+	 * this accepted exactly that and reported `client=1x1 origin=(0,0)` - so every pointer position
+	 * mapped to a coordinate in a window nobody can see. A real game surface is hundreds of pixels
+	 * across; anything smaller than this is a helper. */
+	RECT r;
+	if (!GetClientRect(h, &r)) return TRUE;
+	if (r.right - r.left < 64 || r.bottom - r.top < 64) return TRUE;
+	if (!found[0]) found[0] = h;
+	/* Prefer the largest: a game may own a small overlay window too, and the swapchain is on the
+	 * big one. */
+	if (found[1]) {
+		RECT best;
+		if (GetClientRect(found[1], &best)) {
+			long area = (long)(r.right - r.left) * (r.bottom - r.top);
+			long best_area = (long)(best.right - best.left) * (best.bottom - best.top);
+			if (area <= best_area) return TRUE;
+		}
+	}
+	found[1] = h;
+	return TRUE;
+}
+
+static HWND window_for_thread_for_ui(void)
+{
+	/* The window the user is looking at, if it is ours. */
+	HWND h = GetForegroundWindow();
+	if (window_is_ours(h)) return GetAncestor(h, GA_ROOT);
+
+	/* Ours but unfocused: still the game's window, and the panel still wants the pointer. */
+	h = GetActiveWindow();
+	if (window_is_ours(h)) return GetAncestor(h, GA_ROOT);
+
+	/* Last resort: whatever is under the cursor, walked up to its top-level window. */
+	POINT p;
+	if (GetCursorPos(&p)) {
+		h = WindowFromPoint(p);
+		if (window_is_ours(h)) return GetAncestor(h, GA_ROOT);
+	}
+
+	/* Nothing above is guaranteed.
+	 *
+	 * The three probes all ask "which window is the user's", and every one of them can answer with
+	 * something that is not this process: a game that is loading, a launcher still in front, an
+	 * overlay that took the foreground, or a `SetForegroundWindow` that the OS refused. When that
+	 * happens the panel draws - it needs no pointer to draw - and silently receives no input at
+	 * all, which reads as "the mouse is broken" with the log saying only "no window".
+	 *
+	 * Enumerating is the honest fallback: this process's own visible, client-bearing top-level
+	 * window is the game, whichever one happens to be in front. */
+	{
+		/* Two slots: the first acceptable window, and the largest seen. The caller wants the
+		 * largest, because a game can own a small overlay window as well as its swapchain. */
+		HWND found[2] = { NULL, NULL };
+		EnumWindows(nr_window_enum_proc, (LPARAM)found);
+		if (found[1]) return found[1];
+		if (found[0]) return found[0];
+	}
+	return NULL;
+}
+
+/* The mouse, in the menu's own coordinate space.
+ *
+ * The screen position is converted to the game's client area and scaled to the swapchain extent,
+ * because ImGui draws in image pixels: passing raw screen coordinates would put every click
+ * somewhere other than the pointer. The layer never captures or hides the cursor - it is a guest in
+ * the game's window and the game keeps its input.
+ *
+ * `io.AddMouse*` rather than assigning the fields: ImGui consumes queued input once a frame, and
+ * writing the fields directly is documented as wrong for anything but a fixed test harness. */
+static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain)
+{
+	/* Each guard reports itself once. Four silent returns and one trace line on the far side of
+	 * them is exactly the shape of a bug that costs an evening: the log says "nothing arrived" and
+	 * says nothing about which of the four doors was shut. */
+	static int said[8];
+#define UI_MOUSE_STOP(n, msg) do { if (!said[n]) { said[n] = 1; LAYER_TRACE("[mouse] stopped: " msg "\n"); } return; } while (0)
+
+	if (!data->menu_ui) UI_MOUSE_STOP(0, "no UI");
+
+	/* The gate. While another window is in front, the panel is fed NOTHING.
+	 *
+	 * This is the whole fix for "using any other window drives the menu": the cursor position and
+	 * the button state below are system-wide, so without this test a drag in a browser moved a
+	 * slider and a click in Explorer moved the panel. OptiScaler's `FeedImGui` does the same thing
+	 * for the same reason - when the game is not focused it reports "no position", clears the
+	 * modifiers and returns before touching any widget.
+	 *
+	 * The window is resolved first so the focus test has something to compare against. */
+	HWND hwnd = window_for_thread_for_ui();
+	if (!hwnd) UI_MOUSE_STOP(2, "no window for this process");
+	if (!window_is_foreground(hwnd)) {
+		/* "No position" rather than the last one: leaving a stale position would let a click that
+		 * arrives on the very frame focus is regained land on whatever was under the pointer when
+		 * the user left. The modifiers are cleared for the same reason - the user may have held
+		 * Ctrl+Tab in the other window and released it there. */
+		nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
+		nrex_set_software_cursor(data->menu_ui, 0);
+		return;
+	}
+
+	POINT screen = {0, 0};
+	if (!GetCursorPos(&screen)) UI_MOUSE_STOP(1, "GetCursorPos failed");
+
+	/* Where the game's client area is on screen, and how large. */
+	POINT origin = {0, 0};
+	if (!ClientToScreen(hwnd, &origin)) UI_MOUSE_STOP(3, "ClientToScreen failed");
+	RECT client = {0, 0, 0, 0};
+	GetClientRect(hwnd, &client);
+
+	float cw = (float)(client.right - client.left);
+	float ch = (float)(client.bottom - client.top);
+	if (cw <= 0.0f || ch <= 0.0f) {
+		if (!said[4]) {
+			said[4] = 1;
+			LAYER_TRACE("[mouse] stopped: client area is %.0fx%.0f\n", cw, ch);
+		}
+		return;
+	}
+	if (!said[5]) {
+		said[5] = 1;
+		DWORD pid = 0;
+		GetWindowThreadProcessId(hwnd, &pid);
+		LAYER_TRACE("[mouse] window ok: hwnd=%p pid=%lu client=%.0fx%.0f "
+				"origin=(%ld,%ld) cursor=(%ld,%ld)\n",
+				(void *)hwnd, (unsigned long)pid, cw, ch,
+				(long)origin.x, (long)origin.y, (long)screen.x, (long)screen.y);
+	}
+#undef UI_MOUSE_STOP
+
+	/* Client pixels -> swapchain pixels. A game rendering at a lower resolution than its window is
+	 * the common case, and this is what keeps the pointer aligned when it does. */
+	float sx = (float)chain->extent.width / cw;
+	float sy = (float)chain->extent.height / ch;
+	float x = ((float)screen.x - (float)origin.x) * sx;
+	float y = ((float)screen.y - (float)origin.y) * sy;
+
+	int down = (GetAsyncKeyState(0x01) & 0x8000) != 0;
+	nrex_mouse(data->menu_ui, x, y, down);
+
+	/* And whether the menu has to draw the pointer itself.
+	 *
+	 * The game owns the OS cursor: ShowCursor is a per-process counter it can leave off, and a
+	 * fullscreen title usually paints its own or confines the hardware one. Neither is something a
+	 * layer can undo, so when Windows says the cursor is not showing, the panel draws one. Asked
+	 * every frame because the game shows and hides it as it likes.
+	 *
+	 * The hint goes with it, and it is not the same thing as the position above: that one is
+	 * "no position" outside the image, so a widget is never hovered from off-panel. ImGui draws its
+	 * cursor only when it HAS a position, so without the hint the fallback arrow appeared only over
+	 * the panel - the one place the user is not looking for it. */
+	CURSORINFO ci;
+	ci.cbSize = sizeof ci;
+	int cursor_visible = GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING);
+	nrex_set_software_cursor(data->menu_ui, !cursor_visible);
+	if (!cursor_visible)
+		nrex_cursor_hint(data->menu_ui, x, y);
+}
+
+static int menu_read_keys(struct device_data *data)
+{
+	if (!data->menu) return 0;
+
+	/* The keyboard is system-wide too, so the ImGui feed gets the same gate as the pointer.
+	 *
+	 * Without this, typing in any other window while the game sat behind it pressed keys in the
+	 * panel: an `L` in a chat box cycled the language, an arrow in a document moved a slider.
+	 *
+	 * **Only the ImGui feed is gated.** INS, L and the NR toggle are the LAYER's own hotkeys, read
+	 * further down, and they have to keep working - opening the panel is what the user does when the
+	 * game is NOT in front, and the NR toggle is meant to work over the game while another window
+	 * has focus. Returning early here skipped all of them, which made the panel impossible to open;
+	 * feeding "all keys up" instead is what the ImGui path needs, and it leaves the hotkeys alone.
+	 *
+	 * The sweep is skipped rather than fed as releases for the same reason: 256 release events are
+	 * not a state change ImGui needs, and `nrex_mouse` already reports the pointer gone. */
+	int foreground = window_is_foreground(window_for_thread_for_ui());
+	if (data->menu_ui) {
+		if (foreground) {
+			menu_ui_keys(data);
+		} else {
+			/* Clear whatever the panel was holding, so nothing stays pressed or dragged while the
+			 * user is working in another window. */
+			nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
+		}
+	}
+
+	/* L cycles the language. The combo in the panel's footer sets it too, and both go through
+	 * `nr_menu_inject_language`, so the panel and the settings file cannot disagree - the
+	 * injector raises the same flag the bridge already watches, which re-translates every row
+	 * and rewrites the file. There is no second path that could translate differently.
+	 *
+	 * Edge-triggered here because this is a level poll: without the latch a held L would step the
+	 * language once per presented frame and blur through all four in a fraction of a second. */
+	if (data->menu && data->menu_ui) {
+		int down = (GetAsyncKeyState('L') & 0x8000) != 0;
+		if (down && !data->menu_ui_l_was_down)
+			nr_menu_inject_language(data->menu,
+						(nr_menu_language(data->menu) + 1) % NR_MENU_LANG_COUNT);
+		data->menu_ui_l_was_down = down;
+	}
+
+	/* INS opens and closes the panel.
+	 *
+	 * `nr_menu.c`'s own reader does this for the hand-drawn menu, and the ImGui build switches that
+	 * reader OFF so the two do not both act on one keypress - which left INS bound to nothing at
+	 * all and the panel unreachable without `NR_MENU_OPEN`. The key is the panel's only way in, so
+	 * the ImGui path has to own it here.
+	 *
+	 * Edge-triggered for the same reason as L: this is a level poll, and a held INS would toggle the
+	 * panel once per presented frame. */
+	if (data->menu_ui) {
+		int down = (GetAsyncKeyState(0x2D) & 0x8000) != 0;
+		if (down && !data->menu_ui_ins_was_down)
+			nr_menu_inject_open(data->menu, !nr_menu_is_open(data->menu));
+		data->menu_ui_ins_was_down = down;
+	}
+
+	if (data->menu_bridge) {
+		int state = nr_menu_bridge_update(data->menu_bridge, 1.0f / 60.0f);
+		if (state == 2)
+			fprintf(stderr, "[nr_layer] settings menu %s\n",
+				nr_menu_is_open(data->menu) ? "open" : "closed");
+	} else {
+		nr_menu_update(data->menu, 1.0f / 60.0f);
+	}
+
+	/* The toggle moves the trigger the layer already reads every frame. The menu reports the
+	 * press and this is what acts on it, because the trigger is the layer's. */
+	if (nr_menu_take_toggle_request(data->menu) && trigger_path && *trigger_path) {
+		if (access(trigger_path, F_OK) == 0) {
+			remove(trigger_path);
+		} else {
+			FILE *f = fopen(trigger_path, "wb");
+			if (f) fclose(f);
+		}
+	}
+
+	/* Tell the menu whether NR is on, so its status line is the truth rather than a guess. */
+	nr_menu_set_nr_enabled(data->menu,
+			       trigger_path && access(trigger_path, F_OK) == 0);
+
+	{
+		int need = nr_menu_needs_composite(data->menu);
+		return need;
+	}
+}
+
+/* The menu's own command buffer, its fence, and one submit. See the note above on why it owns no
+ * semaphores.
+ *
+ * Returns 1 when the frame was drawn, 0 when there was nothing to record or the recording failed -
+ * in which case the frame presents without a menu, which is a missing menu rather than a lost
+ * game. */
+static int menu_composite(struct device_data *data, struct swapchain_data *chain, VkQueue queue,
+                          uint32_t index)
+{
+	if (!data->menu || data->device_error || data->transfer_error) return 0;
+	if (index >= chain->image_count) return 0;
+	if (!chain->storage_ok) return 0;
+
+#define FN(type, name) type name = (type)data->get_device_proc(data->device, "vk" #name)
+	FN(PFN_vkAllocateCommandBuffers, AllocateCommandBuffers);
+	FN(PFN_vkResetCommandBuffer, ResetCommandBuffer);
+	FN(PFN_vkBeginCommandBuffer, BeginCommandBuffer);
+	FN(PFN_vkEndCommandBuffer, EndCommandBuffer);
+	FN(PFN_vkCmdPipelineBarrier, CmdPipelineBarrier);
+	FN(PFN_vkQueueSubmit, QueueSubmit);
+	FN(PFN_vkCreateFence, CreateFence);
+	FN(PFN_vkResetFences, ResetFences);
+	FN(PFN_vkWaitForFences, WaitForFences);
+	FN(PFN_vkFreeCommandBuffers, FreeCommandBuffers);
+#undef FN
+
+	/* Allocated once and reused, like `transfer_commands`: an allocation a frame is an allocation
+	 * on the present path. The fence is what makes reuse safe - the wait below completes the
+	 * previous frame's menu before this one resets its buffer. */
+	/* A pool of the menu's own, not `data->pool`.
+	 *
+	 * `data->pool` belongs to the capture path: `transfer()` creates it lazily, and `transfer()`
+	 * only runs while the layer is capturing - which needs the trigger to exist. The menu has
+	 * nothing to do with capture, so on a game where NR is idle the pool is still VK_NULL_HANDLE
+	 * when the menu first draws, and `vkAllocateCommandBuffers` with a null pool faults inside the
+	 * loader. That was this menu's crash: an access violation reading 0x70, which is a field of
+	 * the dispatch table behind a NULL handle.
+	 *
+	 * One pool for one command buffer, created on first use and destroyed with the rest. */
+#define FN2(type, name) type name = (type)data->get_device_proc(data->device, "vk" #name)
+	FN2(PFN_vkCreateCommandPool, CreateCommandPool);
+	FN2(PFN_vkDestroyCommandPool, DestroyCommandPool);
+#undef FN2
+	if (!CreateCommandPool) return 0;
+
+	/* One pool per queue family, rebuilt when the family changes.
+	 *
+	 * A command pool belongs to a family for its whole life and its command buffers may only be
+	 * submitted to a queue of that family. The layer reassigns `data->queue_family` at present time
+	 * when the presenting queue is a different one, and frees the CAPTURE pool there
+	 * (`release_transfer_resources`) for exactly this reason - the menu's pool was not included, so
+	 * it went stale. A submit from a stale pool is accepted by the loader and does nothing, which is
+	 * what the readback found: no pixel of the panel anywhere in the image, no error, no crash. */
+	if (data->menu_pool && data->menu_pool_family != data->queue_family) {
+		/* The command buffer came from this pool; the fence has already been waited, so both are
+		 * finished with. */
+		if (data->menu_commands && DestroyCommandPool) {
+			data->menu_commands = VK_NULL_HANDLE;
+		}
+		if (DestroyCommandPool) DestroyCommandPool(data->device, data->menu_pool, NULL);
+		data->menu_pool = VK_NULL_HANDLE;
+	}
+	if (!data->menu_pool) {
+		VkCommandPoolCreateInfo pci = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+			.queueFamilyIndex = data->queue_family };
+		if (CreateCommandPool(data->device, &pci, NULL, &data->menu_pool) != VK_SUCCESS)
+			return 0;
+		data->menu_pool_family = data->queue_family;
+	}
+	if (!data->menu_commands) {
+		VkCommandBufferAllocateInfo alloc = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = data->menu_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1 };
+		if (AllocateCommandBuffers(data->device, &alloc, &data->menu_commands) != VK_SUCCESS)
+			return 0;
+		if (data->set_loader_data &&
+		    data->set_loader_data(data->device, data->menu_commands) != VK_SUCCESS) {
+			data->menu_commands = VK_NULL_HANDLE;
+			return 0;
+		}
+	}
+	if (!data->menu_fence) {
+		VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+		if (CreateFence(data->device, &fi, NULL, &data->menu_fence) != VK_SUCCESS) return 0;
+	} else if (ResetFences(data->device, 1, &data->menu_fence) != VK_SUCCESS) {
+		data->device_error = VK_ERROR_DEVICE_LOST;
+		return 0;
+	}
+	if (ResetCommandBuffer(data->menu_commands, 0) != VK_SUCCESS) return 0;
+
+	VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+	if (BeginCommandBuffer(data->menu_commands, &bi) != VK_SUCCESS) return 0;
+
+	/* The image is the game's, and the presentation engine may still be reading the previous
+	 * frame from it. Up to GENERAL for the stores, and back to PRESENT_SRC_KHR at the end - the
+	 * layout the game left it in, so a frame with a menu on it presents like any other. */
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = chain->images[index],
+		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+	CmdPipelineBarrier(data->menu_commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+
+	/* The comparison first, so the panel sits over it. The reference is the layer's staging
+	 * buffer, which holds the game's own frame from this present - which is what makes the wipe a
+	 * comparison of two frames rather than a cut in one. */
+	if (nr_menu_compare_mode(data->menu) != NR_MENU_COMPARE_OFF) {
+		/* The staging buffer is what the layer copies the game's frame into, so it holds the
+		 * picture before NR wrote its result back - which is what makes the wipe a comparison of
+		 * two frames rather than a cut in one. Zero when there is no staging buffer, and the menu
+		 * then cuts the image against itself. */
+		uint64_t reference = (data->staging && data->mapped)
+			? (uint64_t)(uintptr_t)data->staging : 0;
+		nr_menu_draw_compare(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
+				     (uint64_t)(uintptr_t)chain->images[index], reference,
+				     chain->extent.width, chain->extent.height);
+	}
+	if (data->menu_ui) {
+		/* The ImGui path: build the frame, convert the bridge's rows, render into the UI's own
+		 * image, then blend that image onto the game's - which is the step that was missing when
+		 * the backend reported itself started and the screen stayed clean. */
+		nrex_row rows[MENU_UI_MAX_ROWS];
+		int count = menu_ui_rows(data, rows, MENU_UI_MAX_ROWS);
+
+		/* The UI image follows the swapchain.
+		 *
+		 * It used to be made once at 640x360 and never touched again, while `nrex_new_frame` below
+		 * was told the swapchain's CURRENT extent every frame. After a resolution change the two
+		 * disagreed: ImGui laid the panel out for the new size and drew it into an image of the old
+		 * one, so the panel was clipped to the old rectangle - the part past 640x360 simply was not
+		 * there, and the blend sampled an image the shader was told was a different size.
+		 *
+		 * Checked every frame because it is one comparison, and because there is no resize EVENT
+		 * here to hang it on: a Vulkan layer learns the extent from the swapchain it is presenting,
+		 * and `chain->extent` is updated by the layer's own `vkCreateSwapchainKHR` hook. A game can
+		 * also change the extent without recreating anything (a borderless window drag), which is
+		 * the case a "recreate on swapchain creation" hook would miss. */
+		if (nrex_image_width(data->menu_ui) != chain->extent.width ||
+		    nrex_image_height(data->menu_ui) != chain->extent.height) {
+			/* The previous frame has to be finished before the image is destroyed.
+			 *
+			 * `nrex_resize` frees the UI image and makes a new one, and the frame before this one
+			 * was still reading it: ImGui draws into it and the blend pass samples it, and both are
+			 * queued behind `menu_fence` until the wait at the end of this function. Destroying an
+			 * image the GPU is still reading is undefined - it shows up as a corrupt panel, a
+			 * device loss, or nothing at all, depending on the driver.
+			 *
+			 * `WaitForFences` on the menu's own fence is the completion point for exactly that work,
+			 * and it is what the end of this function uses for the same reason. Waiting twice is
+			 * harmless: the second wait sees an already-signalled fence and returns at once.
+			 *
+			 * Skipped when there is no fence yet - the first frame, where there is nothing in flight
+			 * to wait for. */
+			if (data->menu_fence)
+				WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE,
+					      1000000000ull);
+			if (!nrex_resize(data->menu_ui, chain->extent.width, chain->extent.height)) {
+				fprintf(stderr, "[nr_layer] the UI image would not resize to %ux%u; "
+						"keeping %ux%u\n", chain->extent.width, chain->extent.height,
+					nrex_image_width(data->menu_ui), nrex_image_height(data->menu_ui));
+			}
+		}
+
+		/* The pointer, before NewFrame: ImGui consumes queued input when the frame opens. */
+		menu_ui_mouse(data, chain);
+		/* Seconds since THIS device's panel was last drawn, not a fixed step.
+		 *
+		 * ImGui's OWN keyboard repeat is timed on `io.DeltaTime`, and a fixed 1/60 here ties that
+		 * repeat to the present rate: measured on the panel's own frames, a held Down moved the
+		 * selection once per second at 240 frames and about ten times per second at 60 - so the
+		 * selection's speed depends on how many frames a second the game draws, which is not what a
+		 * keypress means. The panel's value repeat (`nrex_repeat`) is unaffected: it is already on a
+		 * wall clock, so this changes only the half that was wrong.
+		 *
+		 * The stamp is `data->menu_ui_last_draw`, per device: two devices presenting alternately
+		 * would otherwise feed each one the other's interval. Clamped at a quarter second, so a load
+		 * hitch or an alt-tab does not arrive as a multi-second delta that re-targets focus half the
+		 * panel away. */
+		float dt = 1.0f / 60.0f;
+		{
+			static int have_frequency;
+			static LARGE_INTEGER cached;
+			LARGE_INTEGER counter;
+			double now = 0.0;
+			if (!have_frequency) {
+				QueryPerformanceFrequency(&cached);
+				have_frequency = 1;
+			}
+			if (QueryPerformanceCounter(&counter) && cached.QuadPart > 0)
+				now = (double)counter.QuadPart / (double)cached.QuadPart;
+			if (data->menu_ui_last_draw != 0.0 && now > data->menu_ui_last_draw) {
+				double elapsed = now - data->menu_ui_last_draw;
+				if (elapsed < 0.000001) elapsed = 0.000001;
+				if (elapsed > 0.25) elapsed = 0.25;
+				dt = (float)elapsed;
+			}
+			/* Held across frames, and left alone when the counter is unavailable so a machine without
+			 * one falls back to the fixed step above rather than moving nothing. */
+			data->menu_ui_last_draw = now;
+		}
+		nrex_new_frame(data->menu_ui, (float)chain->extent.width,
+			       (float)chain->extent.height, dt);
+		/* The menu's CURRENT language, not the one this device started with.
+		 *
+		 * `data->menu_language` is read once, when the bridge is created, and never updated - so
+		 * passing it here reset the panel's selector to the startup value on every frame, and the
+		 * combo showed "English" forever however many times L was pressed or the list was used.
+		 * The rows translated correctly the whole time, because they come from the bridge, which
+		 * does track the change; only the selector was pinned.
+		 *
+		 * `nr_menu_language` is the same accessor the L key reads to step the value, so the two
+		 * cannot disagree about which language is showing. */
+		nrex_begin_panel(data->menu_ui, "DLSS-NR on Intel", nr_menu_language(data->menu));
+		nrex_rows(data->menu_ui, rows, count, nr_menu_selected(data->menu));
+		int acted = nrex_end_panel(data->menu_ui);
+
+		/* Apply what the user moved. The UI reports intent; the bridge owns the knob's range, its
+		 * step, the settings write and the daemon's notification - so an edit goes through the same
+		 * path an arrow key takes, and the two cannot disagree about what a knob accepts. */
+		for (int i = 0; i < count; ++i) {
+			if (!rows[i].changed) continue;
+			float v = (rows[i].kind == NREX_KIND_FLOAT) ? rows[i].value_f
+								    : (float)rows[i].value_i;
+			nr_menu_bridge_set(data->menu_bridge, i, v);
+		}
+		/* The panel's language selector, reported the same way L is: through the menu's own flag,
+		 * which the bridge polls on its next update. One path, so the two cannot translate
+		 * differently. */
+		if (acted & NREX_ACT_LANGUAGE)
+			nr_menu_inject_language(data->menu, nrex_panel_language(data->menu_ui));
+		if (acted & NREX_ACT_SAVE)  nr_menu_bridge_save(data->menu_bridge);
+		/* Reset is the menu's own flag: nr_menu_take_reset is what the bridge polls, and setting
+		 * it here puts the button through the same path the R key takes. */
+		if (acted & NREX_ACT_RESET) nr_menu_inject_reset(data->menu);
+		/* Close, through the same path INS uses.
+		 *
+		 * The button reported this action and nothing consumed it, so pressing Close did nothing at
+		 * all - the flag was set, `acted` carried it, and no branch looked at it. Wiring it to the
+		 * menu's own open flag rather than to a path of its own is what makes the button and the
+		 * key agree about what closing means.
+		 *
+		 * Closing KEEPS the unsaved edits; see the close handling in `nr_menu_bridge_update`. */
+		if (acted & NREX_ACT_CLOSE) nr_menu_inject_open(data->menu, 0);
+
+		nrex_render(data->menu_ui, (uint64_t)(uintptr_t)data->menu_commands);
+
+		/* The render pass has just written the UI image and the blend is about to read it as a
+		 * storage image. Without this the dispatch is free to run while those writes are still in
+		 * flight, and what it reads is a mixture of this frame and the last - the banding the
+		 * first working build showed, with pieces of the game's own frame inside the panel.
+		 *
+		 * Both layouts are GENERAL (a storage image has no other), so this orders access rather
+		 * than migrating layout. */
+		{
+			VkImageMemoryBarrier ui_barrier = {0};
+			ui_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			ui_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			ui_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			ui_barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+			ui_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+			ui_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			ui_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			ui_barrier.image = (VkImage)(uintptr_t)nrex_image(data->menu_ui);
+			ui_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			ui_barrier.subresourceRange.levelCount = 1;
+			ui_barrier.subresourceRange.layerCount = 1;
+			CmdPipelineBarrier(data->menu_commands,
+					   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+					   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					   0, 0, NULL, 0, NULL, 1, &ui_barrier);
+		}
+		{
+			static int shown = 0;
+			if (!shown) {
+				shown = 1;
+				LAYER_TRACE("[ov] menu=%p ui=%p view=%p img=%p cmd=%p target=%p %ux%u rows=%d\n",
+					(void *)data->menu, (void *)data->menu_ui,
+					nrex_image_view(data->menu_ui), nrex_image(data->menu_ui),
+					(void *)data->menu_commands, (void *)chain->images[index],
+					chain->extent.width, chain->extent.height, count);
+			}
+		}
+		nr_menu_draw_overlay(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
+				     (uint64_t)(uintptr_t)chain->images[index],
+				     (uint64_t)(uintptr_t)nrex_image_view(data->menu_ui),
+				     chain->extent.width, chain->extent.height);
+	} else if (nr_menu_is_open(data->menu))
+		nr_menu_draw(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
+			     (uint64_t)(uintptr_t)chain->images[index],
+			     chain->extent.width, chain->extent.height);
+
+	barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	CmdPipelineBarrier(data->menu_commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+
+	if (EndCommandBuffer(data->menu_commands) != VK_SUCCESS) return 0;
+
+	/* The game's present waits, so this store is ordered after the frame that is being presented.
+	 *
+	 * An empty wait list was the first attempt and it does not work: the panel was drawn, the
+	 * submit completed on its fence, and nothing appeared - because a submit with nothing to wait
+	 * for is unordered against the queue's other work, and on this driver the store landed before
+	 * the frame's own rendering finished. `transfer()` waits on `data->present_wait` for the same
+	 * reason and its pixels do reach the screen.
+	 *
+	 * Waiting does not consume a semaphore - it orders against it. What must not be signalled
+	 * twice is the signal, and the menu signals nothing.
+	 *
+	 * Zero waits is a real case, not a fallback: the layer captures the waits only while it is
+	 * capturing frames, so a game with NR off has none, and the menu still has to draw. */
+	uint32_t waits = data->present_wait_count;
+	if (waits > data->transfer_stage_capacity) {
+		VkPipelineStageFlags *grown = realloc(data->transfer_stages,
+						      (size_t)waits * sizeof *grown);
+		if (!grown) return 0;
+		data->transfer_stages = grown;
+		data->transfer_stage_capacity = waits;
+		for (uint32_t i = 0; i < waits; ++i)
+			grown[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	}
+	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.waitSemaphoreCount = waits, .pWaitSemaphores = waits ? data->present_wait : NULL,
+		.pWaitDstStageMask = waits ? data->transfer_stages : NULL,
+		.commandBufferCount = 1, .pCommandBuffers = &data->menu_commands,
+		.signalSemaphoreCount = 0, .pSignalSemaphores = NULL };
+	if (QueueSubmit(queue, 1, &si, data->menu_fence) != VK_SUCCESS) return 0;
+
+	/* Waited rather than deferred: the buffer is reused next frame, and the wait is the menu's own
+	 * cost - a compute dispatch over the panel - not the game's. Deferring would need a command
+	 * buffer and a fence per frame in flight, which is more state than the feature is worth. */
+	if (WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
+		return 0;
+
+return 1;
+}
+
 /* A completed private fence covers the consumed waits and all copies. Forward the
  * original wait list only when no copy submission has taken ownership of it. */
 static VkResult present_now(struct device_data *data, VkQueue queue,
@@ -1744,6 +2857,41 @@ static VkResult present_now(struct device_data *data, VkQueue queue,
 {
     if (data->device_error) return data->device_error;
     if (data->transfer_error) return data->transfer_error;
+
+    /* The in-game menu. Two separate costs, deliberately split:
+     *
+     *   the keys   every frame, no GPU work - the NR toggle and the compare key act with the menu
+     *              closed, and a toggle that only worked while the menu was open would be useless
+     *   the draw   only when something is on screen. `nr_menu_needs_composite` is the test, and
+     *              for ordinary play it is false, so no command buffer is opened and nothing is
+     *              submitted.
+     *
+     * The menu is built here, lazily, on the first present of a swapchain that can carry it. It
+     * cannot be built earlier: this is the first moment the layer has the device, the queue family
+     * and the swapchain format together. A failure sets `menu_state` to -1 with a reason, so a
+     * surface that cannot carry a menu is decided once rather than retried every frame.
+     *
+     * This call is what makes the menu exist. Without it `data->menu` is provably NULL at every
+     * read below, and the compiler - correctly - deletes the whole overlay: the first build of this
+     * had `menu_build` defined and never called, and the resulting DLL contained none of the
+     * menu's strings. A build that succeeds is not a menu that runs. */
+    if (!data->menu && !data->menu_state && menu_enabled()
+        && info->swapchainCount > 0 && info->pSwapchains) {
+        struct swapchain_data *first = find_swapchain(info->pSwapchains[0]);
+        if (first && first->device == data->device)
+            menu_build(data, first);
+    }
+
+    if (data->menu && info->swapchainCount > 0 && info->pSwapchains && info->pImageIndices) {
+        struct swapchain_data *chain = find_swapchain(info->pSwapchains[0]);
+        if (chain && chain->device == data->device && menu_read_keys(data))
+            menu_composite(data, chain, queue, info->pImageIndices[0]);
+    } else if (data->menu) {
+        /* No swapchain to draw into - a present-only queue, or a surface the layer never
+         * tracked. The keys still work, so the toggle and the compare keep responding. */
+        menu_read_keys(data);
+    }
+
     if (!data->waits_consumed) return data->present(queue, info);
     VkPresentInfoKHR patched = *info;
     patched.waitSemaphoreCount = 0;

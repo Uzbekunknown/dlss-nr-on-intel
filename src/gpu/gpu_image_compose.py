@@ -170,7 +170,7 @@ class GPUImageComposer:
         push.params[:11] = (self.frame_width, self.frame_height, left, top, self.width,
                             self.height, self.head_width, self.head_height,
                             self.head_row_width, self.head_channels, flags)
-        self.pipeline.record(push, -(-self.frame_width * self.frame_height // 256))
+        self.pipeline.record(push, *xmxres.linear_grid(-(-self.frame_width * self.frame_height // 256)))
         return self.encoded
 
     def close(self):

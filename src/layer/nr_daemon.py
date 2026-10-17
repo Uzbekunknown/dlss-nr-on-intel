@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT / "src" / "ref"))
 sys.path.insert(0, str(ROOT / "src" / "gpu"))
 
 import nr_frame  # noqa: E402
+import nr_weight_models  # noqa: E402  (which model is installed, and which one the settings want)
 import xmx  # noqa: E402  (for the device name, once the model is up)
 from xmxres import DeviceLost  # noqa: E402
 try:
@@ -177,33 +178,38 @@ class Settings:
     """
 
     KNOBS = ("profile", "intensity", "detail_strength", "colour_strength", "render_scale",
-             "temporal", "cut_limit", "hold", "release", "min_extent")
+             "temporal", "cut_limit", "hold", "release", "min_extent", "weights")
 
     def __init__(self, args):
         self.path = args.settings
         self.stamp = None
+        # The menu's live preview, beside the settings file.
+        #
+        # The menu edits in memory and writes the user's settings file only on Save; while they are
+        # dragging, what they are trying arrives here instead. It is a partial object - only the
+        # knobs they have touched - and it is applied over the saved values, never merged back into
+        # them: the saved file is the record and this is a message about right now.
+        self.live_path = f"{args.settings}.live" if args.settings else None
+        self.live_stamp = None
+        # The last bytes read from each file, so a write that shares its predecessor's mtime is
+        # still noticed. See `_read_json`.
+        self.stamp_bytes = None
+        self.live_stamp_bytes = None
+        # Whether this daemon has read the preview file yet. The first reading is the one where an
+        # inherited, unconfirmed preview has to be refused; after that the user is watching the
+        # values change and the flag is no longer the question. See `refresh`.
+        self._started = False
+        # The last settings object read, kept so the preview can be applied over it on a frame where
+        # the saved file itself did not change. See `refresh`.
+        self.saved_values = {}
         for knob in self.KNOBS:
-            setattr(self, knob, getattr(args, knob))
+            setattr(self, knob, getattr(args, knob, None))
+        # `weights` came from `--weights` through the loop above, like every other knob. It is a
+        # name rather than a number; `_apply` validates it against what this build knows and
+        # `serve` swaps the model when it changes.
 
-    def refresh(self):
-        if not self.path:
-            return
-        try:
-            stamp = os.stat(self.path).st_mtime_ns
-        except OSError:
-            return
-        if stamp == self.stamp:
-            return
-        self.stamp = stamp
-        try:
-            with open(self.path) as handle:
-                given = json.load(handle)
-        except (OSError, ValueError) as error:
-            print(f"settings: {error}; keeping the current ones", flush=True)
-            return
-        if not isinstance(given, dict):
-            print("settings: expected a JSON object; keeping the current ones", flush=True)
-            return
+    def _apply(self, given, source):
+        """The knob values in `given`, validated. Returns the names it changed."""
         changed = []
         for knob in self.KNOBS:
             if knob not in given:
@@ -213,6 +219,17 @@ class Settings:
                 if value not in nr_frame.PROFILES:
                     print(f"settings: no profile {value!r}", flush=True)
                     continue
+            elif knob == "weights":
+                # A name, not a number. An install that carries only one model still has to accept
+                # the name of the other - the settings file may have been written where both exist -
+                # and `nr_weight_models.resolve` is what falls back to the model that IS here.
+                if value not in nr_weight_models.names():
+                    print(f"settings: no weights model {value!r}", flush=True)
+                    continue
+                if getattr(self, "weights", None) != value:
+                    self.weights = value
+                    changed.append(f"weights={value}")
+                continue
             else:
                 try:
                     value = float(value)
@@ -251,7 +268,173 @@ class Settings:
                 setattr(self, knob, value)
                 changed.append(f"{knob}={value}")
         if changed:
-            print("settings: " + ", ".join(changed), flush=True)
+            print(f"settings ({source}): " + ", ".join(changed), flush=True)
+        return changed
+
+    def refresh(self):
+        """Recompute the knob values from the saved settings, with the menu's preview on top.
+
+        Read as a pair rather than as two independent updates, and that is the whole reason this is
+        not two calls to a per-file reader. The saved file is the baseline and the preview is an
+        override; the preview is a partial object that exists only while the menu has something
+        unsaved. Layering them incrementally would leave a knob stuck at a previewed value the
+        moment the preview stopped mentioning it - which is exactly what Reset, or a panel closed
+        without saving, produces. Recomputing from the baseline every time makes "no longer in the
+        preview" mean "back to what is saved", which is the behaviour the user asked for.
+        """
+        saved = self._read_json(self.path, "saved", "stamp")
+        preview = self._read_json(self.live_path, "preview", "live_stamp")
+
+        # Nothing to do until one of them has actually changed.
+        if saved is None and preview is None:
+            return
+
+        # A preview whose author is gone, and that no Save confirmed, is not a preview.
+        #
+        # This is the rule that settles the reported bug: "save, then reset, then restart shows the
+        # picture from before the save". Reset writes its defaults to the preview so the change is
+        # visible, the game then exits with the panel open - the normal way to leave - and the file
+        # survives into the next session, where it overrode the saved settings.
+        #
+        # Neither timestamp can separate that from a legitimate preview: "Reset ten minutes after
+        # Save" and "a real preview ten minutes after Save" are identical in time, and what differs
+        # is whether the user ever accepted the values. Nor can it be "the first reading", which an
+        # earlier attempt used and which broke the live effect - a daemon starts, the user is
+        # already dragging a slider, and their change arrives before the first poll.
+        #
+        # What separates them is whether the process that wrote the preview is still running. The
+        # layer writes its PID for exactly this, and `_owner_alive` reports a missing PID as dead:
+        # every current layer writes one, so a preview without it came from a session that has
+        # already ended - which was the shape of the file that caused the report.
+        #
+        # `_confirmed` is the belt to that braces: a preview a Save did write stays valid even
+        # after its process ends, because the values in it are the ones in the settings file.
+        #
+        # There is deliberately NO timestamp comparison between the two files. An earlier version
+        # had one - "a preview older than the save it would override is stale" - and it was wrong in
+        # both directions. Save writes BOTH files, so their order within one save says nothing; and
+        # a preview written before a save is still the user's current intent when they have since
+        # moved another knob. The PID answers the only question that matters - is anyone still
+        # standing behind this file - and a second, weaker rule on top of it produced false
+        # rejections that turned the live effect off.
+        if preview is not None and not self._owner_alive(preview) and not self._confirmed(preview):
+            preview = None
+
+        # The saved values are KEPT, not just read when they change.
+        #
+        # This is the part a first version got wrong, and the test caught it: when only the preview
+        # changed, the saved file read back as "unchanged" and there was nothing to fall back to -
+        # so a knob the preview stopped mentioning kept its previewed value forever. Remembering the
+        # last saved object means "no longer previewed" can always mean "back to what is saved",
+        # which is what Reset and a panel closed without saving both require.
+        if saved is not None:
+            self.saved_values = saved
+
+        merged = dict(self.saved_values)
+        if preview:
+            merged.update(preview)
+        self._apply(merged, "preview" if preview else "saved")
+
+    @staticmethod
+    def _confirmed(preview):
+        """Whether a Save confirmed the values this preview shows.
+
+        An object with no `menu_confirmed` is treated as UNconfirmed. That inverts an earlier
+        reading of this function, and it is the right way round: a preview written by an older layer
+        is a preview from a session that is over, and this daemon's first look at it is exactly the
+        case where a leftover Reset must not win. Treating the missing key as confirmed is what let
+        the reported bug through.
+        """
+        return bool(preview.get("menu_confirmed"))
+
+    @staticmethod
+    def _owner_alive(preview):
+        """Whether the process that wrote this preview is still running.
+
+        A preview is a message from a live menu to a live daemon. When the menu's process ends, the
+        values it was showing stop being anyone's intent and the saved settings must take over.
+
+        A preview with NO `menu_pid` is reported as dead, and that is deliberate. Every layer built
+        with the current source writes one; a preview without it therefore came from a session that
+        has already ended, which is exactly the leftover this function exists to refuse. Reporting
+        it alive - the first version's choice, made to stay compatible with an older layer - is what
+        let the reported bug through, because the real leftover file had no PID in it either.
+
+        The cost is that an older layer's live previews are ignored. That is the acceptable side of
+        the trade: the user's saved settings are honoured, and the mismatched pair is a build that
+        should be reinstalled rather than a combination to keep working.
+        """
+        pid = preview.get("menu_pid")
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        if os.name == "nt":
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False          # no such process
+            try:
+                code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return code.value == STILL_ACTIVE
+                return True
+            finally:
+                kernel32.CloseHandle(handle)
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return True
+
+    def _read_json(self, path, source, attr):
+        """The object in `path`, or None when there is nothing new to read.
+
+        None means "unchanged or unreadable", which is distinct from an empty dict - the caller
+        uses it to tell "no new information" from "this file now says nothing".
+
+        The stamp is compared first because it is one stat call, but a stamp match is NOT the
+        answer on its own: this filesystem gives consecutive writes the SAME `st_mtime_ns` when
+        they land within one tick, which was measured at about half a millisecond here. A held
+        arrow key writes at 20 Hz, so consecutive changes can share a stamp - and treating that as
+        "unchanged" drops the second one. The bytes are compared as well, which costs one read on
+        the frames where the file did change and nothing at all when it did not.
+        """
+        if not path:
+            return None
+        try:
+            stamp = os.stat(path).st_mtime_ns
+        except OSError:
+            # A missing preview is the normal case: it appears when the menu is first moved and is
+            # not required to exist. A missing settings file is equally normal on a first run.
+            return None
+
+        same_stamp = (stamp == getattr(self, attr))
+        setattr(self, attr, stamp)
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read()
+        except OSError:
+            return None
+
+        # The bytes decide, not the stamp. See the note above.
+        if same_stamp and raw == getattr(self, attr + "_bytes", None):
+            return None
+        setattr(self, attr + "_bytes", raw)
+
+        try:
+            given = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            print(f"settings ({source}): {error}; keeping the current ones", flush=True)
+            return {}
+        if not isinstance(given, dict):
+            print(f"settings ({source}): expected a JSON object; keeping the current ones",
+                  flush=True)
+            return {}
+        return given
 
 
 def resample(image, size):
@@ -565,6 +748,50 @@ def explain(error):
     return FAILURES.get(int(code.group(1)), "") if code else ""
 
 
+def refresh_model(args, backend):
+    """The model to answer this frame with, swapped when the settings asked for another one.
+
+    A swap is not a restart. `ResidentBackend.close` drops the weights uploaded to the device and
+    the next frame uploads the next model's; the GPU image engine caches the backend, so it goes
+    first, and the temporal history belongs to the model that made it, so it is dropped too. What
+    the layer sees is one present that waits for a model load.
+
+    Nothing here runs on a frame where the setting did not change: the name is remembered as
+    `requested`, so a value that cannot be honoured - a model this DLL does not carry, or one the
+    loader cannot read - is resolved once and explained once, not looked up once a frame.
+    """
+    model = getattr(args, "model", None)
+    live = getattr(args, "live", None)
+    if not isinstance(model, dict) or live is None:
+        return backend
+    want = getattr(live, "weights", None)
+    if not want or want == model.get("requested"):
+        return backend
+    model["requested"] = want
+    name, path = nr_weight_models.resolve(ROOT / "work", want)
+    if path is None:
+        print(f"weights: nothing on disk answers {want!r}; keeping {model.get('name')}", flush=True)
+        return backend
+    if name == model.get("name"):
+        if want != name:
+            print(f"weights: {want} is not loadable here ({name} is); keeping {name}", flush=True)
+        return backend
+    close_gpu_images(args)
+    args.history = History()
+    previous = model.get("backend")
+    if previous is not None and previous is not backend:
+        try:
+            previous.close()
+        except Exception as error:  # noqa: BLE001 - a failed close must not cost the swap
+            print(f"weights: closing {model.get('name')} failed: {error}", flush=True)
+    started = time.perf_counter()
+    fresh = nr_frame.ResidentBackend(path)
+    model.update(backend=fresh, name=name, path=path)
+    print(f"weights: {want} -> {name} ({path.name}) in {time.perf_counter() - started:.1f}s",
+          flush=True)
+    return fresh
+
+
 def serve(server, backend, args):
     """Answer frames until interrupted, or until the GPU is gone.
 
@@ -587,6 +814,7 @@ def serve(server, backend, args):
         connection, _ = server.accept()
         try:
             connection.settimeout(args.timeout)
+            backend = refresh_model(args, backend)
             process_connection(connection, backend, args)
         except DeviceLost as error:
             print(DEVICE_LOST.format(error=error), flush=True)
@@ -622,7 +850,7 @@ def process_connection(connection, backend, args):
             enabled = (os.environ.get("NR_GPU_IMAGE") == "1" and
                        os.environ.get("NR_GPU_TRANSPORT") == "1")
             transport = args.gpu_transport = nr_gpu_transport.GPUSharedTransport(
-                backend, args.max_pixels, enabled=enabled)
+                backend, enabled=enabled)
         if getattr(args, "image_transport", None) != "gpu-shared":
             transport.reset_history()
         metrics = transport.handle(connection, width, height, vk_format, receive, args.live,
@@ -642,8 +870,14 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     """Legacy host image processing, guarded even when invoked directly."""
     if os.environ.get("NR_GPU_ONLY") == "1":
         raise ValueError("GPU-only: host frame processing is forbidden")
-    if not width or not height or width * height > args.max_pixels:
-        raise ValueError(f"rejected extent {width}x{height}; limit {args.max_pixels} pixels")
+    # No pixel ceiling, on purpose. There used to be one (`--max-pixels`, 1 << 22) and a real
+    # 3.5K swapchain - 3360x2100 - exceeded it, so every frame of a correctly configured game was
+    # refused and the layer kept the original picture: the menu worked, NR silently did nothing,
+    # and the log repeated "rejected extent ... limit ..." once a frame. A ceiling on a frame the
+    # game actually presents can only be wrong; the guard that matters is that the header has an
+    # extent at all, since `width * height * 4` is the read that follows.
+    if not width or not height:
+        raise ValueError(f"rejected extent {width}x{height}; the header has no extent")
     payload = receive(connection, width * height * 4, keep="frame")
     interface = (receive(connection, width * height, keep="interface")
                  if masked else None)
@@ -1168,6 +1402,10 @@ def main():
                         help="deployment root: work/ and src/ are looked for under it "
                              "(also read from NR_ROOT before this parser runs)")
     parser.add_argument("--profile", default="standard", choices=sorted(nr_frame.PROFILES))
+    # Which weight model to run, by name. The choices are the table's, not a second list: a model
+    # added to `nr_weight_models` is nameable here the same day, and one this build cannot load is
+    # still allowed as a value because the settings file may name it and `refresh_model` falls back.
+    parser.add_argument("--weights", default="ht", choices=nr_weight_models.names())
     parser.add_argument("--intensity", type=float, default=1.0)
     parser.add_argument("--detail-strength", type=float, default=1.0)
     parser.add_argument("--colour-strength", type=float, default=1.0)
@@ -1192,8 +1430,6 @@ def main():
     parser.add_argument("--cut-limit", type=float, default=0.15,
                         help="mean absolute frame-to-frame change above which the shot is "
                              "taken to have cut and the history is dropped")
-    parser.add_argument("--max-pixels", type=int, default=1 << 22,
-                        help="refuse frames larger than this, rather than thrash")
     parser.add_argument("--dump", help="write frames in and out as raw, for a look; "
                                        "convert with src/tools/dump_to_png.py")
     parser.add_argument("--dump-every", type=int, default=1, metavar="N",
@@ -1208,8 +1444,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=60,
                         help="socket inactivity timeout in seconds")
     args = parser.parse_args()
-    if args.max_pixels <= 0 or args.timeout <= 0:
-        parser.error("--max-pixels and --timeout must be positive")
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
     if not 0.05 <= args.render_scale <= 1.0:
         parser.error("--render-scale must be between 0.05 and 1")
     for knob in ("temporal", "cut_limit", "hold"):
@@ -1239,7 +1475,8 @@ def run_owned(args):
     args.letterbox = Letterbox()
     args.meter = Meter() if args.meter else None
 
-    if not nr_frame.WEIGHTS.exists():
+    name, weights_path = nr_weight_models.resolve(ROOT / "work", args.live.weights)
+    if weights_path is None or not weights_path.exists():
         # The first thing a new clone hits, and a traceback is a poor way to say it.
         raise SystemExit(
             f"no weights at {nr_frame.WEIGHTS}.\n"
@@ -1250,7 +1487,15 @@ def run_owned(args):
     # while XMX_UNARY_SPV can still select the probe shader - the graph's own runtime is
     # built below and picks its shader then.
     check_half_rounding()
-    backend = nr_frame.ResidentBackend()
+    backend = nr_frame.ResidentBackend(weights_path)
+    # The model this daemon is running, and the one the settings asked for, so a change can be
+    # told apart from a repeat. `refresh_model` swaps it; the panel's knob is the only writer.
+    args.model = {"backend": backend, "name": name, "path": weights_path,
+                  "requested": name}
+    if name != nr_weight_models.default_name() or \
+            len(nr_weight_models.available(ROOT / "work")) > 1:
+        print(f"weights: {name} ({weights_path.name}), installed: "
+              f"{nr_weight_models.describe_available(ROOT / 'work')}", flush=True)
     # which GPU: a machine can have more than one, or a different one than the person
     # assumes. libxmx chooses one that can run the network (XMX_DEVICE names another).
     print(f"model ready in {time.perf_counter() - started:.1f}s"

@@ -107,6 +107,7 @@ class GPUImageResampler:
             self.ratio_y, *controls, self.ratio_x)
 
     def record(self, source, target):
+        import xmxres        # deferred, as in __init__: this module is imported on platforms with no libxmx
         self._buffer(source, self.source_nbytes, "source")
         self._buffer(target, self.output_nbytes, "target")
         if source.id == target.id:
@@ -115,7 +116,7 @@ class GPUImageResampler:
         if self.vk_format in BGRA8_FORMATS:
             flags |= BGRA
         self.pipeline.record(self._push(source, target, flags=flags),
-                             (self.network_w * self.network_h + 63) // 64)
+                             *xmxres.linear_grid((self.network_w * self.network_h + 63) // 64))
         self.runtime.recorded += 1
         return target
 
@@ -190,6 +191,7 @@ class GPUImagePreprocessor(GPUImageResampler):
         """
         if control_mask is not None or automatic_mask is not None:
             raise ValueError("GPU feature masks are unsupported; use CPU fallback")
+        import xmxres        # deferred, as in __init__
         if self.noise is None:
             raise RuntimeError("the GPU image preprocessor is closed")
         self._buffer(raw, self.width * self.height * 4, "raw")
@@ -207,7 +209,7 @@ class GPUImagePreprocessor(GPUImageResampler):
         flags = (BGRA if self.vk_format in BGRA8_FORMATS else 0) | (HISTORY if history is not None else 0)
         self.pipeline.record(self._push(raw, target, history=history, noise=self.noise,
                                         flags=flags, controls=tuple(float(v) for v in controls)),
-                             (self.network_w * self.network_h + 63) // 64)
+                             *xmxres.linear_grid((self.network_w * self.network_h + 63) // 64))
         self.runtime.recorded += 1
         return target
 

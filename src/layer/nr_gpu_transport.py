@@ -66,7 +66,7 @@ class _ProcessLifetime:
             self.handle = None
 
 
-def unpack_packet(raw, width, height, fmt, max_pixels):
+def unpack_packet(raw, width, height, fmt):
     if len(raw) != PACKET.size:
         raise ValueError("GPU control packet must be 128 bytes")
     names = ("action", "pid", "width", "height", "format", "input_memory_type", "output_memory_type", "version",
@@ -77,7 +77,10 @@ def unpack_packet(raw, width, height, fmt, max_pixels):
         raise ValueError("unsupported GPU protocol action/version/session")
     if (p["width"], p["height"], p["format"]) != (width, height, fmt):
         raise ValueError("GPU control header and packet geometry disagree")
-    if width < 1 or height < 1 or width * height > max_pixels or p["bytes"] != width * height * 4:
+    # No extent ceiling: an empty extent is a corrupt header, but a LARGE one is a real swapchain.
+    # The byte count is what has to agree - it is the size the client actually allocated, and a
+    # mismatch is the only case where importing would read past it.
+    if width < 1 or height < 1 or p["bytes"] != width * height * 4:
         raise ValueError("GPU control extent or byte count is invalid")
     if fmt not in (37, 43, 44, 50):
         raise ValueError("GPU transport supports SDR RGBA/BGRA only")
@@ -144,9 +147,8 @@ class _Context:
 
 
 class GPUSharedTransport:
-    def __init__(self, backend, max_pixels, *, enabled=False):
+    def __init__(self, backend, *, enabled=False):
         self.backend, self.lib = backend, backend.runtime.lib
-        self.max_pixels = max_pixels
         self.enabled = bool(enabled)
         self.contexts = {}
         self.images = None  # disabled requests allocate no GPU resources
@@ -192,7 +194,7 @@ class GPUSharedTransport:
         return None
 
     def handle(self, connection, width, height, fmt, read, live, *, diagnostic=False):
-        p = unpack_packet(read(connection, PACKET.size), width, height, fmt, self.max_pixels)
+        p = unpack_packet(read(connection, PACKET.size), width, height, fmt)
         key = (p["pid"], p["session"])
         if peer_pid(connection) != p["pid"]:
             self._reply(connection, p, 1)

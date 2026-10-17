@@ -218,6 +218,52 @@ static void record_start_folder(const wchar_t *folder)
 	CloseHandle(file);
 }
 
+/* A launch trace, beside the game as dlss-nr\proxy-log.txt.
+ *
+ * The proxy is the one component that runs before anything else and the one whose failure is
+ * invisible: if the game is started in a way that never loads this DLL, or loads it into a process
+ * that is not the game, nothing anywhere says so - the game simply runs without NR. A launch from
+ * Steam and a launch from a script are different enough that guessing which branch was taken is
+ * not a method; this records the branch. Appended, so a run of launches can be compared. */
+static void trace_launch(const wchar_t *folder, const wchar_t *what)
+{
+	wchar_t path[MAX_PATH * 2 + 40];
+	swprintf(path, MAX_PATH * 2 + 40, L"%ls\\dlss-nr\\proxy-log.txt", folder);
+	HANDLE file = CreateFileW(path, GENERIC_WRITE | FILE_APPEND_DATA, FILE_SHARE_READ, NULL,
+				  OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (file == INVALID_HANDLE_VALUE) return;
+	char line[16384];
+	wchar_t module[MAX_PATH * 2] = L"?";
+	GetModuleFileNameW(NULL, module, MAX_PATH * 2);
+	wchar_t cwd[MAX_PATH * 2] = L"?";
+	GetCurrentDirectoryW(MAX_PATH * 2, cwd);
+	wchar_t wide[16384];
+	_snwprintf_s(wide, 16384, _TRUNCATE,
+		     L"pid=%lu module=%ls cwd=%ls %ls\r\n",
+		     GetCurrentProcessId(), module, cwd, what);
+	/* UTF-8, and one WriteFile per line.
+	 *
+	 * The first version wrote `_snprintf_s` text straight out, which is bytes for a wide string and
+	 * came out as interleaved fragments - it read as file corruption rather than as a format bug.
+	 * A single write also keeps two processes from interleaving inside one line. */
+	int n = WideCharToMultiByte(CP_UTF8, 0, wide, -1, line, (int)sizeof line, NULL, NULL);
+	if (n > 1) {
+		DWORD written = 0;
+		WriteFile(file, line, (DWORD)(n - 1), &written, NULL);
+		FlushFileBuffers(file);
+	}
+	CloseHandle(file);
+
+	/* The same line on stderr, which the caller can redirect and read without racing the file.
+	 * A game launched by Steam has no visible stderr, but a game launched by a script does - and
+	 * the comparison between the two launches is the whole point of this trace. */
+	{
+		static char narrow[16384];
+		int m = WideCharToMultiByte(CP_UTF8, 0, wide, -1, narrow, (int)sizeof narrow, NULL, NULL);
+		if (m > 1) fwrite(narrow, 1, (size_t)(m - 1), stderr);
+	}
+}
+
 static void apply_environment(HINSTANCE self)
 {
 	wchar_t folder[MAX_PATH * 2], file[MAX_PATH * 2 + 32], game[MAX_PATH * 2];
@@ -227,10 +273,11 @@ static void apply_environment(HINSTANCE self)
 	if (!slash) return;
 	*slash = 0;
 	swprintf(file, MAX_PATH * 2 + 32, L"%ls\\dlss-nr\\nr-env.txt", folder);
+	trace_launch(folder, L"proxy loaded");
 
 	HANDLE handle = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
 				    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (handle == INVALID_HANDLE_VALUE) return;
+	if (handle == INVALID_HANDLE_VALUE) { trace_launch(folder, L"no nr-env.txt"); return; }
 	static char bytes[65536];
 	static wchar_t text[65536];
 	DWORD read = 0;
@@ -258,8 +305,16 @@ static void apply_environment(HINSTANCE self)
 	}
 	const wchar_t *wanted = lookup(names, values, lines, L"NR_GAME_EXE");
 	length = GetModuleFileNameW(NULL, game, MAX_PATH * 2);
-	if (!wanted || !length || length >= MAX_PATH * 2 || !same_file(game, wanted))
+	if (!wanted || !length || length >= MAX_PATH * 2) {
+		trace_launch(folder, L"NR_GAME_EXE missing, or no module path");
 		return;
+	}
+	if (!same_file(game, wanted)) {
+		/* Another executable in the game's folder - a crash reporter, a launcher. */
+		trace_launch(folder, L"not the game process; left alone");
+		return;
+	}
+	trace_launch(folder, L"matched: setting the environment");
 
 	const wchar_t *loader = lookup(names, values, lines, L"NR_REAL_VULKAN");
 	if (loader && *loader) lstrcpynW(real_path, loader, MAX_PATH * 2);
@@ -274,6 +329,28 @@ static void apply_environment(HINSTANCE self)
 		SetEnvironmentVariableW(names[i], values[i]);
 	}
 	record_start_folder(folder);
+	/* What was actually set, and what the process ended up with. A Steam launch arrives with a
+	 * great deal of its own environment - the overlay's, the compatibility tool's - and a variable
+	 * that the proxy sets and something later overrides looks identical, from the game's side, to
+	 * one that was never set. */
+	{
+		/* One line per variable, each written on its own. The buffer is the caller's largest
+		 * possible value plus room for the label - a bound smaller than the string is how the
+		 * first version of this wrote a truncated, interleaved log that read as corruption. */
+		static const wchar_t *names_to_log[] = {
+			L"VK_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"ENABLE_NR_LAYER", L"NR_ROOT",
+			L"NR_LAYER_SPAWN", L"NR_LAYER_LIVE", L"NR_SETTINGS",
+		};
+		wchar_t value[MAX_PATH * 4 + 64];
+		wchar_t msg[MAX_PATH * 4 + 128];
+		for (int i = 0; i < (int)(sizeof names_to_log / sizeof names_to_log[0]); ++i) {
+			DWORD got = GetEnvironmentVariableW(names_to_log[i], value,
+							    (DWORD)(sizeof value / sizeof value[0]));
+			_snwprintf_s(msg, sizeof msg / sizeof msg[0], _TRUNCATE, L"  %ls=%ls",
+				     names_to_log[i], got ? value : L"<unset>");
+			trace_launch(folder, msg);
+		}
+	}
 	/* The game as setup's profile spells it, so its status matches the record. */
 	const wchar_t *state = lookup(names, values, lines, L"NR_LAUNCH_STATE");
 	if (state && *state)

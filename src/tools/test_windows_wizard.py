@@ -669,6 +669,29 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(any(destination.rglob("nvngx_dlssnr.dll")))
         self.assertTrue(self.weights.is_file())
 
+    def test_the_panels_own_shaders_are_installed(self):
+        """`menu.spv` and `menu_rgb10a2.spv` come from `src/layer/nr_menu.c`, not `src/gpu`.
+
+        They were left out of an install once: the shader list scanned `src/gpu` alone, so the
+        game got a layer whose menu could not load its shader. The layer said so - "no settings
+        menu: the menu's shader was not found beside the layer" - and INS did nothing, while the
+        release itself carried both files.
+        """
+        source = self.root / "src/layer/nr_menu.c"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('{ VK_FORMAT_R8G8B8A8_UNORM, "menu.spv", 0 },\n'
+                          '{ VK_FORMAT_A2B10G10R10_UNORM_PACK32, "menu_rgb10a2.spv", 1 },\n',
+                          encoding="utf-8")
+        for name in ("menu.spv", "menu_rgb10a2.spv"):
+            (self.root / "work" / name).write_bytes(b"SPIR-V fixture")
+        self.assertIn("menu.spv", core._shader_names(self.root))
+        self.assertIn("menu_rgb10a2.spv", core._shader_names(self.root))
+        result = core.install(self.profile)
+        self.assertTrue(result["ok"], result)
+        installed = core.installed_path(self.profile) / "work"
+        for name in ("menu.spv", "menu_rgb10a2.spv"):
+            self.assertTrue((installed / name).is_file(), name)
+
     def test_first_install_sets_candidate_defaults_only_when_missing(self):
         result = core.install(self.profile)
         self.assertTrue(result["ok"], result)
@@ -679,9 +702,10 @@ class WizardFixture(unittest.TestCase):
         catalogue = core._runtime_knobs()
         self.assertEqual([knob["name"] for knob in catalogue], [
             "render_scale", "min_extent", "profile", "intensity", "detail_strength",
-            "colour_strength", "temporal", "hold", "release", "cut_limit"])
+            "colour_strength", "temporal", "hold", "release", "cut_limit", "weights"])
         names = {knob["name"]: knob for knob in catalogue}
-        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic", "neutral"])
+        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic"])
+        self.assertEqual(names["weights"]["choices"], ["ht", "cc_small_fp8"])
         self.assertEqual((names["min_extent"]["high"], names["min_extent"]["runtime_high"]), (320, 4096))
         self.assertEqual((names["release"]["high"], names["release"]["runtime_high"]), (64, 255))
         daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
@@ -696,6 +720,33 @@ class WizardFixture(unittest.TestCase):
                         actual[str(node.args[0].value).removeprefix("--").replace("-", "_")] = keyword.value.value
         self.assertEqual({knob["name"]: knob["default"] for knob in catalogue},
                          {knob["name"]: actual[knob["name"]] for knob in catalogue})
+
+    def test_every_choice_value_is_labelled_in_all_four_languages(self):
+        """A `choice` knob's combobox is filled with `Choice.<knob>.<value>`, falling back to
+        `Profile.<value>`.
+
+        `T` throws on a missing key, so a choice value with no label and no fallback takes the
+        SETUP WINDOW's settings page down with `Missing translation: Profile.ht` - which is exactly
+        what the weights knob would have done, because its values are not profiles. Nothing else
+        covers this: the tests drive the backend, and the label lookup lives in the script.
+        """
+        source = (Path(core.__file__).resolve().parent.parent.parent
+                  / "dist-tools" / "windows-wizard.ps1").read_text(encoding="utf-8")
+        catalogue = core._runtime_knobs()
+        checked = 0
+        for knob in catalogue:
+            if knob["kind"] != "choice":
+                continue
+            for value in knob["choices"]:
+                keys = (f"'Choice.{knob['name']}.{value}'", f"'Profile.{value}'")
+                if not any(source.count(key) == 4 for key in keys):
+                    self.fail(f"{knob['name']}={value} has no label in all four languages "
+                              f"(expected one of {keys} four times)")
+                checked += 1
+        self.assertGreater(checked, 0)
+        # And the lookup goes through the helper, not straight at `Profile.` - the line that made
+        # the weights values unresolvable.
+        self.assertNotIn("T ('Profile.'+", source)
 
     def test_reading_control_defaults_needs_no_game_profile_or_processes_and_writes_nothing(self):
         with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")), \
@@ -774,7 +825,15 @@ class WizardFixture(unittest.TestCase):
         daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
         tree = ast.parse(daemon_source)
         actual_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Settings")
+        # The ENGINE's profile table, which stands in for `nr_frame.PROFILES`. It keeps `neutral`
+        # even though the menu no longer offers it: the daemon validates a settings file against
+        # what the engine can run, not against what the UI lists, so a hand-edited file naming
+        # `neutral` is still accepted. `nr_knobs.PROFILES` is the list the menu shows.
         namespace = {"os": os, "math": math, "json": json,
+                     # The class asks which weight models this build knows; a stub is enough here -
+                     # the table itself is `src/tools/test_nr_weights.py`'s subject.
+                     "nr_weight_models": SimpleNamespace(
+                         default_name=lambda: "ht", names=lambda: ["ht", "cc_small_fp8"]),
                      "nr_frame": SimpleNamespace(PROFILES={choice: {} for choice in ("standard", "natural", "cinematic", "neutral")})}
         exec(compile(ast.Module(body=[actual_class], type_ignores=[]), "nr_daemon.py", "exec"), namespace)
         path = self.root / "work/nr_settings.json"
@@ -1360,3 +1419,4 @@ class RunningExecutableTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

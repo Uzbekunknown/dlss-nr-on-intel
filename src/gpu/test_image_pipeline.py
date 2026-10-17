@@ -111,7 +111,7 @@ class HostChecks(unittest.TestCase):
             def sendall(self,data): raise AssertionError("answered before the host path")
         width,height=8,4
         frame=struct.pack("<4I",nr_daemon.MAGIC,width,height,37)+bytes(range(width*height*4))
-        args=SimpleNamespace(live=SimpleNamespace(refresh=lambda:None),max_pixels=1<<22,
+        args=SimpleNamespace(live=SimpleNamespace(refresh=lambda:None),
                              letterbox=SimpleNamespace(region=region),dump=None,meter=None)
         keep={k:v for k,v in os.environ.items()
               if k not in ("NR_GPU_IMAGE","NR_GPU_TRANSPORT","NR_GPU_ONLY")}

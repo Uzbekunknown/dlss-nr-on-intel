@@ -1,4 +1,4 @@
-﻿param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
+param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 # Drawn by the CPU: the window is text and buttons, and on an integrated GPU the game and the
@@ -251,6 +251,7 @@ $script:SettingsStateKey = 'SettingsLoading'
    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
     <ComboBox x:Name="Language" Width="110" ToolTip="">
      <ComboBoxItem Content="English" Tag="en"/>
+     <ComboBoxItem Content="中文" Tag="zh"/>
      <ComboBoxItem Content="Русский" Tag="ru"/>
      <ComboBoxItem Content="Español" Tag="es"/>
     </ComboBox>
@@ -413,7 +414,7 @@ function Set-Theme([string]$Name) {
 # Windows UI culture selects the initial language. Switching never edits a profile,
 # runtime setting or Steam option; only app-owned labels and messages change.
 $script:Language=[Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName
-if($script:Language -notin @('ru','es')) { $script:Language='en' }
+if($script:Language -notin @('ru','es','zh')) { $script:Language='en' }
 $script:ChangingLanguage=$false
 $script:ProgressKey='ChooseFiles'
 $script:RuntimeKey='RuntimeInitial'
@@ -501,7 +502,7 @@ $script:Strings=@{
   'Knob.hold'='Hold unchanged pixels'; 'Knob.release'='Release moving pixels'; 'Knob.cut_limit'='Scene-cut threshold'
   'Hint.render_scale'='Fraction of each dimension processed by the network. Lower is cheaper, with coarser detail; minimum padding can limit the reduction.'
   'Hint.min_extent'='Minimum padded network side. 320 matches the vendor; 128 costs less for small frames and changes the surrounding mirrored context.'
-  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights; neutral greatly reduces the effect.'
+  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights.'
   'Hint.intensity'='Blend strength: 0 keeps the game image, 1 uses the model result, above 1 exaggerates the change.'
   'Hint.detail_strength'='Strength of fine detail. Zero keeps only broad tone changes; above 1 adds more sharpening.'
   'Hint.colour_strength'='Strength of tone and colour changes. Higher values can reduce saturation; zero preserves the game tone.'
@@ -509,10 +510,12 @@ $script:Strings=@{
   'Hint.hold'='Keep the previous result where the game pixels did not change, reducing flicker in still areas.'
   'Hint.release'='Pixel change in levels of 255 that releases history. 16–24 is a useful starting range; zero disables this protection.'
   'Hint.cut_limit'='Average frame change that discards history for a scene cut. Lower reacts sooner; 1 never cuts.'
+  'Knob.weights'='Weights model'; 'Hint.weights'='Which weight model the daemon runs. HT is the model this project reproduces; the small FP8 model newer DLLs carry is detected and extracted, and is not loadable yet.'
   Uninstall='Remove NR'; 'Loading.uninstall'='Removing NR from the game…'; 'Done.uninstall'='NR removed. The game folder is as it was before installation.'
   'Done.uninstall-steam'='Steam''s launch options restored and NR removed. The game folder is as it was before installation.'
   UninstallConfirm='Remove NR from this game? Setup deletes the dlss-nr folder and the files it put beside the game, and puts back the game files it set aside. If Steam still starts the game through an earlier setup''s launch options, they go back first, and Steam restarts. Your weights and settings stay in the DLSS-NR folder.'
-  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.neutral'='Neutral'
+  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'
+  'Choice.weights.ht'='HT (the model this project reproduces)'; 'Choice.weights.cc_small_fp8'='CC small FP8 (not loadable yet)'
  }
  ru=@{
   Title='DLSS-NR — установка и запуск'; LanguageTip='Выберите язык мастера.'
@@ -603,10 +606,12 @@ $script:Strings=@{
   'Hint.hold'='Сохраняет предыдущий результат там, где пиксели игры не менялись, уменьшая мерцание неподвижных участков.'
   'Hint.release'='Изменение пикселя в уровнях из 255, которое освобождает историю. Начните с 16–24; ноль выключает эту защиту.'
   'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
+  'Knob.weights'='Модель весов'; 'Hint.weights'='Какую модель весов запускает демон. HT — модель, которую воспроизводит проект; малая FP8-модель из новых DLL определяется и извлекается, но её раскладка блоков пока не загружается.'
   Uninstall='Удалить NR'; 'Loading.uninstall'='Удаляем NR из игры…'; 'Done.uninstall'='NR удалён. Папка игры такая же, как до установки.'
   'Done.uninstall-steam'='Параметры запуска Steam возвращены, NR удалён. Папка игры такая же, как до установки.'
   UninstallConfirm='Удалить NR из этой игры? Мастер удалит папку dlss-nr и файлы, которые положил рядом с игрой, и вернёт отложенные файлы игры. Если Steam ещё запускает игру с параметрами от прежней версии мастера, сначала вернутся они, и Steam перезапустится. Веса и настройки останутся в папке DLSS-NR.'
-  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
+  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'
+  'Choice.weights.ht'='HT (модель, которую воспроизводит проект)'; 'Choice.weights.cc_small_fp8'='CC small FP8 (пока не загружается)'
  }
  es=@{
   Title='DLSS-NR — instalación e inicio'; LanguageTip='Cambie el idioma del instalador.'
@@ -697,11 +702,109 @@ $script:Strings=@{
   'Hint.hold'='Mantiene el resultado anterior donde los píxeles del juego no cambiaron, lo que reduce el parpadeo en las zonas quietas.'
   'Hint.release'='Cambio de un píxel, en niveles de 255, que libera el historial. 16–24 es un buen punto de partida; cero desactiva esta protección.'
   'Hint.cut_limit'='Cambio medio del fotograma que descarta el historial en un cambio de escena. Menos reacciona antes; 1 nunca corta.'
+  'Knob.weights'='Modelo de pesos'; 'Hint.weights'='Qué modelo de pesos ejecuta el demonio. HT es el modelo que reproduce este proyecto; el modelo FP8 pequeño de los DLL nuevos se detecta y se extrae, y aún no se puede cargar.'
   Uninstall='Quitar NR'; 'Loading.uninstall'='Quitando NR del juego…'; 'Done.uninstall'='NR quitado. La carpeta del juego está como antes de la instalación.'
   'Done.uninstall-steam'='Se restauraron las opciones de inicio de Steam y se quitó NR. La carpeta del juego está como antes de la instalación.'
   UninstallConfirm='¿Quitar NR de este juego? El instalador borra la carpeta dlss-nr y los archivos que puso junto al juego, y devuelve los archivos del juego que guardó aparte. Si Steam todavía inicia el juego con las opciones de un instalador anterior, primero se restauran, y Steam se reinicia. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
-  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.neutral'='Neutro'
+  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'
+  'Choice.weights.ht'='HT (el modelo que reproduce el proyecto)'; 'Choice.weights.cc_small_fp8'='CC small FP8 (aún no se puede cargar)'
  }
+ zh=@{
+   Title='DLSS-NR — 安装与启动'; LanguageTip='更改安装程序语言。'
+   Subtitle='在 Intel Xe2 上安装并试运行'; FilesHeading='1. 选择文件'
+   DllLabel='你的 NVIDIA DLL'; GameLabel='游戏程序'; PythonLabel='64 位 Python'; Browse='浏览…'
+   DllTip='选择你自己的 nvngx_dlssnr.dll。该文件不随安装包提供，也不会被下载。'
+   GameTip='游戏的 .exe，64 位或 32 位均可。对于 DirectX 8–11，安装程序会同时放入 DXVK。'
+   PythonTip='请选择原生 64 位 Windows Python，而不是 MinGW/MSYS2 的解释器。'
+   FindPython='查找 Python'; GetPython='Python 官网'
+   PythonHint='Python 通常会自动检测到。如果缺少，请从 python.org 安装 Windows x64 版 Python。'
+   ConnectHeading='2. 将 NR 连接到游戏'; ApiLabel='图形 API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11（安装程序会添加 DXVK）'
+   LaunchOptions='启动选项'
+   ArgsLabel='游戏参数（可选）'; ArgsTip='普通的游戏参数；此处不执行 shell 命令。'
+   Fossilize='针对 NR 的 Steam 着色器缓存规避方案'
+   FossilizeTip='安装 NR 会在本游戏中关闭 Steam 的 Fossilize 层。Steam 覆盖界面仍然可用。'
+   FirstTestHint='首次测试请选择 800×450 的游戏窗口；网络以 0.4 的比例开始运行。安装程序会把它的 vulkan-1.dll 放到游戏旁，并为 DirectX 8–11 放入 DXVK，同时把被替换的文件收起来；移除 NR 会把一切还原。像平常一样启动游戏即可。DirectX 12 游戏目前无法在 Windows 上运行。'
+   Check='检查'; Dependencies='准备 Python'; Install='安装 NR'; CompareHeading='3. 启动并对比'
+   Launch='启动游戏'; Enable='启用 NR'; Disable='禁用 NR'
+   EffectOn='效果已启用'; EffectOff='效果已禁用'
+   RuntimeInitial='游戏尚未测试。启用 NR 后，请等待处理完成的帧。'
+   FpsHint='NR 会处理每一帧，可能明显降低 FPS。请在效果启用与禁用时对比同一场景。'
+   Report='保存报告'; CheckDetails='检查详情'; ChooseFiles='请选择你的游戏和 DLL。'
+   PythonMissing='未找到 Python。请安装 Windows x64 版 Python 或选择 python.exe。'
+   ActionFailed='操作无法完成。'; NoResult='操作结束了，但没有结果。请打开详情。'
+   ResultMissing='没有产生结果。'; FixChecks='请修正报告中指出的问题。请打开检查详情。'
+   StatusUnavailable='当前无法获取状态。已保留上一次已知的效果状态。'
+   Network='网络：{0}×{1}。'; Frames='帧数'; TailFrames='日志最新段落中的帧数'
+   Processing='游戏正在处理。{0}：{1}；已拒绝：{2}。{3}'
+   Historical='日志中包含 {0} 个已处理帧；已拒绝：{1}。目前尚未确认有新的帧。'
+   WaitingFrames='尚未有新的已处理帧。请进入游戏场景并启用 NR。'
+   BusyClose='请等待当前操作完成。'
+   PickDll='你的 nvngx_dlssnr.dll'; PickGame='游戏程序'; PickPython='64 位 Windows Python'
+   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|DLL 文件|*.dll'; GameFilter='游戏程序|*.exe'
+   PythonFilter='Python 解释器|python.exe;python3.exe|可执行文件|*.exe'; ReportFilter='JSON 报告|*.json'
+   ReportTitle='保存诊断报告'
+   'Loading.discover'='正在查找合适的 Python…'; 'Loading.check'='正在检查文件和依赖…'
+   'Loading.dependencies'='正在准备本地 Python…'; 'Loading.install'='正在解出权重并安装 NR…'
+   'Loading.launch'='正在启动游戏…'
+   'Loading.on'='正在启用 NR…'; 'Loading.off'='正在禁用 NR…'
+   'Loading.report'='正在保存报告…'; 'Loading.save'='正在保存设置…'
+   'Done.discover'='已找到 Python。请选择你的游戏和 DLL。'; 'Done.check'='检查通过。可以安装 NR 了。'
+   'Done.dependencies'='Python 已就绪。现在可以安装 NR。'; 'Done.install'='NR 已安装。像平常一样启动游戏，或使用“启动游戏”。'
+   'Done.launch'='已请求启动。请进入游戏场景。'; 'Done.install-steam'='已恢复此前安装留下的 Steam 启动选项，并装好了 NR。像平常一样启动游戏即可。'
+   'Done.on'='NR 已启用。请等待前几个处理完成的帧。'
+   'Done.off'='NR 已禁用。'; 'Done.report'='报告已保存。'; 'Done.save'='设置已保存。'
+   SetupTab='安装'; ControlsTab='NR 控制'; ControlsHeading='实时 NR 控制'
+   ControlsHint='调整完成后会自动保存。守护进程会在帧之间读取，无需重启游戏。请求的比例与实际补齐的网络尺寸可能不同。'
+   ResetSettings='全部重置'; DefaultKnob='默认'; MoreSettings='更多设置'; ThemeTip='浅色或深色主题'
+   SettingsLoading='正在加载 NR 设置…'; SettingsReady='当前设置已加载。'; SettingsUnsaved='有更改等待保存…'
+   SettingsSaved='已保存。在下一个处理帧上生效。'; SettingsFailed='设置无法保存。请查看“安装 → 检查详情”。'
+   UnsavedClose='有部分 NR 更改尚未保存。关闭并放弃这些更改吗？'
+   InvalidSetting='请输入支持范围内的有限数值。'; FrameReadout='上一个神经帧：输出 {0}×{1}；网络 {3}×{4}；处理 {2} 毫秒。这不是游戏 FPS。'
+   PackagesLater='Python 可用。安装 NR 会向独立的 Python 添加 numpy 和 safetensors。'
+   GameWithoutNr='游戏正在没有 NR 的情况下运行。请重启它；如果 NR 仍未出现，请用“启动游戏”启动。'
+   GameElevated='游戏以管理员身份运行，此时 Windows 的 Vulkan 加载器会忽略 NR 的位置，因此 NR 无法接入。请关闭游戏，以非管理员身份重新启动，Steam 或启动它的启动器也要如此。'
+   GameElevatedUacOff='由于 UAC 已关闭，游戏以管理员身份运行，此时 Windows 的 Vulkan 加载器会忽略 NR 的位置，因此 NR 无法接入。NR 需要 UAC 开启，即 Windows 的默认状态。'
+   'Warn.vulkan_executable'='{0} 本身不加载 Vulkan 加载器，NR 只能接入此处选择的 .exe。如果游戏是在另一个 .exe 中以 Vulkan 绘制的，请改选那个。'
+   'Warn.vulkan_executable_other'='{0} 本身不加载 Vulkan 加载器，NR 只能接入此处选择的 .exe。它旁边的 {1} 会：如果游戏是以 Vulkan 在那里绘制的，请改选它。'
+   'Warn.window_elevated'='本窗口以管理员身份运行，用“启动游戏”启动的游戏也会如此：NR 无法接入以管理员身份运行的游戏。请以非管理员身份启动游戏，以及启动它的 Steam 或启动器。'
+   'Warn.uac_off'='UAC 已关闭，Windows 会以管理员身份运行每个程序，NR 无法接入这样运行的游戏。NR 需要 UAC 开启，即 Windows 的默认状态。'
+   SpeedTest='速度测试'; SpeedTestTip='在有游戏之前，单独在这块 GPU 上测量 NR，覆盖四种窗口尺寸：这里能达到的最好水平。保存报告会带上该结果。'
+   'Loading.speedtest'='正在这块 GPU 上无游戏地测量 NR…'; 'Done.speedtest'='速度测试已保存；保存报告会带上它。'
+   SpeedHead='本机（{0}）上网络本身的每帧耗时：'; SpeedScale='渲染比例 {0}：{1}'
+   SpeedCase='{0}×{1} {2} 毫秒（最高 {3} fps）'
+   SpeedNote='从游戏取每一帧再交回去也要花时间，而且游戏在同一块 GPU 上绘制：在游戏中的帧率会低于这些数字。'
+   PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
+   AsyncMode='异步：网络在游戏绘制下一帧时工作'
+   AsyncModeTip='每秒帧数更多，而屏幕上显示的比处理结果落后一帧。'
+   GpuImagePath='实验性：帧保留在 GPU 上'
+   GpuImagePathTip='帧保留在 GPU 上。如果 GPU 路径不可用或处理失败，则跳过效果，游戏显示原始帧。要求游戏与网络在同一块 Arc 上，异步关闭，且每帧都处理。'
+   GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
+   EveryLabel='网络运行于'; EveryTip='其间各帧重复上一次结果：游戏跑得更快，画面只在网络出帧时变化。'
+   Every1='每帧'; Every2='每 2 帧'; Every3='每 3 帧'; Every4='每 4 帧'
+   'Loading.pacing'='正在保存帧节奏…'; 'Done.pacing'='帧节奏已保存；在游戏下次启动时生效。'
+   'Done.pacing-later'='帧节奏已保存；安装 NR 会把它交给游戏。'
+   'Loading.settings'='正在加载 NR 设置…'; 'Loading.settings-save'='正在保存 NR 控制…'; 'Loading.settings-reset'='正在恢复 NR 默认值…'
+   'Done.settings'='NR 设置已加载。'; 'Done.settings-save'='NR 设置已保存。'; 'Done.settings-reset'='NR 默认值已恢复。'
+   'Knob.render_scale'='渲染比例'; 'Knob.min_extent'='最小网络边长'; 'Knob.profile'='配置风格'; 'Knob.intensity'='强度'
+   'Knob.detail_strength'='细节强度'; 'Knob.colour_strength'='色彩强度'; 'Knob.temporal'='时域历史'
+   'Knob.hold'='保持未变像素'; 'Knob.release'='释放运动像素'; 'Knob.cut_limit'='转场阈值'
+   'Hint.render_scale'='网络处理的每个维度的比例。越低越省，细节也更粗；最小补齐可能限制降低幅度。'
+   'Hint.min_extent'='补齐后的最小网络边长。320 与原厂一致；128 对小帧更省，但会改变周围镜像的上下文。'
+   'Hint.profile'='标准增加纹理；自然与电影保留更多高光。'
+   'Hint.intensity'='混合强度：0 保留游戏画面，1 使用模型结果，大于 1 会夸大变化。'
+   'Hint.detail_strength'='细节强度。零只保留大体的色调变化；大于 1 增加更多锐化。'
+   'Hint.colour_strength'='色调与色彩变化的强度。更高会降低饱和度；零保留游戏色调。'
+   'Hint.temporal'='回馈多少上一次的输出。零则忘记历史，逐帧独立绘制。'
+   'Hint.hold'='在游戏像素未变处保留上一次结果，减少静止区域的闪烁。'
+   'Hint.release'='以 255 级表示的像素变化量，达到则释放历史。16–24 是有用的起始范围；零则关闭该保护。'
+   'Hint.cut_limit'='平均帧变化量，达到则因转场丢弃历史。越低反应越快；1 从不切换。'
+   'Knob.weights'='权重模型'; 'Hint.weights'='守护进程运行哪个权重模型。HT 是本项目复现的模型；新版 DLL 里的小型 FP8 模型会被识别并提取，其分块结构目前还不能加载。'
+   Uninstall='移除 NR'; 'Loading.uninstall'='正在从游戏移除 NR…'; 'Done.uninstall'='NR 已移除。游戏文件夹恢复如初。'
+   'Done.uninstall-steam'='Steam 启动选项已恢复，NR 已移除。游戏文件夹恢复如初。'
+   UninstallConfirm='要从本游戏移除 NR 吗？安装程序会删除 dlss-nr 文件夹和它放到游戏旁的文件，并还原它收起来的游戏文件。如果 Steam 仍通过此前安装的启动选项启动游戏，它们会先被恢复，然后 Steam 重启。你的权重和设置保留在 DLSS-NR 文件夹中。'
+   'Profile.standard'='标准'; 'Profile.natural'='自然'; 'Profile.cinematic'='电影'
+   'Choice.weights.ht'='HT（本项目复现的模型）'; 'Choice.weights.cc_small_fp8'='CC small FP8（暂不可加载）'
+  }
 }
 $script:TextBindings=@{
  Subtitle='Subtitle'; FilesHeading='FilesHeading'; DllLabel='DllLabel'; GameLabel='GameLabel'; PythonLabel='PythonLabel'
@@ -724,6 +827,18 @@ $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTi
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
     return [string]$script:Strings[$script:Language][$Key]
+}
+# The label of one value of a `choice` knob. A choice knob's values are not always profiles: the
+# weight model's are `ht` and `cc_small_fp8`, so the general key is `Choice.<knob>.<value>` and
+# `Profile.<value>` stays what `profile` reads. A value with neither key is shown as it is spelled,
+# because a missing translation throws above and a settings page that will not open is worse than a
+# row that says `ht`.
+function ChoiceLabel([string]$Name,[string]$Value) {
+    $key='Choice.'+$Name+'.'+$Value
+    if($script:Strings[$script:Language].ContainsKey($key)) { return [string]$script:Strings[$script:Language][$key] }
+    $key='Profile.'+$Value
+    if($script:Strings[$script:Language].ContainsKey($key)) { return [string]$script:Strings[$script:Language][$key] }
+    return $Value
 }
 function Set-Progress([string]$Key) {
     $script:ProgressKey=$Key
@@ -789,12 +904,12 @@ function Update-KnobLanguage {
         # The description once, on the name: it was printed under the slider and was the
         # slider's tooltip as well.
         $row.Label.ToolTip=T ('Hint.'+$name)
-        $defaultLabel=$(if($row.Model.kind -eq 'choice'){T ('Profile.'+[string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
+        $defaultLabel=$(if($row.Model.kind -eq 'choice'){ChoiceLabel $name ([string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
         $row.Default.ToolTip=(T 'DefaultKnob')+': '+$defaultLabel
         [Windows.Automation.AutomationProperties]::SetName($row.Default,(T 'DefaultKnob')+' '+$defaultLabel)
         if($row.Choice) {
             [Windows.Automation.AutomationProperties]::SetName($row.Choice,(T ('Knob.'+$name)))
-            foreach($item in $row.Choice.Items) { $item.Content=T ('Profile.'+[string]$item.Tag) }
+            foreach($item in $row.Choice.Items) { $item.Content=ChoiceLabel $name ([string]$item.Tag) }
         } else {
             $row.Input.ToolTip=(T ('Knob.'+$name))+' ['+$row.Model.runtime_low+' – '+$row.Model.runtime_high+']'
             [Windows.Automation.AutomationProperties]::SetName($row.Input,(T ('Knob.'+$name)))
@@ -875,7 +990,18 @@ function Set-Language([string]$Language) {
     $script:ChangingLanguage=$true
     try {
         $script:Language=$Language
-        $script:Ui.Language.SelectedIndex=[array]::IndexOf(@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag }), $Language)
+        # The index, or English when the tag is not in the list.
+        #
+        # `IndexOf` returns -1 for a language the combo does not offer, and `SelectedIndex = -1`
+        # leaves a ComboBox showing NOTHING - the control is blank, which is exactly the reported
+        # "the language box shows nothing". It happened because the combo's items were hardcoded in
+        # XAML with three entries while the language table had four, so a Chinese system found no
+        # `zh` item to select. The list is now built from the table (see below), but the fallback
+        # stays: an unsupported language should show English, not an empty box.
+        $tags=@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag })
+        $index=[array]::IndexOf($tags, $Language)
+        $script:Ui.Language.SelectedIndex=$(if($index -ge 0){$index}else{0})
+        # The tooltip is set by the TipBindings loop below, which already names 'Language'.
         $script:Window.Title=T 'Title'
         foreach($name in $script:TextBindings.Keys) { $script:Ui[$name].Text=T $script:TextBindings[$name] }
         foreach($name in $script:ContentBindings.Keys) { $script:Ui[$name].Content=T $script:ContentBindings[$name] }

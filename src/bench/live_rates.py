@@ -110,8 +110,7 @@ def main():
         settings.write_text(json.dumps({"render_scale": plan[0][2]}))
         daemon = subprocess.Popen(
             [sys.executable, str(ROOT / "src" / "layer" / "nr_daemon.py"),
-             "--socket", str(daemon_socket), "--settings", str(settings),
-             "--max-pixels", str(1920 * 1200)],
+             "--socket", str(daemon_socket), "--settings", str(settings)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             for _ in range(600):

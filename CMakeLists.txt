@@ -279,6 +279,16 @@ if(NR_BUILD_TESTS)
     nr_test(layer_present_negative "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/src/layer/test_present.py" --negative-control)
     set_tests_properties(layer_present_negative PROPERTIES SKIP_RETURN_CODE 77)
+    # The ImGui panel's own two fixtures. Windows-only by construction - they link ImGui,
+    # GetAsyncKeyState and user32 - and off Windows the runner says so rather than skipping,
+    # because nothing else watches what the panel reports. The executables come from
+    # tools/build_win.bat, so REQUIRED_FILES keeps CTest from running before they exist.
+    if(WIN32)
+      nr_test(layer_menu_ui_fixtures "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/src/layer/test_menu_ui_fixtures.py")
+      set_tests_properties(layer_menu_ui_fixtures PROPERTIES
+        REQUIRED_FILES "${NR_WORK_DIR}/test_menu_panel.exe;${NR_WORK_DIR}/test_menu_side.exe")
+    endif()
   endif()
   foreach(name publish_check claims_check build_check)
     nr_test(${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/${name}.py")

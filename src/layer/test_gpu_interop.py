@@ -53,7 +53,7 @@ def serve(path, marker):
             magic, width, height, fmt = struct.unpack("<4I", receive(connection, 16))
             if magic != T.MAGIC:
                 raise ValueError("unexpected GPU magic")
-            p = T.unpack_packet(receive(connection, 128), width, height, fmt, 1024 * 1024)
+            p = T.unpack_packet(receive(connection, 128), width, height, fmt)
             if T.peer_pid(connection) != p["pid"]:
                 raise ValueError("exporter PID did not match the pipe")
             if p["device_uuid"] + p["driver_uuid"] != bytes(identity):

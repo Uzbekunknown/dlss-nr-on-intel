@@ -237,7 +237,7 @@ def main():
                      args=(endpoint, ready, settings, plan, args.frames, args.warmup,
                            args.out)).start()
     sys.argv = [str(ROOT / "src" / "layer" / "nr_daemon.py"), "--socket", endpoint,
-                "--settings", str(settings), "--max-pixels", str(1920 * 1200)]
+                "--settings", str(settings)]
     nr_daemon.main()
 
 

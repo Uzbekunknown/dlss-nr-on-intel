@@ -11,7 +11,12 @@
 int main(int argc, char **argv)
 {
     if (argc != 3) return 2;
+    /* A write to a socket nobody reads is a signal on POSIX and an error return on Windows, so
+     * the disposition is set where it exists. This is the one platform difference in the fixture;
+     * `exchange()` itself is already split by platform. */
+#ifdef SIGPIPE
     signal(SIGPIPE, SIG_DFL);
+#endif
     socket_path = argv[1];
     int reject = strcmp(argv[2], "reject") == 0;
     int masked = strcmp(argv[2], "masked") == 0;

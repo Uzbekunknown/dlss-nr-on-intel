@@ -95,7 +95,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL validation(
     const VkDebugUtilsMessengerCallbackDataEXT *data, void *user)
 {
     (void)type; (void)user;
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    /* A loader diagnostic about ANOTHER module failing to load is not a verdict on this layer:
+     * the loader reports implicit-layer problems through this same messenger, and the development
+     * machine has a ReShade implicit layer whose DLL will not open in this process - counting it
+     * failed the smoke with the layer itself clean. Named narrowly on purpose; no Vulkan usage
+     * error says this. */
+    int foreign_load_failure = data && data->pMessage &&
+        strstr(data->pMessage, "Failed to open dynamic library") != NULL;
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT && !foreign_load_failure)
         InterlockedIncrement(&validation_errors);
     fprintf(stderr, "validation %s: %s\n",
         severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "ERROR" : "warning",
