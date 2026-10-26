@@ -7,9 +7,17 @@
  * interface mask is needed, and XeSS's temporal accumulation then treats NR's detail as
  * it treats any other. No DXVK or VKD3D either: the game stays on its own D3D12.
  *
- * How. The game calls xessD3D12Execute with a command list it is still recording, so
- * nothing here can wait for the network: the frame does not exist yet when the call is
- * made. Ahead of XeSS's own work on that list this file records a copy of the colour into
+ * How, with mode=cut (the default). The game calls xessD3D12Execute with a command list it
+ * is still recording, and nothing in a D3D12 list can wait for another API. So the list is
+ * cut there (nr_xess_split.cpp, after DLSSNR-AMD): the first half copies the colour into a
+ * buffer the daemon shares (ENCODE in nr_xess.hlsl) and is closed; when the game executes
+ * the list, its queue signals a shared fence, the daemon runs the network on that frame on
+ * the GPU and signals the next value (protocol 3, src/layer/nr_gpu_wire.h), and the queue
+ * waits for it before the continuation, where COMPOSE adds NR's change to the colour and
+ * XeSS upscales it. NR's answer lands on its own frame; nothing is carried along motion.
+ *
+ * How, with mode=carry, as it was before the cut. The frame does not exist yet when the call
+ * is made. Ahead of XeSS's own work on that list this file records a copy of the colour into
  * a buffer the CPU can read, and a marker the GPU writes once the copy is done. A worker
  * thread waits for the marker, sends the frame to the daemon over the layer's own pipe
  * protocol and keeps NR's *change*, its answer minus what it was given. Every later
@@ -40,6 +48,9 @@
 #include <string.h>
 
 #include "../layer/nr_transport.h"
+#include "../layer/nr_gpu_d3d12.h"
+#include "../layer/nr_gpu_rpc.h"
+#include "nr_xess_split.h"
 /* nr_xess.hlsl, compiled by fxc once for each pass, each with the root signature */
 #include "nr_xess_clear.h"
 #include "nr_xess_claim.h"
@@ -47,6 +58,8 @@
 #include "nr_xess_match.h"
 #include "nr_xess_reduce.h"
 #include "nr_xess_apply.h"
+#include "nr_xess_encode.h"
+#include "nr_xess_compose.h"
 #ifndef NR_XESS_TEST
 #include "nr_xess_exports.h"
 #endif
@@ -160,7 +173,10 @@ static struct {
 	 * replay_nr_xess; each time the file is saved with a nonzero N. */
 	int record;
 	char record_dir[MAX_PATH];
-} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "" };
+	/* `mode=cut`, 1: the list cut at XeSS, NR's answer on its own frame. `mode=carry`, 0: the
+	 * change to an earlier frame carried along motion. Read once, as the pipe is. */
+	int cut;
+} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", 1 };
 
 static volatile LONG record_asked;      /* frames to record, set by the settings, taken by the hook */
 
@@ -187,6 +203,8 @@ static void read_settings(int first)
 		value[strcspn(value, "\r\n")] = '\0';
 		if (!strcmp(line, "pipe") && first)
 			snprintf(config.pipe, sizeof config.pipe, "%s", value);
+		else if (!strcmp(line, "mode") && first)
+			config.cut = strcmp(value, "carry") != 0;
 		else if (!strcmp(line, "white"))
 			config.white = (float)atof(value);
 		else if (!strcmp(line, "strength"))
@@ -216,9 +234,10 @@ static void read_settings(int first)
 	if (!(config.strength >= 0)) config.strength = 0;
 	if (!(config.match_from >= 0)) config.match_from = 0;
 	if (!(config.match_to > config.match_from)) config.match_to = config.match_from + 0.01f;
-	say("settings: enabled %d, white %g, strength %g, warp %d, motion history %d, match %g-%g, "
-	    "sync %d, pipe %s\n", config.enabled, config.white, config.strength, config.warp,
-	    config.motion_history, config.match_from, config.match_to, config.sync, config.pipe);
+	say("settings: mode %s, enabled %d, white %g, strength %g, warp %d, motion history %d, "
+	    "match %g-%g, sync %d, pipe %s\n", config.cut ? "cut" : "carry", config.enabled, config.white,
+	    config.strength, config.warp, config.motion_history, config.match_from, config.match_to,
+	    config.sync, config.pipe);
 }
 
 /* ---- Pixels on the CPU: the proxy NR is given, and its change ---- */
@@ -412,6 +431,8 @@ static struct {
 	ID3D12PipelineState *pipeline;
 	ID3D12PipelineState *clear_pipeline, *claim_pipeline;
 	ID3D12PipelineState *track_pipeline, *match_pipeline, *reduce_pipeline;
+	ID3D12PipelineState *encode_pipeline, *compose_pipeline;     /* mode=cut */
+	ID3D12Resource *srgb_table, *linear_table;   /* `srgb8` for ENCODE and `linear8` for COMPOSE */
 	ID3D12Resource *claims;      /* CLAIM's sixteen bytes a pixel, read by TRACK */
 	ID3D12Resource *matched;     /* MATCH's seven floats a pixel */
 	ID3D12Resource *sums;        /* ... summed over each cell by REDUCE, with the vectors */
@@ -787,15 +808,18 @@ static void release_motion(void)
 
 static int build_device(ID3D12Device *device)
 {
-	ID3D12PipelineState **pipelines[6] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
-						&nr.match_pipeline, &nr.reduce_pipeline, &nr.pipeline };
-	for (int i = 0; i < 6; i++)
+	ID3D12PipelineState **pipelines[8] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
+						&nr.match_pipeline, &nr.reduce_pipeline, &nr.pipeline,
+						&nr.encode_pipeline, &nr.compose_pipeline };
+	for (int i = 0; i < 8; i++)
 		if (*pipelines[i]) {
 			ID3D12PipelineState_Release(*pipelines[i]);
 			*pipelines[i] = NULL;
 		}
 	if (nr.signature) ID3D12RootSignature_Release(nr.signature);
 	if (nr.marker) ID3D12Resource_Release(nr.marker);
+	drop(&nr.srgb_table);
+	drop(&nr.linear_table);
 	if (nr.device) ID3D12Device_Release(nr.device);
 	release_motion();
 	nr.signature = NULL;
@@ -808,11 +832,12 @@ static int build_device(ID3D12Device *device)
 		say("the compute passes' root signature was refused\n");
 		return -1;
 	}
-	const void *code[6] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
-				nr_xess_reduce, nr_xess_apply };
-	SIZE_T sizes[6] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
-			    sizeof nr_xess_match, sizeof nr_xess_reduce, sizeof nr_xess_apply };
-	for (int i = 0; i < 6; i++) {
+	const void *code[8] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
+				nr_xess_reduce, nr_xess_apply, nr_xess_encode, nr_xess_compose };
+	SIZE_T sizes[8] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
+			    sizeof nr_xess_match, sizeof nr_xess_reduce, sizeof nr_xess_apply,
+			    sizeof nr_xess_encode, sizeof nr_xess_compose };
+	for (int i = 0; i < 8; i++) {
 		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {
 			.pRootSignature = nr.signature, .CS = { code[i], sizes[i] },
 		};
@@ -822,13 +847,28 @@ static int build_device(ID3D12Device *device)
 			return -1;
 		}
 	}
+	/* The CPU's encode and decode tables, once, where the passes read them. */
+	nr.srgb_table = make_buffer(D3D12_HEAP_TYPE_UPLOAD, (SRGB_STEPS + 4) & ~3u, D3D12_RESOURCE_FLAG_NONE,
+				    D3D12_RESOURCE_STATE_GENERIC_READ);
+	nr.linear_table = make_buffer(D3D12_HEAP_TYPE_UPLOAD, sizeof linear8, D3D12_RESOURCE_FLAG_NONE,
+				      D3D12_RESOURCE_STATE_GENERIC_READ);
+	void *mapped = NULL;
+	D3D12_RANGE none = { 0, 0 };
+	if (!nr.srgb_table || FAILED(ID3D12Resource_Map(nr.srgb_table, 0, &none, &mapped))) return -1;
+	memcpy(mapped, srgb8, sizeof srgb8);
+	ID3D12Resource_Unmap(nr.srgb_table, 0, NULL);
+	if (!nr.linear_table || FAILED(ID3D12Resource_Map(nr.linear_table, 0, &none, &mapped))) return -1;
+	memcpy(mapped, linear8, sizeof linear8);
+	ID3D12Resource_Unmap(nr.linear_table, 0, NULL);
 	nr.marker = make_buffer(D3D12_HEAP_TYPE_READBACK, 256, D3D12_RESOURCE_FLAG_NONE,
 				D3D12_RESOURCE_STATE_COPY_DEST);
 	nr.sequence = 0;
 	return nr.marker ? 0 : -1;
 }
 
-static int build_sized(UINT width, UINT height, DXGI_FORMAT format, int kind, UINT texel)
+/* What both modes need for a colour: it as a buffer for the passes, their result as one, and
+ * the texture XeSS reads instead of the game's. */
+static int build_colour(UINT width, UINT height, DXGI_FORMAT format, int kind, UINT texel)
 {
 	D3D12_RESOURCE_DESC desc = {
 		.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D, .Width = width, .Height = height,
@@ -845,13 +885,26 @@ static int build_sized(UINT width, UINT height, DXGI_FORMAT format, int kind, UI
 			(void **)&nr.mixed)))
 		return -1;
 	nr.mixed_state = D3D12_RESOURCE_STATE_COPY_DEST;
-	nr.readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes, D3D12_RESOURCE_FLAG_NONE,
-				  D3D12_RESOURCE_STATE_COPY_DEST);
 	nr.staging = make_buffer(D3D12_HEAP_TYPE_DEFAULT, nr.bytes, D3D12_RESOURCE_FLAG_NONE,
 				 D3D12_RESOURCE_STATE_COMMON);
 	nr.output = make_buffer(D3D12_HEAP_TYPE_DEFAULT, nr.bytes,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
-	if (!nr.readback || !nr.staging || !nr.output) return -1;
+	if (!nr.staging || !nr.output) return -1;
+	nr.width = width;
+	nr.height = height;
+	nr.format = format;
+	nr.kind = kind;
+	nr.texel = texel;
+	return 0;
+}
+
+static int build_sized(UINT width, UINT height, DXGI_FORMAT format, int kind, UINT texel)
+{
+	if (build_colour(width, height, format, kind, texel) != 0) return -1;
+	nr.width = nr.height = 0;               /* until the rest is made too */
+	nr.readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes, D3D12_RESOURCE_FLAG_NONE,
+				  D3D12_RESOURCE_STATE_COPY_DEST);
+	if (!nr.readback) return -1;
 	nr.cells_width = (width + CELL - 1) / CELL;
 	nr.cells_height = (height + CELL - 1) / CELL;
 	nr.claims = make_buffer(D3D12_HEAP_TYPE_DEFAULT, (UINT64)width * height * 16,
@@ -1611,14 +1664,452 @@ static ID3D12Resource *record(ID3D12GraphicsCommandList *list, const xess_d3d12_
 	return apply ? nr.mixed : NULL;
 }
 
+/* ---- mode=cut: the list cut at XeSS, and NR's answer to that very frame ----
+ *
+ * One set of shared buffers and one fence for the session: the queue runs the halves in
+ * order, so a frame's first half, which writes the input, runs only once the daemon is done
+ * with the frame before (its V + 1), and the answer is read before the next frame's is
+ * written. */
+
+/* nr_xess.hlsl's cbuffer for ENCODE and COMPOSE, field for field; the rest of the 32 root
+ * constants unused. */
+struct cut_constants {
+	uint32_t width, height, pitch, kind;
+	float white, strength;
+	uint32_t frame[2];
+	uint32_t unused[24];
+};
+
+_Static_assert(sizeof(struct cut_constants) == 32 * 4, "the root signature takes 32 constants");
+
+/* What one frame's cut hands the daemon: its fence, held, since the session may close before
+ * the worker gets to it, the frame's value V, and the session it belongs to. */
+struct handover {
+	ID3D12Fence *fence;
+	uint64_t value, session;
+	LARGE_INTEGER queued;
+};
+
+#define HANDOVERS 16
+
+/* The daemon's side of a control exchange (nr_gpu_rpc.h); test_nr_xess puts its own in. */
+static int exchange_rpc(const struct nr_gpu_packet *packet, struct nr_gpu_reply *reply)
+{
+	return nr_gpu_rpc(config.pipe, packet, reply);
+}
+
+static int (*exchange_gpu)(const struct nr_gpu_packet *, struct nr_gpu_reply *) = exchange_rpc;
+
+static struct {
+	SRWLOCK lock;
+	HANDLE wake, thread;
+	struct nr_gpu_d3d12 gpu;     /* the buffers and fence the daemon shares, sized to the colour */
+	uint64_t session;            /* the current session's id, or 0 */
+	volatile LONG hello;         /* 1 the worker is to say HELLO, 2 the daemon has answered it */
+	volatile LONG broken;        /* a frame went unanswered: no more cuts until a new session */
+	volatile LONG releasing;     /* the worker is to send `release` */
+	struct nr_gpu_packet release;
+	ULONGLONG retry;             /* when a refused HELLO is tried again */
+	struct handover queue[HANDOVERS];
+	unsigned head, count;
+	uint64_t last;               /* the newest value handed over */
+	char said[160];              /* the last reason a frame went through whole */
+	uint32_t answered, declined, failed;
+	uint64_t window_start, window_frames;
+	double window_ms;
+} cut = { .lock = SRWLOCK_INIT };
+
+static ID3D12Resource *handed;      /* what the last execute gave XeSS, for replay_nr_xess */
+
+static void say_line(const char *line)
+{
+	say("cut: %s\n", line);
+}
+
+/* Why this frame went to XeSS whole, when that changes. */
+static void cut_said(const char *why)
+{
+	if (!strcmp(why, cut.said)) return;
+	snprintf(cut.said, sizeof cut.said, "%s", why);
+	say("this frame goes to XeSS without NR: %s\n", why);
+}
+
+/* The frame's queue waits on the GPU for V + 1. Where the daemon cannot give it, this does,
+ * from the CPU, once the queue has reached V: earlier, the queue's own signal of V would take
+ * the fence back, and the wait would never end. */
+static void unblock(ID3D12Fence *fence, uint64_t value)
+{
+	if (ID3D12Fence_GetCompletedValue(fence) > value) return;
+	HANDLE event = CreateEventW(NULL, FALSE, FALSE, NULL);
+	if (event && SUCCEEDED(ID3D12Fence_SetEventOnCompletion(fence, value, event)))
+		WaitForSingleObject(event, 10000);
+	if (event) CloseHandle(event);
+	if (ID3D12Fence_GetCompletedValue(fence) == value) ID3D12Fence_Signal(fence, value + 1);
+	else if (ID3D12Fence_GetCompletedValue(fence) < value)
+		say("the game's queue did not reach frame %llu's copy in 10 s; its wait is left to it\n",
+		    (unsigned long long)value);
+}
+
+static void say_hello(void)
+{
+	struct nr_gpu_packet packet;
+	AcquireSRWLockShared(&cut.lock);
+	nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_HELLO, 0, &packet);
+	uint32_t width = cut.gpu.width, height = cut.gpu.height;
+	ReleaseSRWLockShared(&cut.lock);
+	struct nr_gpu_reply reply;
+	int ok = exchange_gpu(&packet, &reply);
+	if (ok && reply.status == NR_GPU_SUCCESS) {
+		InterlockedExchange(&cut.hello, 2);
+		say("the daemon at %s takes this game's %ux%u frames on the GPU (process %u)\n", config.pipe,
+		    width, height, reply.detail);
+		return;
+	}
+	cut.retry = GetTickCount64() + 5000;
+	InterlockedExchange(&cut.hello, 0);
+	char why[96];
+	snprintf(why, sizeof why, "no daemon at %s took a D3D12 session (%s); asked again every 5 s",
+		 config.pipe, ok ? "it declined, and its log says why" : "no answer");
+	cut_said(why);
+}
+
+static void hand_over(struct handover *h)
+{
+	if (h->session != cut.session || cut.broken) {
+		unblock(h->fence, h->value);
+		return;
+	}
+	struct nr_gpu_packet packet;
+	AcquireSRWLockShared(&cut.lock);
+	nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
+	ReleaseSRWLockShared(&cut.lock);
+	struct nr_gpu_reply reply;
+	int ok = exchange_gpu(&packet, &reply);
+	if (ok && reply.status == NR_GPU_SUCCESS) {
+		cut.answered++;
+		LARGE_INTEGER now, f;
+		QueryPerformanceCounter(&now);
+		QueryPerformanceFrequency(&f);
+		cut.window_ms += (double)(now.QuadPart - h->queued.QuadPart) * 1000 / f.QuadPart;
+		cut.window_frames++;
+		uint64_t tick = GetTickCount64();
+		if (!cut.window_start) cut.window_start = tick;
+		if (tick - cut.window_start >= 5000) {
+			say("NR: %llu frames in %.1f s, each answered on its own frame, %.0f ms from its copy to "
+			    "the answer; %u declined so far\n", cut.window_frames, (tick - cut.window_start) / 1000.0,
+			    cut.window_ms / (double)cut.window_frames, cut.declined);
+			cut.window_start = tick;
+			cut.window_frames = 0;
+			cut.window_ms = 0;
+		}
+		return;
+	}
+	if (ok && reply.status == NR_GPU_UNSUPPORTED) {
+		/* The daemon has moved the fence on itself; the frame goes on as it was. */
+		if (cut.declined++ % 100 == 0)
+			say("the daemon declined frame %llu (%u so far); its log says why\n",
+			    (unsigned long long)h->value, cut.declined);
+		return;
+	}
+	/* No answer, or the daemon's session failed: it moved the fence where it could, and this
+	 * makes sure. Its session is done with either way. */
+	unblock(h->fence, h->value);
+	InterlockedExchange(&cut.broken, 1);
+	cut.failed++;
+	say("frame %llu: %s; NR is off until the colour or the device changes\n", (unsigned long long)h->value,
+	    ok ? "the daemon's session failed, and its log says why" : "no answer from the daemon");
+}
+
+static DWORD WINAPI cut_worker(LPVOID unused)
+{
+	(void)unused;
+	for (;;) {
+		WaitForSingleObject(cut.wake, 1000);
+		read_settings(0);
+		if (cut.releasing) {
+			struct nr_gpu_reply reply;
+			exchange_gpu(&cut.release, &reply);
+			InterlockedExchange(&cut.releasing, 0);
+		}
+		if (cut.hello == 1) say_hello();
+		for (;;) {
+			struct handover h;
+			AcquireSRWLockExclusive(&cut.lock);
+			int any = cut.count > 0;
+			if (any) {
+				h = cut.queue[cut.head];
+				cut.head = (cut.head + 1) % HANDOVERS;
+				cut.count--;
+			}
+			ReleaseSRWLockExclusive(&cut.lock);
+			if (!any) break;
+			hand_over(&h);
+			ID3D12Fence_Release(h.fence);
+		}
+	}
+}
+
+/* Between the halves, on the queue that runs them, inside the game's ExecuteCommandLists: the
+ * first half is in the queue. Nothing here waits on the CPU. */
+static void run_between(void *user, ID3D12CommandQueue *queue)
+{
+	struct handover *h = user;
+	ID3D12CommandQueue_Signal(queue, h->fence, h->value);          /* the frame is in the input */
+	QueryPerformanceCounter(&h->queued);
+	AcquireSRWLockExclusive(&cut.lock);
+	int room = cut.count < HANDOVERS;
+	if (room) {
+		cut.queue[(cut.head + cut.count) % HANDOVERS] = *h;        /* the worker releases the fence */
+		cut.count++;
+	}
+	ReleaseSRWLockExclusive(&cut.lock);
+	if (room) {
+		SetEvent(cut.wake);
+		/* the continuation waits for the daemon's V + 1: its answer, or its word there is none */
+		ID3D12CommandQueue_Wait(queue, h->fence, h->value + 1);
+	} else {
+		/* the daemon is sixteen frames behind: this one goes on unanswered */
+		ID3D12CommandQueue_Signal(queue, h->fence, h->value + 1);
+		ID3D12Fence_Release(h->fence);
+	}
+	free(h);
+}
+
+/* The list was reset or released unexecuted: the frame never reached the queue. */
+static void drop_handover(void *user)
+{
+	struct handover *h = user;
+	ID3D12Fence_Release(h->fence);
+	free(h);
+}
+
+/* The session's last frame done with its buffers, the daemon told to let them go, and ours
+ * let go. */
+static void cut_close(void)
+{
+	if (!cut.session) return;
+	if (cut.last) {
+		HANDLE event = CreateEventW(NULL, FALSE, FALSE, NULL);
+		if (event && SUCCEEDED(ID3D12Fence_SetEventOnCompletion(cut.gpu.fence, cut.last + 1, event))
+		    && WaitForSingleObject(event, 2000) != WAIT_OBJECT_0)
+			say("the session's last frame was not done with its buffers after 2 s; going on\n");
+		if (event) CloseHandle(event);
+	}
+	AcquireSRWLockExclusive(&cut.lock);
+	if (cut.hello == 2) {
+		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_RELEASE, 0, &cut.release);
+		InterlockedExchange(&cut.releasing, 1);
+	}
+	nr_gpu_d3d12_close(&cut.gpu);
+	cut.session = 0;
+	cut.last = 0;
+	InterlockedExchange(&cut.hello, 0);
+	InterlockedExchange(&cut.broken, 0);
+	cut.retry = 0;
+	ReleaseSRWLockExclusive(&cut.lock);
+	if (cut.wake) SetEvent(cut.wake);
+}
+
+/* A new device or a new colour: the old session goes, and the buffers come again, the shared
+ * ones on the game's own device. Rare, so the game waits here. */
+static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMAT format, int kind,
+		       UINT texel)
+{
+	cut_close();
+	release_sized();
+	if (device != nr.device && build_device(device) != 0) return -1;
+	if (build_colour(width, height, format, kind, texel) != 0) {
+		say("could not make the buffers for a %ux%u colour\n", width, height);
+		return -1;
+	}
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	uint64_t session = ((uint64_t)GetCurrentProcessId() << 40) ^ (uint64_t)now.QuadPart;
+	AcquireSRWLockExclusive(&cut.lock);
+	HRESULT hr = nr_gpu_d3d12_open(&cut.gpu, device, width, height, 37, session ? session : 1);
+	if (SUCCEEDED(hr)) cut.session = cut.gpu.session;
+	ReleaseSRWLockExclusive(&cut.lock);
+	if (FAILED(hr)) {
+		say("could not make the buffers and fence the daemon shares (0x%08lx)\n", (unsigned long)hr);
+		return -1;
+	}
+	if (!cut.thread) {
+		cut.wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+		cut.thread = CreateThread(NULL, 0, cut_worker, NULL, 0, NULL);
+		if (!cut.wake || !cut.thread) return -1;
+	}
+	return 0;
+}
+
+static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants *k,
+		     ID3D12Resource *const read[5], ID3D12Resource *written)
+{
+	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(list, 0, sizeof *k / 4, k, 0);
+	for (UINT i = 0; i < 5; i++)
+		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(list, 1 + i,
+			ID3D12Resource_GetGPUVirtualAddress(read[i]));
+	ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 6,
+		ID3D12Resource_GetGPUVirtualAddress(written));
+	ID3D12GraphicsCommandList_Dispatch(list, (k->width + 7) / 8, (k->height + 7) / 8, 1);
+}
+
+/* Cuts the game's list at this execute: before the cut, the frame NR is given; after it, NR's
+ * answer to it added to the colour. Returns the texture XeSS should read instead of the game's
+ * colour, or NULL to leave this frame to XeSS whole. The colour stays in
+ * NON_PIXEL_SHADER_RESOURCE, and our buffers and the shared ones start and end each half in
+ * COMMON, which the daemon's side needs. */
+static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p)
+{
+	D3D12_RESOURCE_DESC desc;
+	ID3D12Resource_GetDesc(p->pColorTexture, &desc);
+	UINT width = p->inputWidth ? p->inputWidth : (UINT)desc.Width;
+	UINT height = p->inputHeight ? p->inputHeight : desc.Height;
+	UINT texel;
+	int kind = kind_of(desc.Format, &texel);
+	if (kind < 0 || (UINT64)p->inputColorBase.x + width > desc.Width
+	    || (UINT64)p->inputColorBase.y + height > desc.Height) {
+		char why[160];
+		snprintf(why, sizeof why, "colour format %d, %ux%u at (%u, %u) in %llux%u is not handled",
+			 desc.Format, width, height, p->inputColorBase.x, p->inputColorBase.y, desc.Width,
+			 desc.Height);
+		cut_said(why);
+		return NULL;
+	}
+	ID3D12Device *device = NULL;
+	if (FAILED(ID3D12GraphicsCommandList_GetDevice(list, &IID_ID3D12Device, (void **)&device)))
+		return NULL;
+	if (device != nr.device || width != nr.width || height != nr.height || desc.Format != nr.format) {
+		say("colour %ux%u format %d at (%u, %u) in a %llux%u texture; exposure %g, jitter (%.3f, %.3f)\n",
+		    width, height, desc.Format, p->inputColorBase.x, p->inputColorBase.y, desc.Width, desc.Height,
+		    p->exposureScale, p->jitterOffsetX, p->jitterOffsetY);
+		if (cut_rebuild(device, width, height, desc.Format, kind, texel) != 0) {
+			say("setup failed; from here on XeSS gets every frame as it is\n");
+			nr.broken = 1;
+		}
+	}
+	ID3D12Device_Release(device);
+	if (nr.broken) return NULL;
+	if (cut.hello != 2) {
+		if (cut.hello == 0 && GetTickCount64() >= cut.retry) {
+			InterlockedExchange(&cut.hello, 1);
+			SetEvent(cut.wake);
+		}
+		return NULL;
+	}
+	if (cut.broken) {
+		cut_said("a frame went unanswered this session");
+		return NULL;
+	}
+	char why[160];
+	if (!nr_split_prepare(list, why, sizeof why)) {
+		cut_said(why);
+		return NULL;
+	}
+	nr_split_snapshot *state = nr_split_snapshot_take(list);   /* before anything of ours */
+	if (!state) {
+		cut_said("the command list's state is not known");
+		return NULL;
+	}
+	float white = config.white;
+	if (p->exposureScale > 0) white /= p->exposureScale;   /* XeSS multiplies the colour by it */
+	AcquireSRWLockExclusive(&cut.lock);
+	uint64_t value = nr_gpu_d3d12_next(&cut.gpu);
+	ReleaseSRWLockExclusive(&cut.lock);
+	struct cut_constants k = {
+		.width = width, .height = height, .pitch = nr.footprint.Footprint.RowPitch,
+		.kind = (uint32_t)nr.kind, .white = white, .strength = config.strength,
+		.frame = { (uint32_t)value, (uint32_t)(value >> 32) },
+	};
+	ID3D12GraphicsCommandList *l = list;
+	struct batch b = { .count = 0 };
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
+		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST,
+		write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+	/* The first half: the colour as a buffer, and the frame NR is given from it. */
+	add(&b, p->pColorTexture, read, source);
+	add(&b, nr.staging, common, dest);
+	flush(l, &b);
+	D3D12_BOX box = { p->inputColorBase.x, p->inputColorBase.y, 0,
+			  p->inputColorBase.x + width, p->inputColorBase.y + height, 1 };
+	D3D12_TEXTURE_COPY_LOCATION colour = { .pResource = p->pColorTexture,
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+	D3D12_TEXTURE_COPY_LOCATION into = { .pResource = nr.staging,
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &into, 0, 0, 0, &colour, &box);
+	add(&b, p->pColorTexture, source, read);
+	add(&b, nr.staging, dest, read);
+	add(&b, cut.gpu.input, common, write);
+	flush(l, &b);
+	ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.encode_pipeline);
+	ID3D12Resource *encoding[5] = { nr.staging, nr.srgb_table, nr.staging, nr.staging, nr.staging };
+	bind_cut(l, &k, encoding, cut.gpu.input);
+	add(&b, cut.gpu.input, write, common);
+	add(&b, nr.staging, read, common);
+	flush(l, &b);
+
+	struct handover *h = malloc(sizeof *h);
+	if (!h) {
+		nr_split_restore(list, state);
+		nr_split_snapshot_free(state);
+		return NULL;
+	}
+	h->fence = cut.gpu.fence;
+	ID3D12Fence_AddRef(h->fence);
+	h->value = value;
+	h->session = cut.session;
+	if (!nr_split_cut(list, run_between, drop_handover, h, state, why, sizeof why)) {
+		ID3D12Fence_Release(h->fence);
+		free(h);
+		nr_split_restore(list, state);
+		nr_split_snapshot_free(state);
+		cut_said(why);
+		return NULL;
+	}
+	nr_split_snapshot_free(state);
+	cut.last = value;
+	cut.said[0] = '\0';
+
+	/* The continuation: once the queue has the daemon's V + 1, NR's answer into the colour. */
+	add(&b, nr.staging, common, read);
+	add(&b, cut.gpu.input, common, read);
+	add(&b, cut.gpu.output, common, read);
+	add(&b, nr.output, common, write);
+	flush(l, &b);
+	ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.compose_pipeline);
+	ID3D12Resource *composing[5] = { nr.staging, cut.gpu.input, cut.gpu.output, nr.linear_table, nr.staging };
+	bind_cut(l, &k, composing, nr.output);
+	add(&b, nr.staging, read, common);
+	add(&b, cut.gpu.input, read, common);
+	add(&b, cut.gpu.output, read, common);
+	add(&b, nr.output, write, source);
+	if (nr.mixed_state != dest) add(&b, nr.mixed, nr.mixed_state, dest);
+	flush(l, &b);
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = nr.output,
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION mixed = { .pResource = nr.mixed,
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &mixed, 0, 0, 0, &from, NULL);
+	add(&b, nr.output, source, common);
+	add(&b, nr.mixed, dest, read);
+	flush(l, &b);
+	nr.mixed_state = read;
+	return nr.mixed;
+}
+
 xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsCommandList *list,
 			       const xess_d3d12_execute_params_t *params)
 {
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
+	handed = params ? params->pColorTexture : NULL;
 	if (nr.broken || !config.enabled || !list || !params || !params->pColorTexture)
 		return real_execute(context, list, params);
-	ID3D12Resource *mixed = record(list, params);
+	ID3D12Resource *mixed = config.cut ? record_cut(list, params) : record(list, params);
 	if (!mixed) return real_execute(context, list, params);
+	handed = mixed;
 	xess_d3d12_execute_params_t changed = *params;
 	changed.pColorTexture = mixed;
 	changed.inputColorBase.x = 0;
@@ -1705,6 +2196,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 	real_velocity_scale = (scale_fn)(void *)GetProcAddress(module, "xessSetVelocityScale");
 	real_jitter_scale = (scale_fn)(void *)GetProcAddress(module, "xessSetJitterScale");
 	build_tables();
+	nr_split_set_log(say_line);
 	read_settings(1);
 	say("NR in front of XeSS, process %lu\n", GetCurrentProcessId());
 	return TRUE;

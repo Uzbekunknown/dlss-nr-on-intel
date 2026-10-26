@@ -26,7 +26,7 @@ struct nr_gpu_d3d12 {
 
 /* The adapter's LUID. Called through the vtable with the hidden return pointer spelled out,
  * which is how both MinGW's d3d12.h and the Windows SDK's declare it for C. */
-static LUID nr_gpu_d3d12_luid(ID3D12Device *device)
+static inline LUID nr_gpu_d3d12_luid(ID3D12Device *device)
 {
     typedef LUID *(STDMETHODCALLTYPE *luid_fn)(ID3D12Device *, LUID *);
     LUID luid;
@@ -35,7 +35,7 @@ static LUID nr_gpu_d3d12_luid(ID3D12Device *device)
     return luid;
 }
 
-static HRESULT nr_gpu_d3d12_buffer(ID3D12Device *device, uint64_t bytes, ID3D12Resource **resource,
+static inline HRESULT nr_gpu_d3d12_buffer(ID3D12Device *device, uint64_t bytes, ID3D12Resource **resource,
                                    HANDLE *handle)
 {
     D3D12_HEAP_PROPERTIES heap;
@@ -59,7 +59,7 @@ static HRESULT nr_gpu_d3d12_buffer(ID3D12Device *device, uint64_t bytes, ID3D12R
     return hr;
 }
 
-static void nr_gpu_d3d12_close(struct nr_gpu_d3d12 *s)
+static inline void nr_gpu_d3d12_close(struct nr_gpu_d3d12 *s)
 {
     if (s->input_handle) CloseHandle(s->input_handle);
     if (s->output_handle) CloseHandle(s->output_handle);
@@ -72,7 +72,7 @@ static void nr_gpu_d3d12_close(struct nr_gpu_d3d12 *s)
 
 /* A session for frames of width x height in `format` (a VkFormat number, as the daemon reads
  * the bytes: 37 for R8G8B8A8_UNORM). The device is the game's; nothing is kept on it. */
-static HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *device, uint32_t width,
+static inline HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *device, uint32_t width,
                                  uint32_t height, uint32_t format, uint64_t session)
 {
     memset(s, 0, sizeof *s);
@@ -96,14 +96,14 @@ static HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *device, u
 
 /* The next frame's V: the client's queue signals it once the input is written and then waits
  * for V + 1, which only the daemon signals. */
-static uint64_t nr_gpu_d3d12_next(struct nr_gpu_d3d12 *s)
+static inline uint64_t nr_gpu_d3d12_next(struct nr_gpu_d3d12 *s)
 {
     s->value += 2;
     return s->value - 1;
 }
 
 /* HELLO and RELEASE carry `value` 0, a FRAME its V. */
-static void nr_gpu_d3d12_packet(const struct nr_gpu_d3d12 *s, uint32_t action, uint64_t value,
+static inline void nr_gpu_d3d12_packet(const struct nr_gpu_d3d12 *s, uint32_t action, uint64_t value,
                                 struct nr_gpu_packet *p)
 {
     memset(p, 0, sizeof *p);
@@ -120,7 +120,7 @@ static void nr_gpu_d3d12_packet(const struct nr_gpu_d3d12 *s, uint32_t action, u
 }
 
 /* What the daemon left in a stamp the client copied out of the output: 1 when it names V. */
-static int nr_gpu_d3d12_answered(const struct nr_gpu_stamp *stamp, uint64_t value)
+static inline int nr_gpu_d3d12_answered(const struct nr_gpu_stamp *stamp, uint64_t value)
 {
     return stamp->magic == NR_GPU_STAMP_MAGIC && stamp->frame_low == (uint32_t)value
         && stamp->frame_high == (uint32_t)(value >> 32);

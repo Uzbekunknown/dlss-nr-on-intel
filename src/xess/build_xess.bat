@@ -21,16 +21,19 @@ if not defined VSROOT (
 call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" >nul
 :have_msvc
 rem cs_5_1 carries the root signature written in the shader, so the C side needs no
-rem serialiser; fxc is on PATH once vcvars has run. One source, six passes.
-for %%P in (clear claim track match reduce apply) do call :pass %%P
+rem serialiser; fxc is on PATH once vcvars has run. One source, eight passes.
+for %%P in (clear claim track match reduce apply encode compose) do call :pass %%P
 if errorlevel 1 exit /b 1
 ml64 /nologo /c /Fo"%OUT%\nr_xess_thunks.obj" "%HERE%nr_xess_thunks.asm" >nul
 if errorlevel 1 ( echo ERROR: nr_xess_thunks.asm failed & exit /b 1 )
-cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_xess.obj" /Fe:"%OUT%\libxess.dll" /LD "%HERE%nr_xess.c" /link /DEF:"%HERE%nr_xess.def" "%OUT%\nr_xess_thunks.obj" d3d12.lib dxguid.lib
+rem The command-list cut is C++, after DLSSNR-AMD's; the rest is C and calls it through nr_xess_split.h.
+cl /nologo /O2 /W4 /std:c++17 /EHsc /c /Fo:"%OUT%\nr_xess_split.obj" "%HERE%nr_xess_split.cpp"
+if errorlevel 1 ( echo ERROR: nr_xess_split.cpp failed & exit /b 1 )
+cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_xess.obj" /Fe:"%OUT%\libxess.dll" /LD "%HERE%nr_xess.c" /link /DEF:"%HERE%nr_xess.def" "%OUT%\nr_xess_thunks.obj" "%OUT%\nr_xess_split.obj" d3d12.lib dxguid.lib
 if errorlevel 1 ( echo ERROR: libxess.dll failed & exit /b 1 )
-cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\test_nr_xess.obj" /Fe:"%OUT%\test_nr_xess.exe" "%HERE%test_nr_xess.c" /link d3d12.lib dxguid.lib
+cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\test_nr_xess.obj" /Fe:"%OUT%\test_nr_xess.exe" "%HERE%test_nr_xess.c" /link "%OUT%\nr_xess_split.obj" d3d12.lib dxguid.lib
 if errorlevel 1 ( echo ERROR: test_nr_xess.exe failed & exit /b 1 )
-cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\replay_nr_xess.obj" /Fe:"%OUT%\replay_nr_xess.exe" "%HERE%replay_nr_xess.c" /link d3d12.lib dxguid.lib
+cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\replay_nr_xess.obj" /Fe:"%OUT%\replay_nr_xess.exe" "%HERE%replay_nr_xess.c" /link "%OUT%\nr_xess_split.obj" d3d12.lib dxguid.lib
 if errorlevel 1 ( echo ERROR: replay_nr_xess.exe failed & exit /b 1 )
 echo built %OUT%\libxess.dll, test_nr_xess.exe and replay_nr_xess.exe
 exit /b 0
@@ -38,7 +41,7 @@ exit /b 0
 rem One pass: nr_xess.hlsl with the pass's name defined, upper-cased, to nr_xess_<pass>.h.
 :pass
 set "NAME=%~1"
-for %%U in (CLEAR CLAIM TRACK MATCH REDUCE APPLY) do if /i "%%U"=="%NAME%" set "UPPER=%%U"
+for %%U in (CLEAR CLAIM TRACK MATCH REDUCE APPLY ENCODE COMPOSE) do if /i "%%U"=="%NAME%" set "UPPER=%%U"
 fxc /nologo /T cs_5_1 /E main /O3 /D %UPPER% /Fh "%OUT%\nr_xess_%NAME%.h" /Vn nr_xess_%NAME% "%HERE%nr_xess.hlsl" >nul
 if errorlevel 1 ( echo ERROR: nr_xess.hlsl's %UPPER% pass failed & exit /b 1 )
 exit /b 0

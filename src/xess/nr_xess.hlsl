@@ -1,6 +1,7 @@
 /* nr_xess.hlsl — the proxy's compute passes, one root signature.
  *
- * Built six times (build_xess.bat), one pass each:
+ * Built eight times (build_xess.bat), one pass each. With mode=carry, NR's change to an
+ * earlier frame is carried to this one:
  *   CLEAR   empties the claims;
  *   CLAIM   marks, on the last frame's pixels, the vectors of the surfaces that came from each;
  *   TRACK   follows the game's motion vectors, frame by frame, back to the frame NR was given;
@@ -8,6 +9,10 @@
  *   REDUCE  sums what MATCH trusted over CELL-pixel squares;
  *   APPLY   adds the change to the colour XeSS is about to upscale, filling what MATCH did not
  *           trust from the trusted change around it.
+ * With mode=cut, the game's command list is cut at XeSS and NR answers this very frame
+ * between the halves (nr_xess_split.cpp):
+ *   ENCODE  the frame NR is given, into the buffer the daemon shares, before the cut;
+ *   COMPOSE NR's change to it added to the colour, after the cut, when its answer came.
  *
  * Everything arrives as buffers — copies of the game's textures laid out in their own
  * formats — because root descriptors reach buffers directly, where a texture would need a
@@ -28,6 +33,22 @@
  * UNKNOWN, which reads as off screen from then on.
  */
 #define RS "RootConstants(num32BitConstants=32, b0), SRV(t0), SRV(t1), SRV(t2), SRV(t3), SRV(t4), UAV(u0)"
+
+#if defined(ENCODE) || defined(COMPOSE)
+
+/* nr_xess.c `struct cut_constants`, field for field. */
+cbuffer Constants : register(b0)
+{
+    uint width;            /* the colour's extent */
+    uint height;
+    uint pitch;            /* bytes between rows of the colour and of the result */
+    uint kind;             /* 0 R16G16B16A16_FLOAT, 1 R11G11B10_FLOAT, 2 R10G10B10A2_UNORM */
+    float white;           /* the scene value the proxy shows as display white */
+    float strength;        /* compose: 0 adds nothing, 1 all of NR's change */
+    uint2 frame;           /* compose: the frame's fence value, low and high, as the stamp names it */
+};
+
+#else
 
 cbuffer Constants : register(b0)
 {
@@ -57,6 +78,8 @@ cbuffer Constants : register(b0)
     float match_from;      /* match: how far outside the neighbourhood a change starts to be refused */
     float match_to;        /* match: ... and where it is refused entirely */
 };
+
+#endif
 
 /* What MATCH leaves for each pixel, seven floats: the change it trusted times the trust
  * (rgb), the trust (0-1), and the pixel's own `likeness` (rgb). REDUCE leaves the same seven
@@ -91,7 +114,7 @@ float spread(float2 m)
 
 #endif
 
-#if defined(MATCH) || defined(APPLY)
+#if defined(MATCH) || defined(APPLY) || defined(ENCODE) || defined(COMPOSE)
 
 ByteAddressBuffer colour : register(t0);       /* the colour, in its own format */
 
@@ -124,6 +147,42 @@ float3 likeness(float3 c)
     if (lit > 0.75)
         d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
     return sqrt(saturate(d));
+}
+
+#endif
+
+#if defined(APPLY) || defined(COMPOSE)
+
+RWByteAddressBuffer result : register(u0);     /* the colour XeSS gets */
+
+void store_texel(uint at, float4 c)
+{
+    if (kind == 0) {
+        result.Store2(at, uint2(f32tof16(c.r) | (f32tof16(c.g) << 16),
+                                f32tof16(c.b) | (f32tof16(c.a) << 16)));
+        return;
+    }
+    if (kind == 1) {
+        /* Rounded to nearest, and held below infinity: a carry out of the largest finite
+         * value would otherwise land on the format's infinity. */
+        uint r = min((f32tof16(c.r) + 0x8) >> 4, 0x7BF);
+        uint g = min((f32tof16(c.g) + 0x8) >> 4, 0x7BF);
+        uint b = min((f32tof16(c.b) + 0x10) >> 5, 0x3DF);
+        result.Store(at, r | (g << 11) | (b << 22));
+        return;
+    }
+    uint4 q = uint4(round(saturate(c) * float4(1023, 1023, 1023, 3)));
+    result.Store(at, q.r | (q.g << 10) | (q.b << 20) | (q.a << 30));
+}
+
+/* What the proxy's knee took from a pixel, as a factor: a change made to its proxy, scaled by
+ * it, is the model's relative change at the original's own level, which is what `resolve` does
+ * there. */
+float knee_gain(float3 c)
+{
+    float lit = dot(max(c, 0) / white, float3(0.2126, 0.7152, 0.0722));
+    float rolled = 0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25));
+    return lit > 0.75 ? lit / rolled : 1;
 }
 
 #endif
@@ -409,32 +468,11 @@ void main(uint3 id : SV_DispatchThreadID)
 ByteAddressBuffer matched : register(t1);
 ByteAddressBuffer sums : register(t2);
 ByteAddressBuffer motion : register(t3);       /* this frame's vectors, when `vectors` */
-RWByteAddressBuffer result : register(u0);     /* the colour XeSS gets */
 
 /* The trusted pixels' worth of support below which a fill is weaker than the change it reads:
  * a surface with little of its own trusted round it takes little, rather than all of what
  * some unlike cell happened to hold. */
 #define SUPPORT 8
-
-void store_texel(uint at, float4 c)
-{
-    if (kind == 0) {
-        result.Store2(at, uint2(f32tof16(c.r) | (f32tof16(c.g) << 16),
-                                f32tof16(c.b) | (f32tof16(c.a) << 16)));
-        return;
-    }
-    if (kind == 1) {
-        /* Rounded to nearest, and held below infinity: a carry out of the largest finite
-         * value would otherwise land on the format's infinity. */
-        uint r = min((f32tof16(c.r) + 0x8) >> 4, 0x7BF);
-        uint g = min((f32tof16(c.g) + 0x8) >> 4, 0x7BF);
-        uint b = min((f32tof16(c.b) + 0x10) >> 5, 0x3DF);
-        result.Store(at, r | (g << 11) | (b << 22));
-        return;
-    }
-    uint4 q = uint4(round(saturate(c) * float4(1023, 1023, 1023, 3)));
-    result.Store(at, q.r | (q.g << 10) | (q.b << 20) | (q.a << 30));
-}
 
 /* The change where MATCH did not trust its own: the trusted change of the cells round the
  * pixel, each by how much of it was trusted, how near its centre is, how alike its pixels
@@ -471,9 +509,8 @@ float3 fill(int2 p, float3 own)
     return sum / max(total, SUPPORT);
 }
 
-/* Where the proxy's knee compressed a pixel the change is scaled back up by the same ratio,
- * which is what `resolve` does there: the model's relative change, applied at the original's
- * own level. */
+/* Where the proxy's knee compressed a pixel the change is scaled back up by the same ratio
+ * (`knee_gain`). */
 [RootSignature(RS)]
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -487,10 +524,74 @@ void main(uint3 id : SV_DispatchThreadID)
     float3 delta = m.rgb;
     if (m.a < 1)
         delta += (1 - m.a) * fill(int2(id.xy), asfloat(matched.Load3(here + 16)));
-    float lit = dot(max(c.rgb, 0) / white, float3(0.2126, 0.7152, 0.0722));
-    float rolled = 0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25));
-    float gain = lit > 0.75 ? lit / rolled : 1;
-    c.rgb = max(c.rgb + white * strength * gain * delta, 0);
+    c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
+    store_texel(at, c);
+}
+
+#endif
+
+#ifdef ENCODE
+
+ByteAddressBuffer srgb : register(t1);         /* nr_xess.c `srgb8`, packed four to a word */
+RWByteAddressBuffer given : register(u0);      /* the frame NR is given, R8G8B8A8 */
+
+#define SRGB_STEPS 16384
+
+uint srgb_byte(float v)
+{
+    uint i = v >= 1 ? SRGB_STEPS : uint(v * SRGB_STEPS + 0.5);
+    return (srgb.Load(i & ~3u) >> ((i & 3u) * 8)) & 0xFF;
+}
+
+/* nr_xess.c `encode_proxy` on the GPU: over white, the knee on luminance, then sRGB through
+ * the CPU's own table, so that the daemon sees what mode=carry hands it. */
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= width || id.y >= height)
+        return;
+    float3 d = max(load_texel(id.y * pitch + id.x * (kind == 0 ? 8 : 4)).rgb, 0) / white;
+    float lit = dot(d, float3(0.2126, 0.7152, 0.0722));
+    if (lit > 0.75)
+        d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
+    given.Store((id.y * width + id.x) * 4,
+                srgb_byte(d.r) | (srgb_byte(d.g) << 8) | (srgb_byte(d.b) << 16) | 0xFF000000);
+}
+
+#endif
+
+#ifdef COMPOSE
+
+ByteAddressBuffer given : register(t1);        /* the frame NR was given, R8G8B8A8 */
+ByteAddressBuffer answer : register(t2);       /* its answer, R8G8B8A8, and the daemon's stamp after it */
+ByteAddressBuffer linear8 : register(t3);      /* nr_xess.c `linear8`: an sRGB byte's linear value */
+
+#define STAMP_MAGIC 0x5453524E                 /* nr_gpu_wire.h `NR_GPU_STAMP_MAGIC` */
+
+float3 linear_of(uint rgba)
+{
+    return float3(asfloat(linear8.Load((rgba & 0xFF) * 4)), asfloat(linear8.Load(((rgba >> 8) & 0xFF) * 4)),
+                  asfloat(linear8.Load(((rgba >> 16) & 0xFF) * 4)));
+}
+
+/* The colour XeSS gets: the game's, with NR's change to this very frame added as APPLY adds a
+ * carried one, when the stamp after the answer names this frame; otherwise the game's as it
+ * was, the daemon having declined it or not come. */
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= width || id.y >= height)
+        return;
+    uint at = id.y * pitch + id.x * (kind == 0 ? 8 : 4);
+    float4 c = load_texel(at);
+    uint4 stamp = answer.Load4(width * height * 4);
+    if (stamp.x == STAMP_MAGIC && stamp.y == frame.x && stamp.z == frame.y && strength > 0) {
+        uint p = (id.y * width + id.x) * 4;
+        float3 delta = linear_of(answer.Load(p)) - linear_of(given.Load(p));
+        c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
+    }
     store_texel(at, c);
 }
 

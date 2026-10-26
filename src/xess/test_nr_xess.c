@@ -905,10 +905,287 @@ static int run_record(ID3D12Resource *motion)
 	return failures != 0;
 }
 
+/* ---- mode=cut ---- */
+
+/* The cut on its own: what the list had bound before it holds after it, and the work handed to
+ * the queue between the halves runs after the first and before the second. */
+struct between {
+	ID3D12GraphicsCommandList *list;
+	int ran, discarded;
+};
+
+static void between_run(void *user, ID3D12CommandQueue *queue)
+{
+	struct between *b = user;
+	ID3D12CommandQueue_ExecuteCommandLists(queue, 1, (ID3D12CommandList **)&b->list);
+	b->ran++;
+}
+
+static void between_discard(void *user)
+{
+	((struct between *)user)->discarded++;
+}
+
+static ID3D12Resource *word_buffer(D3D12_HEAP_TYPE heap, uint32_t value)
+{
+	ID3D12Resource *buffer = make_buffer(heap, 256, D3D12_RESOURCE_FLAG_NONE,
+					     heap == D3D12_HEAP_TYPE_UPLOAD ? D3D12_RESOURCE_STATE_GENERIC_READ
+					     : D3D12_RESOURCE_STATE_COPY_DEST);
+	uint32_t *mapped;
+	if (buffer && heap == D3D12_HEAP_TYPE_UPLOAD && SUCCEEDED(ID3D12Resource_Map(buffer, 0, NULL, (void **)&mapped))) {
+		*mapped = value;
+		ID3D12Resource_Unmap(buffer, 0, NULL);
+	}
+	return buffer;
+}
+
+static int run_split(void)
+{
+	char why[160];
+	/* The first call hooks the classes; the list's state is followed from its next Reset. */
+	nr_split_prepare(gpu.list, why, sizeof why);
+	if (submit()) return 1;
+	if (!nr_split_prepare(gpu.list, why, sizeof why)) {
+		printf("FAIL cut: the list cannot be cut: %s\n", why);
+		return 1;
+	}
+	/* What ENCODE reads: an 8x8 RGBA16F picture below the knee, and where it writes. */
+	enum { SIDE = 8 };
+	ID3D12Resource *picture = make_buffer(D3D12_HEAP_TYPE_UPLOAD, SIDE * SIDE * 8, D3D12_RESOURCE_FLAG_NONE,
+					      D3D12_RESOURCE_STATE_GENERIC_READ);
+	ID3D12Resource *out = make_buffer(D3D12_HEAP_TYPE_DEFAULT, SIDE * SIDE * 4,
+					  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+	ID3D12Resource *marker = make_buffer(D3D12_HEAP_TYPE_DEFAULT, 256, D3D12_RESOURCE_FLAG_NONE,
+					     D3D12_RESOURCE_STATE_COMMON);
+	ID3D12Resource *one = word_buffer(D3D12_HEAP_TYPE_UPLOAD, 1), *two = word_buffer(D3D12_HEAP_TYPE_UPLOAD, 2);
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, SIDE * SIDE * 4 + 256,
+					       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+	if (!picture || !out || !marker || !one || !two || !readback) {
+		printf("FAIL cut: no buffers\n");
+		return 1;
+	}
+	uint16_t *texels;
+	ID3D12Resource_Map(picture, 0, NULL, (void **)&texels);
+	for (int i = 0; i < SIDE * SIDE; i++) {
+		float c[4] = { (i % SIDE) / 16.0f, (i / SIDE) / 16.0f, 0.25f, 1 };
+		for (int k = 0; k < 4; k++) texels[4 * i + k] = to_half(c[k]);
+	}
+	ID3D12Resource_Unmap(picture, 0, NULL);
+	struct between b = { .ran = 0 };
+	ID3D12CommandAllocator *allocator;
+	ID3D12Device_CreateCommandAllocator(gpu.device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator,
+					    (void **)&allocator);
+	ID3D12Device_CreateCommandList(gpu.device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, NULL,
+				       &IID_ID3D12GraphicsCommandList, (void **)&b.list);
+	ID3D12GraphicsCommandList_CopyBufferRegion(b.list, marker, 0, two, 0, 4);
+	ID3D12GraphicsCommandList_Close(b.list);
+
+	/* Bound before the cut, used after it with nothing bound again. */
+	struct cut_constants k = { .width = SIDE, .height = SIDE, .pitch = SIDE * 8, .kind = KIND_RGBA16F, .white = 1 };
+	ID3D12GraphicsCommandList_SetComputeRootSignature(gpu.list, nr.signature);
+	ID3D12GraphicsCommandList_SetPipelineState(gpu.list, nr.encode_pipeline);
+	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(gpu.list, 0, sizeof k / 4, &k, 0);
+	ID3D12Resource *reads[5] = { picture, nr.srgb_table, picture, picture, picture };
+	for (UINT i = 0; i < 5; i++)
+		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(gpu.list, 1 + i,
+			ID3D12Resource_GetGPUVirtualAddress(reads[i]));
+	ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(gpu.list, 6, ID3D12Resource_GetGPUVirtualAddress(out));
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, marker, 0, one, 0, 4);
+	nr_split_snapshot *state = nr_split_snapshot_take(gpu.list);
+	if (!state || !nr_split_cut(gpu.list, between_run, between_discard, &b, state, why, sizeof why)) {
+		printf("FAIL cut: %s\n", state ? why : "no snapshot");
+		return 1;
+	}
+	nr_split_snapshot_free(state);
+	D3D12_RESOURCE_BARRIER barrier = transition(out, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &barrier);
+	ID3D12GraphicsCommandList_Dispatch(gpu.list, 1, 1, 1);
+	barrier = transition(out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &barrier);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, 0, out, 0, SIDE * SIDE * 4);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, SIDE * SIDE * 4, marker, 0, 4);
+	if (submit()) return 1;
+
+	int failures = 0;
+	uint8_t *got;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&got);
+	uint32_t mark;
+	memcpy(&mark, got + SIDE * SIDE * 4, 4);
+	if (mark != 2 || b.ran != 1 || b.discarded) {
+		printf("FAIL cut: the work between the halves %s (marker %u, ran %d, discarded %d)\n",
+		       mark == 1 ? "ran before the first half" : "did not run between them", mark, b.ran, b.discarded);
+		failures++;
+	}
+	for (int i = 0; i < SIDE * SIDE; i++) {
+		float rgb[3] = { half_value[to_half((i % SIDE) / 16.0f)], half_value[to_half((i / SIDE) / 16.0f)],
+				 half_value[to_half(0.25f)] };
+		uint8_t want[4];
+		encode_proxy(rgb, 1, want);
+		if (memcmp(got + 4 * i, want, 4) && failures++ < 3)
+			printf("FAIL cut: after it, pixel %d is %02x%02x%02x, not %02x%02x%02x: the list's state was "
+			       "not carried over\n", i, got[4 * i], got[4 * i + 1], got[4 * i + 2], want[0], want[1], want[2]);
+	}
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	printf("%s cut: the state bound before it holds after it, and the work between the halves runs "
+	       "between them\n", failures ? "FAIL" : "ok  ");
+	ID3D12GraphicsCommandList_Release(b.list);
+	ID3D12CommandAllocator_Release(allocator);
+	ID3D12Resource *made[] = { picture, out, marker, one, two, readback };
+	for (int i = 0; i < 6; i++) ID3D12Resource_Release(made[i]);
+	return failures != 0;
+}
+
+/* A stand-in for the daemon's protocol 3, on its own queue: it waits there for a frame's V,
+ * puts `answer` and the stamp naming V into the shared output — nothing when declining — and
+ * signals V + 1. */
+static struct {
+	ID3D12CommandQueue *queue;
+	ID3D12CommandAllocator *allocator;
+	ID3D12GraphicsCommandList *list;
+	ID3D12Resource *upload;
+	uint8_t answer[IN_W * IN_H * 4];
+	int decline, frames, hellos;
+} stand;
+
+static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *reply)
+{
+	memset(reply, 0, sizeof *reply);
+	reply->session_low = (uint32_t)p->session;
+	reply->session_high = (uint32_t)(p->session >> 32);
+	if (p->action == NR_GPU_HELLO) {
+		stand.hellos++;
+		reply->detail = GetCurrentProcessId();
+		return p->bytes == sizeof stand.answer && p->version == NR_GPU_D3D12_VERSION;
+	}
+	if (p->action != NR_GPU_FRAME) return 1;
+	uint64_t value = p->done_sem;
+	ID3D12CommandAllocator_Reset(stand.allocator);
+	ID3D12GraphicsCommandList_Reset(stand.list, stand.allocator, NULL);
+	if (!stand.decline) {
+		uint8_t *mapped;
+		ID3D12Resource_Map(stand.upload, 0, NULL, (void **)&mapped);
+		memcpy(mapped, stand.answer, sizeof stand.answer);
+		struct nr_gpu_stamp stamp = { NR_GPU_STAMP_MAGIC, (uint32_t)value, (uint32_t)(value >> 32), 0 };
+		memcpy(mapped + sizeof stand.answer, &stamp, sizeof stamp);
+		ID3D12Resource_Unmap(stand.upload, 0, NULL);
+		ID3D12GraphicsCommandList_CopyBufferRegion(stand.list, cut.gpu.output, 0, stand.upload, 0,
+							   sizeof stand.answer + sizeof stamp);
+	}
+	ID3D12GraphicsCommandList_Close(stand.list);
+	ID3D12CommandQueue_Wait(stand.queue, cut.gpu.fence, value);
+	ID3D12CommandQueue_ExecuteCommandLists(stand.queue, 1, (ID3D12CommandList **)&stand.list);
+	ID3D12CommandQueue_Signal(stand.queue, cut.gpu.fence, value + 1);
+	HANDLE event = CreateEventW(NULL, FALSE, FALSE, NULL);
+	ID3D12Fence_SetEventOnCompletion(cut.gpu.fence, value + 1, event);
+	int done = WaitForSingleObject(event, 10000) == WAIT_OBJECT_0;
+	CloseHandle(event);
+	stand.frames++;
+	reply->status = stand.decline ? NR_GPU_UNSUPPORTED : NR_GPU_SUCCESS;
+	return done;
+}
+
+/* An execute in mode=cut with the stand-in: the frame NR is given as the CPU encodes it, the
+ * stamp naming the frame's V, and the colour XeSS is handed against the colour plus NR's change
+ * to this very frame — or the colour unchanged, declined or at strength 0. */
+static int run_cut(DXGI_FORMAT format, const char *name, float strength, int decline)
+{
+	UINT texel;
+	int kind = kind_of(format, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(format, W, H, texel, fill_colour, &how);
+	if (!tex) {
+		printf("FAIL %s: no texture\n", name);
+		return 1;
+	}
+	nr.width = 0;                       /* start over: a new session, as at a resolution change */
+	config.strength = strength;
+	stand.decline = decline;
+	static uint8_t given[IN_W * IN_H * 4];
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			float o[4];
+			colour_at(kind, x, y, 0, 0, o);
+			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
+		}
+	brighten(given, NULL, stand.answer, IN_W, IN_H);
+	xess_d3d12_execute_params_t params = params_for(tex, NULL, NULL);
+	/* The first execute of a colour closes the last session, opens one and goes to XeSS whole. */
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL %s: the session was not opened\n", name);
+		return 1;
+	}
+	int before = stand.frames;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	uint64_t value = cut.last;
+	if (seen.pColorTexture != nr.mixed || seen.inputColorBase.x || seen.inputColorBase.y) {
+		printf("FAIL %s: XeSS was not handed the composed colour (%s)\n", name, cut.said);
+		return 1;
+	}
+	/* Read back, in the continuation: the colour XeSS got, and the two shared buffers. */
+	UINT64 shared = (UINT64)IN_W * IN_H * 4;
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes + 2 * shared + 16,
+					       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+	D3D12_RESOURCE_BARRIER b = transition(nr.mixed, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+					      D3D12_RESOURCE_STATE_COPY_SOURCE);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = readback, .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+					   .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = nr.mixed, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, NULL);
+	b = transition(nr.mixed, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes, cut.gpu.input, 0, shared);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes + shared, cut.gpu.output, 0, shared + 16);
+	if (submit()) return 1;
+	if (stand.frames != before + 1) {
+		printf("FAIL %s: the stand-in was handed %d frames, not one\n", name, stand.frames - before);
+		failures++;
+	}
+	uint8_t *raw;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&raw);
+	const uint8_t *gpu_given = raw + nr.bytes, *answer = raw + nr.bytes + shared;
+	/* The GPU's exp is not the CPU's to the last bit: a level apart now and then, no more. */
+	int off = 0;
+	for (size_t i = 0; i < shared; i++) {
+		if (i % 4 == 3) continue;
+		int d = abs((int)gpu_given[i] - (int)given[i]);
+		off += d != 0;
+		if (d > 1 && failures++ < 3)
+			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
+	}
+	struct nr_gpu_stamp stamp;
+	memcpy(&stamp, answer + shared, sizeof stamp);
+	if (nr_gpu_d3d12_answered(&stamp, value) == decline) {
+		printf("FAIL %s: the stamp %s frame %llu\n", name, decline ? "names the declined" : "does not name",
+		       (unsigned long long)value);
+		failures++;
+	}
+	static float delta[IN_W * IN_H * 3];
+	for (int i = 0; i < IN_W * IN_H; i++)
+		for (int c = 0; c < 3; c++)
+			delta[3 * i + c] = decline ? 0 : linear8[answer[4 * i + c]] - linear8[gpu_given[4 * i + c]];
+	uint8_t *mixed = malloc((size_t)nr.bytes);
+	memcpy(mixed, raw, (size_t)nr.bytes);
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	if (off) printf("     %s: %d of %zu channels the GPU encoded a level away from the CPU\n", name, off, shared / 4 * 3);
+	failures += compare(name, kind, texel, mixed, 0, 0, strength, delta, 1);
+	free(mixed);
+	ID3D12Resource_Release(tex);
+	return failures != 0;
+}
+
 int main(int argc, char **argv)
 {
 	_snwprintf(log_path, MAX_PATH + 16, L"test_nr_xess.log");
 	build_tables();
+	nr_split_set_log(say_line);
+	config.cut = 0;                     /* mode=carry first, then mode=cut */
 	real_execute = stub_execute;
 	real_init = stub_init;
 	if (argc > 1) {
@@ -972,6 +1249,24 @@ int main(int argc, char **argv)
 	failed += run_uncovered();
 	failed += run_rise(none);
 	failed += run_record(moving);
+
+	/* mode=cut, with the stand-in for the daemon on a queue of its own */
+	config.cut = 1;
+	exchange_gpu = stand_in_gpu;
+	D3D12_COMMAND_QUEUE_DESC other = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT };
+	ID3D12Device_CreateCommandQueue(gpu.device, &other, &IID_ID3D12CommandQueue, (void **)&stand.queue);
+	ID3D12Device_CreateCommandAllocator(gpu.device, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator,
+					    (void **)&stand.allocator);
+	ID3D12Device_CreateCommandList(gpu.device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, stand.allocator, NULL,
+				       &IID_ID3D12GraphicsCommandList, (void **)&stand.list);
+	ID3D12GraphicsCommandList_Close(stand.list);
+	stand.upload = make_buffer(D3D12_HEAP_TYPE_UPLOAD, sizeof stand.answer + 16, D3D12_RESOURCE_FLAG_NONE,
+				   D3D12_RESOURCE_STATE_GENERIC_READ);
+	failed += run_split();
+	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, R16G16B16A16_FLOAT", 1, 0);
+	failed += run_cut(DXGI_FORMAT_R11G11B10_FLOAT, "cut, R11G11B10_FLOAT", 1, 0);
+	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, strength 0", 0, 0);
+	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, declined by the daemon", 1, 1);
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }

@@ -84,6 +84,11 @@ DLSSNR-RDNA3 — https://github.com/mauri870/DLSSNR-RDNA3
   Copyright (c) 2026 mochizuki0323, MIT License; retained in
   licenses/rdna3-e4m3-MIT.txt. Our magnitude and zero-sign handling is preserved.
 
+DLSSNR-AMD — https://github.com/mochizuki0323/DLSSNR-AMD
+  src/xess/nr_xess_split.cpp, the D3D12 command-list cut at the upscaler's evaluate, is
+  adapted from windows/src/pe/nr_pe_d3d12split.cpp, commit c71b0f4.
+  Copyright (c) 2026 mochizuki0323, MIT License; retained in licenses/dlssnr-amd-MIT.txt.
+
 --------------------------------------------------------------------------------
 Provenance within this repository
 --------------------------------------------------------------------------------

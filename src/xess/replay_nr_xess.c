@@ -2,14 +2,18 @@
  * again through the proxy, the daemon and Intel's own XeSS, without the game.
  *
  *   replay_nr_xess <recording> <out> <Intel's libxess.dll> [options]
- *     --pipe P          the daemon (default \\.\pipe\nr-xess-replay)
+ *     --pipe P          the daemon (default \\.\pipe\nr-xess-replay); for mode=cut it runs with
+ *                       NR_GPU_IMAGE=1 and NR_GPU_TRANSPORT=1
+ *     --mode cut|carry  the proxy's mode (default cut: NR answers each frame between the halves
+ *                       of a cut list; carry: its change to an earlier frame carried along motion)
  *     --interval MS     at least this long a frame, as the game ran (default 28)
  *     --strength S      NR's strength (default 1; 0 runs the whole path and adds nothing)
  *     --off             XeSS alone: the proxy hands every frame straight on
- *     --warp 0|1, --match FROM TO, --history 0|1   the proxy's own settings
- *     --sync            each frame waits for the answer to the one before (`sync=1`)
+ *     --warp 0|1, --match FROM TO, --history 0|1   mode=carry's own settings
+ *     --sync            mode=carry: each frame waits for the answer to the one before (`sync=1`)
  *     --answers DIR     each frame NR was given and its answer, DIR\given_%04u.ppm and
- *                       answer_%04u.ppm by frame: with --sync, NR on every frame as it is
+ *                       answer_%04u.ppm by frame: in mode=cut, or in mode=carry with --sync,
+ *                       NR on every frame as it is
  *     --every N         write every Nth frame (default 1)
  *     --inputs DIR      also the colour XeSS was handed, the proxy's change in it, to
  *                       DIR\%04u.ppm: whether something in the output came in with the
@@ -148,6 +152,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--strength") && i + 1 < argc) config.strength = (float)atof(argv[++i]);
 		else if (!strcmp(argv[i], "--every") && i + 1 < argc) every = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--off")) off = 1;
+		else if (!strcmp(argv[i], "--mode") && i + 1 < argc) config.cut = strcmp(argv[++i], "carry") != 0;
 		else if (!strcmp(argv[i], "--sync")) config.sync = 1;
 		else if (!strcmp(argv[i], "--answers") && i + 1 < argc) {
 			answers_dir = argv[++i];
@@ -167,6 +172,7 @@ int main(int argc, char **argv)
 	snprintf(path, sizeof path, "%s\\replay.log", out);
 	MultiByteToWideChar(CP_UTF8, 0, path, -1, log_path, MAX_PATH + 16);
 	build_tables();
+	nr_split_set_log(say_line);
 	config.enabled = !off;
 
 	/* what the recording says */
@@ -288,6 +294,7 @@ int main(int argc, char **argv)
 	nr.device = NULL;                       /* the hook takes it from the command list */
 	size_t colour_size = (size_t)width * height * texel, motion_size = (size_t)motion_width * motion_height * 4;
 	uint8_t *data = malloc(colour_size + motion_size);
+	ID3D12Resource *answers_readback = NULL;
 
 	LARGE_INTEGER frequency, start, now;
 	QueryPerformanceFrequency(&frequency);
@@ -317,20 +324,53 @@ int main(int argc, char **argv)
 		ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, NULL);
 		b = transition(output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
-		/* the hook handed XeSS its mixed colour when it applied a change, else the game's */
+		/* what the hook handed XeSS: its own colour when it changed the frame, else the game's */
 		int input = inputs && i % every == 0;
+		ID3D12Resource *given_xess = handed ? handed : colour;
 		if (input) {
-			ID3D12Resource *handed = config.enabled && nr.applied >= 0 && nr.mixed ? nr.mixed : colour;
-			b = transition(handed, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			b = transition(given_xess, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
 			ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
 			D3D12_TEXTURE_COPY_LOCATION into = { .pResource = input_readback,
 				.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = input_layout };
-			D3D12_TEXTURE_COPY_LOCATION taken = { .pResource = handed, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+			D3D12_TEXTURE_COPY_LOCATION taken = { .pResource = given_xess, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
 			ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &into, 0, 0, 0, &taken, NULL);
-			b = transition(handed, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+			b = transition(given_xess, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 			ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
 		}
+		/* mode=cut's --answers: the frame NR was given and its answer, out of the shared buffers,
+		 * read after the continuation's COMPOSE */
+		int cut_frame = config.cut && answers_dir && given_xess == nr.mixed && nr.mixed && i % every == 0;
+		UINT64 shared = (UINT64)width * height * 4;
+		if (cut_frame) {
+			if (!answers_readback)
+				answers_readback = make_buffer(D3D12_HEAP_TYPE_READBACK, 2 * shared + 16, D3D12_RESOURCE_FLAG_NONE,
+							       D3D12_RESOURCE_STATE_COPY_DEST);
+			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, answers_readback, 0, cut.gpu.input, 0, shared);
+			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, answers_readback, shared, cut.gpu.output, 0,
+								   shared + 16);
+		}
+		uint64_t cut_value = cut.last;
 		if (submit()) return 1;
+		if (cut_frame) {
+			uint8_t *mapped;
+			D3D12_RANGE all = { 0, (SIZE_T)(2 * shared + 16) }, none = { 0, 0 };
+			ID3D12Resource_Map(answers_readback, 0, &all, (void **)&mapped);
+			struct nr_gpu_stamp stamp;
+			memcpy(&stamp, mapped + 2 * shared, sizeof stamp);
+			if (nr_gpu_d3d12_answered(&stamp, cut_value)) {
+				const char *names[2] = { "given", "answer" };
+				for (int k = 0; k < 2; k++) {
+					snprintf(path, sizeof path, "%s\\%s_%04zu.ppm", answers_dir, names[k], i);
+					FILE *file = fopen(path, "wb");
+					if (!file) continue;
+					fprintf(file, "P6\n%u %u\n255\n", width, height);
+					for (size_t p = 0; p < (size_t)width * height; p++)
+						fwrite(mapped + k * shared + p * 4, 1, 3, file);
+					fclose(file);
+				}
+			}
+			ID3D12Resource_Unmap(answers_readback, 0, &none);
+		}
 		if (i % every == 0) {
 			uint8_t *mapped;
 			D3D12_RANGE all = { 0, (SIZE_T)output_bytes }, none = { 0, 0 };
