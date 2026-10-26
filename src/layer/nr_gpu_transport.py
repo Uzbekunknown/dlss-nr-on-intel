@@ -4,6 +4,15 @@ The caller must explicitly enable this experimental transport. Imported resource
 lifetimes belong to the authenticated process handle and the session, rather than
 to an individual short-lived pipe connection. Cleanup is acknowledged only after
 the runtime confirms that all imports were released.
+
+Protocol 3 is a D3D12 client, the XeSS proxy, as nr_gpu_wire.h describes it: shared
+committed buffers and one shared fence, waited for at the frame's value V and
+signalled at V + 1 once the daemon is done with the buffers. Its queue waits for
+V + 1 on the GPU, so a FRAME moves the fence on whether it is answered or not, once
+the session's fence is imported and the client's queue has reached V; only a stamp
+naming V after the answer says it was answered. A value that does not rise, a queue
+that never reaches V, and a lost device leave the fence where it is, and the client
+has to see to its own queue.
 """
 from __future__ import annotations
 
@@ -19,6 +28,12 @@ MAGIC = 0x3147524E
 PACKET = struct.Struct("<8I8Q16s16s")
 REPLY = struct.Struct("<4I")
 HELLO, FRAME, RELEASE = 0, 1, 2
+D3D12 = 3                          # the protocol version of a D3D12 client
+STAMP = struct.Struct("<4I")       # nr_gpu_stamp: magic, the frame's value low and high, 0
+STAMP_MAGIC = 0x5453524E
+# The client sends FRAME once its queue holds the signal of V, so V comes within a frame
+# of the game's GPU work; this is for a client that died first.
+D3D12_WAIT_NS = 10_000_000_000
 
 
 def peer_pid(connection):
@@ -73,7 +88,7 @@ def unpack_packet(raw, width, height, fmt, max_pixels):
              "session", "input_alloc", "output_alloc", "bytes", "input_memory", "output_memory",
              "ready_sem", "done_sem", "device_uuid", "driver_uuid")
     p = dict(zip(names, PACKET.unpack(raw)))
-    if p["action"] not in (HELLO, FRAME, RELEASE) or p["version"] not in (1, 2) or not p["session"]:
+    if p["action"] not in (HELLO, FRAME, RELEASE) or p["version"] not in (1, 2, D3D12) or not p["session"]:
         raise ValueError("unsupported GPU protocol action/version/session")
     if (p["width"], p["height"], p["format"]) != (width, height, fmt):
         raise ValueError("GPU control header and packet geometry disagree")
@@ -94,6 +109,17 @@ def unpack_packet(raw, width, height, fmt, max_pixels):
         raise ValueError("GPU fence protocol must not carry semaphore handles")
     if p["input_memory"] == p["output_memory"] or (p["version"] == 1 and p["ready_sem"] == p["done_sem"]):
         raise ValueError("GPU input/output resources must be distinct")
+    if p["version"] == D3D12:
+        if p["output_alloc"] < p["bytes"] + STAMP.size:
+            raise ValueError("D3D12 output buffer has no room for the frame stamp")
+        if p["input_memory_type"] or p["output_memory_type"]:
+            raise ValueError("D3D12 buffers carry no Vulkan memory type")
+        if not p["ready_sem"] or p["ready_sem"] in (p["input_memory"], p["output_memory"]):
+            raise ValueError("D3D12 protocol requires a shared fence of its own")
+        if (p["action"] == FRAME) != bool(p["done_sem"]) or p["done_sem"] >= 1 << 62:
+            raise ValueError("a D3D12 FRAME carries its fence value, and nothing else does")
+        if any(p["device_uuid"][8:]) or any(p["driver_uuid"]):
+            raise ValueError("D3D12 protocol names its adapter by LUID alone")
     return p
 
 
@@ -102,10 +128,20 @@ class _Context:
         self.lib, self.packet, self.process = lib, packet, process
         self.input = self.output = None
         self.ready = self.done = -1
+        self.value = 0   # protocol 3: the fence's value as the daemon last moved it
         self.usable = False
 
     def open(self):
         p = self.packet
+        if p["version"] == D3D12:
+            # One fence both ways, kept as `ready`; the stamp goes after the answer.
+            self.input = X.Buffer.import_d3d12(p["pid"], p["input_memory"], p["bytes"])
+            self.output = X.Buffer.import_d3d12(p["pid"], p["output_memory"], p["bytes"] + STAMP.size)
+            self.ready = self.lib.xmx_sem_import_d3d12(p["pid"], p["ready_sem"])
+            if self.ready < 0:
+                raise X.failure(self.lib, "D3D12 fence import")
+            self.usable = True
+            return
         self.input = X.Buffer.import_win32(p["pid"], p["input_memory"], p["bytes"],
                                            p["input_alloc"], p["input_memory_type"])
         self.output = X.Buffer.import_win32(p["pid"], p["output_memory"], p["bytes"],
@@ -205,7 +241,10 @@ class GPUSharedTransport:
             self._failure_reply(connection, p)
             raise
         context = self.contexts.get(key)
-        if context is not None and context.packet != {**p, "action": HELLO}:
+        hello = {**p, "action": HELLO}
+        if p["version"] == D3D12:
+            hello["done_sem"] = 0   # a FRAME's fence value is its own
+        if context is not None and context.packet != hello:
             self._reply(connection, p, 2)
             raise ValueError("GPU request metadata does not match imported session")
         if p["action"] == RELEASE:
@@ -229,12 +268,21 @@ class GPUSharedTransport:
             raise X.failure(self.lib, "GPU request on lost device")
         if not self.lib.xmx_external_available():
             return self._decline(connection, p, "driver lacks GPU memory/semaphore sharing")
-        if bytes(identity) != p["device_uuid"] + p["driver_uuid"]:
+        if p["version"] == D3D12:
+            # D3D12 knows its adapter by LUID; Vulkan's UUIDs are not for it to see.
+            luid = (ctypes.c_ubyte * 8)()
+            if self.lib.xmx_device_luid(luid):
+                return self._decline(connection, p, "the network's GPU reports no LUID")
+            if bytes(luid) != p["device_uuid"][:8]:
+                return self._decline(connection, p, "game and network must use the same GPU")
+        elif bytes(identity) != p["device_uuid"] + p["driver_uuid"]:
             return self._decline(connection, p, "game and network must use the same Arc and driver")
         if self.images is None:
             self.images = GPUImagePipeline(self.backend)
         reason = self.images.supported(width, height, fmt, live, diagnostic=diagnostic)
         if reason:
+            if p["version"] == D3D12 and p["action"] == FRAME and context is not None:
+                self._pass_or_fail(connection, context, p)
             return self._decline(connection, p, reason)
         self.fallback_reason = None
         if p["action"] == HELLO:
@@ -263,12 +311,16 @@ class GPUSharedTransport:
             self._reply(connection, p, 0, os.getpid())
             return None
         if context is None or not context.usable:
+            if context is not None and p["version"] == D3D12:
+                self._pass_or_fail(connection, context, p)
             self._reply(connection, p, 2)
             raise ValueError("GPU frame has no matching imported session")
         if self.active != key:
             self.reset_history()
             self.active = key
         started = time.perf_counter()
+        if p["version"] == D3D12:
+            return self._frame_d3d12(connection, context, p, width, height, fmt, live, started)
         acquired = False
         try:
             if self.lib.xmx_external_acquire(context.input.id, context.output.id, context.ready):
@@ -295,6 +347,71 @@ class GPUSharedTransport:
                 if acquired and not self.lib.xmx_device_lost():
                     if self.lib.xmx_external_release(context.input.id, context.output.id, context.done):
                         raise X.failure(self.lib, "GPU failed-frame ownership release")
+            except Exception:
+                self._failure_reply(connection, p)
+                raise
+            self._failure_reply(connection, p)
+            raise
+
+    def _reached(self, context, value):
+        """Wait for the client's queue to reach V; a session whose client never gets there ends."""
+        if value <= context.value:
+            context.usable = False
+            raise ValueError("a D3D12 frame's fence value must rise")
+        waited = self.lib.xmx_sem_wait(context.ready, value, D3D12_WAIT_NS)
+        if waited:
+            context.usable = False
+            if waited < 0:
+                raise X.failure(self.lib, "D3D12 fence wait")
+            raise ValueError("the game's queue never reached the frame's fence value")
+
+    def _pass_or_fail(self, connection, context, p):
+        """A D3D12 frame not answered: its fence still goes on to V + 1, with no stamp."""
+        try:
+            self._reached(context, p["done_sem"])
+            if self.lib.xmx_sem_pass(context.ready, p["done_sem"], p["done_sem"] + 1):
+                context.usable = False
+                raise X.failure(self.lib, "D3D12 fence pass")
+            context.value = p["done_sem"] + 1
+        except Exception:
+            self._failure_reply(connection, p)
+            raise
+
+    def _frame_d3d12(self, connection, context, p, width, height, fmt, live, started):
+        value, reached, acquired = p["done_sem"], False, False
+        try:
+            self._reached(context, value)
+            reached = True
+            if self.lib.xmx_external_acquire_at(context.input.id, context.output.id, context.ready, value):
+                raise X.failure(self.lib, "GPU input ownership acquire")
+            acquired = True
+            result = self.images.process_device(context.input, width, height, fmt, live)
+            self.backend.runtime.begin()
+            self.backend.runtime.copy(result, context.output, p["bytes"])
+            self.backend.runtime.submit()
+            stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
+            if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,
+                                                value + 1, p["bytes"], stamp, STAMP.size):
+                raise X.failure(self.lib, "GPU output ownership release")
+            acquired = False
+            context.value = value + 1
+            self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
+                         "sync": "d3d12"}
+            self._reply(connection, p, 0)
+            return self.last
+        except Exception:
+            context.usable = False
+            self.reset_history()
+            try:
+                # The client's queue waits for V + 1 whatever happened here.
+                if reached and not self.lib.xmx_device_lost() and context.value <= value:
+                    if acquired:
+                        if self.lib.xmx_external_release_at(context.input.id, context.output.id,
+                                                            context.ready, value + 1, 0, None, 0):
+                            raise X.failure(self.lib, "GPU failed-frame ownership release")
+                    elif self.lib.xmx_sem_pass(context.ready, value, value + 1):
+                        raise X.failure(self.lib, "D3D12 fence pass")
+                    context.value = value + 1
             except Exception:
                 self._failure_reply(connection, p)
                 raise

@@ -17,6 +17,7 @@ import nr_gpu_transport as T
 
 DEVICE_UUID = bytes([12]) * 16
 DRIVER_UUID = bytes([34]) * 16
+LUID = bytes(range(1, 9))
 
 
 def packet(action=T.HELLO, **changes):
@@ -26,6 +27,15 @@ def packet(action=T.HELLO, **changes):
              output_alloc=1280 * 720 * 4 + 256, bytes=1280 * 720 * 4,
              input_memory=100, output_memory=101, ready_sem=102, done_sem=103,
              device_uuid=DEVICE_UUID, driver_uuid=DRIVER_UUID)
+    p.update(changes)
+    return p
+
+
+def d3d12_packet(action=T.HELLO, value=0, **changes):
+    """Protocol 3 (nr_gpu_wire.h): D3D12 buffers and a fence, the adapter by LUID."""
+    p = packet(action, version=T.D3D12, input_memory_type=0, output_memory_type=0,
+               input_alloc=1280 * 720 * 4, output_alloc=1280 * 720 * 4 + T.STAMP.size,
+               done_sem=value, device_uuid=LUID + bytes(8), driver_uuid=bytes(16))
     p.update(changes)
     return p
 
@@ -60,9 +70,35 @@ class Library:
         self.buffers = {}
         self.destroy_error = 0
         self.pin_buffers = False
+        self.luid_error = self.wait_result = 0
 
     def xmx_device_ids(self, out):
         out[:] = DEVICE_UUID + DRIVER_UUID
+        return 0
+
+    def xmx_device_luid(self, out):
+        out[:] = LUID
+        return self.luid_error
+
+    def xmx_sem_import_d3d12(self, pid, handle):
+        self.events.append(("import_fence", pid, handle))
+        self.next_sem += 1
+        return self.next_sem
+
+    def xmx_sem_wait(self, fence, value, _timeout):
+        self.events.append(("wait", fence, value))
+        return self.wait_result
+
+    def xmx_sem_pass(self, fence, wait, signal):
+        self.events.append(("pass", fence, wait, signal))
+        return 0
+
+    def xmx_external_acquire_at(self, a, b, fence, value):
+        self.events.append(("acquire_at", a, b, fence, value))
+        return 0
+
+    def xmx_external_release_at(self, a, b, fence, value, offset, stamp, size):
+        self.events.append(("release_at", a, b, fence, value, offset, stamp, size))
         return 0
 
     def xmx_external_available(self):
@@ -159,7 +195,7 @@ class Process:
         self.closed = True
 
 
-class ProtocolTests(unittest.TestCase):
+class TransportCase(unittest.TestCase):
     def setUp(self):
         self.events, self.imports, self.processes = [], [], []
         self.lib = Library(self.events)
@@ -168,6 +204,7 @@ class ProtocolTests(unittest.TestCase):
             patch.object(T, "peer_pid", return_value=42),
             patch.object(T, "GPUImagePipeline", return_value=self.images),
             patch.object(T.X.Buffer, "import_win32", side_effect=self.import_buffer),
+            patch.object(T.X.Buffer, "import_d3d12", side_effect=self.import_buffer),
             patch.object(T, "_ProcessLifetime", side_effect=self.process),
             patch.object(T.X, "failure", side_effect=lambda _lib, what:
                          T.X.DeviceLost(what) if _lib.lost else RuntimeError(what)),
@@ -200,6 +237,8 @@ class ProtocolTests(unittest.TestCase):
             result = self.transport.handle(connection, p["width"], p["height"], p["format"], read, object())
         return connection, result
 
+
+class ProtocolTests(TransportCase):
     def test_memory_indices_and_packet_layout(self):
         p = packet()
         self.assertEqual(T.PACKET.size, 128)
@@ -499,6 +538,128 @@ class ProtocolTests(unittest.TestCase):
         self.transport.cleanup_stale()
         self.assertEqual(self.transport.active, (42, 2))
         self.assertNotIn(("reset_history",), self.events)
+
+
+class D3D12ProtocolTests(TransportCase):
+    """Protocol 3: whatever happens to a frame, its client's queue gets V + 1, and only once."""
+
+    BYTES = 1280 * 720 * 4
+
+    def frame(self, value):
+        return self.request(d3d12_packet(T.FRAME, value))
+
+    def test_packet_rules(self):
+        for p in (d3d12_packet(), d3d12_packet(T.FRAME, 7), d3d12_packet(T.RELEASE)):
+            self.assertEqual(T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)["version"], T.D3D12)
+        for action, changes in ((T.HELLO, {"input_memory_type": 1}), (T.HELLO, {"ready_sem": 0}),
+                                (T.HELLO, {"ready_sem": 100}), (T.HELLO, {"done_sem": 5}),
+                                (T.FRAME, {}), (T.RELEASE, {"done_sem": 5}),
+                                (T.FRAME, {"done_sem": 1 << 62}),
+                                (T.HELLO, {"output_alloc": self.BYTES + 15}),
+                                (T.HELLO, {"device_uuid": LUID + bytes([1]) + bytes(7)}),
+                                (T.HELLO, {"driver_uuid": DRIVER_UUID})):
+            with self.subTest(action=action, changes=changes), self.assertRaises(ValueError):
+                self.request(d3d12_packet(action, **changes))
+        self.assertFalse(self.imports)
+
+    def test_hello_imports_d3d12_buffers_and_the_fence_by_luid(self):
+        connection, result = self.request(d3d12_packet())
+        self.assertIsNone(result)
+        self.assertEqual(self.imports, [(42, 100, self.BYTES), (42, 101, self.BYTES + T.STAMP.size)])
+        self.assertIn(("import_fence", 42, 102), self.events)
+        self.assertNotIn("import_sem", [e[0] for e in self.events])
+        self.assertEqual(connection.replies[-1][:2], (0, os.getpid()))
+
+    def test_another_adapter_is_declined_before_import(self):
+        connection, _ = self.request(d3d12_packet(device_uuid=bytes(range(9, 17)) + bytes(8)))
+        self.assertEqual(connection.replies[-1][0], 1)
+        self.lib.luid_error = -1
+        connection, _ = self.request(d3d12_packet())
+        self.assertEqual(connection.replies[-1][0], 1)
+        self.assertFalse(self.imports)
+
+    def test_frame_waits_answers_stamps_and_signals_the_next_value(self):
+        self.request(d3d12_packet())
+        self.events.clear()
+        connection, result = self.frame(5)
+        self.assertEqual([e[0] for e in self.events],
+                         ["reset_history", "wait", "acquire_at", "process", "begin", "copy", "submit",
+                          "release_at", "reply"])
+        self.assertEqual(self.events[1], ("wait", 1, 5))
+        self.assertEqual(self.events[2], ("acquire_at", 1, 2, 1, 5))
+        self.assertEqual(self.events[-2], ("release_at", 1, 2, 1, 6, self.BYTES,
+                                           T.STAMP.pack(T.STAMP_MAGIC, 5, 0, 0), T.STAMP.size))
+        self.assertEqual(connection.replies[-1][0], 0)
+        self.assertEqual(result["sync"], "d3d12")
+        context = self.transport.contexts[(42, packet()["session"])]
+        self.assertEqual((context.value, context.usable), (6, True))
+        self.events.clear()
+        self.frame(1 << 33 | 7)
+        self.assertEqual(self.events[-2][4], (1 << 33 | 7) + 1)
+        self.assertEqual(self.events[-2][6], T.STAMP.pack(T.STAMP_MAGIC, 7, 2, 0))
+
+    def test_a_value_that_does_not_rise_is_refused_and_signals_nothing(self):
+        self.request(d3d12_packet())
+        self.frame(5)
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "rise"):
+            self.frame(5)
+        self.assertEqual(self.events, [("reset_history",), ("reply", 2)])
+        self.assertFalse(self.transport.contexts[(42, packet()["session"])].usable)
+
+    def test_declined_frame_moves_the_fence_on_without_a_stamp(self):
+        self.request(d3d12_packet())
+        self.images.reason = "controlled decline"
+        self.events.clear()
+        connection, result = self.frame(3)
+        self.assertIsNone(result)
+        self.assertEqual(self.events, [("wait", 1, 3), ("pass", 1, 3, 4), ("reset_history",), ("reply", 1)])
+        context = self.transport.contexts[(42, packet()["session"])]
+        self.assertEqual((context.value, context.usable), (4, True))
+        self.images.reason = None
+        self.events.clear()
+        connection, result = self.frame(5)
+        self.assertEqual(connection.replies[-1][0], 0)
+
+    def test_failed_pipeline_releases_and_signals_without_a_stamp(self):
+        self.request(d3d12_packet())
+        self.images.error = True
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "controlled pipeline"):
+            self.frame(3)
+        self.assertEqual(self.events[-2], ("release_at", 1, 2, 1, 4, 0, None, 0))
+        self.assertEqual(self.events[-1], ("reply", 2))
+        self.assertNotIn("pass", [e[0] for e in self.events])
+        context = self.transport.contexts[(42, packet()["session"])]
+        self.assertEqual((context.value, context.usable), (4, False))
+
+    def test_a_value_never_reached_signals_nothing(self):
+        self.request(d3d12_packet())
+        self.lib.wait_result = 1
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "never reached"):
+            self.frame(3)
+        self.assertEqual([e[0] for e in self.events], ["reset_history", "wait", "reset_history", "reply"])
+        self.assertFalse(self.transport.contexts[(42, packet()["session"])].usable)
+
+    def test_a_broken_session_still_lets_the_queue_go_on(self):
+        self.request(d3d12_packet())
+        self.lib.wait_result = 1
+        with self.assertRaises(ValueError):
+            self.frame(3)
+        self.lib.wait_result = 0
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "no matching"):
+            self.frame(5)
+        self.assertEqual(self.events, [("wait", 1, 5), ("pass", 1, 5, 6), ("reply", 2)])
+
+    def test_release_frees_the_fence_and_both_buffers(self):
+        self.request(d3d12_packet())
+        self.events.clear()
+        connection, _ = self.request(d3d12_packet(T.RELEASE))
+        self.assertEqual([e[0] for e in self.events], ["destroy_sem", "free", "free", "close_process", "reply"])
+        self.assertEqual(connection.replies[-1][0], 0)
+        self.assertFalse(self.transport.contexts)
 
 
 class Call:

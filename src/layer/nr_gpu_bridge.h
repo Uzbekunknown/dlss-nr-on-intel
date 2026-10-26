@@ -11,35 +11,14 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
+#include "nr_gpu_wire.h"
 
-#define NR_GPU_MAGIC 0x3147524eu
-#define NR_GPU_VERSION 1u
-#define NR_GPU_FENCED_VERSION 2u
-#define NR_GPU_HELLO 0u
-#define NR_GPU_FRAME 1u
-#define NR_GPU_RELEASE 2u
-#define NR_GPU_SUCCESS 0u
-#define NR_GPU_UNSUPPORTED 1u
-#define NR_GPU_FAILURE 2u
 #define NR_GPU_BUFFER_USAGE (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT \
                              | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
 #define NR_GPU_MEMORY_TYPE VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT
 #define NR_GPU_SEMAPHORE_TYPE VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
 #define NR_GPU_WAIT_NS UINT64_C(10000000000)
-
-struct nr_gpu_header { uint32_t magic, width, height, format; };
-struct nr_gpu_packet {
-    /* Opaque Win32 handle types are fixed by v1. Vulkan import requires these
-     * exact exporter memory type indices and allocation sizes. */
-    uint32_t action, pid, width, height, format, input_memory_type, output_memory_type, version;
-    uint64_t session, input_alloc, output_alloc, bytes;
-    uint64_t input_memory, output_memory, ready_sem, done_sem;
-    uint8_t device_uuid[VK_UUID_SIZE], driver_uuid[VK_UUID_SIZE];
-};
-struct nr_gpu_reply { uint32_t status, detail, session_low, session_high; };
-typedef char nr_gpu_packet_size_is_128[(sizeof(struct nr_gpu_packet) == 128) ? 1 : -1];
-typedef char nr_gpu_header_size_is_16[(sizeof(struct nr_gpu_header) == 16) ? 1 : -1];
-typedef char nr_gpu_reply_size_is_16[(sizeof(struct nr_gpu_reply) == 16) ? 1 : -1];
+typedef char nr_gpu_uuid_is_vulkans[(VK_UUID_SIZE == NR_GPU_UUID_BYTES) ? 1 : -1];
 
 struct nr_gpu_device_patch {
     VkDeviceCreateInfo info;

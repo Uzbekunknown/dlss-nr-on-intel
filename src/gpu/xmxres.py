@@ -94,6 +94,17 @@ def _load():
             ("xmx_sem_destroy", [ctypes.c_int]),
             ("xmx_external_acquire", [ctypes.c_int] * 3),
             ("xmx_external_release", [ctypes.c_int] * 3),
+            # A D3D12 client (nr_gpu_transport.py, protocol 3): its buffers, its fence, and the
+            # fence's values.
+            ("xmx_device_luid", [ctypes.c_void_p]),
+            ("xmx_buf_import_d3d12", [ctypes.c_uint, ctypes.c_ulonglong, ctypes.c_ulonglong]),
+            ("xmx_sem_import_d3d12", [ctypes.c_uint, ctypes.c_ulonglong]),
+            ("xmx_sem_wait", [ctypes.c_int, ctypes.c_ulonglong, ctypes.c_ulonglong]),
+            ("xmx_sem_value", [ctypes.c_int, ctypes.POINTER(ctypes.c_ulonglong)]),
+            ("xmx_sem_pass", [ctypes.c_int, ctypes.c_ulonglong, ctypes.c_ulonglong]),
+            ("xmx_external_acquire_at", [ctypes.c_int] * 3 + [ctypes.c_ulonglong]),
+            ("xmx_external_release_at", [ctypes.c_int] * 3 + [ctypes.c_ulonglong, ctypes.c_ulonglong,
+                                                              ctypes.c_char_p, ctypes.c_uint]),
             ("xmx_image_pipeline_init", [ctypes.c_char_p]),
             ("xmx_rec_image_pipeline", [ctypes.c_int, ctypes.c_void_p] + [ctypes.c_uint] * 4),
             ("xmx_buf_zero", [ctypes.c_int]),
@@ -258,6 +269,16 @@ class Buffer:
         obj.id=obj._lib.xmx_buf_import_win32(int(pid),int(handle),int(nbytes),
                                             int(allocation_size),int(memory_type))
         if obj.id<0: raise failure(obj._lib,"xmx_buf_import_win32")
+        return obj
+
+    @classmethod
+    def import_d3d12(cls, pid, handle, nbytes):
+        """Import the first `nbytes` of a shared committed D3D12 buffer, unmapped."""
+        obj=cls.__new__(cls)
+        obj._lib=_load()
+        obj.nbytes,obj.kind=int(nbytes),DEVICE
+        obj.id=obj._lib.xmx_buf_import_d3d12(int(pid),int(handle),int(nbytes))
+        if obj.id<0: raise failure(obj._lib,"xmx_buf_import_d3d12")
         return obj
 
     @property

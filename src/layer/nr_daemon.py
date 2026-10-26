@@ -718,7 +718,8 @@ def process_connection(connection, backend, args):
         if metrics:
             args.history = History()
             args.image_transport = "gpu-shared"
-            mode = "gpu-shared-fence" if metrics.get("sync") == "fence" else "gpu-shared"
+            mode = {"fence": "gpu-shared-fence", "d3d12": "gpu-shared-d3d12"}.get(metrics.get("sync"),
+                                                                                 "gpu-shared")
             print_gpu_frame(width, height, vk_format, args.live, metrics, mode)
         return
     if magic not in (MAGIC, MAGIC_MASKED, MAGIC_MOTION):

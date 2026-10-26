@@ -1,11 +1,16 @@
 #ifndef NR_GPU_RPC_H
 #define NR_GPU_RPC_H
-/* Small control exchanges for the Win32 GPU bridge. This never sends pixels and
- * never uses the CPU frame transport's connection state. Include after the
- * bridge header. Every exchange has one deadline, including pipe connection.
- * Cancelled OVERLAPPED storage remains alive until Windows confirms completion. */
+/* Small control exchanges for the Win32 GPU transport, for a Vulkan client (the
+ * bridge) or a D3D12 one. This never sends pixels and never uses the CPU frame
+ * transport's connection state. Every exchange has one deadline, including pipe
+ * connection. Cancelled OVERLAPPED storage remains alive until Windows confirms
+ * completion. */
 #ifdef _WIN32
-#include "nr_gpu_bridge.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+#include "nr_gpu_wire.h"
 
 #define NR_GPU_RPC_TIMEOUT_MS 10000u
 #define NR_GPU_RPC_CANCEL_GRACE_MS 100u
@@ -133,7 +138,8 @@ static int nr_gpu_rpc_peer(const char *socket_path, const struct nr_gpu_packet *
     if (peer_pid) *peer_pid = 0;
     if (!socket_path || strncmp(socket_path, "\\\\.\\pipe\\", 9)
         || !packet || !reply || !packet->session
-        || (packet->version != NR_GPU_VERSION && packet->version != NR_GPU_FENCED_VERSION)
+        || (packet->version != NR_GPU_VERSION && packet->version != NR_GPU_FENCED_VERSION
+            && packet->version != NR_GPU_D3D12_VERSION)
         || packet->action > NR_GPU_RELEASE) {
         SetLastError(ERROR_INVALID_PARAMETER); return 0;
     }

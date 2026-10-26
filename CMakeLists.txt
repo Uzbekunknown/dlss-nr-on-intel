@@ -212,6 +212,12 @@ if(NR_BUILD_TESTS)
     target_compile_options(test_gpu_interop PRIVATE -O2 -UNDEBUG)
     add_dependencies(test_gpu_interop xmx shaders)
     nr_output(test_gpu_interop)
+    # The D3D12 client of protocol 3, as the XeSS proxy will be: no Vulkan in it.
+    add_executable(test_gpu_d3d12 src/layer/test_gpu_d3d12.c)
+    target_link_libraries(test_gpu_d3d12 PRIVATE d3d12 dxgi)
+    target_compile_options(test_gpu_d3d12 PRIVATE -O2 -UNDEBUG)
+    add_dependencies(test_gpu_d3d12 xmx shaders)
+    nr_output(test_gpu_d3d12)
     if(NR_BUILD_LAYER)
       add_executable(test_gpu_present src/layer/test_gpu_present.c)
       target_link_libraries(test_gpu_present PRIVATE nr_vulkan user32)
@@ -258,6 +264,22 @@ if(NR_BUILD_TESTS)
         TIMEOUT 90
         REQUIRED_FILES "$<TARGET_FILE:test_gpu_interop>;$<TARGET_FILE:xmx>;${NR_SPV}")
       set_property(TEST gpu_win32_interop APPEND PROPERTY ENVIRONMENT
+        "NR_ROOT=${PROJECT_SOURCE_DIR}" "NR_DLL_PATH=${NR_COMPILER_BIN}")
+      nr_test(gpu_win32_d3d12 "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/src/layer/test_gpu_d3d12.py"
+        --executable "$<TARGET_FILE:test_gpu_d3d12>")
+      set_tests_properties(gpu_win32_d3d12 PROPERTIES LABELS "gpu;manual;win32"
+        TIMEOUT 90
+        REQUIRED_FILES "$<TARGET_FILE:test_gpu_d3d12>;$<TARGET_FILE:xmx>;${NR_SPV}")
+      set_property(TEST gpu_win32_d3d12 APPEND PROPERTY ENVIRONMENT
+        "NR_ROOT=${PROJECT_SOURCE_DIR}" "NR_DLL_PATH=${NR_COMPILER_BIN}")
+      nr_test(gpu_win32_d3d12_network "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/src/layer/test_gpu_d3d12.py" --network
+        --executable "$<TARGET_FILE:test_gpu_d3d12>")
+      set_tests_properties(gpu_win32_d3d12_network PROPERTIES LABELS "gpu;manual;win32"
+        TIMEOUT 600
+        REQUIRED_FILES "$<TARGET_FILE:test_gpu_d3d12>;$<TARGET_FILE:xmx>;$<TARGET_FILE:nr_image>;$<TARGET_FILE:nr_alloc>;${NR_SPV};${NR_WORK_DIR}/mlxw/dlssnr-logical.safetensors")
+      set_property(TEST gpu_win32_d3d12_network APPEND PROPERTY ENVIRONMENT
         "NR_ROOT=${PROJECT_SOURCE_DIR}" "NR_DLL_PATH=${NR_COMPILER_BIN}")
       if(NR_BUILD_LAYER)
         nr_test(gpu_win32_present "${Python3_EXECUTABLE}"

@@ -67,6 +67,10 @@ static struct {
 	int driver;                /* the device's VkDriverId, 0 where Vulkan 1.2 cannot say (xmx_init) */
 	int low_latency;           /* the driver asked for its low-latency clock strategy (xmx_init) */
 	unsigned char device_uuid[VK_UUID_SIZE], driver_uuid[VK_UUID_SIZE];
+	/* A D3D12 client names its adapter by LUID and hands over a fence, which Vulkan takes
+	 * as a timeline semaphore (xmx_sem_import_d3d12). */
+	unsigned char device_luid[VK_LUID_SIZE];
+	int luid_valid, timeline;
 	int pin32;                /* pipelines require 32-lane subgroups (build_pipeline_spec) */
 	int half_by_cast;         /* half_round's spelling, constant 1 on every pipeline (xmx_init) */
 	int staged_packed;        /* raw 128-bit staged operand copies, constant 2 (xmx_init) */
@@ -1055,6 +1059,15 @@ int xmx_init(const char *spv_path)
 			ext[next++]=VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME;
 			if(semaphore) ext[next++]=VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME;
 		}
+		/* A D3D12 fence imports as a timeline semaphore, Vulkan 1.2's own. */
+		g.timeline=0;
+		if(g.external_semaphore && props.apiVersion>=VK_API_VERSION_1_2) {
+			VkPhysicalDeviceVulkan12Features have12={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+			VkPhysicalDeviceFeatures2 query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&have12};
+			vkGetPhysicalDeviceFeatures2(g.pd,&query);
+			g.timeline=have12.timelineSemaphore==VK_TRUE;
+			v12.timelineSemaphore=g.timeline?VK_TRUE:VK_FALSE;
+		}
 	}
 #endif
 	if (priority.globalPriority) ext[next++] = priority_extension;
@@ -1078,6 +1091,8 @@ int xmx_init(const char *spv_path)
 		vkGetPhysicalDeviceProperties2(g.pd,&props);
 		memcpy(g.device_uuid,id.deviceUUID,VK_UUID_SIZE);
 		memcpy(g.driver_uuid,id.driverUUID,VK_UUID_SIZE);
+		memcpy(g.device_luid,id.deviceLUID,VK_LUID_SIZE);
+		g.luid_valid=id.deviceLUIDValid==VK_TRUE;
 	}
 	if (priority.globalPriority || g.qi || (family && *family))
 		fprintf(stderr, "libxmx: queue family %u%s%s\n", g.qi,
@@ -2518,9 +2533,20 @@ int xmx_device_ids(void *output)
 	return 0;
 }
 
+/* The adapter's LUID, as ID3D12Device::GetAdapterLuid gives it: a D3D12 client is matched by
+ * this, since D3D12 knows nothing of Vulkan's UUIDs. */
+int xmx_device_luid(void *output)
+{
+	if (!g.ready || !output) FAIL("device identity unavailable", 0);
+	if (!g.luid_valid) FAIL("the device reports no LUID", 0);
+	memcpy(output,g.device_luid,VK_LUID_SIZE);
+	return 0;
+}
+
 #ifdef _WIN32
 #define MAX_EXTERNAL_SEMAPHORES 32
 static VkSemaphore external_semaphores[MAX_EXTERNAL_SEMAPHORES];
+static unsigned char external_timeline[MAX_EXTERNAL_SEMAPHORES];   /* a D3D12 fence's, waited at a value */
 
 static HANDLE duplicate_gpu_handle(unsigned pid, unsigned long long value)
 {
@@ -2532,18 +2558,20 @@ static HANDLE duplicate_gpu_handle(unsigned pid, unsigned long long value)
 	CloseHandle(process);
 	return ok?copy:NULL;
 }
-#endif
 
-int xmx_buf_import_win32(unsigned pid, unsigned long long handle,
-	unsigned long long bytes, unsigned long long allocation_size, unsigned memory_type)
+/* A dedicated buffer over another process's memory: Vulkan's own export (OPAQUE_WIN32), with
+ * the exporter's memory type and allocation size, or a committed D3D12 resource
+ * (D3D12_RESOURCE), whose memory type the driver names and whose size it reads itself. */
+static int import_buffer(unsigned pid, unsigned long long handle, unsigned long long bytes,
+	unsigned long long allocation_size, unsigned memory_type, VkExternalMemoryHandleTypeFlagBits type)
 {
-#ifdef _WIN32
+	int d3d12=type==VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT;
 	if(!g.rready || !g.external || g.recording) FAIL("GPU import is unavailable while recording",0);
 	if(!bytes || bytes>allocation_size || allocation_size>(1ull<<30)) FAIL("invalid GPU import size",0);
 	VkPhysicalDeviceMemoryProperties mp;
 	vkGetPhysicalDeviceMemoryProperties(g.pd,&mp);
-	if(memory_type>=mp.memoryTypeCount ||
-	   !(mp.memoryTypes[memory_type].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+	if(!d3d12 && (memory_type>=mp.memoryTypeCount ||
+	   !(mp.memoryTypes[memory_type].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)))
 		FAIL("GPU import is not device-local memory",0);
 	int id=-1;
 	for(int i=0;i<MAX_RBUF;i++) if(!rbufs[i].live){id=i;break;}
@@ -2552,7 +2580,7 @@ int xmx_buf_import_win32(unsigned pid, unsigned long long handle,
 	if(!copy) FAIL("DuplicateHandle for GPU memory",GetLastError());
 	struct rbuf *rb=&rbufs[id];
 	VkExternalMemoryBufferCreateInfo external={.sType=VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
-		.handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT};
+		.handleTypes=type};
 	VkBufferCreateInfo bi={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.pNext=&external,.size=bytes,
 		.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT|
 		       VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT};
@@ -2561,17 +2589,34 @@ int xmx_buf_import_win32(unsigned pid, unsigned long long handle,
 	if(r) goto import_failed;
 	VkMemoryRequirements mr;
 	vkGetBufferMemoryRequirements(g.dev,rb->b,&mr);
-	if(mr.size>allocation_size || !(mr.memoryTypeBits&(1u<<memory_type))) {
+	if(d3d12) {
+		/* The first device-local type that both the handle and the buffer allow. */
+		PFN_vkGetMemoryWin32HandlePropertiesKHR properties=(PFN_vkGetMemoryWin32HandlePropertiesKHR)
+			vkGetDeviceProcAddr(g.dev,"vkGetMemoryWin32HandlePropertiesKHR");
+		VkMemoryWin32HandlePropertiesKHR hp={.sType=VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR};
+		failure="D3D12 memory properties";
+		if(!properties) {r=VK_ERROR_EXTENSION_NOT_PRESENT;goto import_failed;}
+		if((r=properties(g.dev,type,copy,&hp))) goto import_failed;
+		memory_type=UINT32_MAX;
+		for(uint32_t i=0;i<mp.memoryTypeCount && memory_type==UINT32_MAX;i++)
+			if((mr.memoryTypeBits&hp.memoryTypeBits&(1u<<i)) &&
+			   (mp.memoryTypes[i].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) memory_type=i;
+		if(memory_type==UINT32_MAX) {
+			failure="no device-local memory type takes the D3D12 buffer";r=VK_ERROR_INVALID_EXTERNAL_HANDLE;
+			goto import_failed;
+		}
+		allocation_size=mr.size;
+	} else if(mr.size>allocation_size || !(mr.memoryTypeBits&(1u<<memory_type))) {
 		failure="incompatible exported GPU allocation";r=VK_ERROR_INVALID_EXTERNAL_HANDLE;goto import_failed;
 	}
 	VkMemoryDedicatedAllocateInfo dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,.buffer=rb->b};
 	VkImportMemoryWin32HandleInfoKHR imported={.sType=VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR,
-		.pNext=&dedicated,.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,.handle=copy};
+		.pNext=&dedicated,.handleType=type,.handle=copy};
 	VkMemoryAllocateFlagsInfo flags={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
 		.pNext=&imported,.flags=VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT};
 	VkMemoryAllocateInfo ai={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.pNext=&flags,
 		.allocationSize=allocation_size,.memoryTypeIndex=memory_type};
-	failure="import Win32 GPU memory";
+	failure=d3d12?"import D3D12 GPU memory":"import Win32 GPU memory";
 	if((r=vkAllocateMemory(g.dev,&ai,NULL,&rb->m))) goto import_failed;
 	failure="bind imported GPU memory";
 	if((r=vkBindBufferMemory(g.dev,rb->b,rb->m,0))) goto import_failed;
@@ -2587,39 +2632,86 @@ import_failed:
 	if(rb->m) vkFreeMemory(g.dev,rb->m,NULL);
 	*rb=(struct rbuf){0};
 	FAIL(failure,r);
-#else
-	(void)pid;(void)handle;(void)bytes;(void)allocation_size;(void)memory_type;
-	FAIL("Win32 GPU memory import is unavailable",0);
-#endif
 }
 
-int xmx_sem_import_win32(unsigned pid, unsigned long long handle)
+/* A binary semaphore exported by a Vulkan client, or a D3D12 fence as a timeline semaphore. */
+static int import_semaphore(unsigned pid, unsigned long long handle, int timeline)
 {
-#ifdef _WIN32
 	if(!g.rready || !g.external_semaphore || g.recording) FAIL("GPU semaphore import unavailable",0);
+	if(timeline && !g.timeline) FAIL("the device has no timeline semaphores for a D3D12 fence",0);
 	int id=-1;
 	for(int i=0;i<MAX_EXTERNAL_SEMAPHORES;i++) if(!external_semaphores[i]){id=i;break;}
 	if(id<0) FAIL("out of imported GPU semaphore slots",0);
 	HANDLE copy=duplicate_gpu_handle(pid,handle);
 	if(!copy) FAIL("DuplicateHandle for GPU semaphore",GetLastError());
-	VkSemaphoreCreateInfo si={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+	VkSemaphoreTypeCreateInfo kind={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType=VK_SEMAPHORE_TYPE_TIMELINE};
+	VkSemaphoreCreateInfo si={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,.pNext=timeline?&kind:NULL};
 	VkResult r=vkCreateSemaphore(g.dev,&si,NULL,&external_semaphores[id]);
 	PFN_vkImportSemaphoreWin32HandleKHR import_sem=(PFN_vkImportSemaphoreWin32HandleKHR)
 		vkGetDeviceProcAddr(g.dev,"vkImportSemaphoreWin32HandleKHR");
 	if(!r && import_sem) {
 		VkImportSemaphoreWin32HandleInfoKHR info={.sType=VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR,
-			.semaphore=external_semaphores[id],.handleType=VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+			.semaphore=external_semaphores[id],
+			.handleType=timeline?VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT
+					    :VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
 			.handle=copy};
 		r=import_sem(g.dev,&info);
 	} else if(!r) r=VK_ERROR_EXTENSION_NOT_PRESENT;
 	CloseHandle(copy);
 	if(r) {
 		if(external_semaphores[id]) vkDestroySemaphore(g.dev,external_semaphores[id],NULL);
-		external_semaphores[id]=VK_NULL_HANDLE;FAIL("import Win32 GPU semaphore",r);
+		external_semaphores[id]=VK_NULL_HANDLE;FAIL(timeline?"import D3D12 fence":"import Win32 GPU semaphore",r);
 	}
+	external_timeline[id]=(unsigned char)timeline;
 	return id;
+}
+
+static VkSemaphore fence_of(int id)
+{
+	return id>=0 && id<MAX_EXTERNAL_SEMAPHORES && external_timeline[id] ? external_semaphores[id] : VK_NULL_HANDLE;
+}
+#endif
+
+int xmx_buf_import_win32(unsigned pid, unsigned long long handle,
+	unsigned long long bytes, unsigned long long allocation_size, unsigned memory_type)
+{
+#ifdef _WIN32
+	return import_buffer(pid,handle,bytes,allocation_size,memory_type,VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT);
+#else
+	(void)pid;(void)handle;(void)bytes;(void)allocation_size;(void)memory_type;
+	FAIL("Win32 GPU memory import is unavailable",0);
+#endif
+}
+
+/* A committed D3D12 buffer made with D3D12_HEAP_FLAG_SHARED, by its NT handle in process
+ * `pid`: the first `bytes` of it, unmapped. */
+int xmx_buf_import_d3d12(unsigned pid, unsigned long long handle, unsigned long long bytes)
+{
+#ifdef _WIN32
+	return import_buffer(pid,handle,bytes,bytes,0,VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT);
+#else
+	(void)pid;(void)handle;(void)bytes;FAIL("D3D12 GPU memory import is unavailable",0);
+#endif
+}
+
+int xmx_sem_import_win32(unsigned pid, unsigned long long handle)
+{
+#ifdef _WIN32
+	return import_semaphore(pid,handle,0);
 #else
 	(void)pid;(void)handle;FAIL("Win32 GPU semaphore import is unavailable",0);
+#endif
+}
+
+/* A fence made with D3D12_FENCE_FLAG_SHARED, by its NT handle in process `pid`, as a timeline
+ * semaphore whose value is the fence's. */
+int xmx_sem_import_d3d12(unsigned pid, unsigned long long handle)
+{
+#ifdef _WIN32
+	return import_semaphore(pid,handle,1);
+#else
+	(void)pid;(void)handle;FAIL("D3D12 fence import is unavailable",0);
 #endif
 }
 
@@ -2630,27 +2722,75 @@ int xmx_sem_destroy(int id)
 	if(g.recording || g.lost) FAIL("cannot destroy external semaphore with pending/lost device",0);
 	if(external_semaphores[id]) vkDestroySemaphore(g.dev,external_semaphores[id],NULL);
 	external_semaphores[id]=VK_NULL_HANDLE;
+	external_timeline[id]=0;
 	return 0;
 #else
 	(void)id;return 0;
 #endif
 }
 
+/* Wait on the host until an imported D3D12 fence reaches `value`: 0 once it has, 1 if
+ * `timeout_ns` ran out first. Nothing is submitted, so a client that never signals pins
+ * nothing here. */
+int xmx_sem_wait(int fence, unsigned long long value, unsigned long long timeout_ns)
+{
+#ifdef _WIN32
+	VkSemaphore sem=fence_of(fence);
+	if(!sem || g.lost) FAIL("not an imported D3D12 fence",0);
+	uint64_t at=value;
+	VkSemaphoreWaitInfo wait={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,.semaphoreCount=1,
+		.pSemaphores=&sem,.pValues=&at};
+	VkResult r=vkWaitSemaphores(g.dev,&wait,timeout_ns);
+	if(r==VK_TIMEOUT) return 1;
+	if(r) FAIL("wait for a D3D12 fence",r);
+	return 0;
+#else
+	(void)fence;(void)value;(void)timeout_ns;FAIL("D3D12 fences are unavailable",0);
+#endif
+}
+
+/* An imported D3D12 fence's value now. */
+int xmx_sem_value(int fence, unsigned long long *value)
+{
+#ifdef _WIN32
+	VkSemaphore sem=fence_of(fence);
+	if(!sem || !value) FAIL("not an imported D3D12 fence",0);
+	uint64_t now=0;
+	VkResult r=vkGetSemaphoreCounterValue(g.dev,sem,&now);
+	if(r) FAIL("read a D3D12 fence",r);
+	*value=now;
+	return 0;
+#else
+	(void)fence;(void)value;FAIL("D3D12 fences are unavailable",0);
+#endif
+}
+
 /* The private transfer fence bounds lifetime. No pixels are mapped/read by the host.
  * Semaphore -1 is protocol v2: the caller establishes release-before-acquire
- * execution ordering with completed private fences and the control-channel ACK. */
-static int external_ownership(int a,int b,int semaphore,int release)
+ * execution ordering with completed private fences and the control-channel ACK.
+ * A D3D12 fence (protocol v3) is waited for, or signalled, at `value`, and a release
+ * can first write `stamp_bytes` of `stamp` at `stamp_offset` in `b`, which the client
+ * then sees with the rest of it. */
+static int external_ownership(int a,int b,int semaphore,int release,uint64_t value,
+	uint64_t stamp_offset,const void *stamp,unsigned stamp_bytes)
 {
 #ifdef _WIN32
 	if(g.recording || g.lost || !g.external || !addr_of(a) || !addr_of(b) || a==b ||
 	   semaphore < -1 || semaphore>=MAX_EXTERNAL_SEMAPHORES ||
 	   (semaphore >= 0 && !external_semaphores[semaphore]))
 		FAIL("invalid external ownership operation",0);
+	int timeline=semaphore>=0 && external_timeline[semaphore];
+	if(timeline ? !value : value!=0) FAIL("a D3D12 fence takes a value, and nothing else does",0);
+	if(stamp && (!release || !stamp_bytes || stamp_bytes>64 || stamp_bytes%4 || stamp_offset%4 ||
+	   stamp_offset+stamp_bytes>rbufs[b].size))
+		FAIL("invalid external ownership stamp",0);
 	VkResult r=vkResetCommandBuffer(g.tcb,0);
 	if(r) FAIL("external command reset",r);
 	VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 	if((r=vkBeginCommandBuffer(g.tcb,&begin))) FAIL("external command begin",r);
+	/* Ahead of the release barrier, whose first scope holds this write as it holds the frame's. */
+	if(stamp) vkCmdUpdateBuffer(g.tcb,rbufs[b].b,stamp_offset,stamp_bytes,stamp);
 	VkBufferMemoryBarrier barriers[2];
 	int ids[]={a,b};
 	for(int i=0;i<2;i++) barriers[i]=(VkBufferMemoryBarrier){.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -2668,7 +2808,11 @@ static int external_ownership(int a,int b,int semaphore,int release)
 	if((r=vkResetFences(g.dev,1,&g.tfence))) FAIL("external fence reset",r);
 	VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 	VkSemaphore sem=semaphore >= 0 ? external_semaphores[semaphore] : VK_NULL_HANDLE;
-	VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&g.tcb,
+	VkTimelineSemaphoreSubmitInfo values={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.waitSemaphoreValueCount=release ? 0 : 1,.pWaitSemaphoreValues=&value,
+		.signalSemaphoreValueCount=release ? 1 : 0,.pSignalSemaphoreValues=&value};
+	VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=timeline ? &values : NULL,
+		.commandBufferCount=1,.pCommandBuffers=&g.tcb,
 		.waitSemaphoreCount=!release && sem ? 1 : 0,.pWaitSemaphores=!release && sem ? &sem : NULL,
 		.pWaitDstStageMask=!release && sem ? &stage : NULL,.signalSemaphoreCount=release && sem ? 1 : 0,
 		.pSignalSemaphores=release && sem ? &sem : NULL};
@@ -2679,12 +2823,52 @@ static int external_ownership(int a,int b,int semaphore,int release)
 	g.external_pending=0;
 	return 0;
 #else
-	(void)a;(void)b;(void)semaphore;(void)release;FAIL("Win32 external ownership unavailable",0);
+	(void)a;(void)b;(void)semaphore;(void)release;(void)value;(void)stamp_offset;(void)stamp;(void)stamp_bytes;
+	FAIL("Win32 external ownership unavailable",0);
 #endif
 }
 
-int xmx_external_acquire(int a,int b,int ready) { return external_ownership(a,b,ready,0); }
-int xmx_external_release(int a,int b,int done) { return external_ownership(a,b,done,1); }
+int xmx_external_acquire(int a,int b,int ready) { return external_ownership(a,b,ready,0,0,0,NULL,0); }
+int xmx_external_release(int a,int b,int done) { return external_ownership(a,b,done,1,0,0,NULL,0); }
+/* The same for a D3D12 client, whose fence is waited for, or signalled, at `value`. */
+int xmx_external_acquire_at(int a,int b,int fence,unsigned long long value)
+{
+	return external_ownership(a,b,fence,0,value,0,NULL,0);
+}
+int xmx_external_release_at(int a,int b,int fence,unsigned long long value,
+	unsigned long long stamp_offset,const void *stamp,unsigned stamp_bytes)
+{
+	return external_ownership(a,b,fence,1,value,stamp_offset,stamp,stamp_bytes);
+}
+
+/* A D3D12 frame declined after its client queued it: nothing is touched, and the fence moves
+ * on from `wait` to `signal` on the device, so the client's queue goes on. The caller has
+ * seen `wait` reached (xmx_sem_wait), so nothing here can be left waiting. */
+int xmx_sem_pass(int fence, unsigned long long wait, unsigned long long signal)
+{
+#ifdef _WIN32
+	VkSemaphore sem=fence_of(fence);
+	if(!sem || g.recording || g.lost || !wait || signal<=wait) FAIL("invalid D3D12 fence pass",0);
+	VkResult r=vkResetFences(g.dev,1,&g.tfence);
+	if(r) FAIL("external fence reset",r);
+	uint64_t from=wait,to=signal;
+	VkTimelineSemaphoreSubmitInfo values={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.waitSemaphoreValueCount=1,.pWaitSemaphoreValues=&from,
+		.signalSemaphoreValueCount=1,.pSignalSemaphoreValues=&to};
+	VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&values,
+		.waitSemaphoreCount=1,.pWaitSemaphores=&sem,.pWaitDstStageMask=&stage,
+		.signalSemaphoreCount=1,.pSignalSemaphores=&sem};
+	if((r=vkQueueSubmit(g.q,1,&submit,g.tfence))) FAIL("D3D12 fence pass submit",r);
+	g.external_pending=1;
+	r=vkWaitForFences(g.dev,1,&g.tfence,VK_TRUE,10000000000ull);
+	if(r) { g.lost=1; FAIL("D3D12 fence pass wait failed; resources pinned",r); }
+	g.external_pending=0;
+	return 0;
+#else
+	(void)fence;(void)wait;(void)signal;FAIL("D3D12 fences are unavailable",0);
+#endif
+}
 
 int xmx_graph_destroy(int id)
 {
