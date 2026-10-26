@@ -246,12 +246,13 @@ fence as a timeline semaphore, with no wrong word both ways and the order kept o
   channels changed by 2-6 levels on average under A, 63-76 % by about 1 under B; the round trip
   as the client sees it, after the first frame, 26-33 ms under A (the daemon's network 25-29)
   and 15.5-16.4 under B (network 12).
-- MSVC: libxmx at `/W4` with no new warnings and the eight new functions in its exports, the
-  layer for x64 and x86, the client header with no warnings at `/W4`.
+- MSVC, `build_win.bat` at `928add5` (only the three known C4068): both smoke tests pass on its
+  libxmx with the same numbers, and so do the 58 CTest entries that need no CMake-built fixture
+  (the other 7 are those fixtures). At `/W4` libxmx has no new warning and exports all eight new
+  functions, and the client header compiles with none.
 
-**Not tested:** MSVC's libxmx through the smoke tests (built only); D3D12's own debug layer
-(Windows' Graphics Tools are not installed); the motion-following history, which the GPU image
-path does not have yet (step 3).
+**Not tested:** D3D12's own debug layer (Windows' Graphics Tools are not installed); the
+motion-following history, which the GPU image path does not have yet (step 3).
 
 **Next on Windows:** step 2, the cut in `src/xess` with DLSSNR-AMD's licence in NOTICE; step 3,
 the history following the game's motion on the GPU; then the two Hogwarts recordings through the
