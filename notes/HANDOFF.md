@@ -39,7 +39,10 @@ When the dated entries grow long, move the older ones into the archive the same 
   of Intel's hands the daemon the frame XeSS is about to upscale, in the game's own D3D12, and
   adds NR's change to it. It runs in Hogwarts Legacy. The trail behind moving things was found
   in a recording and fixed (`e803624`), **pushed on the owner's word before anyone saw it in the
-  game**: what is untested is listed in the entry below, 10-16.
+  game**: what is untested is listed in the entry below, 10-16. Carrying a change onto later
+  frames is what makes the trails and patches (10-18), so the proxy is being rebuilt to cut the
+  game's command list at XeSS and run NR on the frame itself, all on the GPU; step 1, the daemon
+  taking D3D12 frames, is done (below, 10-26).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -190,6 +193,72 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12: the game's list cut at XeSS instead of XeSS a frame late, and step 1, D3D12 frames into the daemon on the GPU (2026-10-26, branch `dx12`)
+
+**The plan changes.** Before starting, the owner asked what OptiScaler and ReShade already do.
+`mochizuki0323/DLSSNR-AMD` (MIT; its network is Vulkan on RDNA4) runs in native D3D12 games on
+Windows as 10-18 wanted, and with no frame of delay. At the upscaler's evaluate it **cuts the
+game's command list** (`windows/src/pe/nr_pe_d3d12split.cpp`, ~1 500 lines): stubs on every slot
+of the list class's vtable send the game's later recording to a continuation list, which starts
+with the state the list had at the cut; the hooked `ExecuteCommandLists` submits the first half
+with copies into shared textures and a fence signal, the network runs on a Vulkan device of its
+own between, and the continuation after. A list it cannot follow (open queries or render passes,
+predication, bundles it has not seen) runs whole, without NR, for that frame. Its front end for
+DLSS/FSR/XeSS games is `wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass` (GPL-3.0), which calls NGX
+feature 18 before the upscaler; DLSSNR-AMD answers as an NGX core and patches that fork in memory
+by byte signatures for each version. Mainline OptiScaler has no NR. ReShade's add-ons reach the
+queue only between submissions and at Present, after the upscaler. So **XeSS no longer runs a
+frame late**: the proxy cuts the list at `xessD3D12Execute`, NR runs between the halves, and
+Intel's XeSS gets NR's answer on the same frame. The cut is to come from DLSSNR-AMD under its
+licence, credited in NOTICE.
+
+**This driver shares across the APIs** (101.9150, `work/tools-win/d3d12_vk_probe.c`): Vulkan
+imports a shared committed D3D12 buffer (`D3D12_RESOURCE_BIT`, dedicated) and a shared D3D12
+fence as a timeline semaphore, with no wrong word both ways and the order kept on the GPU.
+`D3D12_HEAP_BIT` is not importable (the query says so, and Vulkan's writes are lost).
+
+**Step 1: protocol 3, a D3D12 client of the GPU transport** (`nr_gpu_wire.h` says it in full).
+- `src/layer/nr_gpu_wire.h`: the control messages without a graphics API, out of
+  `nr_gpu_bridge.h`, so that the proxy can include them; `nr_gpu_rpc.h` needs no Vulkan header
+  now and takes version 3. `src/layer/nr_gpu_d3d12.h`: the client's side, for the proxy.
+- libxmx: `xmx_buf_import_d3d12`, `xmx_sem_import_d3d12` (Windows enables `timelineSemaphore`
+  where the device has it), `xmx_sem_wait` (on the host, with a timeout, so a client that dies
+  pins nothing), `xmx_sem_value`, `xmx_sem_pass`, `xmx_external_acquire_at`/`_release_at` (the
+  fence at a value; the release first writes a 16-byte stamp after the answer), `xmx_device_luid`.
+- The daemon (`nr_gpu_transport.py`): HELLO names the adapter by LUID and the daemon imports both
+  buffers and the fence; FRAME carries V, the value the game's queue signals after its copy. The
+  daemon waits for V, answers, writes the stamp naming V, and signals V + 1, for which the
+  client's queue waits on the GPU. A frame it declines, or one on a session that broke, still
+  gets V + 1 once V is reached; never earlier, since D3D12 would take the fence back to V when
+  its queue got there. The log calls it `transport=gpu-shared-d3d12`.
+
+**Checked here** (Arc 140V, 101.9150): MinGW build with no warnings and CTest 65 of 65;
+`test_gpu_transport.py` 43 (9 new); two new opt-in GPU smoke tests beside `gpu_win32_interop`
+(`NR_ENABLE_GPU_SMOKE_TESTS`, all three pass):
+- `gpu_win32_d3d12`: a D3D12 client (`test_gpu_d3d12.c`) against the daemon's transport with the
+  image pipeline replaced by the frame as it came. Two sessions of four frames: seven come back
+  exact and stamped, one declined on purpose comes back untouched, every fence ends at V + 1.
+  With Khronos validation and synchronisation validation on the daemon: no message. The layer
+  does report here: the probe's heap import gives three errors.
+- `gpu_win32_d3d12_network`: the daemon itself with `NR_GPU_IMAGE=1`, 640x360 frames from the
+  client through the network (320x320 field at 0.5): six answered and stamped, 82-94 % of the
+  channels changed by 2-6 levels on average under A, 63-76 % by about 1 under B; the round trip
+  as the client sees it, after the first frame, 26-33 ms under A (the daemon's network 25-29)
+  and 15.5-16.4 under B (network 12).
+- MSVC: libxmx at `/W4` with no new warnings and the eight new functions in its exports, the
+  layer for x64 and x86, the client header with no warnings at `/W4`.
+
+**Not tested:** MSVC's libxmx through the smoke tests (built only); D3D12's own debug layer
+(Windows' Graphics Tools are not installed); the motion-following history, which the GPU image
+path does not have yet (step 3).
+
+**Next on Windows:** step 2, the cut in `src/xess` with DLSSNR-AMD's licence in NOTICE; step 3,
+the history following the game's motion on the GPU; then the two Hogwarts recordings through the
+replay, and the game with the owner.
+**Next on Linux:** `make test` in both memory modes, and CTest. `libxmx.c` changed in its Win32
+arms and in `external_ownership`'s signature, and it now reads the device's LUID everywhere;
+`test_gpu_transport.py` has the protocol 3 cases.
 
 ## `e803624` in Hogwarts, `sync=1`, and the owner's call: NR's answer on its own frame, on the GPU (2026-10-18, branch `newnr`)
 
