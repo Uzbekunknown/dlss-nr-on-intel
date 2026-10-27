@@ -8,7 +8,8 @@
  * surface's, and the frame itself stands in for its history.
  *
  * Mode 0, at the active extent: e = the network's last output moved (`full`), f = the
- * game's last frame moved (`pixels`), g = 1 where the motion is known. Mode 1, at the
+ * game's last frame moved (`pixels`), or nr_daemon.NOTHING (-1) where the motion is not
+ * known, so that the composition holds no history there, g = 1 where known. Mode 1, at the
  * network's input extent, reading the motion of the nearest active pixel: e = the history
  * for the network (`inner`), f = the game's last frame there moved, or this one's own pixel
  * where the motion is not known, so that its mean distance from this frame over all pixels
@@ -167,7 +168,7 @@ void main() {
     vec3 now = pixel_of(FloatBuf(pc.d), index);
     vec3 earlier = history_sample(FloatBuf(pc.c), height, width, u, v);
     vec3 history = known ? history_sample(FloatBuf(pc.b), height, width, u, v) : now;
-    if (mode == 0u && !known) earlier = now;
+    if (mode == 0u && !known) earlier = vec3(-1.0);   /* nr_daemon.NOTHING */
     if (apart(now, earlier) > stale) history = now;
     if (mode == 1u && !known) earlier = now;
     store(FloatBuf(pc.e), index, history);

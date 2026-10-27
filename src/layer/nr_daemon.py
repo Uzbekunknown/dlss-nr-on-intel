@@ -514,8 +514,11 @@ class History:
         all — a surface uncovered behind something that moved, which the vectors trace back
         to the thing in front — the history is of something else, and the model is given
         none there rather than trusted to see it. Where nothing was, the frame itself is
-        the history, so nothing old is blended in there; with nothing known anywhere, there
-        is no history at all."""
+        the history, so nothing old is blended in there, and the game's last frame there is
+        NOTHING, so the composition holds none of it: held to the frame itself, NR drew 1.5
+        levels on what came on screen where it draws 8.3 elsewhere, and caught up over
+        frames (Hogwarts, 2026-10-28). With nothing known anywhere, there is no history at
+        all."""
         known = np.isfinite(motion[..., 0]) & np.isfinite(motion[..., 1])
         if not known.any():
             return self.drop()
@@ -528,7 +531,7 @@ class History:
         pixels = None
         if self.pixels is not None and self.pixels.shape == colour.shape:
             pixels = sample_history(self.pixels, u + dx, v + dy)
-            pixels[~known] = colour[~known]
+            pixels[~known] = NOTHING
             other = np.abs(colour - pixels).max(axis=-1) > STALE
             full[other] = colour[other]
         # The network's extent reads the motion of the nearest full-size pixel.
@@ -568,6 +571,10 @@ class History:
 # Jitter and the reprojection's own filter move textured pixels by a few levels; a surface
 # uncovered behind something that moved differs by far more.
 STALE = 0.12
+# The game's last frame where a pixel's surface was not on screen (`History.follow`): no colour
+# the game draws, so the composition's release lets go of the history there and its hold
+# floor holds none.
+NOTHING = np.float32(-1)
 
 
 def sample_history(history, u, v):

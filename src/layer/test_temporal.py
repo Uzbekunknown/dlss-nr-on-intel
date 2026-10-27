@@ -202,9 +202,19 @@ def holder_checks():
     floor_gap = (float(np.abs(got_pixels[:, :93] - game[:, 3:]).max())
                  if got_pixels is not None else 1.0)
     check("the hold floor asks the game's last frame moved here",
-          floor_gap < 1e-4 and np.array_equal(got_pixels[:, 93:], now[:, 93:])
+          floor_gap < 1e-4 and np.all(got_pixels[:, 93:] == nr_daemon.NOTHING)
           and got_inner is not None and got_inner.shape == (32, 48, 3),
-          f"to {floor_gap:.1e}; cut {history.cut:.3f} measured against the moved frame")
+          f"to {floor_gap:.1e}, NOTHING where nothing was; cut {history.cut:.3f} measured "
+          "against the moved frame")
+    # Held to the frame itself there, NR's answer on what came on screen was mostly the game's
+    # own colour, and caught up over frames (Hogwarts, 10-28).
+    head = (rng.random((64, 96, 4), dtype=np.float32) - 0.5).astype(np.float32)
+    held = nr_frame.compose(head, now, history=got_full, history_previous=got_pixels,
+                            history_hold=1.0, history_release=24.0)
+    alone = nr_frame.compose(head, now)
+    check("what came on screen is NR's own answer at once",
+          np.array_equal(held[:, 93:], alone[:, 93:]),
+          f"max |d| {float(np.abs(held[:, 93:] - alone[:, 93:]).max()):.2e} against no history")
     history.keep("m", output, np.ascontiguousarray(game[::2, ::2]), game)
     check("with nothing known there is no history",
           history.take("m", np.ascontiguousarray(now[::2, ::2]), 0.15,
