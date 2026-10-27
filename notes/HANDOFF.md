@@ -42,8 +42,9 @@ When the dated entries grow long, move the older ones into the archive the same 
   game**: what is untested is listed in the entry below, 10-16. Carrying a change onto later
   frames is what makes the trails and patches (10-18), so the proxy now cuts the game's command
   list at XeSS and runs NR on the frame itself, all on the GPU (`mode=cut`, local): the daemon
-  takes D3D12 frames (step 1, below, 10-26), and the cut runs both Hogwarts recordings with no
-  trail (step 2, below, 10-27). Not yet seen in the game.
+  takes D3D12 frames (step 1, below, 10-26), the cut runs both Hogwarts recordings with no
+  trail (step 2, below, 10-27), and the daemon's history follows the game's motion (step 3,
+  below, 10-27). Not yet seen in the game.
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -95,9 +96,11 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `dx12`'s protocol 3 (`455a6fe`): `make test` in both memory modes and CTest. libxmx changed in
-  its Win32 arms and in `external_ownership`'s signature, and reads the device's LUID
-  everywhere. Below, 10-26.
+- `dx12`'s protocol 3 (`455a6fe`) and step 3 (`04c4817`): `make test` in both memory modes and
+  CTest. libxmx changed in its Win32 arms and in `external_ownership`'s signature, and reads the
+  device's LUID everywhere; `test_image_history.py` is new (its device check skips off Intel's
+  Windows driver), and the GPU image path, the transport and the daemon's frame line changed.
+  Below, 10-26 and 10-27.
 - ~~**Preset B, the new model: recover its graph**, then the CPU reference against it~~: A's
   graph at depths `{2,2,2,2,2}`, running on CPU and on the device (`2bb16f6`, below, 10-17
   later; phase72).
@@ -197,6 +200,65 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12, step 3: the daemon's history follows the game's motion, on the GPU (2026-10-27, branch `dx12`)
+
+**`04c4817`.** The history standing still carried next to nothing onto moving things (step 2,
+below), because `release` drops it wherever a pixel's colour moved: so where things moved, NR
+had no history at all. Now:
+- The proxy's MOTION pass (`nr_xess.hlsl`) writes, after the frame NR is given, each pixel's
+  offset to where its surface was on the frame NR was given before: the game's vector at the
+  unjittered position and the two frames' jitter, NaN off screen. That is TRACK's one step from
+  a fresh tracker, without CLAIM, since the daemon tells an uncovered surface by the picture.
+  Only when that frame came from the execute before this one and `resetHistory` is not set;
+  `motion_history=0` turns it off.
+- Protocol 3: the input has room for the offsets (`NR_GPU_MOTION_BYTES`), and a FRAME names
+  the frame they lead back to by its V, in `driver_uuid`'s first 8 bytes
+  (`nr_gpu_d3d12_follow`). The daemon follows them only back to the frame it answered last.
+- The GPU image path does `History.follow` (`image_history.comp`, `gpu_image_history.py`): the
+  network's last output and the game's last frame read along the offsets with the vendor's
+  Catmull-Rom; the frame itself where the motion is not known, or where the frame moved here
+  differs by more than STALE; no history where nothing is known; the cut against the frame
+  moved here. The daemon's frame line ends `history=moved`, `still` or `none`.
+
+**Checked here:**
+- `test_image_history.py`: 32 comparisons with `History.follow`, byte for byte on Intel's
+  driver. Three geometries, with crops and a smaller network extent; NaN, infinities and offsets
+  past the edge; no motion; motion known only where the network reads none. A wrong STALE
+  fails it.
+- `test_image_pipeline.py`: the history follows only onto a history; it is dropped on a cut
+  against the frame moved here and where nothing is known; without motion the history stands
+  still; a new extent rebuilds. `test_gpu_transport.py`, 45: the packet rules, and offsets
+  followed only back to the frame answered last.
+- `test_nr_xess.exe`: two executes in a row; the second's offsets are (3.5, -2.75) exactly over
+  2814 pixels and NaN off screen, and the FRAMEs name 0, then the first.
+- MinGW CTest 70 of 70. The setup window's suite, 83, under a native Python
+  (`D:\NRonWindows\release-check-04459d2\python-native`); MSYS2's fails one of them on `\\`
+  against `/` in a path, with or without this change.
+- Found on the way: `build_xess.bat` gives each pass its define from a fixed list, and MOTION,
+  missing from it, was built as ENCODE. A pass without a define now stops the build.
+
+**The orbit recording** (A, as in step 2; on battery). `work/tools-win/orbit_flicker.py`
+compares each frame's change with the change to the frame before, carried along the offsets
+the daemon was told, over surfaces that match within STALE: 295 pairs, levels of 255.
+
+| history | where the colour moved by 24 or more at the same place (97 000 px a frame) | elsewhere (304 000 px) |
+| --- | --- | --- |
+| along the motion | 2.58 | 1.74 |
+| standing still (step 2) | 3.94 | 2.34 |
+| none (`temporal=0`) | 4.01 | 2.70 |
+
+- 298 of 300 frames answered with a stamp, 296 of them following the motion. XeSS's input lies
+  0.245 levels from NR's answer (p99 3.8); NR's change is 8.1 levels a frame, against 8.8 with
+  the history standing still. Beside step 2's output at frame 120, no trail.
+- The daemon's frame: 41.0 ms against 40.8. Its image preparation takes 4.8 ms against 3.7, for
+  the two passes, a resample and two reductions.
+
+**Not tested:** the game; Linux; MSVC's build of the daemon's side (libxmx did not change); a
+game whose vectors are at render resolution (Hogwarts' are at the output's).
+
+**Next on Windows:** `work\xess` rebuilt, and Hogwarts with the owner there.
+**Next on Linux:** `make test` in both memory modes and CTest (Open items).
 
 ## DirectX 12, step 2: the cut in `src/xess`, and the orbit recording with no trail (2026-10-27, branch `dx12`)
 
