@@ -44,7 +44,8 @@ When the dated entries grow long, move the older ones into the archive the same 
   list at XeSS and runs NR on the frame itself, all on the GPU (`mode=cut`, local): the daemon
   takes D3D12 frames (step 1, below, 10-26), the cut runs both Hogwarts recordings with no
   trail (step 2, below, 10-27), and the daemon's history follows the game's motion (step 3,
-  below, 10-27). Not yet seen in the game.
+  below, 10-27). In the game, NR before XeSS gave halos and trails, so NR now runs on XeSS's
+  output, before the interface (`mode=after`, below, 10-28); not yet seen in the game so.
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -200,6 +201,61 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12 in Hogwarts: NR before XeSS gives halos and trails, so it moves after XeSS (2026-10-28, branch `dx12`)
+
+**The game test**, the evening of 10-27, with the owner playing (Arc 140V, 101.9150, on mains;
+A; `04c4817`, the history along the motion). The proxy hooked the list, queue and device
+classes, the daemon answered every frame on its own frame with none declined, and its history
+followed the game's motion on 579 of the first 590 frames. The owner changed XeSS's quality
+and the daemon's `render_scale` while playing:
+
+| XeSS | its colour | `render_scale` | network field | daemon's frame | the game, frames a second |
+| --- | --- | --- | --- | --- | --- |
+| Performance | 835x522 | 0.5 | 448x320 | 46 ms | about 20 |
+| Ultra Quality Plus | 1478x924 | 0.5 | 768x512 | 90 ms | about 11 |
+| Ultra Quality Plus | 1478x924 | 1.0 | 1536x960 | 270 ms | about 3.7 |
+| Performance | 835x522 | 1.0 | 896x576 | 102 ms | about 9.6 |
+
+- What the owner saw: slight halos and a soft picture at Performance and 0.5; fewer halos and
+  trails at Ultra Quality Plus and 1.0; worse again at Performance and 1.0. With NR's change
+  set to nothing at the same frame rate (the daemon's `intensity=0`), the halos and trails went.
+- So they come from NR before XeSS. XeSS's temporal accumulation meets NR's detail, redrawn a
+  little differently each frame at each jitter, and takes it for change it should not trust or
+  noise it should average; the further XeSS upscales, the more it accumulates.
+- The owner's word: NR after XeSS, before the interface.
+- The proxy took no setting while the game ran (the bug below). The test stopped itself at
+  00:16; the game's top, exe and XeSS folders matched the snapshot by SHA-256 (55 files), and
+  the script left the owner's settings and saves as they were.
+
+**`d3a9bcc`: `mode=after`, the default.**
+- XeSS's work goes into the game's list first and the list is cut after it. The first half
+  copies XeSS's output and writes the frame NR is given and the offsets for the daemon's
+  history (with no jitter: the output has none). The continuation puts NR's answer back into
+  XeSS's output, which the game then post-processes and draws its interface on.
+- `mode=before` (or `cut`) keeps the cut before XeSS; `mode=carry` is as it was. The test
+  script takes `-Mode after|before|cut|carry`, `after` by default.
+- Fixed: in both cut modes the worker read `nr-xess.txt` again only when the hand-over queue
+  emptied, which it never does while the daemon is slower than the game. It now reads it once
+  a second.
+
+**Checked here:** `test_nr_xess.exe` all passed, with two new cases after XeSS (R16G16B16A16 and
+R11G11B10): the output the game goes on with is XeSS's plus NR's change to it, and XeSS was
+handed the game's own colour. The orbit recording in `mode=after`, through the daemon (0.5) and
+Intel's XeSS:
+- 1920x1200 frames; 29 of the 30 written answered with a stamp. The output lies 0.21 levels
+  from NR's answer (p99 3.7), against a change of 10.3.
+- The network takes 102 ms at 960x640, and the replay ran at 7 frames a second.
+- Frame 120 beside XeSS alone and beside `mode=before`: NR's look over XeSS's output, and no
+  halo round the head against the wall (`work/orbit-cut/`, local).
+- A rewrite of `nr-xess.txt` mid-replay was read within the second.
+
+**Not tested:** `mode=after` in the game: the halos and trails, the look, the frame rate (7-9 a
+second at 0.5, by the replay); a game whose XeSS output is in another format.
+
+**Next on Windows:** Hogwarts in `mode=after` with the owner. Then the cost at the output's
+extent (preset B there, or a smaller `render_scale`).
+**Next on Linux:** nothing; `src/xess` is Windows'.
 
 ## DirectX 12, step 3: the daemon's history follows the game's motion, on the GPU (2026-10-27, branch `dx12`)
 
