@@ -21,6 +21,7 @@ struct nr_gpu_d3d12 {
     uint32_t width, height, format;
     uint64_t bytes, input_alloc, output_alloc, session;
     uint64_t value;   /* the fence's last value this client handed out (nr_gpu_d3d12_next) */
+    uint64_t motion;  /* where each pixel's offset starts in the input, after the frame; 0 without */
     LUID luid;
 };
 
@@ -71,9 +72,10 @@ static inline void nr_gpu_d3d12_close(struct nr_gpu_d3d12 *s)
 }
 
 /* A session for frames of width x height in `format` (a VkFormat number, as the daemon reads
- * the bytes: 37 for R8G8B8A8_UNORM). The device is the game's; nothing is kept on it. */
+ * the bytes: 37 for R8G8B8A8_UNORM). The device is the game's; nothing is kept on it. With
+ * `motion` the input has room after the frame for each pixel's offset (nr_gpu_wire.h). */
 static inline HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *device, uint32_t width,
-                                 uint32_t height, uint32_t format, uint64_t session)
+                                 uint32_t height, uint32_t format, uint64_t session, int motion)
 {
     memset(s, 0, sizeof *s);
     if (!device || !width || !height || !session || (uint64_t)width * height > (1u << 28))
@@ -81,7 +83,8 @@ static inline HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *de
     s->device = device;
     s->width = width; s->height = height; s->format = format; s->session = session;
     s->bytes = (uint64_t)width * height * 4;
-    s->input_alloc = s->bytes;
+    s->input_alloc = s->bytes + (motion ? NR_GPU_MOTION_BYTES(width, height) : 0);
+    s->motion = motion ? s->bytes : 0;
     s->output_alloc = s->bytes + sizeof(struct nr_gpu_stamp);
     s->luid = nr_gpu_d3d12_luid(device);
     HRESULT hr = nr_gpu_d3d12_buffer(device, s->input_alloc, &s->input, &s->input_handle);
@@ -117,6 +120,13 @@ static inline void nr_gpu_d3d12_packet(const struct nr_gpu_d3d12 *s, uint32_t ac
     p->ready_sem = (uint64_t)(uintptr_t)s->fence_handle;
     p->done_sem = action == NR_GPU_FRAME ? value : 0;
     memcpy(p->device_uuid, &s->luid, sizeof s->luid);
+}
+
+/* A FRAME whose offsets lead back to the frame of value `previous`, for a session opened with
+ * motion; 0, as the packet comes, leaves them unfollowed. */
+static inline void nr_gpu_d3d12_follow(struct nr_gpu_packet *p, uint64_t previous)
+{
+    memcpy(p->driver_uuid, &previous, sizeof previous);
 }
 
 /* What the daemon left in a stamp the client copied out of the output: 1 when it names V. */

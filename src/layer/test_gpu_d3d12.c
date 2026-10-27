@@ -151,7 +151,7 @@ static int network(const char *pipe)
 {
     const uint32_t width = 640, height = 360, frames = 6;
     struct nr_gpu_d3d12 s;
-    HR(nr_gpu_d3d12_open(&s, device, width, height, 37, UINT64_C(0x13579bdf02468ace)));
+    HR(nr_gpu_d3d12_open(&s, device, width, height, 37, UINT64_C(0x13579bdf02468ace), 0));
     ID3D12Resource *upload = host_buffer(D3D12_HEAP_TYPE_UPLOAD, s.bytes);
     ID3D12Resource *fill = host_buffer(D3D12_HEAP_TYPE_UPLOAD, s.bytes);
     ID3D12Resource *readback = host_buffer(D3D12_HEAP_TYPE_READBACK, s.output_alloc);
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
     for (uint32_t session = 1; session <= 2; ++session) {
         uint32_t width = session == 1 ? 64 : DECLINED_WIDTH, height = session == 1 ? 64 : 80;
         struct nr_gpu_d3d12 s;
-        HR(nr_gpu_d3d12_open(&s, device, width, height, 37, UINT64_C(0x2468ace013579bd0) + session));
+        HR(nr_gpu_d3d12_open(&s, device, width, height, 37, UINT64_C(0x2468ace013579bd0) + session, 0));
         ID3D12Resource *upload = host_buffer(D3D12_HEAP_TYPE_UPLOAD, s.bytes);
         ID3D12Resource *fill = host_buffer(D3D12_HEAP_TYPE_UPLOAD, s.bytes);
         ID3D12Resource *readback = host_buffer(D3D12_HEAP_TYPE_READBACK, s.output_alloc);

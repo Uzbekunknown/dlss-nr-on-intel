@@ -47,7 +47,7 @@ class Frame:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args):
+    def process_device(self, raw, *_args, motion=None):
         return raw
 
     def reset_history(self):

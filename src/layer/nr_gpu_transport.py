@@ -12,7 +12,9 @@ V + 1 on the GPU, so a FRAME moves the fence on whether it is answered or not, o
 the session's fence is imported and the client's queue has reached V; only a stamp
 naming V after the answer says it was answered. A value that does not rise, a queue
 that never reaches V, and a lost device leave the fence where it is, and the client
-has to see to its own queue.
+has to see to its own queue. A client with the game's motion vectors puts each pixel's
+offset to the frame before after the frame, and the history follows them when the frame
+they lead back to is the one this daemon answered last.
 """
 from __future__ import annotations
 
@@ -31,6 +33,7 @@ HELLO, FRAME, RELEASE = 0, 1, 2
 D3D12 = 3                          # the protocol version of a D3D12 client
 STAMP = struct.Struct("<4I")       # nr_gpu_stamp: magic, the frame's value low and high, 0
 STAMP_MAGIC = 0x5453524E
+MOTION = 8                         # bytes a pixel of the offsets after a frame, two float32
 # The client sends FRAME once its queue holds the signal of V, so V comes within a frame
 # of the game's GPU work; this is for a client that died first.
 D3D12_WAIT_NS = 10_000_000_000
@@ -118,9 +121,24 @@ def unpack_packet(raw, width, height, fmt, max_pixels):
             raise ValueError("D3D12 protocol requires a shared fence of its own")
         if (p["action"] == FRAME) != bool(p["done_sem"]) or p["done_sem"] >= 1 << 62:
             raise ValueError("a D3D12 FRAME carries its fence value, and nothing else does")
-        if any(p["device_uuid"][8:]) or any(p["driver_uuid"]):
+        if any(p["device_uuid"][8:]) or any(p["driver_uuid"][8:]):
             raise ValueError("D3D12 protocol names its adapter by LUID alone")
+        before = motion_from(p)
+        if before and (p["action"] != FRAME or before >= p["done_sem"]):
+            raise ValueError("a D3D12 FRAME's motion leads back to an earlier frame, and nothing else names one")
+        if before and not carries_motion(p):
+            raise ValueError("a D3D12 FRAME names motion its input has no room for")
     return p
+
+
+def motion_from(p):
+    """Protocol 3: the frame a FRAME's offsets lead back to, by its fence value; 0 for none."""
+    return int.from_bytes(p["driver_uuid"][:8], "little")
+
+
+def carries_motion(p):
+    """Protocol 3: whether the input holds each pixel's offset after the frame."""
+    return p["input_alloc"] >= p["bytes"] + p["width"] * p["height"] * MOTION
 
 
 class _Context:
@@ -129,13 +147,18 @@ class _Context:
         self.input = self.output = None
         self.ready = self.done = -1
         self.value = 0   # protocol 3: the fence's value as the daemon last moved it
+        self.answered = 0   # ... and the frame it last answered, which motion may lead back to
+        self.motion = False
         self.usable = False
 
     def open(self):
         p = self.packet
         if p["version"] == D3D12:
-            # One fence both ways, kept as `ready`; the stamp goes after the answer.
-            self.input = X.Buffer.import_d3d12(p["pid"], p["input_memory"], p["bytes"])
+            # One fence both ways, kept as `ready`; the stamp goes after the answer, and the
+            # offsets, when the client sends them, after the frame.
+            self.motion = carries_motion(p)
+            extent = p["bytes"] + (p["width"] * p["height"] * MOTION if self.motion else 0)
+            self.input = X.Buffer.import_d3d12(p["pid"], p["input_memory"], extent)
             self.output = X.Buffer.import_d3d12(p["pid"], p["output_memory"], p["bytes"] + STAMP.size)
             self.ready = self.lib.xmx_sem_import_d3d12(p["pid"], p["ready_sem"])
             if self.ready < 0:
@@ -243,7 +266,8 @@ class GPUSharedTransport:
         context = self.contexts.get(key)
         hello = {**p, "action": HELLO}
         if p["version"] == D3D12:
-            hello["done_sem"] = 0   # a FRAME's fence value is its own
+            hello["done_sem"] = 0   # a FRAME's fence value is its own, and so is its motion's
+            hello["driver_uuid"] = bytes(len(p["driver_uuid"]))
         if context is not None and context.packet != hello:
             self._reply(connection, p, 2)
             raise ValueError("GPU request metadata does not match imported session")
@@ -385,7 +409,11 @@ class GPUSharedTransport:
             if self.lib.xmx_external_acquire_at(context.input.id, context.output.id, context.ready, value):
                 raise X.failure(self.lib, "GPU input ownership acquire")
             acquired = True
-            result = self.images.process_device(context.input, width, height, fmt, live)
+            # The offsets are followed only back to the frame the history holds.
+            before = motion_from(p)
+            motion = (context.input.address + p["bytes"]
+                      if context.motion and before and before == context.answered else None)
+            result = self.images.process_device(context.input, width, height, fmt, live, motion=motion)
             self.backend.runtime.begin()
             self.backend.runtime.copy(result, context.output, p["bytes"])
             self.backend.runtime.submit()
@@ -395,12 +423,14 @@ class GPUSharedTransport:
                 raise X.failure(self.lib, "GPU output ownership release")
             acquired = False
             context.value = value + 1
+            context.answered = value
             self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
                          "sync": "d3d12"}
             self._reply(connection, p, 0)
             return self.last
         except Exception:
             context.usable = False
+            context.answered = 0
             self.reset_history()
             try:
                 # The client's queue waits for V + 1 whatever happened here.

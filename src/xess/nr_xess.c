@@ -59,6 +59,7 @@
 #include "nr_xess_reduce.h"
 #include "nr_xess_apply.h"
 #include "nr_xess_encode.h"
+#include "nr_xess_motion.h"
 #include "nr_xess_compose.h"
 #ifndef NR_XESS_TEST
 #include "nr_xess_exports.h"
@@ -431,7 +432,7 @@ static struct {
 	ID3D12PipelineState *pipeline;
 	ID3D12PipelineState *clear_pipeline, *claim_pipeline;
 	ID3D12PipelineState *track_pipeline, *match_pipeline, *reduce_pipeline;
-	ID3D12PipelineState *encode_pipeline, *compose_pipeline;     /* mode=cut */
+	ID3D12PipelineState *encode_pipeline, *motion_pipeline, *compose_pipeline;     /* mode=cut */
 	ID3D12Resource *srgb_table, *linear_table;   /* `srgb8` for ENCODE and `linear8` for COMPOSE */
 	ID3D12Resource *claims;      /* CLAIM's sixteen bytes a pixel, read by TRACK */
 	ID3D12Resource *matched;     /* MATCH's seven floats a pixel */
@@ -808,10 +809,10 @@ static void release_motion(void)
 
 static int build_device(ID3D12Device *device)
 {
-	ID3D12PipelineState **pipelines[8] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
+	ID3D12PipelineState **pipelines[9] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
 						&nr.match_pipeline, &nr.reduce_pipeline, &nr.pipeline,
-						&nr.encode_pipeline, &nr.compose_pipeline };
-	for (int i = 0; i < 8; i++)
+						&nr.encode_pipeline, &nr.motion_pipeline, &nr.compose_pipeline };
+	for (int i = 0; i < 9; i++)
 		if (*pipelines[i]) {
 			ID3D12PipelineState_Release(*pipelines[i]);
 			*pipelines[i] = NULL;
@@ -832,12 +833,12 @@ static int build_device(ID3D12Device *device)
 		say("the compute passes' root signature was refused\n");
 		return -1;
 	}
-	const void *code[8] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
-				nr_xess_reduce, nr_xess_apply, nr_xess_encode, nr_xess_compose };
-	SIZE_T sizes[8] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
+	const void *code[9] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
+				nr_xess_reduce, nr_xess_apply, nr_xess_encode, nr_xess_motion, nr_xess_compose };
+	SIZE_T sizes[9] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
 			    sizeof nr_xess_match, sizeof nr_xess_reduce, sizeof nr_xess_apply,
-			    sizeof nr_xess_encode, sizeof nr_xess_compose };
-	for (int i = 0; i < 8; i++) {
+			    sizeof nr_xess_encode, sizeof nr_xess_motion, sizeof nr_xess_compose };
+	for (int i = 0; i < 9; i++) {
 		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {
 			.pRootSignature = nr.signature, .CS = { code[i], sizes[i] },
 		};
@@ -1166,8 +1167,9 @@ static int motion_region(const xess_d3d12_execute_params_t *p, UINT width, UINT 
 	    || (UINT64)p->inputMotionVectorBase.x + w > desc.Width
 	    || (UINT64)p->inputMotionVectorBase.y + h > desc.Height) {
 		if (!told++)
-			say("motion vectors format %d, %ux%u at (%u, %u) in %llux%u: not followed; NR's "
-			    "change stays where it was captured\n", desc.Format, w, h,
+			say("motion vectors format %d, %ux%u at (%u, %u) in %llux%u: not followed (mode=carry: "
+			    "NR's change stays where it was captured; mode=cut: the daemon's history stays "
+			    "where it was)\n", desc.Format, w, h,
 			    p->inputMotionVectorBase.x, p->inputMotionVectorBase.y, desc.Width, desc.Height);
 		return 0;
 	}
@@ -1677,16 +1679,23 @@ struct cut_constants {
 	uint32_t width, height, pitch, kind;
 	float white, strength;
 	uint32_t frame[2];
-	uint32_t unused[24];
+	uint32_t motion_pitch, offsets;
+	uint32_t motion_size[2];
+	float motion_scale[2];
+	float motion_texels[2];
+	float jitter[2];
+	float previous_jitter[2];
+	uint32_t unused[12];
 };
 
 _Static_assert(sizeof(struct cut_constants) == 32 * 4, "the root signature takes 32 constants");
 
 /* What one frame's cut hands the daemon: its fence, held, since the session may close before
- * the worker gets to it, the frame's value V, and the session it belongs to. */
+ * the worker gets to it, the frame's value V, the session it belongs to, and the V of the
+ * frame its offsets lead back to, or 0 when it has none to follow. */
 struct handover {
 	ID3D12Fence *fence;
-	uint64_t value, session;
+	uint64_t value, session, previous;
 	LARGE_INTEGER queued;
 };
 
@@ -1713,6 +1722,9 @@ static struct {
 	struct handover queue[HANDOVERS];
 	unsigned head, count;
 	uint64_t last;               /* the newest value handed over */
+	uint64_t calls, last_call;   /* executes so far, and the one that handed `last` over */
+	float last_jitter[2];        /* that frame's jitter */
+	int followed;                /* that frame carries offsets for the daemon's history */
 	char said[160];              /* the last reason a frame went through whole */
 	uint32_t answered, declined, failed;
 	uint64_t window_start, window_frames;
@@ -1782,6 +1794,7 @@ static void hand_over(struct handover *h)
 	struct nr_gpu_packet packet;
 	AcquireSRWLockShared(&cut.lock);
 	nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
+	nr_gpu_d3d12_follow(&packet, h->previous);
 	ReleaseSRWLockShared(&cut.lock);
 	struct nr_gpu_reply reply;
 	int ok = exchange_gpu(&packet, &reply);
@@ -1926,8 +1939,9 @@ static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMA
 	QueryPerformanceCounter(&now);
 	uint64_t session = ((uint64_t)GetCurrentProcessId() << 40) ^ (uint64_t)now.QuadPart;
 	AcquireSRWLockExclusive(&cut.lock);
-	HRESULT hr = nr_gpu_d3d12_open(&cut.gpu, device, width, height, 37, session ? session : 1);
+	HRESULT hr = nr_gpu_d3d12_open(&cut.gpu, device, width, height, 37, session ? session : 1, 1);
 	if (SUCCEEDED(hr)) cut.session = cut.gpu.session;
+	cut.last = cut.last_call = 0;   /* a new session's frames lead back to none of the old's */
 	ReleaseSRWLockExclusive(&cut.lock);
 	if (FAILED(hr)) {
 		say("could not make the buffers and fence the daemon shares (0x%08lx)\n", (unsigned long)hr);
@@ -1960,6 +1974,7 @@ static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants
  * COMMON, which the daemon's side needs. */
 static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p)
 {
+	uint64_t call = ++cut.calls;   /* offsets lead back only to the execute before this one */
 	D3D12_RESOURCE_DESC desc;
 	ID3D12Resource_GetDesc(p->pColorTexture, &desc);
 	UINT width = p->inputWidth ? p->inputWidth : (UINT)desc.Width;
@@ -2012,6 +2027,14 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	}
 	float white = config.white;
 	if (p->exposureScale > 0) white /= p->exposureScale;   /* XeSS multiplies the colour by it */
+	float jitter[2] = { p->jitterOffsetX * xess.jitter[0], p->jitterOffsetY * xess.jitter[1] };
+	/* Where each pixel's surface was on the frame NR was given before, for the daemon's
+	 * history: only when that frame came from the execute before this one, and the game's
+	 * vectors, and its own history, say where. */
+	UINT motion_width = 0, motion_height = 0;
+	int follow = config.motion_history && cut.last && cut.last_call == call - 1 && !p->resetHistory
+		     && motion_region(p, width, height, &motion_width, &motion_height)
+		     && ensure_motion(motion_width, motion_height) == 0;
 	AcquireSRWLockExclusive(&cut.lock);
 	uint64_t value = nr_gpu_d3d12_next(&cut.gpu);
 	ReleaseSRWLockExclusive(&cut.lock);
@@ -2019,7 +2042,19 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		.width = width, .height = height, .pitch = nr.footprint.Footprint.RowPitch,
 		.kind = (uint32_t)nr.kind, .white = white, .strength = config.strength,
 		.frame = { (uint32_t)value, (uint32_t)(value >> 32) },
+		.offsets = (uint32_t)cut.gpu.motion,
+		.jitter = { jitter[0], jitter[1] },
+		.previous_jitter = { cut.last_jitter[0], cut.last_jitter[1] },
 	};
+	if (follow) {
+		k.motion_pitch = nr.motion_footprint.Footprint.RowPitch;
+		k.motion_size[0] = motion_width;
+		k.motion_size[1] = motion_height;
+		k.motion_scale[0] = xess.velocity[0] * width / motion_width;
+		k.motion_scale[1] = xess.velocity[1] * height / motion_height;
+		k.motion_texels[0] = (float)motion_width / width;
+		k.motion_texels[1] = (float)motion_height / height;
+	}
 	ID3D12GraphicsCommandList *l = list;
 	struct batch b = { .count = 0 };
 	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
@@ -2027,9 +2062,14 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST,
 		write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
-	/* The first half: the colour as a buffer, and the frame NR is given from it. */
+	/* The first half: the colour as a buffer, and the frame NR is given from it; after the frame
+	 * in the same buffer, from a copy of the vectors, the offsets when they are to be followed. */
 	add(&b, p->pColorTexture, read, source);
 	add(&b, nr.staging, common, dest);
+	if (follow) {
+		add(&b, p->pVelocityTexture, read, source);
+		add(&b, nr.motion[0], common, dest);
+	}
 	flush(l, &b);
 	D3D12_BOX box = { p->inputColorBase.x, p->inputColorBase.y, 0,
 			  p->inputColorBase.x + width, p->inputColorBase.y + height, 1 };
@@ -2038,6 +2078,18 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	D3D12_TEXTURE_COPY_LOCATION into = { .pResource = nr.staging,
 		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
 	ID3D12GraphicsCommandList_CopyTextureRegion(l, &into, 0, 0, 0, &colour, &box);
+	if (follow) {
+		D3D12_BOX region = { p->inputMotionVectorBase.x, p->inputMotionVectorBase.y, 0,
+				     p->inputMotionVectorBase.x + motion_width,
+				     p->inputMotionVectorBase.y + motion_height, 1 };
+		D3D12_TEXTURE_COPY_LOCATION vectors = { .pResource = p->pVelocityTexture,
+			.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+		D3D12_TEXTURE_COPY_LOCATION to = { .pResource = nr.motion[0],
+			.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.motion_footprint };
+		ID3D12GraphicsCommandList_CopyTextureRegion(l, &to, 0, 0, 0, &vectors, &region);
+		add(&b, p->pVelocityTexture, source, read);
+		add(&b, nr.motion[0], dest, read);
+	}
 	add(&b, p->pColorTexture, source, read);
 	add(&b, nr.staging, dest, read);
 	add(&b, cut.gpu.input, common, write);
@@ -2046,8 +2098,14 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	ID3D12GraphicsCommandList_SetPipelineState(l, nr.encode_pipeline);
 	ID3D12Resource *encoding[5] = { nr.staging, nr.srgb_table, nr.staging, nr.staging, nr.staging };
 	bind_cut(l, &k, encoding, cut.gpu.input);
+	if (follow) {   /* the offsets lie after the frame ENCODE writes, so no barrier between */
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.motion_pipeline);
+		ID3D12Resource *moving[5] = { nr.motion[0], nr.motion[0], nr.motion[0], nr.motion[0], nr.motion[0] };
+		bind_cut(l, &k, moving, cut.gpu.input);
+	}
 	add(&b, cut.gpu.input, write, common);
 	add(&b, nr.staging, read, common);
+	if (follow) add(&b, nr.motion[0], read, common);
 	flush(l, &b);
 
 	struct handover *h = malloc(sizeof *h);
@@ -2060,6 +2118,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	ID3D12Fence_AddRef(h->fence);
 	h->value = value;
 	h->session = cut.session;
+	h->previous = follow ? cut.last : 0;
 	if (!nr_split_cut(list, run_between, drop_handover, h, state, why, sizeof why)) {
 		ID3D12Fence_Release(h->fence);
 		free(h);
@@ -2070,6 +2129,10 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	}
 	nr_split_snapshot_free(state);
 	cut.last = value;
+	cut.last_call = call;
+	cut.last_jitter[0] = jitter[0];
+	cut.last_jitter[1] = jitter[1];
+	cut.followed = follow;
 	cut.said[0] = '\0';
 
 	/* The continuation: once the queue has the daemon's V + 1, NR's answer into the colour. */

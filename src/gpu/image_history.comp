@@ -1,0 +1,176 @@
+#version 450
+/* The history carried along the client's motion, `History.follow` in nr_daemon.py, on the
+ * device: the network's last output and the game's last frame read at where each pixel's
+ * surface was on the frame before, with the vendor's five-tap Catmull-Rom (nr_image.c
+ * `nr_history_sample`, MLX-DLSS's `sample_history`), in the reference's float32 operation
+ * order. Where the motion is not known the frame itself stands in, and where the last
+ * frame moved here differs from this one by more than STALE in a channel, it is another
+ * surface's, and the frame itself stands in for its history.
+ *
+ * Mode 0, at the active extent: e = the network's last output moved (`full`), f = the
+ * game's last frame moved (`pixels`), g = 1 where the motion is known. Mode 1, at the
+ * network's input extent, reading the motion of the nearest active pixel: e = the history
+ * for the network (`inner`), f = the game's last frame there moved, or this one's own pixel
+ * where the motion is not known, so that its mean distance from this frame over all pixels
+ * is the reference's cut over the known ones times their share, g = 1 where known. */
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256) in;
+layout(buffer_reference, scalar, buffer_reference_align = 4) buffer FloatBuf { float v[]; };
+layout(push_constant, scalar) uniform Push {
+    uint64_t a, b, c, d, e, f, g, h;
+    uint p[16];
+} pc;
+
+/* a: the motion, two float32 a pixel at the frame's extent; b: what is moved (mode 0 the
+ * network's last output at the active extent, mode 1 it resampled to the network's input
+ * extent); c: the game's last frame at that extent; d: this frame at that extent.
+ * p: frame width, left, top, active width, active height, mode, the extent's width and
+ * height, STALE's float bits. */
+
+/* Intel's native FDiv is approximate; one residual correction gives the correctly rounded
+ * quotient the reference's float32 division has (image_compose.comp). */
+float divide(float a, float b) {
+    precise float q = a / b;
+    precise float error = fma(-q, b, a);
+    precise float refined = q + error / b;
+    return refined;
+}
+
+float clamp_to(float value, float lower, float upper) {
+    value = value < lower ? lower : value;
+    return value > upper ? upper : value;
+}
+
+/* nr_image.c `catmull`: the two inner weights folded into one offset bilinear tap. */
+void catmull(float normalized, uint dimension, out float outer0, out float middle,
+             out float outer3, out float w0, out float w3, out float g) {
+    precise float pixel = normalized * float(dimension) - 0.5;
+    float base_index = floor(pixel);
+    precise float t = clamp_to(pixel - base_index, 0.0, 1.0);
+    precise float square = t * t;
+    precise float cube = square * t;
+    precise float w1 = 1.0 - 2.5 * square + 1.5 * cube;
+    precise float w2 = 0.5 * t + 2.0 * square - 1.5 * cube;
+    precise float first = -0.5 * t + square - 0.5 * cube;
+    precise float last = -0.5 * square + 0.5 * cube;
+    precise float gain = w1 + w2;
+    w0 = first;
+    w3 = last;
+    g = gain;
+    precise float base = base_index + 0.5;
+    float lower = 0.5, upper = float(dimension) - 0.5;
+    precise float before = base - 1.0;
+    precise float inside = base + divide(w2, gain);
+    precise float after = base + 2.0;
+    outer0 = clamp_to(before, lower, upper);
+    middle = clamp_to(inside, lower, upper);
+    outer3 = clamp_to(after, lower, upper);
+}
+
+/* nr_image.c `sample_linear`, three channels. */
+vec3 linear_tap(FloatBuf image, uint height, uint width, float x, float y) {
+    precise float px = x - 0.5;
+    precise float py = y - 0.5;
+    float fx = floor(px), fy = floor(py);
+    int x0 = fx < 0.0 ? 0 : fx > float(width - 1u) ? int(width - 1u) : int(fx);
+    int y0 = fy < 0.0 ? 0 : fy > float(height - 1u) ? int(height - 1u) : int(fy);
+    int x1 = x0 + 1 < int(width) ? x0 + 1 : int(width) - 1;
+    int y1 = y0 + 1 < int(height) ? y0 + 1 : int(height) - 1;
+    precise float tx = clamp_to(px - float(x0), 0.0, 1.0);
+    precise float ty = clamp_to(py - float(y0), 0.0, 1.0);
+    vec3 result;
+    for (uint c = 0u; c < 3u; ++c) {
+        precise float top = image.v[(uint(y0) * width + uint(x0)) * 3u + c] * (1.0 - tx)
+                          + image.v[(uint(y0) * width + uint(x1)) * 3u + c] * tx;
+        precise float bottom = image.v[(uint(y1) * width + uint(x0)) * 3u + c] * (1.0 - tx)
+                             + image.v[(uint(y1) * width + uint(x1)) * 3u + c] * tx;
+        precise float value = top * (1.0 - ty) + bottom * ty;
+        result[c] = value;
+    }
+    return result;
+}
+
+/* nr_image.c `nr_history_sample` at one normalised coordinate. */
+vec3 history_sample(FloatBuf image, uint height, uint width, float u, float v) {
+    float xo0, xm, xo3, xw0, xw3, xg, yo0, ym, yo3, yw0, yw3, yg;
+    catmull(u, width, xo0, xm, xo3, xw0, xw3, xg);
+    catmull(v, height, yo0, ym, yo3, yw0, yw3, yg);
+    precise float k0 = xw0 * yg;
+    precise float k1 = xg * yw0;
+    precise float k2 = xg * yg;
+    precise float k3 = xg * yw3;
+    precise float k4 = xw3 * yg;
+    vec3 t0 = linear_tap(image, height, width, xo0, ym);
+    vec3 t1 = linear_tap(image, height, width, xm, yo0);
+    vec3 t2 = linear_tap(image, height, width, xm, ym);
+    vec3 t3 = linear_tap(image, height, width, xm, yo3);
+    vec3 t4 = linear_tap(image, height, width, xo3, ym);
+    /* Both sums start from 0, as the reference's do. */
+    precise float sum = 0.0;
+    sum = sum + k0;
+    sum = sum + k1;
+    sum = sum + k2;
+    sum = sum + k3;
+    sum = sum + k4;
+    vec3 result;
+    for (uint c = 0u; c < 3u; ++c) {
+        precise float total = 0.0;
+        total = total + k0 * t0[c];
+        total = total + k1 * t1[c];
+        total = total + k2 * t2[c];
+        total = total + k3 * t3[c];
+        total = total + k4 * t4[c];
+        result[c] = divide(total, sum);
+    }
+    return result;
+}
+
+vec3 pixel_of(FloatBuf image, uint index) {
+    return vec3(image.v[3u * index], image.v[3u * index + 1u], image.v[3u * index + 2u]);
+}
+
+void store(FloatBuf image, uint index, vec3 value) {
+    for (uint c = 0u; c < 3u; ++c) image.v[3u * index + c] = value[c];
+}
+
+float apart(vec3 a, vec3 b) {
+    precise vec3 step = abs(a - b);
+    return max(max(step.r, step.g), step.b);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint frame_width = pc.p[0], left = pc.p[1], top = pc.p[2];
+    uint active_width = pc.p[3], active_height = pc.p[4], mode = pc.p[5];
+    uint width = pc.p[6], height = pc.p[7];
+    float stale = uintBitsToFloat(pc.p[8]);
+    if (index >= width * height) return;
+    uint x = index % width, y = index / width;
+    /* Mode 1 reads the motion of the nearest active pixel, as the reference's
+     * `((arange + 0.5) * (active / extent)).astype(intp)`, in whole numbers here. */
+    uint mx = mode == 0u ? x : min(((2u * x + 1u) * active_width) / (2u * width), active_width - 1u);
+    uint my = mode == 0u ? y : min(((2u * y + 1u) * active_height) / (2u * height), active_height - 1u);
+    FloatBuf motion = FloatBuf(pc.a);
+    uint at = 2u * ((my + top) * frame_width + mx + left);
+    float dx = motion.v[at], dy = motion.v[at + 1u];
+    bool known = !isnan(dx) && !isinf(dx) && !isnan(dy) && !isinf(dy);
+    precise float u = divide(float(x) + 0.5, float(width));
+    precise float v = divide(float(y) + 0.5, float(height));
+    if (known) {
+        /* The offset is in active pixels, so normalised by the active extent. */
+        u = u + divide(dx, float(active_width));
+        v = v + divide(dy, float(active_height));
+    }
+    vec3 now = pixel_of(FloatBuf(pc.d), index);
+    vec3 earlier = history_sample(FloatBuf(pc.c), height, width, u, v);
+    vec3 history = known ? history_sample(FloatBuf(pc.b), height, width, u, v) : now;
+    if (mode == 0u && !known) earlier = now;
+    if (apart(now, earlier) > stale) history = now;
+    if (mode == 1u && !known) earlier = now;
+    store(FloatBuf(pc.e), index, history);
+    store(FloatBuf(pc.f), index, earlier);
+    FloatBuf(pc.g).v[index] = known ? 1.0 : 0.0;
+}

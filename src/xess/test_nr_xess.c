@@ -1045,6 +1045,7 @@ static struct {
 	ID3D12Resource *upload;
 	uint8_t answer[IN_W * IN_H * 4];
 	int decline, frames, hellos;
+	uint64_t input_alloc, previous;   /* the HELLO's input, the last FRAME's motion */
 } stand;
 
 static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *reply)
@@ -1054,11 +1055,13 @@ static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *repl
 	reply->session_high = (uint32_t)(p->session >> 32);
 	if (p->action == NR_GPU_HELLO) {
 		stand.hellos++;
+		stand.input_alloc = p->input_alloc;
 		reply->detail = GetCurrentProcessId();
 		return p->bytes == sizeof stand.answer && p->version == NR_GPU_D3D12_VERSION;
 	}
 	if (p->action != NR_GPU_FRAME) return 1;
 	uint64_t value = p->done_sem;
+	memcpy(&stand.previous, p->driver_uuid, sizeof stand.previous);
 	ID3D12CommandAllocator_Reset(stand.allocator);
 	ID3D12GraphicsCommandList_Reset(stand.list, stand.allocator, NULL);
 	if (!stand.decline) {
@@ -1180,6 +1183,77 @@ static int run_cut(DXGI_FORMAT format, const char *name, float strength, int dec
 	return failures != 0;
 }
 
+/* mode=cut's motion: of two executes in a row, the second hands the daemon, after the frame,
+ * each pixel's offset to where its surface was on the first — the game's vector, (3, -2)
+ * pixels here, and the two frames' jitter — NaN where that was off screen, and names the first
+ * frame in its FRAME. The first names none. */
+static int run_cut_motion(ID3D12Resource *motion)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R16G16B16A16_FLOAT, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how);
+	if (!tex) {
+		printf("FAIL cut, motion: no texture\n");
+		return 1;
+	}
+	nr.width = 0;
+	config.strength = 1;
+	stand.decline = 0;
+	float first[2] = { 0.25f, -0.25f }, second[2] = { -0.25f, 0.5f };
+	xess_d3d12_execute_params_t params = params_for(tex, motion, first);
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL cut, motion: the session was not opened\n");
+		return 1;
+	}
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	uint64_t earlier = cut.last, named_first = stand.previous;
+	params = params_for(tex, motion, second);
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	UINT64 bytes = NR_GPU_MOTION_BYTES(IN_W, IN_H);
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE,
+					       D3D12_RESOURCE_STATE_COPY_DEST);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, 0, cut.gpu.input, cut.gpu.motion, bytes);
+	if (submit()) return 1;
+	if (stand.input_alloc != (UINT64)IN_W * IN_H * 4 + bytes) {
+		printf("FAIL cut, motion: the session's input is %llu bytes, with no room for the offsets\n",
+		       (unsigned long long)stand.input_alloc);
+		failures++;
+	}
+	if (named_first != 0 || !earlier || stand.previous != earlier) {
+		printf("FAIL cut, motion: the frames named %llu and %llu, not 0 and %llu\n",
+		       (unsigned long long)named_first, (unsigned long long)stand.previous,
+		       (unsigned long long)earlier);
+		failures++;
+	}
+	float *offsets;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&offsets);
+	float dx = 3 + first[0] - second[0], dy = -2 + first[1] - second[1];
+	int wrong = 0, known = 0;
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			const float *o = offsets + 2 * ((size_t)y * IN_W + x);
+			int off = x + dx < -0.5f || y + dy < -0.5f || x + dx > IN_W - 0.5f || y + dy > IN_H - 0.5f;
+			int right = off ? isnan(o[0]) && isnan(o[1]) : o[0] == dx && o[1] == dy;
+			known += !off;
+			if (!right && wrong++ < 3)
+				printf("FAIL cut, motion: pixel (%d, %d) has (%g, %g)\n", x, y, o[0], o[1]);
+		}
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	ID3D12Resource_Release(tex);
+	failures += wrong != 0;
+	printf("%s cut, motion: (%.2f, %.2f) to the frame before over %d pixels, the rest off screen\n",
+	       failures ? "FAIL" : "ok  ", dx, dy, known);
+	return failures != 0;
+}
+
 int main(int argc, char **argv)
 {
 	_snwprintf(log_path, MAX_PATH + 16, L"test_nr_xess.log");
@@ -1267,6 +1341,7 @@ int main(int argc, char **argv)
 	failed += run_cut(DXGI_FORMAT_R11G11B10_FLOAT, "cut, R11G11B10_FLOAT", 1, 0);
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, strength 0", 0, 0);
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, declined by the daemon", 1, 1);
+	failed += run_cut_motion(moving);
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }

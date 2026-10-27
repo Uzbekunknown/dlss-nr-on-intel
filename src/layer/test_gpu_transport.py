@@ -57,6 +57,7 @@ class Connection:
 class Buffer:
     def __init__(self, ident, events):
         self.id, self.events, self.freed = ident, events, False
+        self.address = ident << 32
 
     def free(self):
         self.events.append(("free", self.id))
@@ -158,12 +159,14 @@ class Images:
         self.events, self.reason, self.error = events, None, False
         self.last = {"network_ms": 3.5}
         self.before_process = None
+        self.motions = []
 
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args):
+    def process_device(self, raw, *_args, motion=None):
         self.events.append(("process", raw.id))
+        self.motions.append(motion)
         if self.before_process:
             self.before_process()
         if isinstance(self.error, Exception):
@@ -620,6 +623,38 @@ class D3D12ProtocolTests(TransportCase):
         self.events.clear()
         connection, result = self.frame(5)
         self.assertEqual(connection.replies[-1][0], 0)
+
+    MOTION_ALLOC = 1280 * 720 * (4 + T.MOTION)
+
+    def test_motion_rules(self):
+        roomy, back = {"input_alloc": self.MOTION_ALLOC}, (5).to_bytes(8, "little") + bytes(8)
+        for p in (d3d12_packet(**roomy), d3d12_packet(T.FRAME, 7, driver_uuid=back, **roomy)):
+            self.assertEqual(T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)["version"], T.D3D12)
+        for action, value, changes in ((T.HELLO, 0, dict(driver_uuid=back, **roomy)),
+                                       (T.FRAME, 5, dict(driver_uuid=back, **roomy)),
+                                       (T.FRAME, 7, dict(driver_uuid=back)),
+                                       (T.FRAME, 7, dict(driver_uuid=bytes(9) + bytes([1]) + bytes(6), **roomy))):
+            with self.subTest(action=action, value=value, changes=changes), self.assertRaises(ValueError):
+                T.unpack_packet(encoded(d3d12_packet(action, value, **changes)), 1280, 720, 44, 4096 * 4096)
+
+    def test_motion_is_followed_back_to_the_frame_answered_last(self):
+        self.request(d3d12_packet(input_alloc=self.MOTION_ALLOC))
+        self.assertEqual(self.imports[0], (42, 100, self.MOTION_ALLOC))
+        offsets = self.transport.contexts[(42, packet()["session"])].input.address + self.BYTES
+
+        def frame(value, before):
+            return self.request(d3d12_packet(T.FRAME, value, input_alloc=self.MOTION_ALLOC,
+                                             driver_uuid=before.to_bytes(8, "little") + bytes(8)))
+        frame(3, 0)                          # nothing to follow
+        frame(5, 3)                          # back to the frame answered last
+        frame(7, 3)                          # back past it
+        self.images.reason = "controlled decline"
+        connection, _ = frame(9, 7)          # declined, so not answered
+        self.assertEqual(connection.replies[-1][0], 1)
+        self.images.reason = None
+        frame(11, 9)                         # back to the declined frame
+        frame(13, 11)
+        self.assertEqual(self.images.motions, [None, offsets, None, None, offsets])
 
     def test_failed_pipeline_releases_and_signals_without_a_stamp(self):
         self.request(d3d12_packet())

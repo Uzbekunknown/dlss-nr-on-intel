@@ -15,7 +15,8 @@ SHADERS := work/gemm_resident.spv work/gemm_tiled.spv work/gemm_staged.spv \
            work/history.spv work/gemm_coopmat.spv work/gemm_batched.spv \
            work/gemm_f16acc.spv work/gemm_coopmat_int8.spv work/gemm_staged_int8.spv \
            work/window_attention.spv work/window_block.spv work/global_attention.spv \
-           work/ffn_fused.spv work/image_preprocess.spv work/image_compose.spv work/image_stats.spv
+           work/ffn_fused.spv work/image_preprocess.spv work/image_compose.spv work/image_stats.spv \
+           work/image_history.spv
 
 # half_probe.spv is built by `all` because the daemon needs it: check_half_rounding()
 # runs it at start-up and refuses to run the graph if the driver's float16 conversion is
@@ -149,6 +150,8 @@ work/image_compose.spv: src/gpu/image_compose.comp
 	$(GLSL) -o $@ $<
 work/image_stats.spv: src/gpu/image_stats.comp
 	$(GLSL) -o $@ $<
+work/image_history.spv: src/gpu/image_history.comp
+	$(GLSL) -o $@ $<
 
 # Window attention's QK^T, softmax and PV in one pass (ProjectsCodex's phase42).
 work/window_attention.spv: src/gpu/window_attention.comp src/gpu/publish.glsl
@@ -219,6 +222,7 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/gpu/test_image_preprocess.py
 	python3 src/gpu/test_image_compose.py
 	python3 src/gpu/test_image_stats.py
+	python3 src/gpu/test_image_history.py
 	python3 src/gpu/test_image_pipeline.py --full-model
 	python3 src/gpu/test_resident.py
 	python3 src/ref/test_frame_cache.py
@@ -234,6 +238,7 @@ test-image: all
 	python3 src/gpu/test_image_preprocess.py
 	python3 src/gpu/test_image_compose.py
 	python3 src/gpu/test_image_stats.py
+	python3 src/gpu/test_image_history.py
 	python3 src/gpu/test_image_pipeline.py --full-model
 
 # Recorder, metadata and lifecycle contracts without a Vulkan device.
@@ -241,6 +246,7 @@ test-image-host:
 	python3 src/gpu/test_image_preprocess.py --cpu-only
 	python3 src/gpu/test_image_compose.py --host-only
 	python3 src/gpu/test_image_stats.py --host-only
+	python3 src/gpu/test_image_history.py --host-only
 	python3 src/gpu/test_image_pipeline.py --host-only
 
 # Focused checks for the FFN schedule, including a complete frame with both variants.

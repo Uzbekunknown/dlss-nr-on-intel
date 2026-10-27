@@ -42,8 +42,15 @@ struct nr_gpu_reply { uint32_t status, detail, session_low, session_high; };
  *   names V. Nothing else signals V + 1, and V rises by at least 2 from frame to frame.
  *   The daemon never signals before V: D3D12 would take the fence back to V when the
  *   client's queue got there, and a wait for V + 1 would never end.
- * - device_uuid holds the adapter's LUID in its first 8 bytes; the rest of it and
- *   driver_uuid are zero. */
+ * - device_uuid holds the adapter's LUID in its first 8 bytes; the rest of it is zero, and
+ *   so is driver_uuid, but for a FRAME's motion.
+ * - Motion: when input_alloc is at least bytes + NR_GPU_MOTION_BYTES(width, height), the
+ *   input holds after the frame, for each pixel, two float32: the offset in pixels to where
+ *   its surface was on the frame before, NaN where it was not on screen (the daemon's
+ *   MAGIC_MOTION). A FRAME names that frame by its V in driver_uuid's first 8 bytes, little
+ *   endian, or leaves them 0 when its offsets are not to be followed; the daemon follows
+ *   them only when that is the frame it answered last. */
+#define NR_GPU_MOTION_BYTES(width, height) ((uint64_t)(width) * (height) * 8u)
 struct nr_gpu_stamp { uint32_t magic, frame_low, frame_high, reserved; };
 #define NR_GPU_STAMP_MAGIC 0x5453524eu   /* "NRST" */
 

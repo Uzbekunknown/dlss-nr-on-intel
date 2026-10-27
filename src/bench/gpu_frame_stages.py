@@ -358,7 +358,8 @@ def metadata():
             out["windows_video_driver_query_error"]=str(error)
     out["artifact_sha256"]={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in
         (ROOT/"work"/("libxmx.dll" if os.name=="nt" else "libxmx.so"),
-         ROOT/"work/image_preprocess.spv",ROOT/"work/image_compose.spv",ROOT/"work/image_stats.spv")
+         ROOT/"work/image_preprocess.spv",ROOT/"work/image_compose.spv",ROOT/"work/image_stats.spv",
+         ROOT/"work/image_history.spv")
         if path.is_file()}
     return out
 

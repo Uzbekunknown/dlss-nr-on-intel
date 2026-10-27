@@ -1218,7 +1218,9 @@ def print_gpu_frame(width, height, vk_format, live, metrics, transport):
           f"change {metrics['change']:.5f}  cut {metrics['cut']:.4f}  "
           f"gpu 0+{metrics['network_ms']:.0f}+0ms  network {nw}x{nh} scale {live.render_scale:g} "
           f"transport={transport} image prep={metrics['preprocess_ms']:.3f}ms "
-          f"compose={metrics['compose_ms']:.3f}ms", flush=True)
+          f"compose={metrics['compose_ms']:.3f}ms "
+          f"history={('moved' if metrics.get('motion') else 'still') if metrics.get('history') else 'none'}",
+          flush=True)
 
 
 def _end_with_game_posix(pid):

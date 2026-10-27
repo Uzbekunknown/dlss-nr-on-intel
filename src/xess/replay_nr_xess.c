@@ -13,7 +13,9 @@
  *     --sync            mode=carry: each frame waits for the answer to the one before (`sync=1`)
  *     --answers DIR     each frame NR was given and its answer, DIR\given_%04u.ppm and
  *                       answer_%04u.ppm by frame: in mode=cut, or in mode=carry with --sync,
- *                       NR on every frame as it is
+ *                       NR on every frame as it is; in mode=cut also DIR\motion_%04u.bin, each
+ *                       pixel's offset to the frame before as the daemon was told it (two
+ *                       float32 a pixel), for frames whose history followed it
  *     --every N         write every Nth frame (default 1)
  *     --inputs DIR      also the colour XeSS was handed, the proxy's change in it, to
  *                       DIR\%04u.ppm: whether something in the output came in with the
@@ -341,19 +343,24 @@ int main(int argc, char **argv)
 		 * read after the continuation's COMPOSE */
 		int cut_frame = config.cut && answers_dir && given_xess == nr.mixed && nr.mixed && i % every == 0;
 		UINT64 shared = (UINT64)width * height * 4;
+		UINT64 moved = cut.gpu.motion ? NR_GPU_MOTION_BYTES(width, height) : 0;
 		if (cut_frame) {
 			if (!answers_readback)
-				answers_readback = make_buffer(D3D12_HEAP_TYPE_READBACK, 2 * shared + 16, D3D12_RESOURCE_FLAG_NONE,
-							       D3D12_RESOURCE_STATE_COPY_DEST);
+				answers_readback = make_buffer(D3D12_HEAP_TYPE_READBACK, 2 * shared + 16 + moved,
+							       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
 			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, answers_readback, 0, cut.gpu.input, 0, shared);
 			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, answers_readback, shared, cut.gpu.output, 0,
 								   shared + 16);
+			if (moved)
+				ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, answers_readback, 2 * shared + 16,
+									   cut.gpu.input, cut.gpu.motion, moved);
 		}
 		uint64_t cut_value = cut.last;
+		int followed = cut.followed;
 		if (submit()) return 1;
 		if (cut_frame) {
 			uint8_t *mapped;
-			D3D12_RANGE all = { 0, (SIZE_T)(2 * shared + 16) }, none = { 0, 0 };
+			D3D12_RANGE all = { 0, (SIZE_T)(2 * shared + 16 + moved) }, none = { 0, 0 };
 			ID3D12Resource_Map(answers_readback, 0, &all, (void **)&mapped);
 			struct nr_gpu_stamp stamp;
 			memcpy(&stamp, mapped + 2 * shared, sizeof stamp);
@@ -366,6 +373,13 @@ int main(int argc, char **argv)
 					fprintf(file, "P6\n%u %u\n255\n", width, height);
 					for (size_t p = 0; p < (size_t)width * height; p++)
 						fwrite(mapped + k * shared + p * 4, 1, 3, file);
+					fclose(file);
+				}
+				/* and, when its history was told, each pixel's offset to the frame before */
+				snprintf(path, sizeof path, "%s\\motion_%04zu.bin", answers_dir, i);
+				FILE *file = moved && followed ? fopen(path, "wb") : NULL;
+				if (file) {
+					fwrite(mapped + 2 * shared + 16, 1, (size_t)moved, file);
 					fclose(file);
 				}
 			}

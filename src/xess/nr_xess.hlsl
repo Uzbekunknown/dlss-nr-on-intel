@@ -1,6 +1,6 @@
 /* nr_xess.hlsl — the proxy's compute passes, one root signature.
  *
- * Built eight times (build_xess.bat), one pass each. With mode=carry, NR's change to an
+ * Built nine times (build_xess.bat), one pass each. With mode=carry, NR's change to an
  * earlier frame is carried to this one:
  *   CLEAR   empties the claims;
  *   CLAIM   marks, on the last frame's pixels, the vectors of the surfaces that came from each;
@@ -12,6 +12,8 @@
  * With mode=cut, the game's command list is cut at XeSS and NR answers this very frame
  * between the halves (nr_xess_split.cpp):
  *   ENCODE  the frame NR is given, into the buffer the daemon shares, before the cut;
+ *   MOTION  after it in that buffer, each pixel's offset to the frame NR was given before,
+ *           which the daemon's history follows;
  *   COMPOSE NR's change to it added to the colour, after the cut, when its answer came.
  *
  * Everything arrives as buffers — copies of the game's textures laid out in their own
@@ -34,7 +36,7 @@
  */
 #define RS "RootConstants(num32BitConstants=32, b0), SRV(t0), SRV(t1), SRV(t2), SRV(t3), SRV(t4), UAV(u0)"
 
-#if defined(ENCODE) || defined(COMPOSE)
+#if defined(ENCODE) || defined(COMPOSE) || defined(MOTION)
 
 /* nr_xess.c `struct cut_constants`, field for field. */
 cbuffer Constants : register(b0)
@@ -46,6 +48,13 @@ cbuffer Constants : register(b0)
     float white;           /* the scene value the proxy shows as display white */
     float strength;        /* compose: 0 adds nothing, 1 all of NR's change */
     uint2 frame;           /* compose: the frame's fence value, low and high, as the stamp names it */
+    uint motion_pitch;     /* motion: bytes between rows of the motion copy */
+    uint offsets;          /* ... where the offsets start in the buffer the daemon shares */
+    uint2 motion_size;     /* ... the motion region, in its texels */
+    float2 motion_scale;   /* ... a texel's value to colour pixels (velocity scale, extents) */
+    float2 motion_texels;  /* ... motion texels per colour pixel */
+    float2 jitter;         /* ... this frame's */
+    float2 previous_jitter;/* ... the frame's NR was given before */
 };
 
 #else
@@ -92,7 +101,7 @@ cbuffer Constants : register(b0)
  * change for it and the daemon is told nothing of where it was. */
 #define UNKNOWN 1e30
 
-#if defined(CLAIM) || defined(TRACK) || defined(REDUCE) || defined(APPLY)
+#if defined(CLAIM) || defined(TRACK) || defined(REDUCE) || defined(APPLY) || defined(MOTION)
 
 /* The vector at an unjittered colour position, to where its surface was the frame before, in
  * colour pixels: the nearest texel, because high-resolution vectors are dilated to the
@@ -593,6 +602,32 @@ void main(uint3 id : SV_DispatchThreadID)
         c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
     }
     store_texel(at, c);
+}
+
+#endif
+
+#ifdef MOTION
+
+ByteAddressBuffer motion : register(t0);       /* this frame's vectors, R16G16_FLOAT */
+RWByteAddressBuffer shared_input : register(u0);   /* the frame NR is given, then the offsets */
+
+/* For each pixel of the frame NR is given, the offset in its pixels to where its surface was
+ * on the frame NR was given before: TRACK's one step from a fresh tracker, the vector at the
+ * unjittered position and the two frames' jitter. NaN where that was off screen, as
+ * nr_xess.c `measure_motion` hands the daemon (nr_gpu_wire.h, "Motion"); the daemon tells a
+ * surface uncovered behind something that moved by the picture, as its history does. */
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= width || id.y >= height)
+        return;
+    float2 m = vector_in(motion, float2(id.xy) - jitter);
+    float2 d = m + previous_jitter - jitter;
+    float2 g = float2(id.xy) + d;
+    bool off = g.x < -0.5 || g.y < -0.5 || g.x > width - 0.5 || g.y > height - 0.5;
+    float nan = asfloat(0x7FC00000u);
+    shared_input.Store2(offsets + (id.y * width + id.x) * 8, asuint(off ? float2(nan, nan) : d));
 }
 
 #endif

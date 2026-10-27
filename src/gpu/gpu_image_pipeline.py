@@ -10,6 +10,7 @@ import xmxres as X
 import nr_frame
 from gpu_image_preprocess import GPUImagePreprocessor, GPUImageResampler
 from gpu_image_compose import GPUImageComposer, fallback_reason
+from gpu_image_history import GPUImageFollower
 from gpu_image_stats import GPUImageStats
 
 
@@ -22,6 +23,7 @@ class GPUImagePipeline:
         self.history_frames = 0
         self.buffers = []
         self.prep = self.compose = None
+        self.follower = None   # made at the first frame with motion
         self.raw = None
         self.wire = None
         self.last = {}
@@ -58,9 +60,10 @@ class GPUImagePipeline:
     def _clear(self):
         if self.prep is not None: self.prep.close()
         if self.compose is not None: self.compose.close()
+        if self.follower is not None: self.follower.close()
         for buffer in self.buffers: buffer.free()
         self.buffers = []
-        self.prep = self.compose = None
+        self.prep = self.compose = self.follower = None
         self.frame = None  # cached graph lifetime belongs to the backend, not this wrapper
         self.key = self.history_key = None
         self.history_frames = 0
@@ -110,18 +113,27 @@ class GPUImagePipeline:
             grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
         return ih,iw,ah,aw
 
-    def process_device(self, raw, width, height, fmt, live):
-        """Return a device wire-image buffer. Only line maxima and scalar reductions are read."""
+    def process_device(self, raw, width, height, fmt, live, motion=None):
+        """Return a device wire-image buffer. Only line maxima and scalar reductions are read.
+
+        ``motion``: the device address of each pixel's offset to where its surface was on the
+        frame before this pipeline was last given, two float32 a pixel at the frame's extent,
+        NaN where it was not on screen; the history then follows it (`History.follow`)."""
         reason=self.supported(width,height,fmt,live)
         if reason: raise ValueError(reason)
         try:
-            return self._process_device(raw,width,height,fmt,live)
+            return self._process_device(raw,width,height,fmt,live,motion)
         except Exception:
             self.rt.abort()
             self.reset_history()
             raise
 
-    def _process_device(self, raw, width, height, fmt, live):
+    def _follower(self, width, height, crop, ih, iw):
+        if self.follower is None:
+            self.follower=GPUImageFollower(self.rt,frame_size=(height,width),crop=crop,inner_size=(ih,iw))
+        return self.follower
+
+    def _process_device(self, raw, width, height, fmt, live, motion=None):
         started=time.perf_counter()
         crop=self.stats.region(raw,width,height,fmt)
         ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
@@ -129,14 +141,28 @@ class GPUImagePipeline:
         self.decode.record(raw,self.active)
         self.inner_decode.record(raw,self.inner)
         self.rt.submit()
-        cut=self.stats.delta(self.inner,self.previous_inner,iw,ih,
-                             decision_threshold=live.cut_limit) if self.history_frames else 0.0
-        history=live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
+        follow=motion is not None and live.temporal>0 and self.history_frames>0
+        if follow:
+            follower=self._follower(width,height,crop,ih,iw)
+            self.rt.begin()
+            self.history_resize.record(self.previous_neural,follower.resampled)
+            follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
+                            active=self.active,previous_inner=self.previous_inner,inner=self.inner)
+            self.rt.submit()
+            # Known nowhere, or a cut even against the last frame moved here: no history.
+            cut=follower.cut(self.stats,self.inner,live.cut_limit)
+            history=cut is not None and cut<=live.cut_limit
+            cut=0.0 if cut is None else cut
+        else:
+            cut=self.stats.delta(self.inner,self.previous_inner,iw,ih,
+                                 decision_threshold=live.cut_limit) if self.history_frames else 0.0
+            history=live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
         if not history: self.history_frames=0
         self.rt.begin()
-        if history: self.history_resize.record(self.previous_neural,self.history_inner)
+        if history and not follow: self.history_resize.record(self.previous_neural,self.history_inner)
+        inner_history=(self.follower.inner if follow else self.history_inner) if history else None
         self.prep.record(raw,self.frame.input_buffer(),
-            history=self.history_inner if history else None,**nr_frame.PROFILES[live.profile])
+            history=inner_history,**nr_frame.PROFILES[live.profile])
         self.rt.submit()
         prepared=time.perf_counter()
         head=self.frame.run_device()
@@ -146,8 +172,11 @@ class GPUImagePipeline:
             self.history_frames=0
             raise ValueError("GPU network head contains nonfinite values; original frame retained")
         self.rt.begin()
-        result=self.compose.record(raw,head,history=self.previous_neural if history else None,
-                                   previous=self.previous_active if history else None)
+        if history and follow:
+            result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels)
+        else:
+            result=self.compose.record(raw,head,history=self.previous_neural if history else None,
+                                       previous=self.previous_active if history else None)
         self.rt.submit()
         composed=time.perf_counter()
         change=self.stats.delta(self.compose.composed,self.active,aw,ah)
@@ -161,7 +190,7 @@ class GPUImagePipeline:
         self.last={"preprocess_ms":1000*(prepared-started),"network_ms":1000*(ran-prepared),
                    "compose_ms":1000*(composed-ran),"metadata_history_ms":1000*(time.perf_counter()-composed),
                    "network":(self.geometry.network_width,self.geometry.network_height),
-                   "change":change,"cut":cut,"history":history,"crop":crop}
+                   "change":change,"cut":cut,"history":history,"motion":follow,"crop":crop}
         self.backend.split=(0.0,ran-prepared,0.0)
         return result
 

@@ -37,7 +37,7 @@ SHADERS = frozenset((
     "gemm_staged32_deep.spv", "gemm_staged_int8.spv", "gemm_tiled.spv",
     "global_attention.spv", "half_probe.spv", "history.spv", "resident.spv",
     "window_attention.spv", "window_block.spv", "image_preprocess.spv",
-    "image_compose.spv", "image_stats.spv",
+    "image_compose.spv", "image_stats.spv", "image_history.spv",
 ))
 SOURCE_DIRS = ("layer", "ref", "gpu", "bench")
 # The layer the game's own architecture loads; the daemon and its libraries are always x64.
@@ -74,7 +74,7 @@ RUNTIME_MODULES = (
     "src/ref/image_io.py",
     "src/gpu/xmx.py", "src/gpu/xmxres.py", "scripts/get_weights.py", "src/tools/unpack_preset.py",
     "src/gpu/gpu_image_pipeline.py", "src/gpu/gpu_image_preprocess.py",
-    "src/gpu/gpu_image_compose.py", "src/gpu/gpu_image_stats.py",
+    "src/gpu/gpu_image_compose.py", "src/gpu/gpu_image_stats.py", "src/gpu/gpu_image_history.py",
     "work/mlx-dlss/python/mlxdlss/features.py",
     "work/mlx-dlss/python/mlxdlss/tools/extract_dlssnr_weights.py",
     "work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py",

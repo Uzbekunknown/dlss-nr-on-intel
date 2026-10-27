@@ -30,7 +30,7 @@ import pathlib
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-IMAGE_SHADERS = ("image_preprocess.spv", "image_compose.spv", "image_stats.spv")
+IMAGE_SHADERS = ("image_preprocess.spv", "image_compose.spv", "image_stats.spv", "image_history.spv")
 TM, TN, TK = 8, 16, 16
 
 (E4M3, GATE, HALF, TO_HALF, SCALE, RESIDUAL, FROM_HALF, PARTITION, REVERSE, ADD_BIAS,

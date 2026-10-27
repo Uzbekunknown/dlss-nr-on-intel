@@ -57,8 +57,19 @@ class FakeBackend:
 
 
 class FakePreprocessor:
-    def __init__(self,*args,**kwargs): self.closed=False
-    def record(self,*args,**kwargs): pass
+    def __init__(self,*args,**kwargs): self.closed=False;self.calls=[]
+    def record(self,*args,**kwargs): self.calls.append(kwargs)
+    def close(self): self.closed=True
+
+
+class FakeFollower:
+    def __init__(self,rt,*,frame_size,crop,inner_size):
+        top,bottom,left,right=crop;ih,iw=inner_size
+        self.full=rt.buffer((bottom-top)*(right-left)*3);self.pixels=rt.buffer((bottom-top)*(right-left)*3)
+        self.resampled=rt.buffer(ih*iw*3);self.inner=rt.buffer(ih*iw*3)
+        self.motions=[];self.share=1.;self.closed=False
+    def record(self,motion,**kwargs): self.motions.append(motion)
+    def cut(self,stats,inner,limit): return None if self.share==0 else stats.cut
     def close(self): self.closed=True
 
 
@@ -75,7 +86,7 @@ class FakeComposer:
         self.composed=rt.buffer((bottom-top)*(right-left)*3)
         self.closed=False
     def configure(self,**kwargs): self.controls=kwargs
-    def record(self,*args,**kwargs): return self.encoded
+    def record(self,*args,**kwargs): self.calls=getattr(self,"calls",[])+[kwargs];return self.encoded
     def close(self): self.closed=True
 
 
@@ -90,7 +101,8 @@ class FakeStats:
 class HostChecks(unittest.TestCase):
     def setUp(self):
         for name,value in (("GPUImageStats",FakeStats),("GPUImagePreprocessor",FakePreprocessor),
-                           ("GPUImageResampler",FakeResampler),("GPUImageComposer",FakeComposer)):
+                           ("GPUImageResampler",FakeResampler),("GPUImageComposer",FakeComposer),
+                           ("GPUImageFollower",FakeFollower)):
             current=patch.object(G,name,value);current.start();self.addCleanup(current.stop)
         self.backend=FakeBackend();self.pipe=G.GPUImagePipeline(self.backend)
         self.addCleanup(self.pipe.close)
@@ -119,6 +131,35 @@ class HostChecks(unittest.TestCase):
             with self.assertRaises(Reached):
                 nr_daemon.process_connection(Connection(frame),None,args)
         self.assertEqual(args.image_transport,"cpu")
+
+    def test_motion_is_followed_only_onto_a_history(self):
+        live=settings();pipe=self.pipe
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        self.assertIsNone(pipe.follower)               # nothing yet to carry along it
+        self.assertFalse(pipe.last["history"] or pipe.last["motion"])
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        follower=pipe.follower
+        self.assertEqual(follower.motions,[8192])
+        self.assertTrue(pipe.last["history"] and pipe.last["motion"])
+        self.assertIs(pipe.prep.calls[-1]["history"],follower.inner)
+        self.assertIs(pipe.compose.calls[-1]["history"],follower.full)
+        self.assertIs(pipe.compose.calls[-1]["previous"],follower.pixels)
+        pipe.stats.cut=.2                               # a cut even against the frame moved here
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        self.assertFalse(pipe.last["history"])
+        self.assertIsNone(pipe.compose.calls[-1]["history"])
+        pipe.stats.cut=0.;follower.share=0             # known nowhere
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        self.assertEqual((pipe.last["history"],pipe.last["cut"]),(False,0.0))
+        follower.share=1                                # without motion, the identity history
+        pipe.process_device(self.raw,256,192,37,live)
+        self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
+        self.assertIs(pipe.compose.calls[-1]["history"],pipe.previous_neural)
+        self.assertEqual(len(follower.motions),3)
+        pipe.process_device(self.raw,256,192,37,settings(temporal=0.),motion=8192)
+        self.assertFalse(pipe.last["motion"])
+        pipe.process_device(self.raw,320,192,37,live,motion=8192)   # another extent: rebuilt
+        self.assertTrue(follower.closed);self.assertIsNone(pipe.follower)
 
     def test_no_history_first_frame_then_cut_and_reset(self):
         live=settings()
