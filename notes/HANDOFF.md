@@ -40,9 +40,10 @@ When the dated entries grow long, move the older ones into the archive the same 
   adds NR's change to it. It runs in Hogwarts Legacy. The trail behind moving things was found
   in a recording and fixed (`e803624`), **pushed on the owner's word before anyone saw it in the
   game**: what is untested is listed in the entry below, 10-16. Carrying a change onto later
-  frames is what makes the trails and patches (10-18), so the proxy is being rebuilt to cut the
-  game's command list at XeSS and run NR on the frame itself, all on the GPU; step 1, the daemon
-  taking D3D12 frames, is done (below, 10-26).
+  frames is what makes the trails and patches (10-18), so the proxy now cuts the game's command
+  list at XeSS and runs NR on the frame itself, all on the GPU (`mode=cut`, local): the daemon
+  takes D3D12 frames (step 1, below, 10-26), and the cut runs both Hogwarts recordings with no
+  trail (step 2, below, 10-27). Not yet seen in the game.
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -94,6 +95,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
+- `dx12`'s protocol 3 (`455a6fe`): `make test` in both memory modes and CTest. libxmx changed in
+  its Win32 arms and in `external_ownership`'s signature, and reads the device's LUID
+  everywhere. Below, 10-26.
 - ~~**Preset B, the new model: recover its graph**, then the CPU reference against it~~: A's
   graph at depths `{2,2,2,2,2}`, running on CPU and on the device (`2bb16f6`, below, 10-17
   later; phase72).
@@ -193,6 +197,64 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12, step 2: the cut in `src/xess`, and the orbit recording with no trail (2026-10-27, branch `dx12`)
+
+**`61776ff`: `mode=cut`, the default** (`mode=carry` in `nr-xess.txt` keeps the path of 10-16).
+- `src/xess/nr_xess_split.cpp` is DLSSNR-AMD's `nr_pe_d3d12split.cpp` at `c71b0f4`, as C++17
+  behind a C API (`nr_xess_split.h`); MIT, in NOTICE and `licenses/dlssnr-amd-MIT.txt`. Stubs on
+  the list class's vtable, and hooks on `ExecuteCommandLists`, `Reset` and `CreateCommandList`,
+  keep each list's state since its Reset and replay it into the continuation. A list with an
+  open query, a render pass, predication or a bundle it has not seen is refused, and that frame
+  goes to XeSS without NR; so does the first frame after hooking.
+- `record_cut` in `nr_xess.c`, at `xessD3D12Execute`: the first half copies the colour, and
+  ENCODE (`nr_xess.hlsl`, `encode_proxy`'s white, knee and sRGB table) writes the frame NR is
+  given into protocol 3's input buffer. Between the halves the queue signals V, a worker sends
+  FRAME, and the queue waits for V + 1. In the continuation COMPOSE adds NR's change to that
+  frame's colour where the stamp names V, with APPLY's arithmetic, and XeSS upscales it.
+- HELLO goes out on the worker, so the game never waits for it; frames pass whole until it is
+  answered, and again after each new colour extent or device. A frame left unanswered gets
+  V + 1 from the CPU once its queue has reached V, and the session counts as broken until the
+  next. A frame that finds 16 already pending passes without NR.
+- `test_nr_xess.exe`: the twelve carry cases, the cut on its own (state carried over, the work
+  between the halves run between them), and four cut cases against a stand-in daemon on its own
+  queue: R16G16B16A16 and R11G11B10 against the CPU, strength 0 and a declined frame exact. The
+  GPU's ENCODE differs from `encode_proxy` in 2 of 9 450 channels, by a level.
+  `replay_nr_xess.exe --mode cut|carry`; in cut mode `--answers` writes what NR was given and
+  its answer, out of the shared buffers.
+
+**Both Hogwarts recordings through it** (`work/tools-win/run_replay_cut.py`: the daemon with
+the GPU transport, A, render scale 0.5, network 448x320, Intel's XeSS 2.0.2; on battery in best
+performance today, so the times are a guide):
+
+| recording | frames answered with a stamp | NR's change | what XeSS got against NR's answer, mean (p99) |
+| --- | --- | --- | --- |
+| idle (10-18), every 4th frame written | 29 of 30 | 7.6 levels | 0.31 (5.2) |
+| orbit (10-16), every frame | 297 of 300 | 8.8 | 0.235 (3.4) |
+
+- The frames missing are the first two or three: the first after hooking, then those before
+  HELLO's answer. The daemon: 38 ms a frame, the network 30-32 ms.
+- Where XeSS's input lies more than 8 levels from the answer (1.6-3.6 % of the orbit's frames
+  75, 99 and 147), the frame NR was given is 255: light brighter than white, which an 8-bit frame
+  cannot hold. COMPOSE adds the change to the real colour, so it stays brighter than the answer
+  there, red by 12-15 levels.
+- **No trail.** XeSS gets the change made to that frame. Beside XeSS alone at the orbit's frames
+  108 and 120 (10-18 found green fringes at 80 and 120 under carry) there is no copy of the head
+  and no fringe (`work/orbit-cut/`, local).
+- **The daemon's identity history carries next to nothing onto moving things**
+  (`work/tools-win/orbit_ghost.py`, against a replay with `temporal=0`). Over the 27 % of pixels
+  whose given colour moved by 24 levels or more, NR's change leans towards the answer before
+  with a slope of 0.024, against 0.020 with no history: about 0.16 of the 41 levels it could
+  carry. `release` drops it there. Where nothing moved, two answers in a row agree with a slope
+  of 0.992, against 0.958 with no history.
+
+**Not tested:** the game; D3D12's debug layer; another game or XeSS version; a refused list
+outside the unit test; the first frame at a new extent, which waits for the daemon's graph build.
+
+**Next on Windows:** `work\xess` rebuilt in `mode=cut` and Hogwarts with the owner there. Then
+step 3, the history following the game's motion on the GPU, so that it steadies moving things
+too instead of being dropped there.
+**Next on Linux:** nothing of step 2 builds there; step 1's list stands (the entry below).
 
 ## DirectX 12: the game's list cut at XeSS instead of XeSS a frame late, and step 1, D3D12 frames into the daemon on the GPU (2026-10-26, branch `dx12`)
 
