@@ -1,20 +1,23 @@
-/* nr_xess.c — a libxess.dll in front of Intel's, so that NR works on the frame XeSS is
- * about to upscale rather than on the one the game presents.
+/* nr_xess.c — a libxess.dll in front of Intel's, so that NR works on the game's frame before
+ * its interface is drawn, in the game's own D3D12: no DXVK or VKD3D.
  *
- * Why there. The upscaler's input is the scene at render resolution with no interface
- * drawn on it, which is where NVIDIA's own pipeline runs the network: before DLSS SR
- * (notes/phase37). The network costs a fraction of what it does at the output size, no
- * interface mask is needed, and XeSS's temporal accumulation then treats NR's detail as
- * it treats any other. No DXVK or VKD3D either: the game stays on its own D3D12.
+ * Where. With mode=after (the default) NR runs on XeSS's output: the scene upscaled, before
+ * the game's post-processing and interface. With mode=before it runs on the colour XeSS is
+ * about to upscale, where NVIDIA's own pipeline runs the network (notes/phase37), at a
+ * fraction of the cost. There, though, XeSS's temporal accumulation takes NR's detail, redrawn
+ * a little differently each frame at each jitter, for change it should not trust or for noise
+ * it should average: halos and trails round moving edges, worse the further XeSS upscales
+ * (Hogwarts, 2026-10-28).
  *
- * How, with mode=cut (the default). The game calls xessD3D12Execute with a command list it
+ * How, with mode=after or before. The game calls xessD3D12Execute with a command list it
  * is still recording, and nothing in a D3D12 list can wait for another API. So the list is
- * cut there (nr_xess_split.cpp, after DLSSNR-AMD): the first half copies the colour into a
- * buffer the daemon shares (ENCODE in nr_xess.hlsl) and is closed; when the game executes
- * the list, its queue signals a shared fence, the daemon runs the network on that frame on
- * the GPU and signals the next value (protocol 3, src/layer/nr_gpu_wire.h), and the queue
- * waits for it before the continuation, where COMPOSE adds NR's change to the colour and
- * XeSS upscales it. NR's answer lands on its own frame; nothing is carried along motion.
+ * cut there (nr_xess_split.cpp, after DLSSNR-AMD), after XeSS's work or before it: the first
+ * half copies the frame into a buffer the daemon shares (ENCODE in nr_xess.hlsl) and is
+ * closed; when the game executes the list, its queue signals a shared fence, the daemon runs
+ * the network on that frame on the GPU and signals the next value (protocol 3,
+ * src/layer/nr_gpu_wire.h), and the queue waits for it before the continuation, where COMPOSE
+ * adds NR's change to the frame: to XeSS's output, or to the colour XeSS then upscales. NR's
+ * answer lands on its own frame; nothing is carried along motion.
  *
  * How, with mode=carry, as it was before the cut. The frame does not exist yet when the call
  * is made. Ahead of XeSS's own work on that list this file records a copy of the colour into
@@ -155,6 +158,8 @@ static void say(const char *fmt, ...)
 	CloseHandle(file);
 }
 
+enum { CARRY, BEFORE, AFTER };   /* `mode=`, below */
+
 static struct {
 	char pipe[256];
 	float white;      /* the scene value shown as display white */
@@ -174,10 +179,12 @@ static struct {
 	 * replay_nr_xess; each time the file is saved with a nonzero N. */
 	int record;
 	char record_dir[MAX_PATH];
-	/* `mode=cut`, 1: the list cut at XeSS, NR's answer on its own frame. `mode=carry`, 0: the
-	 * change to an earlier frame carried along motion. Read once, as the pipe is. */
+	/* `mode=after` (AFTER, the default): the list cut after XeSS, NR's answer on XeSS's output
+	 * of the same frame, before the game's post-processing and interface. `mode=before`
+	 * (BEFORE; `cut` says the same): cut before it, NR on the colour XeSS upscales. `mode=carry`
+	 * (CARRY): the change to an earlier frame carried along motion. Read once, as the pipe is. */
 	int cut;
-} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", 1 };
+} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER };
 
 static volatile LONG record_asked;      /* frames to record, set by the settings, taken by the hook */
 
@@ -205,7 +212,7 @@ static void read_settings(int first)
 		if (!strcmp(line, "pipe") && first)
 			snprintf(config.pipe, sizeof config.pipe, "%s", value);
 		else if (!strcmp(line, "mode") && first)
-			config.cut = strcmp(value, "carry") != 0;
+			config.cut = !strcmp(value, "carry") ? CARRY : !strcmp(value, "after") ? AFTER : BEFORE;
 		else if (!strcmp(line, "white"))
 			config.white = (float)atof(value);
 		else if (!strcmp(line, "strength"))
@@ -236,7 +243,8 @@ static void read_settings(int first)
 	if (!(config.match_from >= 0)) config.match_from = 0;
 	if (!(config.match_to > config.match_from)) config.match_to = config.match_from + 0.01f;
 	say("settings: mode %s, enabled %d, white %g, strength %g, warp %d, motion history %d, "
-	    "match %g-%g, sync %d, pipe %s\n", config.cut ? "cut" : "carry", config.enabled, config.white,
+	    "match %g-%g, sync %d, pipe %s\n",
+	    config.cut == AFTER ? "after" : config.cut == BEFORE ? "before" : "carry", config.enabled, config.white,
 	    config.strength, config.warp, config.motion_history, config.match_from, config.match_to,
 	    config.sync, config.pipe);
 }
@@ -1732,6 +1740,7 @@ static struct {
 } cut = { .lock = SRWLOCK_INIT };
 
 static ID3D12Resource *handed;      /* what the last execute gave XeSS, for replay_nr_xess */
+static int cut_now;                 /* ... and whether NR's answer reaches its frame */
 
 static void say_line(const char *line)
 {
@@ -1845,6 +1854,7 @@ static DWORD WINAPI cut_worker(LPVOID unused)
 			InterlockedExchange(&cut.releasing, 0);
 		}
 		if (cut.hello == 1) say_hello();
+		ULONGLONG read_at = GetTickCount64();
 		for (;;) {
 			struct handover h;
 			AcquireSRWLockExclusive(&cut.lock);
@@ -1858,6 +1868,12 @@ static DWORD WINAPI cut_worker(LPVOID unused)
 			if (!any) break;
 			hand_over(&h);
 			ID3D12Fence_Release(h.fence);
+			/* While the daemon is slower than the game the queue never empties, and the
+			 * settings would be read again only when the game paused (Hogwarts, 10-28). */
+			if (GetTickCount64() - read_at >= 1000) {
+				read_settings(0);
+				read_at = GetTickCount64();
+			}
 		}
 	}
 }
@@ -1968,25 +1984,36 @@ static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants
 }
 
 /* Cuts the game's list at this execute: before the cut, the frame NR is given; after it, NR's
- * answer to it added to the colour. Returns the texture XeSS should read instead of the game's
- * colour, or NULL to leave this frame to XeSS whole. The colour stays in
- * NON_PIXEL_SHADER_RESOURCE, and our buffers and the shared ones start and end each half in
- * COMMON, which the daemon's side needs. */
-static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p)
+ * answer to it added to that frame. With mode=before the frame is the colour XeSS is about to
+ * upscale, and the return is the texture XeSS should read instead, or NULL to leave the frame
+ * to XeSS whole. With mode=after it is XeSS's output, recorded already, which the continuation
+ * overwrites with NR's answer before the game goes on to its post-processing and interface;
+ * the return is that output, or NULL when the frame goes on without NR. The game's textures
+ * end each half in the state the call found them in (the colour NON_PIXEL_SHADER_RESOURCE,
+ * the output UNORDERED_ACCESS), and our buffers and the shared ones start and end each half
+ * in COMMON, which the daemon's side needs. */
+static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p,
+				  int after)
 {
 	uint64_t call = ++cut.calls;   /* offsets lead back only to the execute before this one */
-	D3D12_RESOURCE_DESC desc;
-	ID3D12Resource_GetDesc(p->pColorTexture, &desc);
-	UINT width = p->inputWidth ? p->inputWidth : (UINT)desc.Width;
-	UINT height = p->inputHeight ? p->inputHeight : desc.Height;
+	ID3D12Resource *frame = after ? p->pOutputTexture : p->pColorTexture;
+	xess_2d_t base = after ? p->outputColorBase : p->inputColorBase;
+	const char *what = after ? "XeSS's output" : "colour";
+	D3D12_RESOURCE_DESC desc, colour_desc;
+	ID3D12Resource_GetDesc(frame, &desc);
+	ID3D12Resource_GetDesc(p->pColorTexture, &colour_desc);
+	/* the render extent, which the vectors are at unless they are the output's */
+	UINT render_width = p->inputWidth ? p->inputWidth : (UINT)colour_desc.Width;
+	UINT render_height = p->inputHeight ? p->inputHeight : colour_desc.Height;
+	UINT width = !after ? render_width : xess.output.x ? xess.output.x : (UINT)desc.Width - base.x;
+	UINT height = !after ? render_height : xess.output.y ? xess.output.y : desc.Height - base.y;
 	UINT texel;
 	int kind = kind_of(desc.Format, &texel);
-	if (kind < 0 || (UINT64)p->inputColorBase.x + width > desc.Width
-	    || (UINT64)p->inputColorBase.y + height > desc.Height) {
+	if (kind < 0 || !width || !height || (UINT64)base.x + width > desc.Width
+	    || (UINT64)base.y + height > desc.Height) {
 		char why[160];
-		snprintf(why, sizeof why, "colour format %d, %ux%u at (%u, %u) in %llux%u is not handled",
-			 desc.Format, width, height, p->inputColorBase.x, p->inputColorBase.y, desc.Width,
-			 desc.Height);
+		snprintf(why, sizeof why, "%s format %d, %ux%u at (%u, %u) in %llux%u is not handled", what,
+			 desc.Format, width, height, base.x, base.y, desc.Width, desc.Height);
 		cut_said(why);
 		return NULL;
 	}
@@ -1994,8 +2021,8 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	if (FAILED(ID3D12GraphicsCommandList_GetDevice(list, &IID_ID3D12Device, (void **)&device)))
 		return NULL;
 	if (device != nr.device || width != nr.width || height != nr.height || desc.Format != nr.format) {
-		say("colour %ux%u format %d at (%u, %u) in a %llux%u texture; exposure %g, jitter (%.3f, %.3f)\n",
-		    width, height, desc.Format, p->inputColorBase.x, p->inputColorBase.y, desc.Width, desc.Height,
+		say("%s %ux%u format %d at (%u, %u) in a %llux%u texture; exposure %g, jitter (%.3f, %.3f)\n",
+		    what, width, height, desc.Format, base.x, base.y, desc.Width, desc.Height,
 		    p->exposureScale, p->jitterOffsetX, p->jitterOffsetY);
 		if (cut_rebuild(device, width, height, desc.Format, kind, texel) != 0) {
 			say("setup failed; from here on XeSS gets every frame as it is\n");
@@ -2025,15 +2052,18 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		cut_said("the command list's state is not known");
 		return NULL;
 	}
+	/* XeSS multiplies the colour by the exposure; its output is taken to be in the colour's
+	 * own scale, as other upscalers' is (Hogwarts' exposure is 1, so this is untried). */
 	float white = config.white;
-	if (p->exposureScale > 0) white /= p->exposureScale;   /* XeSS multiplies the colour by it */
-	float jitter[2] = { p->jitterOffsetX * xess.jitter[0], p->jitterOffsetY * xess.jitter[1] };
+	if (p->exposureScale > 0) white /= p->exposureScale;
+	/* the output is drawn without jitter */
+	float jitter[2] = { after ? 0 : p->jitterOffsetX * xess.jitter[0], after ? 0 : p->jitterOffsetY * xess.jitter[1] };
 	/* Where each pixel's surface was on the frame NR was given before, for the daemon's
 	 * history: only when that frame came from the execute before this one, and the game's
 	 * vectors, and its own history, say where. */
 	UINT motion_width = 0, motion_height = 0;
 	int follow = config.motion_history && cut.last && cut.last_call == call - 1 && !p->resetHistory
-		     && motion_region(p, width, height, &motion_width, &motion_height)
+		     && motion_region(p, render_width, render_height, &motion_width, &motion_height)
 		     && ensure_motion(motion_width, motion_height) == 0;
 	AcquireSRWLockExclusive(&cut.lock);
 	uint64_t value = nr_gpu_d3d12_next(&cut.gpu);
@@ -2062,18 +2092,19 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST,
 		write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
-	/* The first half: the colour as a buffer, and the frame NR is given from it; after the frame
+	const D3D12_RESOURCE_STATES at = after ? write : read;   /* the frame's state at the call */
+
+	/* The first half: the frame as a buffer, and the frame NR is given from it; after the frame
 	 * in the same buffer, from a copy of the vectors, the offsets when they are to be followed. */
-	add(&b, p->pColorTexture, read, source);
+	add(&b, frame, at, source);
 	add(&b, nr.staging, common, dest);
 	if (follow) {
 		add(&b, p->pVelocityTexture, read, source);
 		add(&b, nr.motion[0], common, dest);
 	}
 	flush(l, &b);
-	D3D12_BOX box = { p->inputColorBase.x, p->inputColorBase.y, 0,
-			  p->inputColorBase.x + width, p->inputColorBase.y + height, 1 };
-	D3D12_TEXTURE_COPY_LOCATION colour = { .pResource = p->pColorTexture,
+	D3D12_BOX box = { base.x, base.y, 0, base.x + width, base.y + height, 1 };
+	D3D12_TEXTURE_COPY_LOCATION colour = { .pResource = frame,
 		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
 	D3D12_TEXTURE_COPY_LOCATION into = { .pResource = nr.staging,
 		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
@@ -2090,7 +2121,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		add(&b, p->pVelocityTexture, source, read);
 		add(&b, nr.motion[0], dest, read);
 	}
-	add(&b, p->pColorTexture, source, read);
+	add(&b, frame, source, at);
 	add(&b, nr.staging, dest, read);
 	add(&b, cut.gpu.input, common, write);
 	flush(l, &b);
@@ -2134,8 +2165,9 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	cut.last_jitter[1] = jitter[1];
 	cut.followed = follow;
 	cut.said[0] = '\0';
+	cut_now = 1;
 
-	/* The continuation: once the queue has the daemon's V + 1, NR's answer into the colour. */
+	/* The continuation: once the queue has the daemon's V + 1, NR's answer into the frame. */
 	add(&b, nr.staging, common, read);
 	add(&b, cut.gpu.input, common, read);
 	add(&b, cut.gpu.output, common, read);
@@ -2149,18 +2181,21 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	add(&b, cut.gpu.input, read, common);
 	add(&b, cut.gpu.output, read, common);
 	add(&b, nr.output, write, source);
-	if (nr.mixed_state != dest) add(&b, nr.mixed, nr.mixed_state, dest);
+	/* before XeSS, into the texture XeSS reads instead; after it, back into its output */
+	ID3D12Resource *target = after ? frame : nr.mixed;
+	if (after) add(&b, frame, at, dest);
+	else if (nr.mixed_state != dest) add(&b, nr.mixed, nr.mixed_state, dest);
 	flush(l, &b);
 	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = nr.output,
 		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
-	D3D12_TEXTURE_COPY_LOCATION mixed = { .pResource = nr.mixed,
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = target,
 		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
-	ID3D12GraphicsCommandList_CopyTextureRegion(l, &mixed, 0, 0, 0, &from, NULL);
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &to, after ? base.x : 0, after ? base.y : 0, 0, &from, NULL);
 	add(&b, nr.output, source, common);
-	add(&b, nr.mixed, dest, read);
+	add(&b, target, dest, after ? at : read);
 	flush(l, &b);
-	nr.mixed_state = read;
-	return nr.mixed;
+	if (!after) nr.mixed_state = read;
+	return target;
 }
 
 xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsCommandList *list,
@@ -2168,9 +2203,16 @@ xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsComm
 {
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
 	handed = params ? params->pColorTexture : NULL;
+	cut_now = 0;
 	if (nr.broken || !config.enabled || !list || !params || !params->pColorTexture)
 		return real_execute(context, list, params);
-	ID3D12Resource *mixed = config.cut ? record_cut(list, params) : record(list, params);
+	if (config.cut == AFTER) {
+		/* XeSS's work goes into the list first, and the cut after it */
+		xess_result_t result = real_execute(context, list, params);
+		if (result == 0 && params->pOutputTexture) record_cut(list, params, 1);
+		return result;
+	}
+	ID3D12Resource *mixed = config.cut == BEFORE ? record_cut(list, params, 0) : record(list, params);
 	if (!mixed) return real_execute(context, list, params);
 	handed = mixed;
 	xess_d3d12_execute_params_t changed = *params;

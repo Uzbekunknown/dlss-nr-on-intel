@@ -2,20 +2,23 @@
  * again through the proxy, the daemon and Intel's own XeSS, without the game.
  *
  *   replay_nr_xess <recording> <out> <Intel's libxess.dll> [options]
- *     --pipe P          the daemon (default \\.\pipe\nr-xess-replay); for mode=cut it runs with
- *                       NR_GPU_IMAGE=1 and NR_GPU_TRANSPORT=1
- *     --mode cut|carry  the proxy's mode (default cut: NR answers each frame between the halves
- *                       of a cut list; carry: its change to an earlier frame carried along motion)
+ *     --pipe P          the daemon (default \\.\pipe\nr-xess-replay); for mode=after or before it
+ *                       runs with NR_GPU_IMAGE=1 and NR_GPU_TRANSPORT=1
+ *     --mode after|before|carry  the proxy's mode (default after: NR answers XeSS's output of
+ *                       each frame between the halves of a list cut after XeSS; before, or cut:
+ *                       the colour XeSS upscales, cut before it; carry: its change to an earlier
+ *                       frame carried along motion)
  *     --interval MS     at least this long a frame, as the game ran (default 28)
  *     --strength S      NR's strength (default 1; 0 runs the whole path and adds nothing)
  *     --off             XeSS alone: the proxy hands every frame straight on
  *     --warp 0|1, --match FROM TO, --history 0|1   mode=carry's own settings
  *     --sync            mode=carry: each frame waits for the answer to the one before (`sync=1`)
  *     --answers DIR     each frame NR was given and its answer, DIR\given_%04u.ppm and
- *                       answer_%04u.ppm by frame: in mode=cut, or in mode=carry with --sync,
- *                       NR on every frame as it is; in mode=cut also DIR\motion_%04u.bin, each
- *                       pixel's offset to the frame before as the daemon was told it (two
- *                       float32 a pixel), for frames whose history followed it
+ *                       answer_%04u.ppm by frame: in mode=after or before (at XeSS's output
+ *                       or input extent), or in mode=carry with --sync, NR on every frame as it
+ *                       is; after or before, also DIR\motion_%04u.bin, each pixel's offset to
+ *                       the frame before as the daemon was told it (two float32 a pixel), for
+ *                       frames whose history followed it
  *     --every N         write every Nth frame (default 1)
  *     --inputs DIR      also the colour XeSS was handed, the proxy's change in it, to
  *                       DIR\%04u.ppm: whether something in the output came in with the
@@ -154,7 +157,10 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--strength") && i + 1 < argc) config.strength = (float)atof(argv[++i]);
 		else if (!strcmp(argv[i], "--every") && i + 1 < argc) every = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--off")) off = 1;
-		else if (!strcmp(argv[i], "--mode") && i + 1 < argc) config.cut = strcmp(argv[++i], "carry") != 0;
+		else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
+			const char *mode = argv[++i];
+			config.cut = !strcmp(mode, "carry") ? CARRY : !strcmp(mode, "after") ? AFTER : BEFORE;
+		}
 		else if (!strcmp(argv[i], "--sync")) config.sync = 1;
 		else if (!strcmp(argv[i], "--answers") && i + 1 < argc) {
 			answers_dir = argv[++i];
@@ -339,11 +345,13 @@ int main(int argc, char **argv)
 			b = transition(given_xess, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 			ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
 		}
-		/* mode=cut's --answers: the frame NR was given and its answer, out of the shared buffers,
-		 * read after the continuation's COMPOSE */
-		int cut_frame = config.cut && answers_dir && given_xess == nr.mixed && nr.mixed && i % every == 0;
-		UINT64 shared = (UINT64)width * height * 4;
-		UINT64 moved = cut.gpu.motion ? NR_GPU_MOTION_BYTES(width, height) : 0;
+		/* mode=after's and before's --answers: the frame NR was given and its answer, out of the
+		 * shared buffers, read after the continuation's COMPOSE; at the session's extent, which
+		 * after XeSS is its output's */
+		int cut_frame = config.cut != CARRY && answers_dir && cut_now && i % every == 0;
+		uint32_t shared_width = cut.gpu.width, shared_height = cut.gpu.height;
+		UINT64 shared = (UINT64)shared_width * shared_height * 4;
+		UINT64 moved = cut.gpu.motion ? NR_GPU_MOTION_BYTES(shared_width, shared_height) : 0;
 		if (cut_frame) {
 			if (!answers_readback)
 				answers_readback = make_buffer(D3D12_HEAP_TYPE_READBACK, 2 * shared + 16 + moved,
@@ -370,8 +378,8 @@ int main(int argc, char **argv)
 					snprintf(path, sizeof path, "%s\\%s_%04zu.ppm", answers_dir, names[k], i);
 					FILE *file = fopen(path, "wb");
 					if (!file) continue;
-					fprintf(file, "P6\n%u %u\n255\n", width, height);
-					for (size_t p = 0; p < (size_t)width * height; p++)
+					fprintf(file, "P6\n%u %u\n255\n", shared_width, shared_height);
+					for (size_t p = 0; p < (size_t)shared_width * shared_height; p++)
 						fwrite(mapped + k * shared + p * 4, 1, 3, file);
 					fclose(file);
 				}

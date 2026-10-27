@@ -159,12 +159,14 @@ static void colour_at(int kind, int x, int y, int sx, int sy, float *rgba)
 }
 
 /* A texture of the given texels, in NON_PIXEL_SHADER_RESOURCE as XeSS's inputs are. */
-static ID3D12Resource *texture(DXGI_FORMAT format, UINT width, UINT height, UINT texel,
-			       void (*fill)(int x, int y, uint8_t *out, const void *how), const void *how)
+/* A texture filled by `fill`, left in `state`; `flags` for one XeSS writes its output into. */
+static ID3D12Resource *texture_as(DXGI_FORMAT format, UINT width, UINT height, UINT texel,
+				  void (*fill)(int x, int y, uint8_t *out, const void *how), const void *how,
+				  D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state)
 {
 	D3D12_RESOURCE_DESC desc = {
 		.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D, .Width = width, .Height = height,
-		.DepthOrArraySize = 1, .MipLevels = 1, .Format = format, .SampleDesc = { 1, 0 },
+		.DepthOrArraySize = 1, .MipLevels = 1, .Format = format, .SampleDesc = { 1, 0 }, .Flags = flags,
 	};
 	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
 	UINT rows;
@@ -191,12 +193,18 @@ static ID3D12Resource *texture(DXGI_FORMAT format, UINT width, UINT height, UINT
 	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = upload, .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
 					     .PlacedFootprint = footprint };
 	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, NULL);
-	D3D12_RESOURCE_BARRIER b = transition(tex, D3D12_RESOURCE_STATE_COPY_DEST,
-					      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+	D3D12_RESOURCE_BARRIER b = transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, state);
 	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
 	if (submit()) return NULL;
 	ID3D12Resource_Release(upload);
 	return tex;
+}
+
+static ID3D12Resource *texture(DXGI_FORMAT format, UINT width, UINT height, UINT texel,
+			       void (*fill)(int x, int y, uint8_t *out, const void *how), const void *how)
+{
+	return texture_as(format, width, height, texel, fill, how, D3D12_RESOURCE_FLAG_NONE,
+			  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
 struct colour_how { int kind, sx, sy; };
@@ -1254,12 +1262,118 @@ static int run_cut_motion(ID3D12Resource *motion)
 	return failures != 0;
 }
 
+/* mode=after: XeSS's output, as XeSS left it, goes to the stand-in between the halves, and the
+ * output the game goes on with is it plus NR's change to it, while XeSS still got the game's
+ * colour. Here the output is the colour's extent and the stand-in XeSS leaves it as the test
+ * filled it, so the CPU's answer is run_cut's. */
+static int run_after(DXGI_FORMAT format, const char *name)
+{
+	UINT texel;
+	int kind = kind_of(format, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(format, W, H, texel, fill_colour, &how);
+	ID3D12Resource *out = texture_as(format, W, H, texel, fill_colour, &how,
+					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+					 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	if (!tex || !out) {
+		printf("FAIL %s: no texture\n", name);
+		return 1;
+	}
+	xess_d3d12_init_params_t init = { .outputResolution = { IN_W, IN_H } };
+	xessD3D12Init((xess_context_handle_t)1, &init);
+	nr.width = 0;
+	config.strength = 1;
+	stand.decline = 0;
+	static uint8_t given[IN_W * IN_H * 4];
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			float o[4];
+			colour_at(kind, x, y, 0, 0, o);
+			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
+		}
+	brighten(given, NULL, stand.answer, IN_W, IN_H);
+	xess_d3d12_execute_params_t params = params_for(tex, NULL, NULL);
+	params.pOutputTexture = out;
+	params.outputColorBase.x = BASE_X;
+	params.outputColorBase.y = BASE_Y;
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL %s: the session was not opened\n", name);
+		return 1;
+	}
+	int before = stand.frames;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	uint64_t value = cut.last;
+	if (seen.pColorTexture != tex || seen.pOutputTexture != out || !cut_now) {
+		printf("FAIL %s: XeSS was not handed the game's own textures, or the frame went on without NR (%s)\n",
+		       name, cut.said);
+		return 1;
+	}
+	/* Read back, after the continuation: XeSS's output as the game goes on with it, and the two
+	 * shared buffers. */
+	UINT64 shared = (UINT64)IN_W * IN_H * 4;
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes + 2 * shared + 16,
+					       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+	D3D12_RESOURCE_BARRIER b = transition(out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					      D3D12_RESOURCE_STATE_COPY_SOURCE);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	D3D12_BOX box = { BASE_X, BASE_Y, 0, BASE_X + IN_W, BASE_Y + IN_H, 1 };
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = readback, .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+					   .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = out, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, &box);
+	b = transition(out, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes, cut.gpu.input, 0, shared);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes + shared, cut.gpu.output, 0, shared + 16);
+	if (submit()) return 1;
+	if (stand.frames != before + 1) {
+		printf("FAIL %s: the stand-in was handed %d frames, not one\n", name, stand.frames - before);
+		failures++;
+	}
+	uint8_t *raw;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&raw);
+	const uint8_t *gpu_given = raw + nr.bytes, *answer = raw + nr.bytes + shared;
+	int off = 0;
+	for (size_t i = 0; i < shared; i++) {
+		if (i % 4 == 3) continue;
+		int d = abs((int)gpu_given[i] - (int)given[i]);
+		off += d != 0;
+		if (d > 1 && failures++ < 3)
+			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
+	}
+	struct nr_gpu_stamp stamp;
+	memcpy(&stamp, answer + shared, sizeof stamp);
+	if (!nr_gpu_d3d12_answered(&stamp, value)) {
+		printf("FAIL %s: the stamp does not name frame %llu\n", name, (unsigned long long)value);
+		failures++;
+	}
+	static float delta[IN_W * IN_H * 3];
+	for (int i = 0; i < IN_W * IN_H; i++)
+		for (int c = 0; c < 3; c++)
+			delta[3 * i + c] = linear8[answer[4 * i + c]] - linear8[gpu_given[4 * i + c]];
+	uint8_t *mixed = malloc((size_t)nr.bytes);
+	memcpy(mixed, raw, (size_t)nr.bytes);
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	if (off) printf("     %s: %d of %zu channels the GPU encoded a level away from the CPU\n", name, off, shared / 4 * 3);
+	failures += compare(name, kind, texel, mixed, 0, 0, 1, delta, 1);
+	free(mixed);
+	ID3D12Resource_Release(out);
+	ID3D12Resource_Release(tex);
+	return failures != 0;
+}
+
 int main(int argc, char **argv)
 {
 	_snwprintf(log_path, MAX_PATH + 16, L"test_nr_xess.log");
 	build_tables();
 	nr_split_set_log(say_line);
-	config.cut = 0;                     /* mode=carry first, then mode=cut */
+	config.cut = CARRY;                 /* mode=carry first, then before and after XeSS */
 	real_execute = stub_execute;
 	real_init = stub_init;
 	if (argc > 1) {
@@ -1325,7 +1439,7 @@ int main(int argc, char **argv)
 	failed += run_record(moving);
 
 	/* mode=cut, with the stand-in for the daemon on a queue of its own */
-	config.cut = 1;
+	config.cut = BEFORE;
 	exchange_gpu = stand_in_gpu;
 	D3D12_COMMAND_QUEUE_DESC other = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT };
 	ID3D12Device_CreateCommandQueue(gpu.device, &other, &IID_ID3D12CommandQueue, (void **)&stand.queue);
@@ -1342,6 +1456,9 @@ int main(int argc, char **argv)
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, strength 0", 0, 0);
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, declined by the daemon", 1, 1);
 	failed += run_cut_motion(moving);
+	config.cut = AFTER;
+	failed += run_after(DXGI_FORMAT_R16G16B16A16_FLOAT, "after XeSS, R16G16B16A16_FLOAT");
+	failed += run_after(DXGI_FORMAT_R11G11B10_FLOAT, "after XeSS, R11G11B10_FLOAT");
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }
