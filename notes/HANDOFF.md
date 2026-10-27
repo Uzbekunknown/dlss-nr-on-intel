@@ -45,7 +45,9 @@ When the dated entries grow long, move the older ones into the archive the same 
   takes D3D12 frames (step 1, below, 10-26), the cut runs both Hogwarts recordings with no
   trail (step 2, below, 10-27), and the daemon's history follows the game's motion (step 3,
   below, 10-27). In the game, NR before XeSS gave halos and trails, so NR now runs on XeSS's
-  output, before the interface (`mode=after`, below, 10-28); not yet seen in the game so.
+  output, before the interface (`mode=after`, below, 10-28). In Hogwarts that way the owner
+  found it excellent with preset B: at full scale, and at 720p and 0.5, about 21 frames a second,
+  under the game's frame generation too (below, 10-28 later).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -97,8 +99,8 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `dx12`'s protocol 3 (`455a6fe`) and step 3 (`04c4817`): `make test` in both memory modes and
-  CTest. libxmx changed in its Win32 arms and in `external_ownership`'s signature, and reads the
+- `dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
+  modes and CTest. libxmx changed in its Win32 arms and in `external_ownership`'s signature, and reads the
   device's LUID everywhere; `test_image_history.py` is new (its device check skips off Intel's
   Windows driver), and the GPU image path, the transport and the daemon's frame line changed.
   Below, 10-26 and 10-27.
@@ -201,6 +203,48 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12 in Hogwarts after XeSS: excellent with preset B, and at 720p under the game's frame generation (2026-10-28, later, branch `dx12`)
+
+**`330ef95`: NR fell behind on what came on screen.** In `mode=after` the owner saw NR lag where
+something new appeared. Where a pixel's motion was not known (off screen the frame before),
+`History.follow` gave the frame itself as the game's last frame there. The composition's hold
+floor then took it for a pixel the game had handed back unchanged and held the history firmly,
+and the history there was the frame itself. On the orbit recording NR changed those pixels by
+1.54 levels where it changes the rest by 8.30 (8.32 with the history standing still). The
+game's last frame there is now `NOTHING` (-1), so the release lets go and the floor holds
+nothing: NR's own answer from the first frame. Host and device agree byte for byte, and
+`test_temporal.py` has a check that what came on screen composes exactly as with no history.
+Its daemon checks need a Unix socket and run on Linux only.
+
+**The game in `mode=after`**, the owner playing (101.9150, on mains). A daemon restart ends NR
+for the rest of a game run (below), so each preset and its starting scale meant a new test;
+the scale was changed live:
+
+| preset | XeSS's output | `render_scale` | network field | network | daemon's frame | frames NR answered a second | the owner |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 1920x1200 | 0.5 | 960x640 | 103 ms | 130 ms | 7.7 | fewer halos than before XeSS; after `330ef95`, "a slight glow, but much better" |
+| B | 1920x1200 | 1.0 | 1920x1216 | 202 ms | 236 ms | 4 | "now everything is excellent" |
+| B | 1920x1200 | 0.5 | 960x640 | 55 ms | 79 ms | 9 | |
+| B | 1280x720 | 0.5 | 640x384 | 27 ms | 46-50 ms | 21 | with the game's frame generation on: no artefacts |
+
+- The slight glow at A and 0.5 is most likely the head drawn at half the output's extent and
+  stretched 2x; at 1.0 there is no stretch. B's change is smaller (0.024 against A's
+  0.037-0.052 a frame), as phase72 found off the game.
+- Frame generation runs after our cut, at present, on frames that carry NR already; the proxy
+  does not see it. NR still answers every real frame.
+- The game was restarted twice for its settings (720p): each time the proxy hooked the new
+  process and the daemon, still running, took the new session. None declined.
+
+**Not done:** a daemon restarted while the game runs (`-Phase daemon`) leaves the proxy's session
+broken, and NR stays off until the colour or the device changes; in `mode=after` the output's
+extent seldom changes. The proxy should open a new session after a broken one.
+
+**Next on Windows:** the proxy reopening a session after a broken one. Then DX12 through the
+release (the setup window putting the proxy beside a game's XeSS), and `dx12` to GitHub, both
+at the owner's word.
+**Next on Linux:** `make test` in both memory modes and CTest at the head, for `455a6fe`,
+`04c4817` and `330ef95` (Open items).
 
 ## DirectX 12 in Hogwarts: NR before XeSS gives halos and trails, so it moves after XeSS (2026-10-28, branch `dx12`)
 
