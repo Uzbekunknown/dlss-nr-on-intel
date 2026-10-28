@@ -48,7 +48,9 @@ When the dated entries grow long, move the older ones into the archive the same 
   output, before the interface (`mode=after`, below, 10-28). In Hogwarts that way the owner
   found it excellent with preset B: at full scale, and at 720p and 0.5, about 21 frames a second,
   under the game's frame generation too (below, 10-28 later). A daemon restarted under the game,
-  for another preset, is taken back by the proxy 5 s later, on a new fence (below, 10-28 evening).
+  for another preset, is taken back by the proxy 5 s later, on a new fence (below, 10-28 evening);
+  in Hogwarts A to B left 5.5 s without NR, most of it the new daemon's start, and the owner saw
+  NR come back.
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -236,10 +238,27 @@ against NR's change of 6.9, as with B alone (14 of 15); `work/tools-win/run_repl
 runs it. MinGW CTest 67/67, the D3D12 smoke test (`test_gpu_d3d12.py`) and the MSVC build
 (`/W4`, no warnings) pass.
 
-**Not done:** the game itself. While no daemon is there the game runs on without NR, and the
-new daemon's first frame waits for its graph build (0.4 s here at 960x640).
+**In the game, the same evening** (Hogwarts, `mode=after`, 1280x720 at 0.5, 101.9150 on mains,
+Windows quiet). The owner started it on A: 15 frames answered a second, the daemon's frame
+62 ms. `-Phase daemon -Preset B` ran under it at 22:06:41 (the auto-mode classifier lets this
+phase through; it refuses `-Phase start`). The frame in flight went unanswered at 41.5, B took
+the new session at 46.5, 5.03 s later, answered its first frame in 0.49 s (the graph build at
+640x384) and then 21-22 a second (42-46 ms a frame, `history=moved`), none declined until the
+watchdog stopped the game at 22:29. The logs cannot tell whether B's answers reach the frames,
+since the first version logged every frame answered too; the owner, watching, saw NR go for a
+few seconds and come back. The 5.5 s without NR: 0.7 s of the harness waiting for A to end
+before it starts B, about 3 s of B's start (Python, its imports, the model in 1.6 s), about 1 s
+left of the pause once B was listening, and B's first frame. B's start is estimated from A's
+at the test's beginning, as the daemon's log carries no times. The watchdog put the folder back
+(Intel's DLL, the XeSS folder and the game folder as before); the saves and the game's two
+`.ini` files had changed with the owner's play, and stay.
 
-**Next on Windows:** this in Hogwarts with the owner (`-Phase daemon -Preset B` while it runs).
+**Next on Windows:** the owner's call on the gap. The pause can go: the first new session at
+once, since the HELLO itself waits up to 10 s for the pipe, and 5 s only after a session that
+broke before answering anything, which saves about a second. A switch with no gap needs the
+daemon to load the other network beside the one it runs and change between frames, and
+`nr_frame.py` and `nr_temporal.py` fix the preset at import, in code shared with Linux; that is
+also why 0.0.1.3's window says its network choice takes effect when the game starts next.
 Then DX12 through the release, and `dx12` to GitHub, both at the owner's word.
 **Next on Linux:** as before, `make test` in both memory modes and CTest for `455a6fe`,
 `04c4817` and `330ef95` (Open items); this change builds on Windows only.
