@@ -1679,7 +1679,9 @@ static ID3D12Resource *record(ID3D12GraphicsCommandList *list, const xess_d3d12_
  * One set of shared buffers and one fence for the session: the queue runs the halves in
  * order, so a frame's first half, which writes the input, runs only once the daemon is done
  * with the frame before (its V + 1), and the answer is read before the next frame's is
- * written. */
+ * written. A session lasts as long as the colour and the device do; when a frame goes
+ * unanswered (the daemon restarted, or its session failed), a new one comes 5 s later on the
+ * same buffers with a new fence, so a daemon started again takes the game back by itself. */
 
 /* nr_xess.hlsl's cbuffer for ENCODE and COMPOSE, field for field; the rest of the 32 root
  * constants unused. */
@@ -1723,10 +1725,10 @@ static struct {
 	struct nr_gpu_d3d12 gpu;     /* the buffers and fence the daemon shares, sized to the colour */
 	uint64_t session;            /* the current session's id, or 0 */
 	volatile LONG hello;         /* 1 the worker is to say HELLO, 2 the daemon has answered it */
-	volatile LONG broken;        /* a frame went unanswered: no more cuts until a new session */
+	volatile LONG broken;        /* a frame went unanswered: no more cuts until the next session */
 	volatile LONG releasing;     /* the worker is to send `release` */
 	struct nr_gpu_packet release;
-	ULONGLONG retry;             /* when a refused HELLO is tried again */
+	ULONGLONG retry;             /* when a refused HELLO, or a session a frame broke, is tried again */
 	struct handover queue[HANDOVERS];
 	unsigned head, count;
 	uint64_t last;               /* the newest value handed over */
@@ -1796,15 +1798,19 @@ static void say_hello(void)
 
 static void hand_over(struct handover *h)
 {
-	if (h->session != cut.session || cut.broken) {
+	/* under the lock, as a new session changes both at once */
+	struct nr_gpu_packet packet;
+	AcquireSRWLockShared(&cut.lock);
+	int current = h->session == cut.session && !cut.broken;
+	if (current) {
+		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
+		nr_gpu_d3d12_follow(&packet, h->previous);
+	}
+	ReleaseSRWLockShared(&cut.lock);
+	if (!current) {
 		unblock(h->fence, h->value);
 		return;
 	}
-	struct nr_gpu_packet packet;
-	AcquireSRWLockShared(&cut.lock);
-	nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
-	nr_gpu_d3d12_follow(&packet, h->previous);
-	ReleaseSRWLockShared(&cut.lock);
 	struct nr_gpu_reply reply;
 	int ok = exchange_gpu(&packet, &reply);
 	if (ok && reply.status == NR_GPU_SUCCESS) {
@@ -1834,12 +1840,20 @@ static void hand_over(struct handover *h)
 		return;
 	}
 	/* No answer, or the daemon's session failed: it moved the fence where it could, and this
-	 * makes sure. Its session is done with either way. */
+	 * makes sure. Its session is done with either way, and record_cut opens the next after a
+	 * pause: a daemon that restarted knows none of this one's. */
+	AcquireSRWLockExclusive(&cut.lock);
+	int ours = h->session == cut.session;   /* no session opened since the frame was sent */
+	if (ours) {
+		cut.retry = GetTickCount64() + 5000;
+		InterlockedExchange(&cut.broken, 1);
+	}
+	ReleaseSRWLockExclusive(&cut.lock);
 	unblock(h->fence, h->value);
-	InterlockedExchange(&cut.broken, 1);
 	cut.failed++;
-	say("frame %llu: %s; NR is off until the colour or the device changes\n", (unsigned long long)h->value,
-	    ok ? "the daemon's session failed, and its log says why" : "no answer from the daemon");
+	say("frame %llu: %s%s\n", (unsigned long long)h->value,
+	    ok ? "the daemon's session failed, and its log says why" : "no answer from the daemon",
+	    ours ? "; a new session is asked for in 5 s" : "");
 }
 
 static DWORD WINAPI cut_worker(LPVOID unused)
@@ -1939,6 +1953,44 @@ static void cut_close(void)
 	if (cut.wake) SetEvent(cut.wake);
 }
 
+/* A session's id: this process's, and new each time. */
+static uint64_t new_session(void)
+{
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	uint64_t session = ((uint64_t)GetCurrentProcessId() << 40) ^ (uint64_t)now.QuadPart;
+	return session ? session : 1;
+}
+
+/* After a frame went unanswered: the next session, on the same buffers, which a daemon takes
+ * afresh at its HELLO; the old one's frames still queued go on unanswered, being another
+ * session's, on the fence they hold. The fence is a new one: a daemon's process ending left the
+ * old one at UINT64_MAX (Hogwarts' orbit replayed, 2026-10-28), where the game's queue no longer
+ * waits for an answer and takes the frame before's. The buffers stay, so nothing the GPU may
+ * still be at goes, and the values go on rising, so no answer of the old session's is taken
+ * for one of the new's. */
+static int cut_reopen(void)
+{
+	uint64_t session = new_session();
+	AcquireSRWLockExclusive(&cut.lock);
+	if (cut.hello == 2) {   /* a daemon whose session failed lets the old one's imports go */
+		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_RELEASE, 0, &cut.release);
+		InterlockedExchange(&cut.releasing, 1);
+	}
+	HRESULT hr = nr_gpu_d3d12_renew_fence(&cut.gpu);
+	cut.gpu.session = cut.session = session;
+	cut.last = cut.last_call = 0;
+	InterlockedExchange(&cut.hello, 0);
+	InterlockedExchange(&cut.broken, 0);
+	cut.retry = 0;
+	ReleaseSRWLockExclusive(&cut.lock);
+	if (FAILED(hr)) {
+		say("could not make a new fence for the daemon (0x%08lx)\n", (unsigned long)hr);
+		return -1;
+	}
+	return 0;
+}
+
 /* A new device or a new colour: the old session goes, and the buffers come again, the shared
  * ones on the game's own device. Rare, so the game waits here. */
 static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMAT format, int kind,
@@ -1951,11 +2003,9 @@ static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMA
 		say("could not make the buffers for a %ux%u colour\n", width, height);
 		return -1;
 	}
-	LARGE_INTEGER now;
-	QueryPerformanceCounter(&now);
-	uint64_t session = ((uint64_t)GetCurrentProcessId() << 40) ^ (uint64_t)now.QuadPart;
+	uint64_t session = new_session();
 	AcquireSRWLockExclusive(&cut.lock);
-	HRESULT hr = nr_gpu_d3d12_open(&cut.gpu, device, width, height, 37, session ? session : 1, 1);
+	HRESULT hr = nr_gpu_d3d12_open(&cut.gpu, device, width, height, 37, session, 1);
 	if (SUCCEEDED(hr)) cut.session = cut.gpu.session;
 	cut.last = cut.last_call = 0;   /* a new session's frames lead back to none of the old's */
 	ReleaseSRWLockExclusive(&cut.lock);
@@ -2031,15 +2081,24 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	}
 	ID3D12Device_Release(device);
 	if (nr.broken) return NULL;
+	if (cut.broken) {
+		/* the session's frame went unanswered: after the pause, the next, which the HELLO
+		 * below asks a daemon to take */
+		if (GetTickCount64() < cut.retry) {
+			cut_said("a frame went unanswered; a new session is asked for 5 s after it");
+			return NULL;
+		}
+		if (cut_reopen() != 0) {
+			say("setup failed; from here on XeSS gets every frame as it is\n");
+			nr.broken = 1;
+			return NULL;
+		}
+	}
 	if (cut.hello != 2) {
 		if (cut.hello == 0 && GetTickCount64() >= cut.retry) {
 			InterlockedExchange(&cut.hello, 1);
 			SetEvent(cut.wake);
 		}
-		return NULL;
-	}
-	if (cut.broken) {
-		cut_said("a frame went unanswered this session");
 		return NULL;
 	}
 	char why[160];

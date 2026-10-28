@@ -97,6 +97,28 @@ static inline HRESULT nr_gpu_d3d12_open(struct nr_gpu_d3d12 *s, ID3D12Device *de
     return hr;
 }
 
+/* A new fence for a new session on the same buffers, starting where the last one left off,
+ * so a frame's V still names that frame alone. A daemon whose process ends can leave the fence
+ * it imported at UINT64_MAX (Intel's 101.9150, 2026-10-28), where every wait passes at once. */
+static inline HRESULT nr_gpu_d3d12_renew_fence(struct nr_gpu_d3d12 *s)
+{
+    ID3D12Fence *fence = NULL;
+    HANDLE handle = NULL;
+    HRESULT hr = ID3D12Device_CreateFence(s->device, s->value, D3D12_FENCE_FLAG_SHARED, &IID_ID3D12Fence,
+                                          (void **)&fence);
+    if (SUCCEEDED(hr)) hr = ID3D12Device_CreateSharedHandle(s->device, (ID3D12DeviceChild *)fence, NULL,
+                                                           GENERIC_ALL, NULL, &handle);
+    if (FAILED(hr)) {
+        if (fence) ID3D12Fence_Release(fence);
+        return hr;
+    }
+    if (s->fence_handle) CloseHandle(s->fence_handle);
+    if (s->fence) ID3D12Fence_Release(s->fence);
+    s->fence = fence;
+    s->fence_handle = handle;
+    return S_OK;
+}
+
 /* The next frame's V: the client's queue signals it once the input is written and then waits
  * for V + 1, which only the daemon signals. */
 static inline uint64_t nr_gpu_d3d12_next(struct nr_gpu_d3d12 *s)

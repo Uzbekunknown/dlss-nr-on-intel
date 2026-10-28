@@ -47,7 +47,8 @@ When the dated entries grow long, move the older ones into the archive the same 
   below, 10-27). In the game, NR before XeSS gave halos and trails, so NR now runs on XeSS's
   output, before the interface (`mode=after`, below, 10-28). In Hogwarts that way the owner
   found it excellent with preset B: at full scale, and at 720p and 0.5, about 21 frames a second,
-  under the game's frame generation too (below, 10-28 later).
+  under the game's frame generation too (below, 10-28 later). A daemon restarted under the game,
+  for another preset, is taken back by the proxy 5 s later, on a new fence (below, 10-28 evening).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -204,6 +205,45 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
+## DirectX 12: a daemon restarted under the game is taken back, and the fence a dead daemon leaves at UINT64_MAX (2026-10-28, evening, branch `dx12`)
+
+**The proxy opens a new session after a broken one.** A frame that goes unanswered (no answer,
+or the daemon's session failed) still ends the session, but 5 s later `record_cut` opens the
+next: the old one is released to a daemon still running, and the new one's HELLO goes out as
+at the start, asked again every 5 s until a daemon takes it. A preset change while the game
+runs (`-Phase daemon -Preset B`) no longer needs a new game run.
+
+**Finding: a daemon whose process ends leaves the shared fence at UINT64_MAX.** The first
+version kept the fence. On the orbit recording (replay, `mode=after`, A stopped after 30
+frames, B started) B answered every frame and none of its answers was used: the stamp in the
+output named the frame before (frame 80: 103 against V = 105), and from A's end on the fence
+read 0xffffffffffffffff in the game's process. Every wait on it passes at once, so the game's
+queue no longer waits for the answer, COMPOSE finds the last frame's stamp and leaves the
+frame as it was, and the daemon's work races the next frame's copy into the same buffers.
+Seen with Intel's 101.9150 on Windows 11; whether a daemon that exits cleanly does the same
+is untried. So the new session gets a new fence (`nr_gpu_d3d12_renew_fence`), starting where
+the old one left off, so V keeps rising and no stale stamp names a new frame. The buffers stay.
+
+**Checked here.** `test_nr_xess` has a new case: the stand-in daemon dies with its frame
+(unanswered, fence at UINT64_MAX), the pause, the old session released, the HELLO unanswered
+while no daemon is there and then taken, the new session's first frame answered and stamped,
+its fence where the old one left off. It fails against the first version (fence at
+UINT64_MAX, the answer a frame late) and against the proxy before this change. The orbit
+replay, A then B: the new session was taken 5.1 s after the unanswered frame; A answered 30
+frames, B 246; 13 of the 15 frames written carry their answer (frame 0 came before the
+session, frame 40 in the pause), and the output lies 0.12 levels from the answer (p99 2.3)
+against NR's change of 6.9, as with B alone (14 of 15); `work/tools-win/run_replay_restart.py`
+runs it. MinGW CTest 67/67, the D3D12 smoke test (`test_gpu_d3d12.py`) and the MSVC build
+(`/W4`, no warnings) pass.
+
+**Not done:** the game itself. While no daemon is there the game runs on without NR, and the
+new daemon's first frame waits for its graph build (0.4 s here at 960x640).
+
+**Next on Windows:** this in Hogwarts with the owner (`-Phase daemon -Preset B` while it runs).
+Then DX12 through the release, and `dx12` to GitHub, both at the owner's word.
+**Next on Linux:** as before, `make test` in both memory modes and CTest for `455a6fe`,
+`04c4817` and `330ef95` (Open items); this change builds on Windows only.
+
 ## DirectX 12 in Hogwarts after XeSS: excellent with preset B, and at 720p under the game's frame generation (2026-10-28, later, branch `dx12`)
 
 **`330ef95`: NR fell behind on what came on screen.** In `mode=after` the owner saw NR lag where
@@ -238,7 +278,8 @@ the scale was changed live:
 
 **Not done:** a daemon restarted while the game runs (`-Phase daemon`) leaves the proxy's session
 broken, and NR stays off until the colour or the device changes; in `mode=after` the output's
-extent seldom changes. The proxy should open a new session after a broken one.
+extent seldom changes. The proxy should open a new session after a broken one. Done the same
+evening (above).
 
 **Next on Windows:** the proxy reopening a session after a broken one. Then DX12 through the
 release (the setup window putting the proxy beside a game's XeSS), and `dx12` to GitHub, both

@@ -1045,15 +1045,19 @@ static int run_split(void)
 
 /* A stand-in for the daemon's protocol 3, on its own queue: it waits there for a frame's V,
  * puts `answer` and the stamp naming V into the shared output — nothing when declining — and
- * signals V + 1. */
+ * signals V + 1. A frame of a session it has not taken fails, as the daemon's does, with the
+ * fence left where it is; `down` answers nothing, as no daemon at all; `dies` ends it with the
+ * next frame, unanswered and the fence at UINT64_MAX, as a daemon's process ending left it
+ * with Intel's driver. */
 static struct {
 	ID3D12CommandQueue *queue;
 	ID3D12CommandAllocator *allocator;
 	ID3D12GraphicsCommandList *list;
 	ID3D12Resource *upload;
 	uint8_t answer[IN_W * IN_H * 4];
-	int decline, frames, hellos;
+	int decline, down, dies, frames, hellos;
 	uint64_t input_alloc, previous;   /* the HELLO's input, the last FRAME's motion */
+	uint64_t session, released;       /* the session taken, the last one released */
 } stand;
 
 static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *reply)
@@ -1061,13 +1065,34 @@ static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *repl
 	memset(reply, 0, sizeof *reply);
 	reply->session_low = (uint32_t)p->session;
 	reply->session_high = (uint32_t)(p->session >> 32);
+	if (p->action == NR_GPU_RELEASE) stand.released = p->session;
+	if (stand.down) return 0;
 	if (p->action == NR_GPU_HELLO) {
 		stand.hellos++;
 		stand.input_alloc = p->input_alloc;
 		reply->detail = GetCurrentProcessId();
-		return p->bytes == sizeof stand.answer && p->version == NR_GPU_D3D12_VERSION;
+		int taken = p->bytes == sizeof stand.answer && p->version == NR_GPU_D3D12_VERSION;
+		if (taken) stand.session = p->session;
+		return taken;
 	}
-	if (p->action != NR_GPU_FRAME) return 1;
+	if (p->action != NR_GPU_FRAME) {
+		if (p->session == stand.session) stand.session = 0;
+		return 1;
+	}
+	if (stand.dies) {
+		stand.dies = 0;
+		stand.session = 0;
+		HANDLE event = CreateEventW(NULL, FALSE, FALSE, NULL);
+		ID3D12Fence_SetEventOnCompletion(cut.gpu.fence, p->done_sem, event);
+		WaitForSingleObject(event, 10000);
+		CloseHandle(event);
+		ID3D12Fence_Signal(cut.gpu.fence, UINT64_MAX);
+		return 0;
+	}
+	if (p->session != stand.session) {
+		reply->status = NR_GPU_FAILURE;
+		return 1;
+	}
 	uint64_t value = p->done_sem;
 	memcpy(&stand.previous, p->driver_uuid, sizeof stand.previous);
 	ID3D12CommandAllocator_Reset(stand.allocator);
@@ -1368,6 +1393,134 @@ static int run_after(DXGI_FORMAT format, const char *name)
 	return failures != 0;
 }
 
+/* The daemon restarting under the game: it ends with the frame it is sent, unanswered and the
+ * fence at UINT64_MAX, and the game's queue goes on all the same; for 5 s frames go on without
+ * NR; then the next session, on the same buffers with a new fence: the old one released, its
+ * HELLO unanswered while no daemon is there and taken once one is, and its frames answered, V
+ * still rising, the first naming no frame of the old session's and the second the first. */
+static int run_reopen(ID3D12Resource *motion)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R16G16B16A16_FLOAT, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how);
+	ID3D12Resource *out = texture_as(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how,
+					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+					 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, sizeof(struct nr_gpu_stamp),
+					       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+	if (!tex || !out || !readback) {
+		printf("FAIL reopen: no texture\n");
+		return 1;
+	}
+	nr.width = 0;
+	config.strength = 1;
+	stand.decline = 0;
+	xess_d3d12_execute_params_t params = params_for(tex, motion, NULL);
+	params.pOutputTexture = out;
+	params.outputColorBase.x = BASE_X;
+	params.outputColorBase.y = BASE_Y;
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL reopen: the session was not opened\n");
+		return 1;
+	}
+	uint64_t old = cut.session;
+	int frames = stand.frames;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	uint64_t first = cut.last;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	if (stand.frames != frames + 2 || stand.previous != first) {
+		printf("FAIL reopen: before the restart %d frames were answered, the second naming %llu, not %llu\n",
+		       stand.frames - frames, (unsigned long long)stand.previous, (unsigned long long)first);
+		failures++;
+	}
+
+	stand.dies = 1;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	uint64_t lost = cut.last;
+	if (submit()) {
+		printf("FAIL reopen: the game's queue was left waiting for the unanswered frame\n");
+		return 1;
+	}
+	if (!cut.broken || stand.frames != frames + 2) {
+		printf("FAIL reopen: the unanswered frame %llu did not end the session\n", (unsigned long long)lost);
+		failures++;
+	}
+	int hellos = stand.hellos;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	int paused = !cut_now;
+	if (submit()) return 1;
+	if (!paused || stand.hellos != hellos || stand.frames != frames + 2) {
+		printf("FAIL reopen: within the pause a frame was cut, or the daemon was asked (%s)\n", cut.said);
+		failures++;
+	}
+
+	stand.down = 1;                     /* the pause over, and no daemon yet */
+	cut.retry = 0;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	for (ULONGLONG until = GetTickCount64() + 5000; GetTickCount64() < until && (cut.hello == 1 || cut.releasing);
+	     Sleep(5)) {}
+	if (stand.released != old || !cut.session || cut.session == old || cut.hello != 0
+	    || cut.retry <= GetTickCount64()) {
+		printf("FAIL reopen: with no daemon, the old session was %sreleased, and the next one (%s) %s\n",
+		       stand.released == old ? "" : "not ", cut.session && cut.session != old ? "new" : "not new",
+		       cut.hello == 0 && cut.retry > GetTickCount64() ? "is asked for again later" : "is not asked for again");
+		failures++;
+	}
+	UINT64 fence = ID3D12Fence_GetCompletedValue(cut.gpu.fence);
+	if (fence != lost + 1) {
+		printf("FAIL reopen: the next session's fence is at %llu, not where the last one left off (%llu)\n",
+		       (unsigned long long)fence, (unsigned long long)lost + 1);
+		failures++;
+	}
+
+	stand.down = 0;                     /* a daemon there again */
+	cut.retry = 0;
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2 || stand.session != cut.session || stand.hellos != hellos + 1) {
+		printf("FAIL reopen: the next session was not taken\n");
+		return 1;
+	}
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	uint64_t next = cut.last;
+	int answered = cut_now;
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, 0, cut.gpu.output, cut.gpu.bytes,
+						   sizeof(struct nr_gpu_stamp));
+	if (submit()) return 1;
+	uint64_t named = stand.previous;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	struct nr_gpu_stamp *stamp;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&stamp);
+	answered = answered && nr_gpu_d3d12_answered(stamp, next);
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	if (!answered || stand.frames != frames + 4 || next <= lost || named != 0 || stand.previous != next) {
+		printf("FAIL reopen: in the next session frame %llu was %sanswered (%d frames), naming %llu, and the "
+		       "one after it naming %llu\n", (unsigned long long)next, answered ? "" : "not ",
+		       stand.frames - frames, (unsigned long long)named, (unsigned long long)stand.previous);
+		failures++;
+	}
+	ID3D12Resource_Release(readback);
+	ID3D12Resource_Release(out);
+	ID3D12Resource_Release(tex);
+	printf("%s after XeSS, the daemon restarting: frame %llu unanswered, the next session taken after "
+	       "the pause on a new fence, frame %llu answered\n", failures ? "FAIL" : "ok  ", (unsigned long long)lost,
+	       (unsigned long long)next);
+	return failures != 0;
+}
+
 int main(int argc, char **argv)
 {
 	_snwprintf(log_path, MAX_PATH + 16, L"test_nr_xess.log");
@@ -1459,6 +1612,7 @@ int main(int argc, char **argv)
 	config.cut = AFTER;
 	failed += run_after(DXGI_FORMAT_R16G16B16A16_FLOAT, "after XeSS, R16G16B16A16_FLOAT");
 	failed += run_after(DXGI_FORMAT_R11G11B10_FLOAT, "after XeSS, R11G11B10_FLOAT");
+	failed += run_reopen(moving);
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }
