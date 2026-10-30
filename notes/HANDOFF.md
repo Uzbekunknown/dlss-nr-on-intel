@@ -1,22 +1,23 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-17**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-10-30**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
 **How to read this file.** "Where things stand" and "Open items" are the current state. The dated
-entries after them are the last week, newest first. Everything older (the graph's recovery, the
-kernel work, the measurements and the experiments that did not pay) is in
-`notes/archive/HANDOFF-until-2026-10-07.md`, word for word. It is history: do not read it to start
-a task. Open it only when a line here points there, or before an optimisation, to see whether it
-was tried and not kept. `notes/INDEX.md` says which note settles what.
+entries after them are the last two weeks, newest first. Everything older is in `notes/archive/`,
+word for word: the graph's recovery, the kernel work, the measurements and the experiments that
+did not pay in `HANDOFF-until-2026-10-07.md`, the first Windows releases and the testers' reports
+in `HANDOFF-2026-10-08-to-2026-10-15.md`. It is history: do not read it to start a task. Open it
+only when a line here points there, or before an optimisation, to see whether it was tried and
+not kept. `notes/INDEX.md` says which note settles what.
 
 Keep this file short. Every agent reads it first, and `publish_check` refuses a file over 200 KB.
-When the dated entries grow long, move the older ones into the archive the same way.
+When the dated entries grow long, move the older ones the same way, into a new archive file.
 
 ---
 
-## Where things stand (2026-10-17)
+## Where things stand (2026-10-30)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
@@ -31,22 +32,24 @@ When the dated entries grow long, move the older ones into the archive the same 
   build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`);
-  - `newnr`: everything since, with PR #20 merged at `097d6d4`;
+  - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
+    (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments.
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
   `master` or `newnr`, except one merge commit and two of Codex's BGRA8 experiments. A bundle of
-  all seven is in `D:\NRonWindows\backups` on Windows. `dx12` lives on locally, ahead of `newnr`,
-  until it goes back into it.
-- **DirectX 12 on Windows, before the upscaler** (branch `dx12`, 10-16): a `libxess.dll` in front
-  of Intel's hands the daemon the frame XeSS is about to upscale, in the game's own D3D12, and
+  all seven is in `D:\NRonWindows\backups` on Windows. `dx12` went into `newnr` on 10-30, a
+  fast-forward.
+- **DirectX 12 on Windows, through the game's XeSS** (`src/xess`, from 10-16, on `newnr` since
+  10-30): a `libxess.dll` in front of Intel's hands the daemon the frame XeSS is about to upscale,
+  in the game's own D3D12, and
   adds NR's change to it. It runs in Hogwarts Legacy. The trail behind moving things was found
   in a recording and fixed (`e803624`), **pushed on the owner's word before anyone saw it in the
   game**: what is untested is listed in the entry below, 10-16. Carrying a change onto later
   frames is what makes the trails and patches (10-18), so the proxy now cuts the game's command
-  list at XeSS and runs NR on the frame itself, all on the GPU (`mode=cut`, local): the daemon
+  list at XeSS and runs NR on the frame itself, all on the GPU (`mode=cut`): the daemon
   takes D3D12 frames (step 1, below, 10-26), the cut runs both Hogwarts recordings with no
   trail (step 2, below, 10-27), and the daemon's history follows the game's motion (step 3,
   below, 10-27). In the game, NR before XeSS gave halos and trails, so NR now runs on XeSS's
@@ -63,7 +66,7 @@ When the dated entries grow long, move the older ones into the archive the same 
   unpacked, and run here, on CPU and on the device, at 0.54-0.58 of A's time. Through the daemon
   its round trip is 0.5-0.8 of A's once the GPU's clock is held up (below, 10-18). That is on
   branch `newnr`, on GitHub since 10-18; `NR_PRESET=B` picks it (below, 10-17; phase72). On
-  Windows the setup window takes B out of a 310.9.16 DLL and offers it (`a75e5da`, local).
+  Windows the setup window takes B out of a 310.9.16 DLL and offers it (`a75e5da`, in 0.0.1.3).
   Intel's Windows driver clocks a gap-separated frame down too, B's to 865-956 MHz, and Windows
   has no hint for it yet (below, 10-18, Windows).
 - **Speed on this laptop**, `src/bench/speed_test.py`, network and round trip: 640x360 at 0.4 is
@@ -108,11 +111,15 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
-  modes and CTest. libxmx changed in its Win32 arms and in `external_ownership`'s signature, and reads the
-  device's LUID everywhere; `test_image_history.py` is new (its device check skips off Intel's
-  Windows driver), and the GPU image path, the transport and the daemon's frame line changed.
-  Below, 10-26 and 10-27.
+- ~~`dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
+  modes and CTest~~: green at `cc2b8b7` (10-30), which is `newnr` with them and PR #20: `make test`
+  60 of 60 in both memory modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`.
+  `test_image_history.py`'s device check skips on Mesa; run ungated on ANV, `image_history.comp`
+  is within 3.1e-05 of `History.follow` and no STALE or NOTHING decision differs. `speed_test.py`
+  puts `cc2b8b7` level with `2d1d550`. `publish_check --history` finds nothing new: what it lists
+  (Paimonshen's local committer address on four commits of 10-02, two HANDOFF versions over 200 KB
+  of 10-11 and 10-12) has been on GitHub since then, and rewriting `master`, `newnr` and the tags
+  for it is not worth it.
 - ~~**Preset B, the new model: recover its graph**, then the CPU reference against it~~: A's
   graph at depths `{2,2,2,2,2}`, running on CPU and on the device (`2bb16f6`, below, 10-17
   later; phase72).
@@ -145,7 +152,7 @@ under that date. When an item is done, strike it through here and name the commi
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 - ~~Steam keeping a game "running" while its daemon lives~~: it did, and the daemon now ends with
-  its game on Linux too. Below, 10-14, later.
+  its game on Linux too. Archive, 10-14, later.
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
@@ -161,32 +168,32 @@ under that date. When an item is done, strike it through here and name the commi
   ImGui vendored, against `master`~~: merged into `newnr` on 10-30 (`097d6d4`), after the last
   fixes were made on its branch by us; issue #16 closed.
 - ~~The unmerged window attention hangs Intel's Windows driver from 32 windows up~~: found and
-  avoided on 10-15, and `gpu_window_attention` is in CTest on Windows again. Below, 10-15;
+  avoided on 10-15, and `gpu_window_attention` is in CTest on Windows again. Archive, 10-15;
   phase71.
 - The staged GEMM's loop on Intel's compiler takes 1.2-1.5x Mesa's time where the graph is large.
   The packed copies took 6-9 % of it; the rest is open. Archive, 10-02 and 10-03.
 - ~~Four daemon processes with Mortal Kombat 11~~: two processes are one daemon (the venv's
   `python.exe` and the interpreter it starts); four were two. The owner lock now stops a second
-  one. Below, 10-15.
+  one. Archive, 10-15.
 - DOOM (2016) through 0.0.1.2 is untested: the owner's own installation from another release is in
-  its folder, and its removal was refused by this session's safety check. Below, 10-15.
+  its folder, and its removal was refused by this session's safety check. Archive, 10-15.
 - `windows_launch.py`'s Configure Steam, Restore Steam and their wrapper can go, with their tests,
-  once no release with those buttons is in testers' hands. The GitHub releases have none. Below,
+  once no release with those buttons is in testers' hands. The GitHub releases have none. Archive,
   10-09.
 - DirectX 12 is not offered by the release. VKD3D-Proton does not run Hogwarts Legacy on Windows
-  (below, 10-16); the route taken instead is the game's own upscaler, `src/xess` on `dx12` (below,
-  10-16), for games with XeSS. A game that runs elevated, or any game with UAC off, never gets the
-  layer; the HKLM manifest that would reach it is kept for later. Below, 10-08 and 10-09.
+  (below, 10-16); the route taken instead is the game's own upscaler, `src/xess` (below, 10-16 to
+  10-30), for games with XeSS. A game that runs elevated, or any game with UAC off, never gets the
+  layer; the HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
 - ~~`dx12`: record a real Hogwarts sequence with the owner~~: recorded and replayed on 10-16,
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Below, 10-16.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
   gives three C4068 warnings that an `NR_IVDEP` macro would silence. Archive, 10-02 and 10-07.
 - Housekeeping: each release root in `D:\NRonWindows\rel` holds ~440 MB of extracted weights, and
-  `D:` ran out of space mid-test. Below, 10-12.
+  `D:` ran out of space mid-test. Archive, 10-12.
 
 **Planned, not started** (parked by the owner: do not start unasked)
 - ~~Motion vectors from the game's own upscaler, through OptiScaler~~: started by the owner on
-  10-16 for XeSS, without OptiScaler: `src/xess` on `dx12`, below.
+  10-16 for XeSS, without OptiScaler: `src/xess`, below.
 - A FAQ in the README. Later.
 - INT8 on the bottleneck: the exact kernel exists (`gemm_staged_int8.comp`) and stays out of the
   graph by the owner's decision; `improve-int8` keeps the branch. Archive, 09-26.
@@ -254,12 +261,11 @@ between two frames, the session and its D3D12 imports stay, and the proxy opens 
   `image_preprocess.comp` to a two-dimensional workgroup grid, which gives the same index below
   4 194 240 pixels.
 
-**Next on Windows:** `dx12` into `newnr`, a fast-forward now, and both to GitHub at the owner's
-word, after Linux. Then DirectX 12 through the release: the setup window putting the proxy beside
-a game's XeSS.
-**Next on Linux:** `make test` in both memory modes and CTest at `dx12`'s head. Protocol 3
-(`455a6fe`), step 3 (`04c4817`) and `330ef95` have never run there (Open items), and the merge
-puts PR #20's daemon beside them.
+**Next on Windows:** ~~`dx12` into `newnr`, a fast-forward now, and both to GitHub at the owner's
+word, after Linux~~: on GitHub at the owner's word before Linux ran (`cc2b8b7`). Then DirectX 12
+through the release: the setup window putting the proxy beside a game's XeSS.
+**Next on Linux:** ~~`make test` in both memory modes and CTest at `dx12`'s head~~: green at
+`cc2b8b7` (Open items).
 
 ## DirectX 12: a daemon restarted under the game is taken back, and the fence a dead daemon leaves at UINT64_MAX (2026-10-28, evening, branch `dx12`)
 
@@ -1450,545 +1456,6 @@ on Windows is the `dxgi.dll` proxy (Open items); on Linux it is Proton, as for M
 
 **Next on Linux:** `make test` and CTest. `nr_layer.c`'s POSIX arm gained `append_daemon_log`
 (open with `O_APPEND`, one write, close), which only the GPU-only notice uses there.
-
-## 0.0.1.2 built and tested on Windows; the window attention hang found and avoided (2026-10-15)
-
-The owner relayed the Linux agent's list of 10-14 and answered its questions. On `improve-e4m3`,
-pushed to GitHub at the owner's word:
-- **`7e7dfb5`**, `master` (`429855c`) merged in. The three conflicts as the list asked: both of
-  `nr_daemon.py`'s new functions, both groups of `notes/INDEX.md` rows, and this file on
-  `master`'s structure with `improve-e4m3`'s entries of 10-12 to 10-14 placed by date.
-- **`1a146c2`**, Linux's four red tests. `test_device_pick.py` takes Mesa's "is not offered for
-  this queue family". The GPU image path's parity tests hold the bytes on Intel's Windows driver,
-  where they were proved: libxmx records the device's `VkDriverId` (`xmx_driver`), and
-  `xmxres.image_path_exact` asks for 5. Elsewhere they are skipped with the reason, and a new
-  host check, run on any driver, holds that the default daemon takes the host path and never
-  builds the GPU image pipeline. Checked here with the id forced to differ. **Next on Linux:**
-  `make test` in both memory modes and CTest.
-- **`4932958`**: `test_setup_proxy.py` failed on Windows: an 8.3 TEMP against the long names
-  Profile resolves to, and MSYS2's Python, which `setup.bat` refuses as `NR_PYTHON` (no NumPy or
-  safetensors); the batch tests are skipped with the reason under such a Python.
-- **`584f1fa`**: 0.0.1.3 is 0.0.1.2, as the owner numbers it.
-- **`2f90064`**: no stray Chinese characters in the notes, the owner asked. PR #13 brought a
-  section heading, two references to it and two names of the contributor's own files in Chinese;
-  they are English now. `docs/WINDOWS-PORT.md`'s two mojibake examples are said in words. The
-  Japanese path names in `test_windows_launch.py` stay: they are its Unicode fixtures.
-- **`1ef43e0`**: the unmerged window attention, below.
-
-At `2f90064`: MinGW CTest 63 of 63 (64 of 64 with `gpu_window_attention` at `1ef43e0`); against the
-MSVC build CTest's Python entries 56 of 56 (57 of 57 at `1ef43e0`), the wizard 79, launch 40, release 19, `setup_proxy` 11
-(the native venv), `build_check`, `publish_check`, `claims_check`, and the layer's `spawn_reasons`,
-`vulkan_proxy`, `spawn_exit`, `pipe`, `alloc`; the window's self-test, 68 named controls and 161
-keys in English, Russian and Spanish. `NR_E4M3_MAGIC` is 0 and the GPU path off, by default.
-
-**The release**, `D:\NRonWindows\rel\dlss-nr-windows-0.0.1.2-x64.zip`: `deploy.bat --release` at
-`2f90064`, DXVK 3.1.1 from the pin's cache, 299 entries, 19 805 166 bytes, SHA-256
-`df930e0d805250cc79fb3ad8eebb9bf11b786005186fc843f5f4bf164b00bf87`. No NVIDIA DLL, no weights, no
-Chinese. The window attention change is not in it, as the list asked. Not tagged, not published.
-
-**From the ZIP, through Steam's Play button, Arc 140V, 101.9150**: a first build at `584f1fa`,
-Mortal Kombat 11 624 frames and Dead or Alive 5 (32-bit, the 32-bit proxy) 554, the weights
-extracted on the first Install NR; the final one, Mortal Kombat 11 767 frames. Each with none
-rejected, Save report with no warning, the daemon ending with the game, Steam letting go, and the
-game's folder as before after Remove NR. **DOOM was not run**: its folder holds the owner's own
-installation from `D:\NR Test\dlss-nr-windows-7f9c364`, which 0.0.1.2 will not install over. The
-owner agreed to remove it; this session's safety check refused the removal twice, so it waits for
-the owner's Remove NR in that release's window. The folder's NR files are backed up in
-`nr-game\backups\doom-owner-install-2026-10-15`.
-
-**The four daemon processes of 10-09.** Listed with their parents, a daemon is two processes: the
-venv's `python.exe`, whose parent is the game, and the interpreter it starts. Four were two
-daemons; `nr_daemon_owner.py`'s lock now refuses a second one on the same pipe.
-
-**The power mode.** On 10-14 and the night of 10-15 Windows ran on mains in "best power
-efficiency" (the owner found it); on 10-12 it was "best performance". The host passes run slower
-there, the same in this release and in a build of 10-12, so it was not the code: Mortal Kombat 11
-gave 14-16 processed frames a second against 19-20. `quiet-check.ps1` prints the mode: put it beside
-every number.
-
-**The GPU image path in a game** (the window's option, `NR_GPU_ONLY`), Mortal Kombat 11 at
-1280x720, render scale 0.4, processed frames a second over 40 s, the runs interleaved: in power
-efficiency, off 14.1 and 15.7, on 22.7 and 23.0, every frame through `gpu-shared`, no fallback;
-in best performance, off 18.8 and 18.7, on 23.5 and 23.7 (+26 %), every frame through `gpu-shared` again. The path leans far less on the CPU's clock. The daemon's frame falls from 60 to 37-38 ms there, the network staying at 31-33.
-
-**Speed test of the release, 101.9150, best performance**, network and round trip in ms, two runs
-(the table of 10-12 was 101.9033; keep them apart):
-
-| window | 0.4 | 1.0 |
-| --- | --- | --- |
-| 640x360 | 25 / 28 | 45-46 / 50 |
-| 800x450 | 24-25 / 29 | 73 / 79 |
-| 1280x720 | 33-34 / 41 | 166-170 / 179-183 |
-| 1920x1080 | 61 / 76 | 371-426 / 396-452 |
-
-**The unmerged window attention, found and avoided** (`1ef43e0`, the owner: try it on Windows). On
-101.9150 the test still lost the device. Case by case, each in a child the parent kills after a
-timeout: the unmerged variant alone never hangs (to 512 windows, 300 submits); two of it, in one
-submit or two, or it and the merged one in either order, lose the device about 4 s in, with the
-bias and from 32 windows (6 and 16 do not), at any scale of the data; two merged ones do not. No
-scratch memory in either (the driver does not show its code). Only the unmerged variant, with the
-bias, loads a float32 cooperative matrix from global memory and stores float32 accumulators straight
-to global memory. It now stores through shared memory and plain vec4 stores, as the merged one did:
-the same bytes (48 cases, five runs), no hang in any case, and the graph with
-`NR_FUSE_ATTENTION_MERGE=0` passes. `gpu_window_attention` is in CTest on Windows again.
-`notes/phase71`. Merged, the default, is unchanged.
-
-## `improve-e4m3` (Codex) on Linux at `20cba61`: the default path unchanged, four tests red (2026-10-14, later)
-
-Checked in a detached copy, `work/e4m3-check`, with `f3220fd`'s test fix applied; Codex's own
-worktree untouched. It builds with no warnings, and both layers load. With the GPU path and
-`NR_E4M3_MAGIC` off, as by default, it is `master` on Linux: heads `e62005b8…` / `c217fd2f…`
-(changed `e7c72789…` / `95f46f67…`), the replayed graph and the live table the same within noise.
-
-CTest 58 of 62. `make test` stops at its first line, `test_device_pick.py`:
-- **`gpu_device_pick`**: `XMX_QUEUE_PRIORITY=high`, alone and with the compute family, expects
-  libxmx to report the priority. Mesa does not offer high for these families, and libxmx says
-  so ("not offered for this queue family; the driver's default"). The test wants Windows' answer.
-- **`gpu_image_preprocess`, `gpu_image_compose`, `gpu_image_pipeline`**: the GPU image path is
-  not bit-exact on Mesa. Preprocessing is 1 ulp of float32 off on a few values, composition up to
-  0.00049, and the full model's answer bytes differ. The shaders are `precise` throughout, and
-  `image_preprocess.comp` already notes that `OpFDiv` may be inexact; Mesa lowers division to a
-  reciprocal and a multiply. The path is Windows-only and off by default, but the tests run here.
-
-For Codex: make the image shaders exact on Mesa, or hold their tests to the driver they were
-proved on, and let `test_device_pick.py` accept "not offered". Merging `master` in brings
-`f3220fd`, and a small conflict at the top of this file, where both lines changed it.
-
-## Steam on Linux: the daemon ends with its game; the README table re-measured (2026-10-14, later)
-
-**Steam's reaper waited for the daemon.** Steam starts a game under `reaper`, which makes itself
-the subreaper and waits for every descendant, a `setsid` one included. Steam's own
-`ubuntu12_32/reaper`, with `work/test_present` through the layer and `NR_LAYER_SPAWN=1`: the
-stand-in game ended after 0.6 s, the reaper still waited 20 s later, and it returned 0.02 s after
-the daemon was stopped. So a game started from Steam stayed "running", with the model in memory,
-until something stopped its daemon. The Linux layer now marks the daemon with the game's process
-id, as Windows' does, and `nr_daemon.end_with_game` watches it through a pidfd. The same run
-returns as soon as the game ends, and the daemon's log says why. `test_spawn_exit.py` runs on both
-systems (make test, CTest).
-
-**The README's table**, re-measured with `live_rates.py --warmup 3`, medians of six: the same
-within a millisecond, except 1024x768 at 0.55, 56.5 -> 51.5 ms.
-
-## Local GPU frame path and Windows E4M3 check (2026-10-14)
-
-The tested Windows continuation (`codex/gpu-frame-path`, through `dfb2143`) is
-integrated into `improve-e4m3` at the owner's explicit request.
-GPU preparation/composition/history and authenticated shared Vulkan resources
-are implemented behind an experimental window option, off by default. The same
-Arc SDR every-frame synchronous path passed actual Win32 swapchain/full-model
-smoke on **101.9150** for API 1.1 and 1.3: 24 presents, 22 GPU frames, resize,
-trigger and scale controls, zero synchronization-validation errors. Correct
-private command-buffer loader dispatch initialization was required. Owner lock,
-primary surface policy, transfer reuse and timeout-safe cleanup have CPU tests.
-No tag, release or real-game FPS gain is claimed.
-
-`notes/gpu-frame-path-20261013.md` records the limits and remaining checks.
-Current-driver image parity passes; rotating 25-warm/30-sample benchmarks now
-cover full 1080p/1440p. At 1440p/0.4 CPU/GPU-host medians are 179.59/122.14 ms;
-at full 1440p, 786.39/743.07 ms. These exclude game capture/IPC/return and are
-not FPS. Unchanged settings uploads are cached. Forced-fence full-image smoke
-also passes with controls and synchronization validation. A paired memory-policy
-probe found cached DEVICE memory slower; that experiment was removed. The full-
-resolution network gap remains unexplained. Final daemon outage/restart passed:
-original frame retained, then compatibility host-image fallback, zero sync errors. Shared mode
-renegotiates after device/game restart. Next: real game A/B and B580 measurement.
-
-The GPU window option now selects `NR_GPU_ONLY=1`: unsupported or failed shared
-processing retains original GPU frames without legacy pixel capture/processing.
-Final GPU reductions return compact statistics. See `notes/gpu-only-20261014.md`
-for strict failure checks and complete 1080p/1440p present measurements.
-
-Separately checked remote `improve-e4m3` at `40cb8e5` on 101.9150: zero mismatches
-over 1,114,875 inputs, exact full/changed network heads, GEMM/frame regressions
-pass. Alternating warmed contexts showed about 9.6% slower paired time at 320
-and neutral 720p. Full 1080p/1440p remain exact but are about 10.1%/22.4% slower.
-Its source is retained on this branch; keep the compile-time experiment off.
-
-The owner authorized this branch publication; later push/merge/release needs confirmation.
-
-## On Linux at d29b665: green after a test fix, the speed test, and the warm-up (2026-10-14)
-
-`make test` stopped at `test_setup_proxy.py`: `Profile` resolves the interpreter, and here
-`sys.executable` is a symlink (`python3` -> `python3.14`). The test now compares with the
-profile's. Then: `make test` green in both memory modes (578), CTest 48 of 48, test-proton, and
-the Windows tool suites (147, 19 skipped).
-
-`speed_test.py` here, network / round trip, ms. At 0.4: 640x360 23/25.7, 800x450 23/27.3,
-1280x720 29/35.5, 1920x1080 52/63.0. At 1.0: 40/44.6, 61/67.0, 140/152.0, 273/298.9. Windows'
-table of 10-12 matches up to 800x450; at 1.0 from 1280x720 it is slower (170, 384).
-
-`live_rates.py`'s new warm-up of 25 frames (PR #13) reads this laptop slower: with `--warmup 3`
-the table is 10-07's (640x360 at 0.5 26-28 ms, 854x480 31-35), with 25 29-34 and 38-45; 512x288
-and 1080p do not move. Not the code: compare with the README table at `--warmup 3`.
-
-## Small E4M3 probe; remaining work deferred (2026-10-13)
-
-Owner requested the cheapest task now and the rest after limits reset.
-Branch improve-e4m3 now also has a compile-time NR_E4M3_MAGIC experiment, default 0,
-and frame_replay --shader-dir for variant comparisons. 1,114,875 probe inputs
-match, and complete-graph original/changed head hashes match at 320x320 and 720p.
-Short local Linux timings improve 3–5%, including reversed 320 ordering.
-Candidate GEMM-contract and frame-execution regressions pass. This is not a B580,
-Windows or game-FPS measurement; default activation awaits independent-driver checks.
-See notes/improve-e4m3-probe-20261013.md for reproduction and the queued work:
-B580/Windows E4M3 validation, FFN+attention C32 fusion, GPU pre/post with
-shared game resources, then dependency-driven multi-block execution.
-
-## PR #13 reviewed on Windows (2026-10-13)
-
-PR #13 is merged into remote `master` at `d29b665`. The independent continuation branch
-also contains Claude's local `2658b24`, `471de6e` and `f8afcf4`; those three commits remain
-included in this publication. Combined checks pass: device/queue selection, graph execution, CLI installation,
-raw geometry, 75 wizard tests (one platform-specific skip), and the WPF self-test.
-
-The continuation reviewed `Paimonshen/perf-recheck` at `1fc7aa7`, rebased onto `041ef3b`.
-The MSVC build reaches all six stages. The raw writer avoids per-image ImageMagick and
-supports sampling; its measured overhead must still be reported separately from inference.
-
-Two corrections were required before integration:
-- raw images now carry their own geometry. Readers reject interrupted metadata publication,
-  including a same-area resize in a legacy dump directory. PNG conversion verifies the image
-  before removing raw data, and retains legacy sources whose original geometry is ambiguous;
-- CLI proxy installation reuses the window's ownership, placement, rollback and UTF-8
-  environment functions. Reinstallation preserves the original loader, foreign or changed
-  files are refused, and GUI Remove NR recognises the CLI installation. Multiple executables
-  require `--exe`; 32-bit games use the window.
-
-Checked in an independent checkout: full MSVC build and 44 CTest entries; the documented
-`gpu_window_attention` driver hang is excluded as `docs/WINDOWS.md` requires. MinGW builds
-successfully, and seven relevant native/GPU/installer CTest entries pass. The final metadata
-failure regression and raw PNG checks were repeated after the last correction. No game or
-inference-speed benchmark is claimed by these regression tests.
-
-## The network's GPU, frame pacing in the window, and the daemon's queue (2026-10-12, later)
-
-At the owner's word ("можем пушить") `196c8d1..041ef3b` went to `windows` and `master`, after
-the Windows suites and the window's self-test ran again at the head. Then the first three steps
-toward more frames on desktop cards that the owner agreed to, from a look at the other ports
-(AMD's among them: the network before the upscaler, an asynchronous residual, the game's own
-device, a high-priority queue). Local, not pushed:
-
-- **`2658b24` The network runs on a GPU that can run it.** `xmx_init` took the loader's first
-  device. It now takes one with the float16 8x16x16 cooperative-matrix shape at subgroup scope
-  and `VK_KHR_workgroup_memory_explicit_layout`, a discrete card first; an older Intel iGPU, a
-  card of another vendor or a virtual device listed first is passed over. Frames reach the
-  daemon through host memory, so a game on another card can have its network on the Arc. With
-  none able, the loader's first non-CPU device, as before, and the log says what it lacks.
-  `XMX_DEVICE` names one, by index or part of its name; with several devices the daemon's log
-  lists them. `src/gpu/test_device_pick.py` puts sixteen machines in front of `xmx_pick_device`.
-- **`471de6e` Frame pacing in the setup window**: Asynchronous (`NR_LAYER_ASYNC`) and "Network
-  on" every 1st-4th frame (`NR_LAYER_LIVE`), on the NR controls tab. The profile keeps them; a
-  bridge action, `pacing`, rewrites only those two lines of an installed game's `nr-env.txt`,
-  which the layer reads when the game starts. vkcube's stderr shows the layer taking both.
-- **The daemon's queue**: `XMX_QUEUE_PRIORITY` (low to realtime, `VK_KHR_global_priority`) and
-  `XMX_QUEUE_FAMILY=compute` (the family without graphics: Intel's compute engine) or a number.
-  Off by default, since they bought nothing here: below.
-
-**Mortal Kombat 11 through Steam, 1280x720, render scale 0.4 (network 512x320), Arc 140V on
-mains, 101.9033, quiet before and after; processed frames a second over 40 s, two runs each,
-the configurations interleaved** (`nr-game\queue-game-series.ps1`):
-
-| | default | high | compute | compute + high |
-| --- | --- | --- | --- | --- |
-| in step | 19.75, 19.90 | 19.65, 19.22 | 19.59, 19.47 | 19.42, 19.79 |
-| asynchronous | 19.47, 19.72 | 19.05, 20.12 | 19.07, 19.12 | |
-
-Nothing outside the spread of single runs. The daemon's frame is 50 ms, 33 of them the network
-on the GPU and the rest host passes, and in step the game waits on the present rather than
-competing; asynchronous overlaps only the game's few milliseconds. Without a game the speed
-test gives the same times in all four queue configurations. A discrete card, where the game's
-frame and the network's are closer, is where asynchronous and the priority could show: the
-next measure belongs to a B580. (The daemon logs a frame's time to 10 ms, so its median reads
-40 or 50 for the same 45; the processed rate is the measure.)
-
-**Next on Linux:** `python3 src/gpu/test_device_pick.py` — ANV must report the shape (else the
-daemon now says "trying device 0 ... although it lacks"), an llvmpipe in the list is passed
-over, and above medium `XMX_QUEUE_PRIORITY` is likely refused without `CAP_SYS_NICE`, which the
-test accepts and the log says. `make test` for the rest. The window is Windows' alone.
-
-## A speed test on a tester's first run, kept for their reports (2026-10-12)
-
-The owner asked for a short measure of frame time on a first run, saved where reports gather it,
-for the user to be told what NR does at best, at render scale 1.0 as well as 0.4, and for the
-window to say that capturing the frame and the rest take time too. `2afb9e8`, `7cc281e` and
-`c15f491`, pushed 10-12:
-- `src/bench/speed_test.py` starts the daemon as the layer does and sends it synthetic frames,
-  one connection a frame, at 640x360, 800x450, 1280x720 and 1920x1080, at 0.4 and at 1.0. For
-  each it keeps the network's own time (the middle of the daemon's `gpu in+run+out`, from its
-  log for the same frames) and the round trip a game waits for. Fifteen frames after five a
-  case: nine after three left 1280x720 at 38 ms in one run and 50 in the next.
-- The setup window runs it after a first installation, and from a **Speed test** button. It is
-  refused while a game with NR runs. The window shows the network's time and the frame rate it
-  allows, a line a render scale, in three languages, and why a game's frame rate is lower.
-- `work/speed-test.json` holds it with the GPU, driver, CPU, memory and power; Save report
-  carries it whole, round trips included, and the status a summary.
-
-On the Arc 140V, on mains, network and round trip, ms:
-
-| window | 0.4 | 1.0 |
-| --- | --- | --- |
-| 640x360 | 23 / 26.9 | 41 / 44.5 |
-| 800x450 | 24 / 28.2 | 66 / 71.4 |
-| 1280x720 | 31 / 39.1 | 170 / 182.4 |
-| 1920x1080 | 54 / 69.8 | 384 / 408.6 |
-
-About 22 s; at 0.4 alone three runs in a row stayed within 5 %. Through the window by UI
-Automation, from a release built at `c15f491`: Install NR, then the test, then its lines.
-
-**Next on Linux:** `speed_test.py`'s Unix-socket arm has never run. One `python3
-src/bench/speed_test.py` in a checkout with weights, set beside `live_rates.py`'s table.
-
-## Issue #12, further: the layer runs in the tester's DOOM and starts no daemon, silently (2026-10-12)
-
-The tester's game is not elevated, by Task Manager, and elevated it fails the same way; the report
-names `DOOMx64vk.exe`, the right executable. So the cause is not either one below. Windows' loader
-said what it did when asked: the game started from cmd with `VK_LOADER_DEBUG=error,warn,info,layer`
-and `2> file`, which works for a windowed game too (the loader links its C runtime statically, so
-its stderr is the handle the process starts with). Checked here on a console and a windowed probe
-(`nr-game\loader-log-test.ps1`, `loader-log-gui-test.ps1`). Their 6316 lines show:
-- loader 1.4.350 honours `VK_LAYER_PATH`, inserts `VK_LAYER_dlssnr_intel` into the instance and
-  the device, and the layer runs: `[nr_layer] active; socket=\\.\pipe\nr_windows_d716f055`, a
-  1920x1080 swapchain;
-- **no daemon was started and nothing said why.** Once `NR_LAYER_SPAWN` asks, `ensure_daemon` had
-  three quiet ways out: no `NR_LAYER_SOCKET` (it was there), an `NR_LAYER_SPAWNED` mark, or a
-  daemon already answering on the socket. No `no daemon at` lines: NR was off in that run;
-- above ours three implicit layers (two OBS hooks, WeGame's and GamePP's, and CapFrameX's
-  overlay), and broken ones: Epic's overlay, Bandicam's 32-bit one, and
-  `D:\DLSS5-Demo-Bundle`, geladons/DLSS5_INTEL in HKCU, whose library is under
-  `C:\Users\AI\Desktop\...`. That port talks to its daemon over TCP 47990 and never sets
-  `NR_LAYER_SPAWNED`.
-
-Asked the tester for `set NR` and `set VK` and whether a `python.exe` of ours runs (10-11).
-
-**`0a4ce03`, pushed 10-12:** each of the three ways out now says so on stderr (`[nr_layer] no daemon
-started: ...`), so the same capture names it; `NR_LAYER_SPAWN` unset stays silent. The proxy takes
-an inherited `NR_LAYER_SPAWNED` out of the game's own process. `VK_LAYER_PATH` names the manifest
-itself, and the loader stops reading the installation's records as manifests. Tests:
-`test_spawn_reasons.py` (new, CTest on Windows) makes one instance through the layer for each
-way out and for a start, with a stand-in daemon; `test_vulkan_proxy.py` checks the mark. From the
-release's ZIP: Mortal Kombat 11 539 frames and Dead or Alive 5 850 through Steam's Play button,
-none rejected, folders as before; the probe's loader log shows the one manifest searched.
-
-**Two things found on the way.** Mortal Kombat 11 showed four daemon processes on 10-09, likely
-two daemons, since a virtual environment's python.exe starts the interpreter as a second process.
-DXVK makes more than one instance, and one made before the first daemon's pipe exists would start
-its own. Not checked; both would end with the game, the second costing memory. And `D:` ran out of
-space mid-test: the release roots in `D:\NRonWindows\rel` each hold ~440 MB of extracted weights.
-
-**Next on Linux:** `make test` and CTest for the layer's new lines (`nr_layer.c`'s POSIX arm
-prints the same three reasons). Nothing else Linux runs changed.
-
-## Raw dumps and performance measurements (2026-10-10; reviewed 2026-10-13)
-
-PR #13 replaces per-frame ImageMagick encoding with raw RGB capture, adds sampling and
-converts captures afterwards. The original measurements and their methodology are in
-[windows-dump-measurements-20261010.md](windows-dump-measurements-20261010.md). Equal rounded
-medians cannot establish zero dump overhead; compare throughput over matched steady-state
-intervals and report frame-time percentiles. The review adds per-frame geometry so resizing
-cannot silently reshape older raw captures, and validates PNGs before removing raw files.
-
-## The first Windows releases and tester diagnostics (2026-10-09)
-
-The v0.0.1/v0.0.1.1 release record, elevation tests and original issue #12 diagnosis are
-preserved in [windows-first-releases-20261009.md](windows-first-releases-20261009.md). The
-later issue #12 entry above supersedes the original inference that the layer never loaded.
-
-## NR whatever starts the game: a vulkan-1.dll beside it, and the setup window without Steam (2026-10-09)
-
-The owner could not install NR for Mortal Kombat Komplete Edition, a game outside Steam: a Steam
-configuration left by an earlier test locked the profile (`steam_profile_lock`). The request
-that followed was for every game started outside Steam or from another store. The layer is
-found and configured through environment variables, and only setup's own Launch game, or Steam
-launch options naming its wrapper, used to give them.
-
-**`598ccbc`: a `vulkan-1.dll` beside every game** (`src/layer/nr_vulkan_proxy.c`). Windows looks
-for `vulkan-1.dll` in the executable's folder before System32, for a game's own import and for
-DXVK's `LoadLibrary` alike. In `DllMain` the proxy reads `dlss-nr\nr-env.txt` and, in the process
-of the executable named there (compared by volume and file index, not by spelling), sets those
-variables and records the launch in setup's `launch-state.json`. Every one of the loader's 265
-exports goes on to System32's loader, loaded on the first call and outside `DllMain`, or to the
-game's own copy, which install sets aside. `vulkan_proxy_gen.py` writes the wrappers from
-`vulkan-1.exports` and the SDK's prototypes; x86 exports undecorated stdcall names through a
-`.def`. `DISABLE_NR_PROXY=1` turns it off. `build_win.bat` builds both architectures, releases
-carry them, and `layer_vulkan_proxy` is in CTest (Windows).
-
-**Games through the proxy, nothing set in Steam**, setup's backend as its buttons call it, NR on
-for 40 s (release built from `cd150e7`):
-
-| game | started by | API | layer | NR frames | rejected | folder after Remove NR |
-| --- | --- | --- | --- | ---: | ---: | --- |
-| Mortal Kombat 11 | Steam's Play button | DX11 through DXVK | x64 | 370 | 0 | as before |
-| Dead or Alive 5 Last Round | Steam's Play button | DX9 through DXVK | x86 | 783 | 0 | as before |
-| Mortal Kombat Komplete Edition | its own executable | DX9 through DXVK | x86 | 586 | 0 | as before |
-| DOOM (2016) | Steam's Play button | Vulkan | x64 | 388 | 0 | as before |
-
-Every daemon ended with its game, and Steam's RunningAppID was 0 after each. Through the window
-itself, from the unpacked `7f9c364` ZIP and clicked by UI Automation: Komplete Edition from its
-executable 1256 frames, Mortal Kombat 11 from Steam's Play button 766, none rejected. With the
-game in front and nothing clicked, the window started no process in 40 s. Komplete Edition's own
-ASI loader rewrites `asiloader.log` at every start; it was put back from a copy.
-
-**Found on the way, `cd150e7`:**
-- Status never saw the game: the proxy writes its launch record into `work/windows-wizard` and
-  makes no folder, and nothing had made it yet. Install makes it now.
-- DXVK opens its first log before it loads `vulkan-1.dll`, so before `DXVK_LOG_PATH` is set, and
-  in the folder the game was started in. Steam starts Mortal Kombat 11 in its root, above the
-  executable, and Remove NR left `MK11_dxgi.log` there. The proxy lists that folder in
-  `dlss-nr\start-folders.txt`, and Remove NR deletes the DXVK logs written there after the
-  installation (by time, with 2 s for FAT).
-
-**Two more things the games showed:**
-- Once DXVK frees its first instance the proxy can be unloaded, and a later
-  `LoadLibrary("vulkan-1.dll")` gets the loader of that name already in the process, System32's
-  (MK11's module list, and a probe with the DLL search path). So all the proxy does, it does at
-  its first load.
-- Steam starts DOOM's `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the game's renderer is
-  Vulkan (`r_renderAPI 1`); the proxy works in the second.
-
-A game that loads System32's loader by its path, or keeps its DLL search to System32, never loads
-the proxy; Enable NR then warns that the game runs without the layer, and Launch game still
-starts it with the variables. A game with anti-cheat may refuse a DLL beside it: the quick start
-says to test single-player games offline.
-
-**`7f9c364`: the setup window without Launch mode, Steam App ID, Configure Steam and Restore
-Steam.** Launch game starts the game directly. Install NR now returns Steam launch options an
-earlier setup left, as Remove NR does, and they no longer lock the profile.
-`configure_steam`, `restore_steam` and the wrapper stay in `windows_launch.py` for those leftovers;
-they can go, with their tests, once no release with Configure Steam is in testers' hands. The
-window's self-test: 55 named controls, 131 keys in English, Russian and Spanish. Docs: the release
-quick start says to start the game as usual, and `docs/WINDOWS.md` records the proxy.
-
-Before these, from the owner's own session with the window: `925c21f`, Remove NR returns Steam's
-launch options itself and Enable NR says when NR cannot reach the game; `9d472ba`, the window
-compact, with a dark theme, sliders on the arrow keys, and each control's description once, as
-its name's tooltip.
-
-The ZIP is `D:\NRonWindows\rel\dlss-nr-windows-7f9c364-x64.zip` (256 files, 18.5 MB, SHA-256
-`0172a087…2aa2`), with no weights and no NVIDIA DLL. `9f2070c` to `7f9c364` were pushed the same
-day, and `7f9c364` is v0.0.1 (the entry above).
-
-**Next on Linux:** the Windows tool suites at the head: `test_windows_wizard.py` and
-`test_release.py` changed, and `test_vulkan_proxy.py` is new (it skips off Windows). Nothing
-Linux builds or runs changed: the proxy, `build_release.py`'s part and the window are Windows'.
-
-## The setup window through two games, and a daemon that ends with its game (2026-10-08, evening)
-
-The window clicked through by UI Automation, from a release unpacked from its ZIP (`9f2070c`),
-Steam mode, NR on for 40 s:
-
-| game | API | layer | NR frames | rejected | Restore Steam after the game closed | game folder after Remove NR |
-| --- | --- | --- | ---: | ---: | --- | --- |
-| Mortal Kombat 11 | DX11 through DXVK | x64 | 784 | 0 | at once | as before (10 409 entries) |
-| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 809 | 0 | at once | as before (963 entries) |
-
-Install took the weights from the user's own DLL. Configure Steam and Remove NR went through
-their dialogs. With the game in front and nothing clicked, the window started no process in 40 s.
-
-**Found on the way: Steam kept a closed game running, because of NR's daemon.** The layer starts
-the daemon from inside the game, and Steam counts every process a game starts as the game. After
-MK11 closed, RunningAppID stayed 976310 for as long as the daemon ran, and cleared 2 s after it
-was stopped. So Restore Steam refused ("A Steam game is running"), and the model stayed in memory.
-The backend's game runs never showed it, because their script stopped the daemon first.
-`9f2070c`: on Windows the layer puts the game's process id in `NR_LAYER_SPAWNED`, and the daemon
-ends when that process does (`nr_daemon.end_with_game`). A daemon started by hand runs on as
-before. vkcube through the MSVC layer: 90 frames, and the daemon gone 0.1 s after it. CTest 39 of
-39, on MinGW and on MSVC's DLLs (`layer_spawn_exit` is new).
-
-**Two traps in driving the window this way:**
-- Any UI Automation call into the WPF window brings it to the front, even a tab selected (checked
-  with a stand-in window in front). After "Enable NR" is pressed through UIA, the window is in
-  front and polls, as it is after a user's own click. Only a stretch with nothing clicked shows
-  whether polling stops behind the game.
-- The message boxes' Win32 buttons reach UIA from PowerShell as panes with no patterns, so the
-  test sends the dialog WM_COMMAND IDOK. A screen lock does not stop UIA, but a window that was
-  active when the screen locked stays active, and polls.
-
-**`geladons/DLSS5_INTEL`** (MIT) ported this tree's layer and credits it. It has what we lack on
-Windows:
-- a `dxgi.dll` proxy for DX12, live on GTA V Enhanced. Present is hooked by patching the swapchain's
-  vtable entries in place, because GTA V kills a process whose swapchain vtable pointer changes.
-  BattlEye blocks a `dxgi.dll` beside the game;
-- a PE scan that reads the delay-load directory (UE5 loads `d3d12.dll` that way);
-- a pause hotkey.
-
-Its DX9 install is `d3d9.dll` alone, because DXVK's `dxgi.dll` crashed GTA IV there. The proxy is the
-route to DX12 here, after the release.
-
-**Next on Linux:** nothing runs differently there, since the POSIX layer still marks its child
-with 1. But the Linux release's `launch-nr.sh` sets `NR_LAYER_SPAWN=1` too, and Steam's reaper may
-keep a game running while its daemon lives. Worth a look through Steam. If it does, the marker can
-carry `getpid()` and the daemon watch it with a pidfd, as the Windows side now does.
-
-## On Linux at 0513b60: green, the Linux binaries unchanged, and the DXVK pin is DXVK's (2026-10-08)
-
-`make test` green in both memory modes (571), CTest 45 of 45 with no warnings, `make test-proton`
-loads both layers. The five Windows tool suites pass here too (126 tests, 17 skipped for Windows).
-`nr_image.c` and `nr_layer.c` compile to the same machine code as at `5fec502`, so the speeds
-measured there stand. The Linux release, assembled and installed: metadata `"dxvk": null`, the
-host library with F16C, and its layer and daemon answered 124 presents. `dist-tools/dxvk.json`
-matches the archive on DXVK's GitHub release (18 041 512 bytes, the same SHA-256), and
-`fetch_dxvk.py --archive` runs on Linux too.
-
-## The Windows release, prepared: a lighter setup window, Spanish, DXVK and 32-bit games, Remove NR; no DirectX 12 (2026-10-08)
-
-Seven commits on `windows` after `f1175bb`, for the first GitHub release. Arc 140V, 101.9033.
-
-**The setup window's load** (`aed08e5`), measured with a stand-in process as the launched game:
-- The hidden busy bar's indeterminate animation never stopped: 5.9 % of a core with the window
-  idle. It animates only while an action runs: 0.2 %.
-- WPF draws in software: 30 MB of GPU memory and 45 MB of RAM less (179 -> 130 MB).
-- The status check every 5 s started Python, and once a game was launched Python started a
-  PowerShell for WMI's whole process list: 0.45 s of CPU in four processes each time. The game is
-  found by its PID now (0.11 s in two), and the window checks only while it is in front.
-
-**Spanish** (`8a50654`): the third language, every string; the self-test takes its languages
-from the window's list.
-
-**DXVK and 32-bit games, and Remove NR** (`1980e5e`, `2bf9d6f`, `4d21118`, `b8a8a65`):
-- A release carries `nr_layer32.dll` and DXVK 3.1.1, pinned by version and SHA-256 in
-  `dist-tools/dxvk.json` and fetched by `scripts/fetch_dxvk.py` (`deploy.bat --release` runs it);
-  its zlib licence is `dxvk/LICENSE` and in NOTICE.
-- The window takes a 64- or a 32-bit game and installs the layer for its architecture. For
-  DirectX 8-11 it puts DXVK beside the game; a game file of the same name is set aside in
-  `dlss-nr/game-backup`, recorded in `dlss-nr/game-files.json`.
-- **Remove NR** deletes NR's files and puts the set-aside ones back; a file changed since is left
-  and named; it waits for Restore Steam. DXVK logs into the release's `work/logs` for NR
-  launches; Remove NR deletes only the DXVK logs that appeared after the installation.
-- The layer started its daemon with `DETACHED_PROCESS`. With a virtual environment's python.exe,
-  which Prepare Python makes, that put a console window over the game: DOOM, full screen, lost
-  the focus and stopped after 16 frames. `CREATE_NO_WINDOW` now.
-- Restore Steam waits up to 15 s for Steam's RunningAppID to clear after the game has gone; it
-  refused right after every exit before.
-
-**DirectX 12 is not offered.** VKD3D-Proton 3.0.1 with Mortal Kombat 1: Windows' DXGI gave
-E_NOTIMPL creating the swap chain; DXVK's DXGI with Windows' D3D11 crashed in d3d11; all of DXVK
-crashed in the game after it asked its D3D11 device for ID3D12Device. Intel's Vulkan driver has
-the extensions VKD3D-Proton needs (mutable descriptors, descriptor buffers, GPL), so the stop is
-in the D3D11/DXGI interplay, not in the driver.
-
-**Games, through the release, launched by Steam, NR on for 60 s:**
-
-| game | API | layer | NR frames | rejected | game folder after Remove NR |
-| --- | --- | --- | ---: | ---: | --- |
-| DOOM (2016) | Vulkan | x64 | 423 | 0 | as before |
-| Mortal Kombat 11 | DX11 through DXVK | x64 | 942 | 0 | as before |
-| Dead or Alive 5 Last Round | DX9 through DXVK | x86 | 1040 | 0 | as before |
-
-These ran the setup window's backend as its buttons call it (`scripts/windows_wizard.py`).
-Through the window itself, clicked by UI Automation with Mortal Kombat 11, the fields, the API and
-launch-mode choices and Install NR worked and put DXVK beside the game; the screen locked (04:25)
-before Configure Steam, so that run stopped there and the installation was removed through the
-backend. The window's polling behind a real game is still to be watched; with a stand-in it
-started nothing while minimised. Captures of DOOM and MK11 with NR on are in
-`D:\NRonWindows\nr-game\release-tests` (local, not for publishing).
-
-**Cleaned up on the way:** Codex's DOOM installation of 10-06 (`DOOM\dlss-nr`, from before there
-was a Remove) is in `D:\NRonWindows\nr-game\backups`; Dead or Alive 5's Steam launch options still
-ran Codex's test wrapper of 10-04 and are empty again, as before that test. The DirectX 12 test
-overwrote Mortal Kombat 1's `vkd3d-proton.cache` (13.5 MB from Proton); Proton rebuilds it.
-
-**Next on Linux:** `make test` and CTest at the head. `scripts/build_release.py` and
-`test_release.py` changed; the Linux release path is untouched, and the rest is Windows-only.
 
 ---
 

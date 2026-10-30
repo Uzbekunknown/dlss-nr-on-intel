@@ -212,7 +212,7 @@ def align(value, multiple):
 # Intel's Windows driver, VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS: where the GPU image path was
 # proved byte for byte against the CPU's (notes/gpu-frame-path-20261013.md). Mesa lowers
 # OpFDiv to a reciprocal and a multiply, and there preparation lands one float32 ulp off and
-# composition up to 0.00049 (HANDOFF, 2026-10-14), so the path's parity tests hold the bytes
+# composition up to 0.00049 (HANDOFF archive, 2026-10-14), so the path's parity tests hold the bytes
 # on this driver alone. The path is off by default on every driver.
 INTEL_WINDOWS_DRIVER = 5
 
