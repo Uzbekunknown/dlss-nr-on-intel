@@ -413,6 +413,11 @@ foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsT
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
+# NR's icon, which tools\make_icon.ps1 draws when the setup host is built: beside this window in a
+# release, in work\ in a checkout. The window and its taskbar button show it.
+foreach($icon in @((Join-Path $script:Root 'nr-setup.ico'),(Join-Path $script:Root 'work\nr-setup.ico'))) {
+    if(Test-Path -LiteralPath $icon) { try { $script:Window.Icon=[Windows.Media.Imaging.BitmapFrame]::Create([Uri]::new($icon)) } catch { }; break }
+}
 $script:Window.Height=[Math]::Min(700,[Windows.SystemParameters]::WorkArea.Height-36)
 $script:Window.Width=[Math]::Min(780,[Windows.SystemParameters]::WorkArea.Width-36)
 
@@ -1829,6 +1834,7 @@ if($SelfTest) {
     Show-AboutVersion
     if($script:Ui.AboutVersion.Text -notmatch '0\.0\.2' -or $script:Ui.AboutVersion.Text -notmatch '0123456') { throw 'About does not show the version and build' }
     $script:ReleaseInfo=$kept
+    if((Test-Path -LiteralPath (Join-Path $script:Root 'nr-setup.ico')) -and -not $script:Window.Icon) { throw 'The release has an icon and the window does not show it' }
     Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. '+($languages -join '/').ToUpper()+' coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
     exit 0
 }

@@ -158,6 +158,8 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
     ]
     if windows:
         files.append(root / "work/NR-Setup.exe")
+        # Its icon, which tools/make_icon.ps1 draws beside it, for the setup window as well.
+        files.append(root / "work/nr-setup.ico")
         # The layer a 32-bit game loads; the daemon stays 64-bit.
         files.append(root / "work/nr_layer32.dll")
         # vulkan-1.dll beside each game, which gives it NR's environment however it starts.
@@ -206,6 +208,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
             shutil.copy2(root / "dist-tools" / name, stage / name)
         if windows:
             shutil.copy2(root / "work/NR-Setup.exe", stage / "NR-Setup.exe")
+            shutil.copy2(root / "work/nr-setup.ico", stage / "nr-setup.ico")
             shutil.copy2(root / "work/nr_layer32.dll", stage / "nr_layer32.dll")
             for name in PROXIES:
                 shutil.copy2(root / "work" / name, stage / name)

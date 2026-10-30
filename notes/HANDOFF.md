@@ -190,6 +190,10 @@ under that date. When an item is done, strike it through here and name the commi
   (below, 10-16).
 - A Vulkan or DirectX 8–11 game that runs elevated, or any with UAC off, never gets the layer; the
   HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
+- The panel inside a DirectX 12 game: the next release after 0.0.2, the owner's call (10-31). It
+  needs DXGI's Present (a vtable hook from the proxy, as the cut hooks D3D12's classes), ImGui drawn
+  with D3D12, and care with XeSS frame generation, which puts its own swapchain in front. Until
+  then the setup window's NR controls set a DirectX 12 game, the network live (`9ea08ad`).
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
   out as 2.0's. Below, 10-30 evening.

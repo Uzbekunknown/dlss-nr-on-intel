@@ -51,6 +51,7 @@ class ReleaseTests(unittest.TestCase):
                      "libnr_layer.so", "libxmx.so", "libnr_image.so"):
             self.write("work/" + name, name)
         self.write("work/NR-Setup.exe", "own x64 GUI host fixture")
+        self.write("work/nr-setup.ico", "the drawn icon fixture")
         self.write("work/nr_layer32.dll", "nr_layer32.dll")
         for name in release.PROXIES:
             self.write("work/" + name, name)
@@ -125,6 +126,8 @@ class ReleaseTests(unittest.TestCase):
         release.assemble(self.root, self.target, "windows")
         self.assertTrue((self.target / "NR-Setup.cmd").is_file())
         self.assertTrue((self.target / "NR-Setup.exe").is_file())
+        # The icon the window shows, beside it.
+        self.assertEqual((self.target / "nr-setup.ico").read_text(), "the drawn icon fixture")
         self.assertTrue((self.target / "windows-wizard.ps1").is_file())
         for name in release.WINDOWS_TOOLS:
             self.assertTrue((self.target / "scripts" / name).is_file())
