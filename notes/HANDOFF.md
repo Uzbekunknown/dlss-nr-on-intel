@@ -29,12 +29,17 @@ When the dated entries grow long, move the older ones into the archive the same 
   owner's word, as a Windows-only release, and the owner made it the latest release the same
   day so that the repository's front page shows it. `master` still holds 0.0.1.2. Linux users
   build from source (README).
-- **Branches.** `master` holds everything released and since (`d29b665`, PR #13). `windows` is the
-  Windows line, merged into `master`. `improve-e4m3` is where new work goes, with `master` merged in
-  on 10-15 (`7e7dfb5`): Codex's experimental GPU-only frame path on Windows and an E4M3 rounding
-  experiment, both off by default, and what 0.0.1.2 is built from. The owner asked Paimonshen to open his in-game menu (#16) against it.
-  `improve-int8` is kept for INT8 experiments; Codex's own branches are Codex's. `newnr` is the
-  preset B work, made from `dx12` on 10-17, on GitHub since 10-18 at the owner's word.
+- **Branches**, on GitHub since 10-30:
+  - `master`, the default: 0.0.1.2 (`2f90064`);
+  - `newnr`: everything since, with PR #20 merged at `097d6d4`;
+  - `media`: the README's pictures;
+  - `improve-int8`, kept for INT8 experiments.
+
+  The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
+  `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
+  `master` or `newnr`, except one merge commit and two of Codex's BGRA8 experiments. A bundle of
+  all seven is in `D:\NRonWindows\backups` on Windows. `dx12` lives on locally, ahead of `newnr`,
+  until it goes back into it.
 - **DirectX 12 on Windows, before the upscaler** (branch `dx12`, 10-16): a `libxess.dll` in front
   of Intel's hands the daemon the frame XeSS is about to upscale, in the game's own D3D12, and
   adds NR's change to it. It runs in Hogwarts Legacy. The trail behind moving things was found
@@ -50,7 +55,8 @@ When the dated entries grow long, move the older ones into the archive the same 
   under the game's frame generation too (below, 10-28 later). A daemon restarted under the game,
   for another preset, is taken back by the proxy 5 s later, on a new fence (below, 10-28 evening);
   in Hogwarts A to B left 5.5 s without NR, most of it the new daemon's start, and the owner saw
-  NR come back.
+  NR come back. Since 10-30 a preset changes in the running daemon instead, as the in-game panel
+  changes it, and in Hogwarts NR stayed on through A to B and back (below, 10-30).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -151,8 +157,9 @@ under that date. When an item is done, strike it through here and name the commi
   yet in a game. Below, 10-18, Windows.
 - Holding the GPU's clock up on Windows, as libxmx does on Linux: no per-process hint found.
   Below, 10-18, Windows.
-- PR #20 (Paimonshen, 10-16): the in-game settings menu on Insert, in four languages, with Dear
-  ImGui vendored, against `master`. The owner will take it up later.
+- ~~PR #20 (Paimonshen, 10-16): the in-game settings menu on Insert, in four languages, with Dear
+  ImGui vendored, against `master`~~: merged into `newnr` on 10-30 (`097d6d4`), after the last
+  fixes were made on its branch by us; issue #16 closed.
 - ~~The unmerged window attention hangs Intel's Windows driver from 32 windows up~~: found and
   avoided on 10-15, and `gpu_window_attention` is in CTest on Windows again. Below, 10-15;
   phase71.
@@ -206,6 +213,53 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12 takes PR #20's live network swap, and `newnr` goes into `dx12` (2026-10-30, branch `dx12`)
+
+**`newnr` into `dx12`, not yet the other way.** PR #20 is merged into `newnr` (`097d6d4`, 10-30):
+the in-game panel, and a daemon that changes its network between two frames without dropping the
+game's GPU imports. `dx12` takes it (`a4fc09a`, then `568cba3`, the Windows make naming
+`nr_file.c` and `nr_focus.c` once) before it goes back into `newnr`.
+- `notes/HANDOFF.md`: both lines added dated entries in one place; `dx12`'s, the newer, go above
+  PR #20's.
+- A conflict git could not see: PR #20 took `max_pixels` out of `unpack_packet` and
+  `GPUSharedTransport`, and `dx12`'s protocol 3 tests still passed it. They call the new
+  signatures now; no case relied on the ceiling.
+- Checked on the identical tree, built as a trial merge in a scratch clone. MinGW CTest with the
+  layer off and the GPU smoke tests all pass, `gpu_win32_d3d12` and `_network` among them; with
+  the layer on only the four POSIX-only tests fail, as on `newnr`. MSVC: `build_win.bat` with the
+  three known C4068, the nine menu fixtures, `build_xess.bat` and `test_nr_xess`, and CTest's
+  Python entries.
+
+**A preset changes in the running daemon.** The daemon applies a `preset` from its settings
+preview while the process named in it runs. The panel writes that preview in a Vulkan game; for
+the DirectX 12 path the test script now writes it, owned by the game's process
+(`hogwarts-xess-test.ps1 -Phase preset -Preset B`, outside the repository). The model is swapped
+between two frames, the session and its D3D12 imports stay, and the proxy opens no new session.
+`-Phase daemon`, a new daemon and the proxy's new session 5 s on, stays for a daemon that died.
+- The orbit recording (`work/tools-win/run_replay_swap.py`: A, then B after 30 frames, a frame
+  every 200 ms): no frame went unanswered. 0.20 s passed from the last A answer to the first B
+  one, the replay's own interval; A answered 31 frames and B 265, every written frame but the
+  first carries its answer, and the proxy logged no new session. The restart of 10-28 left 5.1 s.
+- **Hogwarts**, the owner playing (1280x720, `render_scale` 0.5, network 640x384, 101.9150, on
+  mains). Every frame answered on its own frame, none declined; the game waits for the swap
+  about a second, and the owner saw NR stay on (10-28: 5.5 s without it):
+
+| switch | the model's load | the five seconds around it | then |
+| --- | --- | --- | --- |
+| A to B | 0.6 s | 63 frames answered, against about 76 | B, 21 a second, the daemon's frame 44 ms |
+| B to A | 1.2 s | 82 frames in 6.0 s | A, 15 a second, 63 ms |
+
+- `work/` was rebuilt at the merged head first: PR #20 moved `image_compose.comp` and
+  `image_preprocess.comp` to a two-dimensional workgroup grid, which gives the same index below
+  4 194 240 pixels.
+
+**Next on Windows:** `dx12` into `newnr`, a fast-forward now, and both to GitHub at the owner's
+word, after Linux. Then DirectX 12 through the release: the setup window putting the proxy beside
+a game's XeSS.
+**Next on Linux:** `make test` in both memory modes and CTest at `dx12`'s head. Protocol 3
+(`455a6fe`), step 3 (`04c4817`) and `330ef95` have never run there (Open items), and the merge
+puts PR #20's daemon beside them.
 
 ## DirectX 12: a daemon restarted under the game is taken back, and the fence a dead daemon leaves at UINT64_MAX (2026-10-28, evening, branch `dx12`)
 
@@ -544,6 +598,7 @@ replay, and the game with the owner.
 **Next on Linux:** `make test` in both memory modes, and CTest. `libxmx.c` changed in its Win32
 arms and in `external_ownership`'s signature, and it now reads the device's LUID everywhere;
 `test_gpu_transport.py` has the protocol 3 cases.
+
 ## PR #20 narrowed to the panel: one Windows-only file, one keyboard reader (2026-10-26, branch `menu-on-e4m3`)
 
 The maintainer looked at five rounds of fixes and proposed the opposite of a sixth: shrink the PR.
