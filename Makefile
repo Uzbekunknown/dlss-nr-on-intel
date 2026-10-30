@@ -121,8 +121,7 @@ IMGUI_SOURCES :=
 ifeq ($(OS),Windows_NT)
 MENU_SOURCES := src/layer/nr_menu_layer.c src/layer/nr_menu.c src/layer/nr_menu_font.c \
                 src/layer/nr_menu_strings.c src/layer/nr_menu_strings_lookup.c \
-                src/layer/nr_menu_bridge.c src/layer/nr_file.c \
-                src/layer/nr_raw_mouse.c src/layer/nr_focus.c
+                src/layer/nr_menu_bridge.c src/layer/nr_raw_mouse.c
 # The ImGui panel behind it, including the C++ translation unit behind a plain-C interface. The
 # vendored sources want IMGUI_DEFINE_MATH_OPERATORS and nothing else defines it.
 IMGUI_SOURCES := third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp \
@@ -132,8 +131,9 @@ endif
 
 # `nr_file.c` and `nr_focus.c` are not menu code and the layer uses them on both platforms: the
 # first is the atomic file write the settings and the log share, the second answers "is the game in
-# front" with a no-op arm off Windows. They are listed apart from MENU_SOURCES so a Linux link still
-# has them.
+# front" with a no-op arm off Windows. They are listed apart from MENU_SOURCES, and only here, so a
+# Linux link still has them and a Windows one does not have them twice: they were in both, and the
+# layer's link line named each of them twice.
 LAYER_SUPPORT := src/layer/nr_file.c src/layer/nr_focus.c
 
 # The driver that compiles and links the layer and the tests that include it. ImGui is the only
@@ -147,14 +147,14 @@ work/libnr_layer.so: src/layer/nr_layer.c $(MENU_SOURCES) $(IMGUI_SOURCES) $(LAY
 
 # The knob table against `nr_knobs.py`, which is the definition. The author asked for this after
 # `render_scale`'s default drifted between three copies of the same fact.
-work/test_menu_rows: src/layer/test_menu_rows.c $(MENU_SOURCES)
-	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_rows.c $(MENU_SOURCES) -lm $(MENU_LIBS)
+work/test_menu_rows: src/layer/test_menu_rows.c $(MENU_SOURCES) $(LAYER_SUPPORT)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_rows.c $(MENU_SOURCES) $(LAYER_SUPPORT) -lm $(MENU_LIBS)
 
 # What the settings file does when the menu touches it: unrelated fields survive, opening changes
 # nothing, render scale is not reset, a moved knob survives a reopen, and the result is valid JSON.
 # No Vulkan - the bridge is attached headless, so this runs anywhere.
-work/test_menu_persist: src/layer/test_menu_persist.c $(MENU_SOURCES)
-	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_persist.c $(MENU_SOURCES) $(MENU_LIBS)
+work/test_menu_persist: src/layer/test_menu_persist.c $(MENU_SOURCES) $(LAYER_SUPPORT)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_persist.c $(MENU_SOURCES) $(LAYER_SUPPORT) $(MENU_LIBS)
 
 # Whether the fallback pointer is actually drawn. It was not: ImGui refuses to draw its own cursor
 # without a position, and the layer reports "no position" whenever the pointer is off the panel - so
@@ -171,11 +171,11 @@ work/test_menu_persist: src/layer/test_menu_persist.c $(MENU_SOURCES)
 # left broken. The writer's clamp is here too: `nr_json_put` refuses to write an object it
 # knows is short, because a truncated one would make the daemon log a parse error and keep its
 # old values - a save that looks like it worked and did nothing.
-work/test_settings_writer: src/layer/test_settings_writer.c $(MENU_SOURCES)
-	$(CC) $(CFLAGS) -o $@ src/layer/test_settings_writer.c $(MENU_SOURCES) $(MENU_LIBS)
+work/test_settings_writer: src/layer/test_settings_writer.c $(MENU_SOURCES) $(LAYER_SUPPORT)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_settings_writer.c $(MENU_SOURCES) $(LAYER_SUPPORT) $(MENU_LIBS)
 
-work/test_menu_hints: src/layer/test_menu_hints.c $(MENU_SOURCES)
-	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_hints.c $(MENU_SOURCES) $(MENU_LIBS)
+work/test_menu_hints: src/layer/test_menu_hints.c $(MENU_SOURCES) $(LAYER_SUPPORT)
+	$(CC) $(CFLAGS) -o $@ src/layer/test_menu_hints.c $(MENU_SOURCES) $(LAYER_SUPPORT) $(MENU_LIBS)
 
 work/test_focus_gate: src/layer/test_focus_gate.c src/layer/nr_focus.c
 	$(CC) $(CFLAGS) -o $@ src/layer/test_focus_gate.c src/layer/nr_focus.c $(MENU_LIBS)
