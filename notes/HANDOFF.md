@@ -17,21 +17,22 @@ When the dated entries grow long, move the older ones the same way, into a new a
 
 ---
 
-## Where things stand (2026-10-30)
+## Where things stand (2026-10-31)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
   GPU and writes the answer back into the swapchain. DirectX 8-11 games go through DXVK. DirectX 12
-  runs on Linux through VKD3D-Proton and is not offered on Windows.
+  runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
-  (`2f90064`, 10-15) and **v0.0.1.3** (`d89563f` on `newnr`, 10-18, the latest), a ZIP with the
-  setup window, DXVK 3.1.1, both layers and a `vulkan-1.dll` proxy. 0.0.1.3 adds preset B in the
-  setup window. It went out as a pre-release without Linux's `make test` at its head, on the
-  owner's word, as a Windows-only release, and the owner made it the latest release the same
-  day so that the repository's front page shows it. `master` held 0.0.1.2 until it caught up with
-  `newnr` on 10-30. Linux users build from source (README).
+  (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18) and **v0.0.2** (`81b0a59`, 10-31, the latest),
+  a ZIP with the setup window, DXVK 3.1.1, both layers, a `vulkan-1.dll` proxy and NR's
+  `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through XeSS, the in-game panel (PR #20),
+  network B and frames on the GPU by default, and an About tab that checks GitHub for a newer
+  release (below, 10-31). It went out on the owner's word before Linux's `make test` at its head,
+  as 0.0.1.3 did. Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
-  - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`;
+  - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
+    with it to 0.0.2 (`81b0a59`, 10-31);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
@@ -113,9 +114,10 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `6c503ae`: `make test` in both memory modes and CTest. The setup window's core changed (its PE
-  readers, the folder of each placed file), and the release builder with its test. Below, 10-30
-  evening.
+- `81b0a59` (0.0.2): `make test` in both memory modes and CTest. Since `cc2b8b7` the setup
+  window's core changed (its PE readers, the folder of each placed file, frames on the GPU and B by
+  default), the release builder (`VERSION`, the icon) with its tests, and `nr_focus.h` and
+  `nr_layer_state.h`, which Linux compiles. Below, 10-30 evening and 10-31.
 - ~~`dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
   modes and CTest~~: green at `cc2b8b7` (10-30), which is `newnr` with them and PR #20: `make test`
   60 of 60 in both memory modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`.
@@ -193,7 +195,9 @@ under that date. When an item is done, strike it through here and name the commi
 - The panel inside a DirectX 12 game: the next release after 0.0.2, the owner's call (10-31). It
   needs DXGI's Present (a vtable hook from the proxy, as the cut hooks D3D12's classes), ImGui drawn
   with D3D12, and care with XeSS frame generation, which puts its own swapchain in front. Until
-  then the setup window's NR controls set a DirectX 12 game, the network live (`9ea08ad`).
+  then the setup window's NR controls set a DirectX 12 game, the network live (`9ea08ad`). With
+  it, keeping the panel's keys and clicks from the game, which still gets them in a Vulkan game
+  as well: the panel reads them and holds nothing back (below, 10-31).
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
   out as 2.0's. Below, 10-30 evening.
@@ -233,6 +237,40 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## 0.0.2 released, and what Mortal Kombat 11 found in the panel (2026-10-31, branch `newnr`)
+
+**The release.** `v0.0.2` at `81b0a59`, on `master` and `newnr`, on the owner's word and with the
+owner's own text for the notes: `dlss-nr-windows-0.0.2-x64.zip`, 21 001 345 bytes, SHA-256
+`f1b71663b6d814bc95d91f626157ce120adba843470aa9a534bce614ed31d242`. Beside DirectX 12 (below, 10-30
+evening) the window gained an About tab, with the version and build from `release-metadata.json`
+(which carries `VERSION` now), links and credits, that asks GitHub's `releases/latest` at most once
+a day and says when a newer release is out (`9ea08ad`); and an icon, a pentagon in Intel's blue,
+which `tools/make_icon.ps1` draws at build time since the repository takes no binary (`3e7cce1`).
+Network B is chosen by the installation that brings it, and frames on the GPU are on unless
+turned off (`1b8b926`, `01fa63c`).
+
+**Mortal Kombat 11 from the candidate ZIPs**, the owner playing, then driven from here at the
+owner's word:
+- The panel held the cursor in a one-pixel `ClipCursor` box that only the layer let go of, at
+  present: in a game that stops presenting without the focus the Start menu and a screenshot's
+  selection could not be used, and the cursor never left the game. `nr_clip_guard`, a thread in
+  `nr_focus.c`, now lets go of the clip whenever the game is not in front, and a pointer pushed
+  48 px past the edge goes out there (`1b8b926`; `test_focus_gate` checks the guard).
+- Arrows pressed in the game after the panel closed moved its rows at the next opening: the layer
+  hands ImGui every key change on every frame, and ImGui queues events until `NewFrame`, which runs
+  only while the panel is drawn. `nrex_listen` keeps keys out of the queue while the panel is shut
+  and empties it on opening (`81b0a59`); `test_menu_side`'s new case fails on the old code. In the
+  game (`steam://rungameid/976310`, keys sent only while MK11 was in front) the live preview did
+  not move after four Lefts given to the game.
+- The first B choice ran only where `unpack_preset.py` ran, and a release's `get_weights.py` takes
+  B with A, so it never did (`01fa63c`).
+- Still so: keys and clicks given to the panel reach the game as well (Open items).
+- B on the GPU path ran at about 25 ms a frame (1280x720, render scale 0.4), and each Remove NR
+  left the game's 10 024 files as they were.
+
+**Next on Windows:** the panel inside DirectX 12 games, and the panel's input kept from the game.
+**Next on Linux:** `make test` in both memory modes and CTest at `81b0a59` (Open items).
 
 ## DirectX 12 through the release: the setup window's third API, and the proxy starts the daemon (2026-10-30, evening, branch `newnr`)
 
