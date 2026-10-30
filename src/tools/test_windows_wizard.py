@@ -373,21 +373,28 @@ class WizardFixture(unittest.TestCase):
         env_file = core.installed_path(self.profile) / core.ENV_FILE
         before, values = written()
         self.assertEqual((values["NR_LAYER_LIVE"], values["NR_LAYER_ASYNC"]), ("1", "0"))
-        # Installed: the two lines change, the rest stays as Install NR wrote it, even with
-        # another Python in the window that Install NR has not checked.
+        # The window writes BOTH now - the profile and the game's env file. It used to write the
+        # profile alone, on the reasoning that two writers for one file need ordering and none
+        # existed; what that cost was a window that said "takes effect at the next start" while
+        # never writing the file the layer reads. The panel keeps the profile in step
+        # (`write_profile_pacing`), so the window's write cannot silently revert the panel's.
         result = core.set_pacing(replace(paced, python=self.base / "unchecked" / "python.exe"))
         self.assertEqual((result["ok"], result["applied"]), (True, True))
         after, values = written()
+        # The pacing lines are what changed, and everything else is byte-identical: NR_GAME_EXE,
+        # NR_LAUNCH_STATE and the rest are the installation, not this function's to rewrite.
+        self.assertNotEqual(after, before, "the window wrote nothing - the game keeps the old values")
+        kept = [line for line in before if line.split("=", 1)[0].strip() not in core.PACING]
+        self.assertEqual([line for line in after if line.split("=", 1)[0].strip() not in core.PACING],
+                         kept, "a line the window does not own was rewritten")
+        # And the file now agrees with the profile it was written from.
         self.assertEqual((values["NR_LAYER_LIVE"], values["NR_LAYER_ASYNC"]), ("2", "1"))
         self.assertEqual(values["NR_PYTHON"], str(self.python))
-        others = [line for line in before if line.split("=", 1)[0] not in core.PACING]
-        self.assertEqual([line for line in after if line.split("=", 1)[0] not in core.PACING], others)
-        self.assertEqual(len(after), len(before))
-        core.set_pacing(self.profile)
-        after, values = written()
-        self.assertEqual((values["NR_LAYER_LIVE"], values["NR_LAYER_ASYNC"]), ("1", "0"))
+        # The profile it did write is the one a later reader sees.
+        self.assertEqual(core.load_profile(self.root).nr_every, core.Profile.from_dict(
+            {**paced.to_dict(), "python": str(self.base / "unchecked" / "python.exe")}).nr_every)
         self.assertFalse(env_file.with_name(core.ENV_FILE + ".new").exists())
-        # Another release's installation is left alone.
+        # Another release's installation: the profile is kept, and its file is left alone.
         other = replace(self.profile, root=self.base / "another release", nr_every=3)
         (self.base / "another release" / "work").mkdir(parents=True)
         result = core.set_pacing(other)
@@ -412,34 +419,37 @@ class WizardFixture(unittest.TestCase):
         self.assertTrue(core.install(self.profile)["ok"])
         path = core.installed_path(self.profile) / core.ENV_FILE
         before = path.read_text(encoding="utf-8").splitlines()
-        # An installation from before strict mode gains its explicit flag when
-        # the requested profile is applied; all non-pacing paths stay intact.
-        path.write_text("\n".join(line for line in before if not line.startswith("NR_GPU_ONLY=")) + "\n",
-                        encoding="utf-8")
+        # The profile carries the choice and the window writes the game's file too, so the file the
+        # layer reads at its next start is the one this profile describes.
         result = core.set_pacing(enabled)
         self.assertTrue(result["applied"])
         self.assertEqual(core.load_profile(self.root), enabled)
-        values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
-                      if "=" in line and not line.startswith("#"))
+        environment = core.layer_environment(enabled)
         # Never strict: where the GPU path stands aside, NR takes its usual path (issue #17).
-        self.assertEqual((values["NR_GPU_IMAGE"], values["NR_GPU_TRANSPORT"], values["NR_GPU_ONLY"]), ("1", "1", "0"))
-        self.assertEqual(sum(line.startswith("NR_GPU_ONLY=")
-                             for line in path.read_text(encoding="utf-8").splitlines()), 1)
+        self.assertEqual((environment["NR_GPU_IMAGE"], environment["NR_GPU_TRANSPORT"],
+                          environment["NR_GPU_ONLY"]), ("1", "1", "0"))
         # The GPU path takes every frame in step or stands aside: the asynchronous mode and
         # every Nth frame asked for wait in the profile until it is off.
-        self.assertEqual((values["NR_LAYER_ASYNC"], values["NR_LAYER_LIVE"]), ("0", "1"))
+        self.assertEqual((environment["NR_LAYER_ASYNC"], environment["NR_LAYER_LIVE"]), ("0", "1"))
+        # And the installed file carries those values now, with the installation's own lines
+        # untouched - NR_GAME_EXE and friends are not this function's to rewrite.
+        after = path.read_text(encoding="utf-8").splitlines()
+        self.assertNotEqual(after, before, "the GPU path was never given to the game")
+        self.assertEqual([line for line in after if line.split("=", 1)[0].strip() not in core.PACING],
+                         [line for line in before if line.split("=", 1)[0].strip() not in core.PACING],
+                         "a line the window does not own was rewritten")
+        file_values = dict(line.split("=", 1) for line in after if "=" in line)
+        self.assertEqual((file_values["NR_GPU_IMAGE"], file_values["NR_LAYER_ASYNC"],
+                          file_values["NR_LAYER_LIVE"]), ("1", "0", "1"))
+        # With the path off the profile keeps what was asked for, and the file follows.
         core.set_pacing(replace(enabled, gpu_image_path=False))
-        values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
-                      if "=" in line and not line.startswith("#"))
-        self.assertEqual((values["NR_LAYER_ASYNC"], values["NR_LAYER_LIVE"], values["NR_GPU_IMAGE"]),
+        off = core.layer_environment(core.load_profile(self.root))
+        self.assertEqual((off["NR_LAYER_ASYNC"], off["NR_LAYER_LIVE"], off["NR_GPU_IMAGE"]),
                          ("1", "3", "0"))
-        unchanged = [line for line in before if line.split("=", 1)[0] not in core.PACING]
-        self.assertEqual([line for line in path.read_text(encoding="utf-8").splitlines()
-                          if line.split("=", 1)[0] not in core.PACING], unchanged)
-        core.set_pacing(self.profile)
-        values = dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
-                      if "=" in line and not line.startswith("#"))
-        self.assertEqual((values["NR_GPU_IMAGE"], values["NR_GPU_TRANSPORT"], values["NR_GPU_ONLY"]), ("0", "0", "0"))
+        off_values = dict(line.split("=", 1) for line in
+                          path.read_text(encoding="utf-8").splitlines() if "=" in line)
+        self.assertEqual((off_values["NR_GPU_IMAGE"], off_values["NR_LAYER_ASYNC"],
+                          off_values["NR_LAYER_LIVE"]), ("0", "1", "3"))
         self.assertNotIn("NR_LAYER_TIMING", core.runtime_env(enabled))
         self.assertNotIn("NR_LAYER_TIMING_LOG", core.runtime_env(enabled))
 
@@ -483,11 +493,91 @@ class WizardFixture(unittest.TestCase):
         result = core.set_pacing(chosen)
         self.assertEqual((result["ok"], result["applied"]), (True, True))
         self.assertEqual(core.load_profile(self.root).preset, "B")
+        # The profile carries the network AND the window writes the game's file, so a game started
+        # from this profile is given B - which is the whole point of choosing it here.
+        self.assertEqual(core.layer_environment(core.load_profile(self.root))["NR_PRESET"], "B")
         self.assertEqual(values()["NR_PRESET"], "B")
-        self.assertEqual(sum(line.startswith("NR_PRESET=") for line in path.read_text(encoding="utf-8").splitlines()), 1)
+        # And back: the window's own control reaches the game as well.
         core.set_pacing(self.profile)
+        self.assertEqual(core.layer_environment(core.load_profile(self.root))["NR_PRESET"], "A")
         self.assertEqual(values()["NR_PRESET"], "A")
         self.assertTrue(core.uninstall(self.profile)["ok"])
+
+    def test_the_window_does_not_write_a_stale_pacing_over_the_panel(self):
+        """The ordering that made this window stop writing nr-env.txt in the first place.
+
+        The window's pacing controls hold the values the profile had when it opened:
+        `Apply-Profile` runs after discover/dependencies/install and never on the `status` poll, so
+        nothing refreshes them while the window sits there. The in-game panel writes both
+        `nr-env.txt` and `windows-profile.json` while that window is open. So the sequence
+
+            window opens (async off, every 1)
+            panel changes it (async on, every 3) - both files move
+            user touches anything pacing-related in the window
+
+        would, without care, put the window's stale values back over the panel's. That is the
+        regression stage 3 reintroduced by making this function write the file again.
+
+        The window resolves it in `windows-wizard.ps1` by comparing each control against
+        `$script:LastProfile` - the profile the controls were last filled from - and taking the
+        file's value for the fields the user did NOT move. The comparison is reproduced here
+        because the decision is what has to be right; the PowerShell around it is one property
+        read.
+        """
+        self.assertTrue(core.install(self.profile)["ok"])
+        path = core.installed_path(self.profile) / core.ENV_FILE
+
+        def values():
+            return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line and not line.startswith("#"))
+
+        # The window opened and filled its controls from this profile: async off, every 1.
+        window_opened_from = core.load_profile(self.root)
+        self.assertEqual((window_opened_from.nr_async, window_opened_from.nr_every), (False, 1))
+
+        # The panel moves it, and keeps the profile in step - which is what makes this safe.
+        moved = replace(window_opened_from, nr_async=True, nr_every=3)
+        self.assertTrue(core.set_pacing(moved)["applied"])
+        self.assertEqual((values()["NR_LAYER_ASYNC"], values()["NR_LAYER_LIVE"]), ("1", "3"))
+
+        # Now the user touches something in the window that sends a pacing request. The controls
+        # still show the values the window opened with; LastProfile is the same profile, so every
+        # pacing field compares equal and each takes the FILE's value.
+        on_disk = core.load_profile(self.root)
+        stale = window_opened_from
+        resolved = {}
+        for key in ("nr_async", "nr_every", "gpu_image_path", "preset"):
+            shown = getattr(stale, key)          # what the control shows
+            was = getattr(window_opened_from, key)   # what it was filled from
+            resolved[key] = getattr(on_disk, key) if shown == was else shown
+        self.assertEqual(resolved["nr_async"], True, "the panel's async was overwritten by the window")
+        self.assertEqual(resolved["nr_every"], 3, "the panel's cadence was overwritten by the window")
+
+        # And a field the user DID move keeps the user's choice: that is what the control is for.
+        shown = 2                                     # the user dragged the cadence to 2
+        resolved_every = getattr(on_disk, "nr_every") if shown == getattr(stale, "nr_every") else shown
+        self.assertEqual(resolved_every, 2, "the user's own change was discarded")
+
+        # The file the layer reads, after the window writes the resolved values, still says what
+        # the panel said - because the window resolved to the file's values.
+        self.assertTrue(core.set_pacing(replace(on_disk, **resolved))["applied"])
+        self.assertEqual((values()["NR_LAYER_ASYNC"], values()["NR_LAYER_LIVE"]), ("1", "3"))
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
+        # ---- and the window actually implements that decision ----
+        #
+        # The block above reproduces the DECISION, so on its own it would still pass if the
+        # PowerShell stopped making it. The behavioural proof lives in the window's own self-test
+        # (`Merge-PacingFromProfile` is called there with an untouched control, a moved one, and
+        # no profile at all), because a PowerShell function cannot be driven from here. What is
+        # checked here is only that the window still routes pacing through that function - the
+        # text of the function itself is the self-test's to verify, not this one's.
+        window = Path(core.__file__).parent.parent.parent / "dist-tools" / "windows-wizard.ps1"
+        source = window.read_text(encoding="utf-8")
+        self.assertIn("function Merge-PacingFromProfile", source,
+                      "the window no longer has the pacing merge it needs")
+        self.assertIn("Merge-PacingFromProfile $requestValues $script:LastProfile $fresh", source,
+                      "pacing requests no longer go through the merge")
 
     def test_preset_b_is_checked_for_its_weights_or_a_dll_that_carries_them(self):
         chosen = replace(self.profile, preset="B")
@@ -665,6 +755,45 @@ class WizardFixture(unittest.TestCase):
                 patch.object(core, "uninstall", return_value={"ok": True, "removed": True}):
             self.assertNotIn("steam_restored", bridge.remove_nr(self.profile, None))
 
+    def test_the_window_chooses_which_network_the_speed_test_measures(self):
+        # The combo beside the button sends `preset` in the request; the bridge passes it on and
+        # leaves it out when absent, so an older window still measures the profile's network.
+        import windows_wizard as bridge
+        request = self.base / "speed-request.json"
+        output = self.base / "speed-result.json"
+
+        def run(values):
+            request.write_text(json.dumps(values), encoding="utf-8")
+            argv = ["windows_wizard.py", "speedtest", "--root", str(self.root),
+                    "--input", str(request), "--output", str(output)]
+            with patch.object(sys, "argv", argv):
+                bridge.main()
+            return core._read_json(output)
+
+        # The words the window sends: a profile and the network to measure.
+        values = {**self.profile.to_dict(), "root": str(self.root), "preset": "B"}
+        with patch.object(core, "speed_test", return_value={"ok": True}) as speed:
+            self.assertTrue(run(values)["ok"])
+            self.assertEqual(speed.call_args.kwargs["preset"], "B")
+            speed.reset_mock()
+            self.assertTrue(run({**values, "preset": "a"})["ok"])
+            self.assertEqual(speed.call_args.kwargs["preset"], "A")
+            speed.reset_mock()
+            # No preset at all: the profile's own network, as before the chooser existed.
+            without = dict(values)
+            without.pop("preset")
+            self.assertTrue(run(without)["ok"])
+            self.assertIsNone(speed.call_args.kwargs["preset"])
+        # A network that does not exist is the backend's refusal, not the window's, and it
+        # costs nothing to reach: no script, no weights, no GPU.
+        self.assertFalse(run({**values, "preset": "C"})["ok"])
+        self.assertIn("Measure which network?", core._read_json(output)["error"])
+        # A value that is not a network at all is refused before anything is measured.
+        for bad in ("", "   ", 1, ["B"]):
+            refused = run({**values, "preset": bad})
+            self.assertFalse(refused["ok"], bad)
+            self.assertIn("Specify the network", refused["error"], bad)
+
     def test_enabling_warns_when_the_game_runs_without_nr(self):
         self.own()
         # Started before NR was installed: no launch record names it, the game runs.
@@ -803,6 +932,29 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(any(destination.rglob("nvngx_dlssnr.dll")))
         self.assertTrue(self.weights.is_file())
 
+    def test_the_panels_own_shaders_are_installed(self):
+        """`menu.spv` and `menu_rgb10a2.spv` come from `src/layer/nr_menu.c`, not `src/gpu`.
+
+        They were left out of an install once: the shader list scanned `src/gpu` alone, so the
+        game got a layer whose menu could not load its shader. The layer said so - "no settings
+        menu: the menu's shader was not found beside the layer" - and INS did nothing, while the
+        release itself carried both files.
+        """
+        source = self.root / "src/layer/nr_menu.c"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('{ VK_FORMAT_R8G8B8A8_UNORM, "menu.spv", 0 },\n'
+                          '{ VK_FORMAT_A2B10G10R10_UNORM_PACK32, "menu_rgb10a2.spv", 1 },\n',
+                          encoding="utf-8")
+        for name in ("menu.spv", "menu_rgb10a2.spv"):
+            (self.root / "work" / name).write_bytes(b"SPIR-V fixture")
+        self.assertIn("menu.spv", core._shader_names(self.root))
+        self.assertIn("menu_rgb10a2.spv", core._shader_names(self.root))
+        result = core.install(self.profile)
+        self.assertTrue(result["ok"], result)
+        installed = core.installed_path(self.profile) / "work"
+        for name in ("menu.spv", "menu_rgb10a2.spv"):
+            self.assertTrue((installed / name).is_file(), name)
+
     def test_first_install_sets_candidate_defaults_only_when_missing(self):
         result = core.install(self.profile)
         self.assertTrue(result["ok"], result)
@@ -815,7 +967,10 @@ class WizardFixture(unittest.TestCase):
             "render_scale", "min_extent", "profile", "intensity", "detail_strength",
             "colour_strength", "temporal", "hold", "release", "cut_limit"])
         names = {knob["name"]: knob for knob in catalogue}
-        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic", "neutral"])
+        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic"])
+        # `weights` is gone: the network is `NR_PRESET`, one setting, not a knob with a list of
+        # model names. A catalogue that still offered it would be the second selection path back.
+        self.assertNotIn("weights", names)
         self.assertEqual((names["min_extent"]["high"], names["min_extent"]["runtime_high"]), (320, 4096))
         self.assertEqual((names["release"]["high"], names["release"]["runtime_high"]), (64, 255))
         daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
@@ -830,6 +985,33 @@ class WizardFixture(unittest.TestCase):
                         actual[str(node.args[0].value).removeprefix("--").replace("-", "_")] = keyword.value.value
         self.assertEqual({knob["name"]: knob["default"] for knob in catalogue},
                          {knob["name"]: actual[knob["name"]] for knob in catalogue})
+
+    def test_every_choice_value_is_labelled_in_all_four_languages(self):
+        """A `choice` knob's combobox is filled with `Choice.<knob>.<value>`, falling back to
+        `Profile.<value>`.
+
+        `T` throws on a missing key, so a choice value with no label and no fallback takes the
+        SETUP WINDOW's settings page down with `Missing translation: Profile.ht` - which is exactly
+        what the weights knob would have done, because its values are not profiles. Nothing else
+        covers this: the tests drive the backend, and the label lookup lives in the script.
+        """
+        source = (Path(core.__file__).resolve().parent.parent.parent
+                  / "dist-tools" / "windows-wizard.ps1").read_text(encoding="utf-8")
+        catalogue = core._runtime_knobs()
+        checked = 0
+        for knob in catalogue:
+            if knob["kind"] != "choice":
+                continue
+            for value in knob["choices"]:
+                keys = (f"'Choice.{knob['name']}.{value}'", f"'Profile.{value}'")
+                if not any(source.count(key) == 4 for key in keys):
+                    self.fail(f"{knob['name']}={value} has no label in all four languages "
+                              f"(expected one of {keys} four times)")
+                checked += 1
+        self.assertGreater(checked, 0)
+        # And the lookup goes through the helper, not straight at `Profile.` - the line that made
+        # the weights values unresolvable.
+        self.assertNotIn("T ('Profile.'+", source)
 
     def test_reading_control_defaults_needs_no_game_profile_or_processes_and_writes_nothing(self):
         with patch.object(core, "_process_snapshot", side_effect=AssertionError("Controls do not inspect games")), \
@@ -908,7 +1090,19 @@ class WizardFixture(unittest.TestCase):
         daemon_source = (Path(core.__file__).resolve().parent.parent / "layer/nr_daemon.py").read_text(encoding="utf-8")
         tree = ast.parse(daemon_source)
         actual_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Settings")
+        # The ENGINE's profile table, which stands in for `nr_frame.PROFILES`. It keeps `neutral`
+        # even though the menu no longer offers it: the daemon validates a settings file against
+        # what the engine can run, not against what the UI lists, so a hand-edited file naming
+        # `neutral` is still accepted. `nr_knobs.PROFILES` is the list the menu shows.
         namespace = {"os": os, "math": math, "json": json,
+                     # The class asks which preset this install runs. A stub is enough here - the
+                     # real module is `src/tools/test_nr_weights.py`'s subject, and the network is
+                     # `NR_PRESET` alone now rather than a table of model names.
+                     "nr_weight_models": SimpleNamespace(
+                         PRESETS=("A", "B"),
+                         preset_of=lambda value: (str(value or "").strip().upper()
+                                                  if str(value or "").strip().upper() in ("A", "B")
+                                                  else "A")),
                      "nr_frame": SimpleNamespace(PROFILES={choice: {} for choice in ("standard", "natural", "cinematic", "neutral")})}
         exec(compile(ast.Module(body=[actual_class], type_ignores=[]), "nr_daemon.py", "exec"), namespace)
         path = self.root / "work/nr_settings.json"
@@ -1370,6 +1564,59 @@ class WizardFixture(unittest.TestCase):
             self.assertIn("no answer in 900 s", core.speed_test(self.profile)["error"])
         self.assertFalse((self.root / core.SPEED_TEST).exists())
 
+    def test_the_speed_test_measures_the_network_it_is_asked_for_or_says_which_is_here(self):
+        # A and B are measurably different networks, so the window lets a tester compare them on
+        # one PC without changing the network a game runs. The choice is the test's own: the
+        # profile may say A while the test measures B, and vice versa.
+        self.speed_script()
+        write_weights(self.weights)
+        measured = {"ok": True, "error": None, "device": "Fixture GPU", "preset": "A", "cases": []}
+        asked = []
+
+        def run(command, timeout=10, env=None, emit=None, cwd=None):
+            command = [str(part) for part in command]
+            asked.append(command[command.index("--preset") + 1])
+            target = Path(command[command.index("--json") + 1])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(dict(measured, preset=asked[-1])), encoding="utf-8")
+            return {"command": command, "returncode": 0, "stdout": "", "stderr": "", "output": "",
+                    "timed_out": False}
+
+        # A release that carries both measures whichever it is asked for, profile untouched.
+        write_weights(self.preset_b_weights(), count=core.PRESETS["B"][1])
+        self.assertEqual(core.get_settings(self.root)["presets"], {"A": True, "B": True})
+        with patch.object(core, "_run", side_effect=run), \
+                patch.object(core, "_system_metadata", return_value={}):
+            self.assertTrue(core.speed_test(self.profile, preset="B")["ok"], asked)
+            self.assertTrue(core.speed_test(replace(self.profile, preset="B"), preset="A")["ok"], asked)
+        self.assertEqual(asked, ["B", "A"])
+        # The network measured is kept with the result, so a report cannot be read as the other.
+        self.assertEqual(core._read_json(self.root / core.SPEED_TEST)["preset"], "A")
+        # Measuring changes neither the profile nor what a game would run.
+        self.assertFalse(core.profile_path(self.root).exists())
+
+        # A release with A alone still measures A, and refuses B by name rather than running
+        # something else: the window greys B for the same reason.
+        self.preset_b_weights().unlink()
+        self.assertEqual(core.get_settings(self.root)["presets"], {"A": True, "B": False})
+        with patch.object(core, "_run", side_effect=run), \
+                patch.object(core, "_system_metadata", return_value={}):
+            self.assertTrue(core.speed_test(self.profile, preset="A")["ok"])
+        refused = core.speed_test(self.profile, preset="B")
+        self.assertFalse(refused["ok"])
+        self.assertIn("B's weights are not in this release", refused["error"])
+        self.assertIn("measure A", refused["error"])
+        self.assertEqual(refused["presets"], {"A": True, "B": False})
+        self.assertEqual(asked, ["B", "A", "A"])
+        # A network the profile's own type would refuse is refused here too, and the message
+        # names the two there are.
+        for bad in ("C", 1, ["B"]):
+            wrong = core.speed_test(self.profile, preset=bad)
+            self.assertFalse(wrong["ok"], bad)
+            self.assertIn("Measure which network?", wrong["error"])
+            self.assertIn("A", wrong["error"])
+            self.assertIn("B", wrong["error"])
+
     def test_a_python_or_a_library_that_fails_says_why_in_its_check(self):
         self.native.return_value = python_info(probe_ok=False, probe_error="no answer in 30 s")
         self.assertIn("did not answer: no answer in 30 s", self.checks()["python_native_x64"]["detail"])
@@ -1505,3 +1752,4 @@ class RunningExecutableTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

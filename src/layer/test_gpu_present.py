@@ -82,6 +82,23 @@ def tail(path, count=MAX_LOG):
         return handle.read(count).decode("utf-8", errors="replace")
 
 
+def wait_for(path, pattern, seconds=10.0):
+    """True once `pattern` appears in the log, waiting up to `seconds` for it.
+
+    A settings change is written between presents and taken up when the daemon next reads the file,
+    which is a frame or two later - at 128x64 that is 40 ms, and at a larger extent it is seconds.
+    Waiting for the effect is what makes the check mean "the daemon used the new value" instead of
+    "the timer happened to be long enough".
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        if re.search(pattern, tail(path), re.MULTILINE):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def stop_owned(process):
     if process is not None and process.poll() is None:
         process.terminate()
@@ -189,6 +206,9 @@ def main():
     parser.add_argument("--restart-daemon", action="store_true", help="step the fixture through owned daemon loss/restart and safe fallback")
     parser.add_argument("--no-validation", action="store_true", help="disable the default Khronos validation request")
     parser.add_argument("--sync-validation", action="store_true", help="require synchronization validation support")
+    parser.add_argument("--validation-ignore", action="append", default=None, metavar="REGEX",
+                        help="an EXTRA validation ERROR pattern not to count; the loader failing to open "
+                             "another module's library is always ignored, and this is for anything else")
     parser.add_argument("--validation-manifest", type=Path)
     parser.add_argument("--api11", action="store_true")
     parser.add_argument("--trace", action="store_true", help="print native Vulkan call boundaries for diagnosis")
@@ -239,8 +259,7 @@ def main():
         parser.error("selected Python environment lacks NumPy")
     daemon_command = [str(native_python), "-u", str(ROOT / "src/layer/nr_daemon.py"),
                       "--socket", endpoint, "--root", str(ROOT), "--settings", str(settings),
-                      "--render-scale", str(args.render_scale), "--min-extent", "128", "--max-pixels",
-                      str(max(w * h for w, h in (args.extent, args.resize_extent)))]
+                      "--render-scale", str(args.render_scale), "--min-extent", "128"]
     fixture_command = [str(fixture), "--frames", str(args.frames), "--pause-ms", str(pause_ms),
                        "--extent", "%dx%d" % args.extent, "--resize-extent", "%dx%d" % args.resize_extent]
     if not args.no_validation:
@@ -415,9 +434,17 @@ def main():
                     r"^original_pixel frame=3 .*status=retained\r?$", output, re.MULTILINE))
                 if frames or not summary["original_pixel_verified"]:
                     raise RuntimeError("unsupported GPU-only mode did not retain the exact original without processing")
-            if not args.baseline and args.exercise_controls and not re.search(r"^settings:.*render_scale=1(?:\.0)?(?:,|\s|$)",
-                                                       tail(daemon_log), re.MULTILINE):
-                raise RuntimeError("daemon did not acknowledge the controlled render-scale change")
+            # "Acknowledged" is the daemon having RUN at the scale the harness wrote - a processed
+            # frame whose line says `scale 1` - not a line about the file it read.
+            #
+            # Two things were wrong with asking for `^settings:.*render_scale=1`: the daemon writes
+            # `settings (saved): render_scale=1.0`, which that pattern cannot match at all, and the
+            # write and the daemon's re-read are a frame or two apart, so even the right line is a
+            # race at 128x64 where a frame is 20 ms. The effect is the acknowledgement, and it is
+            # waited for rather than assumed to have happened by a fixed frame.
+            if not args.baseline and args.exercise_controls:
+                if not wait_for(daemon_log, r"\bscale 1(?:\.0)?(?:\s|$)"):
+                    raise RuntimeError("daemon did not acknowledge the controlled render-scale change")
             if re.search(r"^(?:frame rejected/failed|GPU lost|Traceback)", tail(daemon_log), re.MULTILINE):
                 raise RuntimeError("daemon reported a frame failure or lost GPU")
             if args.gpu_only:
@@ -452,8 +479,25 @@ def main():
                                                  for frame in summary.get("gpu_frames", [])})
         output = tail(folder / "fixture.stdout.log", 65536)
         summary["synchronization_validation"] = "synchronization_validation=on" in output
-        summary["validation_errors"] = len(re.findall(r"^validation ERROR:",
-                                                      summary["fixture_stderr_tail"], re.MULTILINE))
+        # Every `validation ERROR:` in the fixture's own stderr, minus the loader's complaints about
+        # ANOTHER module. The loader reports an implicit layer that will not load through the same
+        # messenger - the development machine has a ReShade implicit layer whose DLL fails to open
+        # in this process - and that is not this layer's verdict. The fixture skips the same message
+        # for its own count; anything else is counted, and `--validation-ignore` can add patterns.
+        counted = [line for line in summary["fixture_stderr_tail"].splitlines()
+                   if line.startswith("validation ERROR:")]
+        patterns = [re.compile(r"Failed to open dynamic library")] + \
+                   [re.compile(pattern) for pattern in (args.validation_ignore or [])]
+        ignored = 0
+        kept = []
+        for line in counted:
+            if any(pattern.search(line) for pattern in patterns):
+                ignored += 1
+            else:
+                kept.append(line)
+        counted = kept
+        summary["validation_errors"] = len(counted)
+        summary["validation_ignored"] = ignored
         if summary["validation_errors"] or (args.sync_validation and not summary["synchronization_validation"]):
             summary["ok"] = False
             summary["error"] = "synchronization validation was unavailable or reported errors"

@@ -123,7 +123,15 @@ float scaled_colour(float value) {
 }
 
 void main() {
-    uint pixel = gl_GlobalInvocationID.x;
+    /* The linear pixel this invocation owns, from a TWO-dimensional workgroup grid.
+     *
+     * One dimension takes 65535 groups, and a 4K frame's network is 7 million pixels - 110 000
+     * groups at 64 to a group - so `xmx_rec_image_pipeline` refused the dispatch and the whole
+     * image path was unavailable above 4 194 240 pixels, which is exactly where the old
+     * `--max-pixels` ceiling sat. With the y row folded in this way a one-row dispatch (gy == 1)
+     * computes the same index as `gl_GlobalInvocationID.x`, so nothing below the limit changes. */
+    uint pixel = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * gl_WorkGroupSize.x
+               + gl_LocalInvocationID.x;
     if (pixel >= p.network_w * p.network_h) return;
     uint y = source_index(pixel / p.network_w, p.inner_h);
     uint x = source_index(pixel % p.network_w, p.inner_w);

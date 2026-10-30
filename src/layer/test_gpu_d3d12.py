@@ -69,7 +69,7 @@ def serve(path, marker):
     backend = type("Backend", (), {})()
     backend.runtime = runtime
     images = Frame()
-    transport = T.GPUSharedTransport(backend, 1 << 22, enabled=True)
+    transport = T.GPUSharedTransport(backend, enabled=True)
     transport.images = images
     server = nr_pipe.server(path, backlog=4)
     flush = nr_pipe._k32.FlushFileBuffers
@@ -87,7 +87,7 @@ def serve(path, marker):
 
             def read(connection, count):
                 raw = receive(connection, count)
-                seen.update(T.unpack_packet(raw, width, height, fmt, 1 << 22))
+                seen.update(T.unpack_packet(raw, width, height, fmt))
                 if seen["version"] != T.D3D12:
                     raise ValueError("the client did not speak protocol 3")
                 images.reason = ("declined by the test" if width == DECLINED_WIDTH and

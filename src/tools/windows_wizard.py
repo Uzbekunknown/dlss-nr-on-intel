@@ -109,11 +109,20 @@ def main() -> int:
             else:
                 result = core.reset_settings(args.root, values.get('reset'))
         else:
+            measure = None
             if args.input:
                 values = json.loads(args.input.read_text(encoding='utf-8-sig'))
                 values['root'] = str(args.root.resolve())
                 if 'game_args_raw' in values:
                     values['game_args'] = windows_arguments(values.pop('game_args_raw'))
+                if args.action == 'speedtest':
+                    # `preset` in a speed-test request names the network to MEASURE, which is a
+                    # different question from the one a game runs. It is taken out before the
+                    # profile is read, so one word cannot mean two things in one request.
+                    measure = values.pop('preset', None)
+                    if measure is not None and (not isinstance(measure, str) or not measure.strip()):
+                        raise ValueError('Specify the network to measure, A or B.')
+                    measure = measure.strip().upper() if measure else None
                 profile = core.Profile.from_dict(values)
             else:
                 profile = core.load_profile(args.root)
@@ -139,7 +148,9 @@ def main() -> int:
                 core.save_profile(profile)
                 result = {'ok': True, 'profile': profile.to_dict()}
             elif args.action == 'speedtest':
-                result = core.speed_test(profile, emit=emit)
+                # Left out, the network the profile names is measured, which is what the
+                # window did before it offered the choice.
+                result = core.speed_test(profile, emit=emit, preset=measure)
             elif args.action in ('pacing', 'preset'):
                 # The network is set as frame pacing is; the window words each on its own.
                 result = core.set_pacing(profile)

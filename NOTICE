@@ -78,6 +78,16 @@ Vulkan-Headers — https://github.com/KhronosGroup/Vulkan-Headers
   Copyright the Khronos Group, licensed under the Apache License 2.0.
   Fetched into `work/` at build time and not redistributed here.
 
+Dear ImGui — https://github.com/ocornut/imgui
+  Copyright (c) 2014-2026 Omar Cornut, licensed under the MIT License.
+  **Redistributed here**, unlike the dependencies above: the in-game settings menu is built on it,
+  and it is vendored in `third_party/imgui/` with its licence as `third_party/imgui/LICENSE.txt`
+  so the tree builds without a network fetch. It is used unmodified — no patch is applied to it —
+  and its version is the one in `third_party/imgui/imgui.h`. The menu's own code, which draws the
+  panel and feeds the backend this layer's keys and pointer, is this project's and is under the
+  Apache License 2.0 like the rest.
+
+
 DLSSNR-RDNA3 — https://github.com/mauri870/DLSSNR-RDNA3
   The optional E4M3 shader path and standalone probe adapt the rounding-constant construction from
   linux/shaders/rdna3/include/e4m3_emul.glsl, commit 5f099e2.

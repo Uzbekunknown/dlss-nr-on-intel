@@ -108,8 +108,8 @@ def case_spec(value):
         scale=float(scale)
     except (ValueError,TypeError):
         raise argparse.ArgumentTypeError("case must be WIDTHxHEIGHT@SCALE") from None
-    if width<1 or height<1 or width*height>1<<22 or not .05<=scale<=1:
-        raise argparse.ArgumentTypeError("case extent/scale is outside daemon limits")
+    if width<1 or height<1 or not .05<=scale<=1:
+        raise argparse.ArgumentTypeError("case extent/scale is invalid")
     return width,height,scale
 
 
@@ -139,7 +139,7 @@ def fixture(width,height):
 def live_args(width,height,scale,minimum,profile):
     args=argparse.Namespace(settings=None,profile=profile,intensity=1.,detail_strength=1.,
         colour_strength=1.,render_scale=scale,temporal=1.,hold=1.,release=24.,
-        cut_limit=.15,min_extent=minimum,max_pixels=1<<22,dump=None,meter=None)
+        cut_limit=.15,min_extent=minimum,dump=None,meter=None)
     args.live=D.Settings(args)
     args.history=D.History()
     args.letterbox=D.Letterbox()

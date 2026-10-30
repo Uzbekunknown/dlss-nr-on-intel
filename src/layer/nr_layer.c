@@ -33,6 +33,11 @@
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
+#ifndef _WIN32
+/* `CLOCK_MONOTONIC`, for the frame timer's non-Windows arm. Windows reaches the same clock
+ * through QPC, which `nr_now_seconds` below keeps to its own side of the `#ifdef`. */
+#  include <time.h>
+#endif
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
 #include "nr_transport.h"
@@ -40,6 +45,46 @@
 #include "nr_surface_policy.h"
 #include "nr_gpu_bridge.h"
 #include "nr_gpu_rpc.h"
+/* The in-game settings menu. Windows-only by construction: on Linux the same settings are driven
+ * by `nr-panel`, which already exists, so these headers bring their own no-op arm and the layer
+ * compiles unchanged on both. */
+#include "nr_menu.h"
+#include "nr_menu_bridge.h"
+#include "nr_menu_ui.h"
+#include "nr_raw_mouse.h"
+#include "nr_focus.h"
+/* The string tables and the codepoint collector: the UI's font atlas is built from the menu's own
+ * text, so this file needs to reach them. */
+#include "nr_menu_strings.h"
+#include "nr_menu_font.h"
+#include "nr_layer_cadence.h"   /* CADENCE_NAME_STORE: the one size the store and its test share */
+/* `struct device_data` and `struct swapchain_data`, which the menu's own file needs too. They used
+ * to be defined below; they live in a header now so the Windows-only glue can see them. */
+#include "nr_layer_state.h"
+/* The three hooks this file calls into the menu's own translation unit.
+ *
+ * **Including this is not optional, and leaving it out was a real defect.** `nr_menu_layer_present`
+ * was called without a declaration, so C assumed it returned `int` - and MSVC, whose C4013 is a
+ * level-3 warning, said nothing at its default level. GCC refuses the file outright, which is what
+ * the maintainer's MinGW and Linux runs hit. The same mistake in a different file truncated a
+ * 64-bit pointer and crashed a game one round earlier; `build_win.bat` now passes `/we4013`, so
+ * MSVC makes it an error rather than relying on anyone noticing. */
+#include "nr_menu_layer.h"
+
+/* ------------------------------------------------------------------ diagnostics
+ *
+ * Two kinds of message, on the same rule nr_menu_ui.cpp follows.
+ *
+ * LAYER_ERROR is a real failure worth reporting to whoever is running the game. It always prints.
+ *
+ * LAYER_TRACE is development chatter - which of the menu's guards shut, a window handle, a swapchain
+ * pointer, how many rows were built. It compiles to nothing unless LAYER_TRACE_LOGGING is defined.
+ * These were written while the pointer conversion and the composite were being worked out, and they
+ * were `fprintf`s into the game's stderr: a released layer should not narrate itself into somebody
+ * else's process, and a handle plus a PID is not something to hand out for no reason.
+ *
+ * The per-frame ones matter most. `[mouse] x=... y=...` fired on every pointer move, unthrottled,
+ * while the user was playing. */
 
 #ifdef _WIN32
 #  include <io.h>
@@ -64,21 +109,30 @@
 
 /* Locking uses the platform's own primitive: an SRWLOCK needs no destroy step and is
  * what this file used on Windows before, a pthread_mutex is what Linux uses. */
-#ifdef _WIN32
-typedef SRWLOCK nr_mutex_t;
-#define NR_MUTEX_INIT SRWLOCK_INIT
-#define nr_mutex_init(m, ...) InitializeSRWLock(m)
-#define nr_mutex_lock(m)      AcquireSRWLockExclusive(m)
-#define nr_mutex_unlock(m)    ReleaseSRWLockExclusive(m)
-#define nr_mutex_destroy(m)   ((void)(m))
-#else
-typedef pthread_mutex_t nr_mutex_t;
-#define NR_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-#define nr_mutex_init(m, ...) pthread_mutex_init(m, NULL)
-#define nr_mutex_lock(m)      pthread_mutex_lock(m)
-#define nr_mutex_unlock(m)    pthread_mutex_unlock(m)
-#define nr_mutex_destroy(m)   pthread_mutex_destroy(m)
-#endif
+
+/* Whether a virtual key is down, on whichever platform has a keyboard.
+ *
+ * `GetAsyncKeyState` is Windows-only, and six call sites in this file used it directly - the six
+ * hotkeys and the panel's left button - with no `#if` around them. `nr_layer.c` compiled on Linux
+ * before this branch because `windows.h` sits inside the `#ifdef _WIN32` below with a pthread arm
+ * beside it; those six lines (and the window helpers) undid that, so `make` stopped here.
+ *
+ * Off Windows the answer is "not down" for every key, which is the same thing a platform backend
+ * with no input reports: ImGui derives its own edges from the levels it is handed, so all-up
+ * leaves every widget idle rather than latched. Nothing on Linux reads the result today - the
+ * ImGui backend is a stub there - but a layer that stops compiling is worse than one that stops
+ * responding. */
+
+/* A monotonic clock in seconds, for the panel's frame timer.
+ *
+ * The QPC calls this file used directly were the last of the Win32 leak: `LARGE_INTEGER` is a
+ * Windows type, so a Linux compile reached three lines of it in the middle of `menu_composite`.
+ * `nr_menu_ui.cpp` already answers the same question off Windows with `clock_gettime` and
+ * `CLOCK_MONOTONIC`, and this is the same question.
+ *
+ * 0.0 means "no clock", which is what the caller falls back on: a machine without one keeps the
+ * fixed 1/60 step rather than moving nothing. */
+
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
@@ -91,119 +145,13 @@ typedef pthread_mutex_t nr_mutex_t;
 #ifndef F_OK
 #define F_OK 0
 #endif
+
+
 #else
 #include <dlfcn.h>   /* dladdr: the layer's own path */
 #include <spawn.h>
 #include <fcntl.h>
 #endif
-
-
-#define MAX_SWAPCHAINS 8
-#define MAX_IMAGES 8
-
-/* Capture and writeback consume the game's waits once, complete on private
- * fences, then present with no remaining waits. Legacy NR_LAYER_SYNC values are
- * accepted for launcher compatibility; both use this single verified path. */
-
-struct device_data {
-	VkDevice device;
-	VkPhysicalDevice physical;
-	VkQueue queue;
-	uint32_t queue_family;
-	nr_mutex_t present_lock;
-	unsigned long frame_counter;
-	VkResult transfer_error, device_error;
-	VkFence stalled_fence;
-	VkSwapchainKHR result_chain;
-	int queues_announced;           /* the one-time queue inventory has been logged */
-	int gpu_only_notice;
-	VkCommandPool pool;
-	VkCommandBuffer transfer_commands;
-	VkFence transfer_fence;
-	VkPipelineStageFlags *transfer_stages;
-	uint32_t transfer_stage_capacity;
-	struct nr_layer_timing timing;
-	struct nr_surface_selection primary;
-#ifdef _WIN32
-	struct nr_gpu_bridge *gpu;
-	HANDLE gpu_peer;
-	int gpu_enabled, gpu_blocked, gpu_attached, gpu_exposed, gpu_announced;
-	unsigned long gpu_retry_frame;
-	/* Why the GPU path stands aside for good on this device, written into the daemon's
-	 * log once frames take the usual path, after the daemon's own first lines. */
-	char gpu_note[200];
-	int gpu_note_logged, gpu_lines;
-#endif
-	VkDeviceMemory staging_memory;
-	VkBuffer staging;
-	VkDeviceSize staging_size;
-	void *mapped;
-	unsigned char *result;          /* the processed frame, held while the trigger is up */
-	VkDeviceSize result_size;
-	int holding;
-	/* One frame captured before the one being processed, so the daemon can be told
-	 * which pixels did not move. Filled on the present after the trigger goes up and
-	 * released when it goes down; nothing is copied while the trigger is down, so a
-	 * game that never triggers pays nothing for this. */
-	unsigned char *earlier;
-	VkDeviceSize earlier_size;
-	const VkSemaphore *present_wait;
-	uint32_t present_wait_count;
-	int waits_consumed;
-	int have_earlier;
-	unsigned char *outgoing;        /* colour followed by the mask, for one send */
-	VkDeviceSize outgoing_size;
-	/* NR_LAYER_ASYNC: the frame sent on the last processed present, whose answer is read
-	 * on the next one. Zero-initialised devices must not read fd 0 as a request. */
-	int inflight;
-	int inflight_fd;
-	VkDeviceSize inflight_size;
-	uint64_t inflight_timing_started;
-	unsigned inflight_timing_slot;
-	unsigned inflight_timing_group;
-	PFN_vkGetDeviceProcAddr get_device_proc;
-	PFN_vkSetDeviceLoaderData set_loader_data;
-	PFN_vkQueuePresentKHR present;
-	PFN_vkCreateSwapchainKHR create_swapchain;
-	PFN_vkDestroySwapchainKHR destroy_swapchain;
-	PFN_vkGetDeviceQueue get_device_queue;
-	PFN_vkGetDeviceQueue2 get_device_queue2;
-	PFN_vkGetSwapchainImagesKHR get_swapchain_images;
-	PFN_vkDestroyDevice destroy_device;
-};
-
-struct swapchain_data {
-	VkSwapchainKHR swapchain;
-	VkDevice device;
-	VkImage images[MAX_IMAGES];
-	uint32_t image_count;
-	VkFormat format;
-	VkExtent2D extent;
-	struct nr_surface_record surface;
-};
-
-static struct device_data devices[8];
-static struct swapchain_data swapchains[MAX_SWAPCHAINS];
-
-static nr_mutex_t lock = NR_MUTEX_INIT;
-static PFN_vkGetInstanceProcAddr next_instance_proc;
-static VkInstance layer_instance;
-static uint32_t layer_api_version;
-static const char *capture_path;
-static long capture_every;
-static long live_every;
-static int async_live;
-static const char *socket_path;
-static const char *trigger_path;
-static int ui_mask;
-
-static int gpu_only_mode(void)
-{
-    const char *value = getenv("NR_GPU_ONLY");
-    return value && !strcmp(value, "1");
-}
-
-static void nr_default_dir(char *out, size_t size);
 
 /* A line appended whole to the daemon's log, which the daemon has open for appending and
  * shares. On Windows a game's stderr reaches nobody, and the setup window's status and
@@ -233,6 +181,36 @@ static void append_daemon_log(const char *line)
 	close(fd);
 #endif
 }
+
+
+
+/* Capture and writeback consume the game's waits once, complete on private
+ * fences, then present with no remaining waits. Legacy NR_LAYER_SYNC values are
+ * accepted for launcher compatibility; both use this single verified path. */
+
+
+
+static struct device_data devices[8];
+static struct swapchain_data swapchains[MAX_SWAPCHAINS];
+
+static nr_mutex_t lock = NR_MUTEX_INIT;
+static PFN_vkGetInstanceProcAddr next_instance_proc;
+static VkInstance layer_instance;
+static uint32_t layer_api_version;
+static const char *capture_path;
+static long capture_every;
+static long live_every;
+static int async_live;
+static const char *socket_path;
+static const char *trigger_path;
+static int ui_mask;
+
+static int gpu_only_mode(void)
+{
+    const char *value = getenv("NR_GPU_ONLY");
+    return value && !strcmp(value, "1");
+}
+
 
 /* Said on stderr, as before, and into the daemon's log when to_log. */
 static void say(int to_log, const char *fmt, va_list args)
@@ -487,29 +465,6 @@ static VkLayerDeviceCreateInfo *device_chain(const VkDeviceCreateInfo *info)
 			 && item->function == VK_LAYER_LINK_INFO))
 		item = (VkLayerDeviceCreateInfo *)item->pNext;
 	return item;
-}
-
-/* The directory the knob files and the daemon's log live in, when the environment does
- * not name one. nr_paths.py picks /tmp on Linux and the user's temp folder on Windows;
- * this matches that, so a default on one side is a default on the other.
- *
- * GetTempPathA returns the length of what it wrote, including the trailing backslash, and
- * 0 on failure. The trailing separator is trimmed, but only after checking that n indexes
- * something we actually wrote: on failure n is 0, and when the buffer is too small n is
- * the length it *would* have needed - either one makes out[n - 1] read and write outside
- * the array. */
-static void nr_default_dir(char *out, size_t size)
-{
-#ifdef _WIN32
-	DWORD n = GetTempPathA((DWORD)size, out);
-	if (n == 0 || n >= (DWORD)size) {
-		snprintf(out, size, ".");
-		return;
-	}
-	if (n >= 1 && out[n - 1] == '\\') out[n - 1] = '\0';
-#else
-	snprintf(out, size, "/tmp");
-#endif
 }
 
 /* The interpreter to start the daemon with, when NR_PYTHON does not name one.
@@ -921,6 +876,41 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *inf
 	return r;
 }
 
+#ifdef _WIN32
+/* Why the in-game panel cannot be built on the device `info` made, or NULL when it can.
+ *
+ * The panel's blend pass takes its two buffers by device address and is a SPIR-V 1.6 module, so
+ * the device must run Vulkan 1.3 and have bufferDeviceAddress ENABLED. What the GPU supports is
+ * not the question: the Arc supports the feature, vkcube's device enables nothing, and building
+ * the panel there was invalid usage. The feature is on when the GPU path's patch put it there
+ * (`gpu_enabled`), or when the game asked for it itself, as DXVK does. Decided here because only
+ * vkCreateDevice sees what was enabled. */
+static const char *menu_device_reason(VkPhysicalDevice physical, const VkDeviceCreateInfo *info,
+				      int gpu_enabled)
+{
+	PFN_vkGetPhysicalDeviceProperties properties = (PFN_vkGetPhysicalDeviceProperties)
+		next_instance_proc(layer_instance, "vkGetPhysicalDeviceProperties");
+	VkPhysicalDeviceProperties props;
+	memset(&props, 0, sizeof props);
+	if (properties) properties(physical, &props);
+	uint32_t version = layer_api_version < props.apiVersion ? layer_api_version : props.apiVersion;
+	if (version < VK_API_VERSION_1_3)
+		return "the device runs Vulkan below 1.3, and the panel's shader needs 1.3";
+	if (gpu_enabled) return NULL;
+	int steps = 0;
+	for (const VkBaseInStructure *p = (const VkBaseInStructure *)info->pNext;
+	     p && ++steps <= 128; p = p->pNext) {
+		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+		    && ((const VkPhysicalDeviceVulkan12Features *)p)->bufferDeviceAddress)
+			return NULL;
+		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
+		    && ((const VkPhysicalDeviceBufferDeviceAddressFeatures *)p)->bufferDeviceAddress)
+			return NULL;
+	}
+	return "the game's device does not enable bufferDeviceAddress, which the panel needs";
+}
+#endif
+
 VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 					       const VkDeviceCreateInfo *info,
 					       const VkAllocationCallbacks *allocator,
@@ -992,6 +982,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 #ifdef _WIN32
 		data->gpu_enabled = gpu_enabled;
 		memcpy(data->gpu_note, gpu_note, sizeof data->gpu_note);
+		data->menu_device_reason = menu_device_reason(physical, info, gpu_enabled);
 #endif
 		data->present = (PFN_vkQueuePresentKHR)next_device(*device, "vkQueuePresentKHR");
 		data->get_device_queue =
@@ -1007,6 +998,18 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 		data->destroy_device = (PFN_vkDestroyDevice)next_device(*device, "vkDestroyDevice");
 		data->queue_family = info->queueCreateInfoCount
 			? info->pQueueCreateInfos[0].queueFamilyIndex : 0;
+		/* The UI's queue comes from a family the application actually created. It used to be
+		 * `queue_family == 0 ? 1 : 0` - a guess that family 1 exists, which held for the game
+		 * (both families are created there) and not for anything that creates one. Validation
+		 * named it twice: vkGetDeviceQueue(1) and the UI's command pool, on a device created with
+		 * family 0 alone. Picking from the create infos costs nothing and is the thing the spec
+		 * asks for. */
+		data->ui_queue_family = data->queue_family;
+		for (uint32_t i = 0; i < info->queueCreateInfoCount; i++)
+			if (info->pQueueCreateInfos[i].queueFamilyIndex != data->queue_family) {
+				data->ui_queue_family = info->pQueueCreateInfos[i].queueFamilyIndex;
+				break;
+			}
 	}
 	nr_mutex_unlock(&lock);
 	return r;
@@ -1014,7 +1017,19 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 
 /* The swapchain images are the frame we want, so they have to be copyable. The loader
  * lets a layer edit the create info on the way down; without TRANSFER_SRC the copy
- * below is invalid, and this is the one place it can be added. */
+ * below is invalid, and this is the one place it can be added.
+ *
+ * STORAGE goes on with it, for the in-game menu. The menu writes into the swapchain image
+ * with a compute pass, which needs the image to be a storage image - and a surface that
+ * refuses STORAGE must leave the menu switched off rather than fail on the first
+ * dispatch. So the two flags are asked for together but tracked apart: a surface that
+ * takes TRANSFER and not STORAGE keeps capture and loses the menu, which is the right way
+ * round because capture is what the daemon needs.
+ *
+ * What must NOT happen is writing a storage image the surface never agreed to: on the
+ * Intel driver that is a device loss, and on any driver a validation error. The menu
+ * refuses to build when the format cannot be one - see `format_supports_storage` in
+ * nr_menu.c, which asks the physical device the same question from the other side. */
 VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 						     const VkSwapchainCreateInfoKHR *info,
 						     const VkAllocationCallbacks *allocator,
@@ -1026,6 +1041,53 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 				       | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	VkSwapchainCreateInfoKHR patched = *info;
 	patched.imageUsage |= copies;
+	/* The caps say whether the surface supports STORAGE; asking for a flag the surface does not
+	 * advertise makes vkCreateSwapchainKHR fail, and the fallback below would then lose the
+	 * transfer flags too and turn capture off. So STORAGE is only requested when the caps offer
+	 * it, and the menu is only built when it was.
+	 *
+	 * **The caps are not enough: the format must take it too.** A surface's caps are the same
+	 * for every format it offers, and Intel's Windows driver offers STORAGE on a surface whose
+	 * B8G8R8A8_SRGB images cannot be storage images. A swapchain asked for that is invalid
+	 * usage (VUID-VkSwapchainCreateInfoKHR-imageFormat-01778), which a driver may answer by
+	 * failing the creation - and then the fallback turns capture off for the whole game. The
+	 * menu's own `format_supports_storage` asks the same question, so a format that fails it
+	 * never had a menu to lose.
+	 *
+	 * **And only on Windows, because that is the only place the menu exists.** The ImGui panel is
+	 * the whole of what draws it: it needs a font from the Windows font directory, keys read
+	 * through `GetAsyncKeyState`, and the STORAGE usage its blend pass writes through. Off Windows
+	 * `nrex_create` is a no-op that returns NULL, so the menu is never built - but asking the
+	 * surface for STORAGE anyway left every Linux swapchain carrying a usage flag nothing uses,
+	 * which is exactly what the maintainer asked to be left as it was before this branch. The
+	 * capture path does not need it: it reads through TRANSFER_SRC. */
+	int storage_ok = 0;
+#ifdef _WIN32
+	{
+		/* Resolved here rather than cached: a swapchain is created a handful of times in a
+		 * session, and a pointer stored on the device would need invalidating when the instance
+		 * goes away - which this file has been bitten by before. */
+		PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR caps_fn =
+			(PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+			next_instance_proc(layer_instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+		PFN_vkGetPhysicalDeviceFormatProperties format_fn =
+			(PFN_vkGetPhysicalDeviceFormatProperties)
+			next_instance_proc(layer_instance, "vkGetPhysicalDeviceFormatProperties");
+		if (caps_fn && format_fn && data->physical) {
+			VkSurfaceCapabilitiesKHR caps;
+			memset(&caps, 0, sizeof caps);
+			VkFormatProperties props;
+			memset(&props, 0, sizeof props);
+			format_fn(data->physical, info->imageFormat, &props);
+			if (caps_fn(data->physical, info->surface, &caps) == VK_SUCCESS
+			    && (caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT)
+			    && (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
+				patched.imageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+				storage_ok = 1;
+			}
+		}
+	}
+#endif
 	int copyable = 1;
 	VkResult r = data->create_swapchain(device, &patched, allocator, swapchain);
 	if (r != VK_SUCCESS) {
@@ -1036,6 +1098,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 		 * the parallel ProjectsCodex tree checks the flags and we did not. */
 		copyable = (info->imageUsage & copies) == copies;
 		r = data->create_swapchain(device, info, allocator, swapchain);
+		storage_ok = 0;
 	}
 	if (r != VK_SUCCESS) return r;
 	if (!copyable) {
@@ -1068,6 +1131,16 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateSwapchainKHR(VkDevice device,
 		entry->device = device;
 		entry->format = info->imageFormat;
 		entry->extent = info->imageExtent;
+		/* Whether this surface took VK_IMAGE_USAGE_STORAGE_BIT, so the menu knows whether it
+		 * may write into these images. A surface that took transfer and not storage keeps
+		 * capture and loses the menu - see the comment above nr_CreateSwapchainKHR.
+		 *
+		 * **Through the hook, and only when `storage_ok` says so.** The hook sets the flag
+		 * without looking, as its header says. A surface that refused STORAGE, or a swapchain
+		 * made on the fallback path, must keep the 0 the memset gave it, or the panel writes
+		 * into images that cannot hold it. Off Windows the hook is a no-op and the flag stays
+		 * 0, which is correct: there is no menu to read it. */
+		if (storage_ok) nr_menu_layer_note_storage(data, entry);
 		entry->surface.handle = (uint64_t)*swapchain;
 		entry->surface.width = info->imageExtent.width;
 		entry->surface.height = info->imageExtent.height;
@@ -1403,6 +1476,19 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroyDevice(VkDevice device,
 			if (queues[i].device == device)
 				memset(&queues[i], 0, sizeof queues[i]);
 		nr_mutex_unlock(&lock);
+		/* **One call, and it is a hook.** This block used to call `nr_menu_bridge_destroy`,
+		 * `nrex_destroy` and `nr_menu_destroy` itself, which had three consequences:
+		 *
+		 *   - off Windows those three have no definition at all, so the layer could not link
+		 *     there - the no-op arm of `nr_menu_layer.h` was never seen;
+		 *   - the menu's command pool and fence, which only the hook knows about, were never
+		 *     destroyed. Validation's Object Tracking reports them at vkDestroyDevice;
+		 *   - it left `nr_menu_layer_destroy` dead code, so "three hooks" was really one.
+		 *
+		 * The hook does the same three calls in the same order - bridge first, because the panel
+		 * reads its rows through it - plus the pool and the fence. It must run before the memset
+		 * below, which would otherwise drop the pointers and leak everything. */
+		nr_menu_layer_destroy(data);
 		memset(data, 0, sizeof *data);
 	}
 	if (next) next(device, allocator);
@@ -1832,6 +1918,62 @@ static int process_frame_async(struct device_data *data, struct swapchain_data *
 	return 0;
 }
 
+/* Turn the effect on or off, by creating or removing the trigger file the present path reads.
+ *
+ * One function because there are now three ways in - the Home key, the panel's checkbox, and
+ * whatever comes next - and they must not each spell the file handling out. A zero-byte file is
+ * "on" and its absence is "off"; nothing else is written, so nothing can go stale.
+ *
+ * Windows only, as its one caller below is: off Windows it would be a function with no caller. */
+#ifdef _WIN32
+static void set_trigger(const char *path, int on)
+{
+	if (!path || !*path) return;
+	if (on) {
+		FILE *f = fopen(path, "wb");
+		if (f) fclose(f);
+	} else {
+		if (access(path, F_OK) == 0) remove(path);
+	}
+}
+#endif
+
+/* ------------------------------------------------------------------ what the menu's file needs
+ *
+ * `nr_menu_layer.c` holds the menu's glue and needs four things that are this file's: the instance
+ * and the instance resolver, the swapchain lookup, and the trigger path. They are accessors rather
+ * than exported globals for one reason: a `VkInstance` shared through a header is how two
+ * translation units come to disagree about which instance is current, and this layer already runs
+ * several devices in one process.
+ *
+ * Off Windows nothing calls them - the menu's file is not compiled - so they are `#ifdef`ed to keep
+ * a Linux build from carrying four functions with no caller. */
+#ifdef _WIN32
+void nr_layer_menu_globals(VkInstance *instance, PFN_vkGetInstanceProcAddr *next_proc)
+{
+	if (instance) *instance = layer_instance;
+	if (next_proc) *next_proc = next_instance_proc;
+}
+
+struct swapchain_data *nr_layer_find_swapchain(VkSwapchainKHR swapchain)
+{
+	return find_swapchain(swapchain);
+}
+
+void nr_layer_set_trigger_file(const char *path, int on)
+{
+	set_trigger(path, on);
+}
+
+const char *nr_layer_trigger_path(void)
+{
+	return trigger_path;
+}
+#endif
+
+
+
+
 /* A completed private fence covers the consumed waits and all copies. Forward the
  * original wait list only when no copy submission has taken ownership of it. */
 static VkResult present_now(struct device_data *data, VkQueue queue,
@@ -1839,6 +1981,34 @@ static VkResult present_now(struct device_data *data, VkQueue queue,
 {
     if (data->device_error) return data->device_error;
     if (data->transfer_error) return data->transfer_error;
+
+    /* The in-game menu. Two separate costs, deliberately split:
+     *
+     *   the keys   every frame, no GPU work - the NR toggle and the compare key act with the menu
+     *              closed, and a toggle that only worked while the menu was open would be useless
+     *   the draw   only when something is on screen. `nr_menu_needs_composite` is the test, and
+     *              for ordinary play it is false, so no command buffer is opened and nothing is
+     *              submitted.
+     *
+     * The menu is built here, lazily, on the first present of a swapchain that can carry it. It
+     * cannot be built earlier: this is the first moment the layer has the device, the queue family
+     * and the swapchain format together. A failure sets `menu_state` to -1 with a reason, so a
+     * surface that cannot carry a menu is decided once rather than retried every frame.
+     *
+     * This call is what makes the menu exist. Without it `data->menu` is provably NULL at every
+     * read below, and the compiler - correctly - deletes the whole overlay: the first build of this
+     * had `menu_build` defined and never called, and the resulting DLL contained none of the
+     * menu's strings. A build that succeeds is not a menu that runs. */
+    /* The menu's own file owns all of this now - building it, reading its keys, drawing it.
+     *
+     * Three hooks, and off Windows they are empty: the menu does not exist there, so the whole of
+     * `nr_menu_layer.c` is not compiled and nothing below is reached. That is what makes Linux
+     * `newnr`'s layer again rather than a layer carrying a menu it can never show.
+     *
+     * The order matters and is unchanged: build on the first present that can carry it, then read
+     * the keys, then draw. `nr_menu_layer_present` returns 1 when it drew into the frame. */
+    nr_menu_layer_present(data, queue, info);
+
     if (!data->waits_consumed) return data->present(queue, info);
     VkPresentInfoKHR patched = *info;
     patched.waitSemaphoreCount = 0;

@@ -199,13 +199,19 @@ def _runtime_knobs():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     knobs = []
+    per_knob_choices = getattr(module, "CHOICES", {})
     for knob in module.KNOBS:
         high = {"min_extent": 4096.0, "release": 255.0}.get(knob.name, knob.high)
+        choices = None
+        if knob.kind == "choice":
+            # `profile` is the profile table; `weights` names a model. One map in the catalogue
+            # keeps both the wizard and the panel reading the same list.
+            choices = list(per_knob_choices.get(knob.name, module.PROFILES))
         knobs.append({"name": knob.name, "label": knob.label, "kind": knob.kind,
                       "low": knob.low, "high": knob.high, "step": knob.step,
                       "default": knob.default, "summary": knob.summary, "detail": knob.detail,
                       "runtime_low": knob.low, "runtime_high": high,
-                      "choices": list(module.PROFILES) if knob.kind == "choice" else None})
+                      "choices": choices})
     return knobs
 
 
@@ -239,7 +245,10 @@ def _validated_settings(values, knobs):
         name = knob["name"]
         value = values.get(name, knob["default"])
         if knob["kind"] == "choice":
-            if value not in knob["choices"]:
+            # None is the unset choice, not a wrong one: `weights` defaults to "follow the
+            # installer's network choice" (`NR_PRESET`), which no single name spells. A value
+            # that IS given must still be one of the choices.
+            if value is not None and value not in knob["choices"]:
                 raise ValueError(f"{name} must be one of {', '.join(knob['choices'])}")
         else:
             if isinstance(value, bool):
@@ -266,7 +275,14 @@ def _settings_result(path, values, knobs):
 def get_settings(root):
     """Describe validated saved values; this is not a daemon acknowledgement."""
     path, values = _settings_document(root)
-    return _settings_result(path, values, _runtime_knobs())
+    result = _settings_result(path, values, _runtime_knobs())
+    # The networks this release can measure, by name, so the window's speed-test chooser can
+    # offer what is here and grey what is not. Root-scoped like the rest of the settings, and
+    # read from the same check everything else uses - a second copy of "is this a whole model"
+    # is how the two would start disagreeing about whether B can be run.
+    result["presets"] = {name: _weights_state_file(Path(root) / PRESETS[name][0])["ready"]
+                         for name in PRESETS}
+    return result
 
 
 def save_settings(root, changes):
@@ -668,8 +684,25 @@ def discover_python():
 
 
 def _shader_names(root):
+    """Every shader the installed runtime has to carry, from the sources that name them.
+
+    `src/gpu` was the whole list, and that left the panel's two shaders out: `menu.spv` and
+    `menu_rgb10a2.spv` are named in `src/layer/nr_menu.c` and nowhere else. A release carried
+    them - `scripts/build_release.py` scans `src/layer` whole for exactly this reason - but an
+    install copied only this list, so the game got a layer whose menu could not load its shader
+    and silently drew nothing. The log said it plainly: "no settings menu: the menu's shader was
+    not found beside the layer", and INS did nothing.
+
+    `src/layer` is scanned whole rather than by filename, as the release builder does, so a
+    shader named in the layer's own sources cannot be forgotten here again.
+    """
     names = set(SHADERS)
-    for name in ("src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"):
+    sources = ["src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"]
+    sources += [str(path.relative_to(root)).replace("\\", "/")
+                for path in sorted((root / "src" / "layer").glob("*.c"))]
+    sources += [str(path.relative_to(root)).replace("\\", "/")
+                for path in sorted((root / "src" / "layer").glob("*.h"))]
+    for name in sources:
         path = root / name
         if path.is_file():
             names.update(re.findall(r"([A-Za-z0-9_]+\.spv)", path.read_text(encoding="utf-8")))
@@ -678,7 +711,18 @@ def _shader_names(root):
 
 def _weights_state(profile, preset="A"):
     relative, count = PRESETS[preset]
-    path = profile.root / relative
+    return _weights_state_file(profile.root / relative, count)
+
+
+def _weights_state_file(path, count=None):
+    """Whether one logical weights file is a whole model, and how much of one it is.
+
+    `count` is the tensor count the model must have; left out, either preset's count is
+    accepted, which is what a caller who only has the path needs. One function because the
+    release-wide answer (which networks can be measured) and the installed answer (which the
+    game runs) must not disagree - a second copy of this check is how they would."""
+    path = Path(path)
+    wanted = [count] if count is not None else [expected for _, expected in PRESETS.values()]
     try:
         with path.open("rb") as handle:
             size_bytes = handle.read(8)
@@ -690,14 +734,15 @@ def _weights_state(profile, preset="A"):
             header = json.loads(handle.read(length))
         data_size = path.stat().st_size - 8 - length
         tensors = {key: value for key, value in header.items() if key != "__metadata__"}
-        if len(tensors) != count or data_size < 0:
-            raise ValueError(f"expected {count} logical tensors")
+        if len(tensors) not in wanted or data_size < 0:
+            raise ValueError(f"expected {wanted[0] if len(wanted) == 1 else ' or '.join(map(str, wanted))} "
+                             f"logical tensors")
         for value in tensors.values():
             offsets = value.get("data_offsets", [])
             if (len(offsets) != 2 or not all(isinstance(v, int) for v in offsets)
                     or not 0 <= offsets[0] <= offsets[1] <= data_size):
                 raise ValueError("invalid tensor data offsets")
-        return {"ready": True, "path": str(path), "detail": f"{count} local logical tensors"}
+        return {"ready": True, "path": str(path), "detail": f"{len(tensors)} local logical tensors"}
     except (OSError, ValueError, TypeError, AttributeError) as error:
         return {"ready": False, "path": str(path), "detail": str(error)}
 
@@ -1568,12 +1613,60 @@ def install(profile, emit=None):
             "speed_test_due": not (profile.root / SPEED_TEST).is_file()}
 
 
+def _rewrite_pacing_lines(path, wanted):
+    """ENV_FILE with `wanted`'s pacing lines replaced in place, every other line byte-identical.
+
+    Why not regenerate the file: it carries `NR_GAME_EXE`, `NR_LAUNCH_STATE` and, when the game's
+    own loader was set aside, `NR_REAL_VULKAN` - the installation, in other words, which a
+    regenerated file would have to reconstruct and would get wrong the moment any of them moved.
+    `nr_menu_bridge.c:write_pacing` makes the same trade for the same reason and its comment says
+    so. So the six pacing lines are dropped and re-appended from `wanted`, and nothing else is
+    touched - not the comment, not the blank lines, not the order of what is left.
+
+    Written through a temporary beside it and `os.replace`d, so a crash mid-write leaves the
+    original intact rather than half a file. The worst case is "the last writer won", never a torn
+    environment.
+    """
+    text = path.read_text(encoding="utf-8")
+    kept = [line for line in text.splitlines()
+            if line.split("=", 1)[0].strip() not in PACING]
+    kept += [f"{name}={wanted[name]}" for name in PACING if name in wanted]
+    temporary = path.with_name(path.name + ".new")
+    temporary.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
+    os.replace(temporary, path)
+
+
 def set_pacing(profile):
-    """Keep frame pacing and the experimental GPU path in the profile, and
-    where NR is installed in this game from this release, in the proxy's ENV_FILE as well. The
-    layer reads them when the game starts, so a running game keeps the pacing it started with.
-    Only the PACING lines change: the rest of the file stays as Install NR wrote it, with the
-    Python and paths it checked."""
+    """Keep frame pacing and the experimental GPU path in the profile AND in the game's env file.
+
+    **Both, and this is a reversal of an earlier decision.** The file used to be the in-game
+    panel's alone, on the reasoning that two writers for one file need ordering and none existed:
+    a change made in the panel and then any pacing save here reverted it silently, because this
+    window wrote from a profile the panel had never touched. That was measured here - the file said
+    `NR_GPU_IMAGE=1 NR_LAYER_ASYNC=0 NR_LAYER_LIVE=1` while the profile still said
+    `gpu_image_path=false nr_async=true nr_every=4`, so the window's checkbox and the panel's row
+    were describing different settings with equal confidence.
+
+    What that decision cost, which the maintainer found: this function returned `applied: true` and
+    the window said the change takes effect at the next start, while the file it was describing was
+    never written - so the layer kept reading the OLD values until Install NR ran again. `applied`
+    was a fact about the installation existing, dressed up as a fact about the write.
+
+    Writing both is now safe, because the panel keeps the profile in step: it writes the file and
+    then `write_profile_pacing` (`nr_menu_bridge.c`) folds the same three values into
+    `windows-profile.json`, which is where this window reads from. So the window writes the file
+    from a profile the panel has already brought up to date, and neither can silently revert the
+    other. The lost-update that motivated the earlier decision needed the window's profile to be
+    OLDER than the panel's last write, and it no longer can be.
+
+    The residual case, recorded rather than ignored: both sides read-modify-write with no lock, so
+    a panel write landing in the same instant as this one loses. The panel re-reads the file on
+    every open and refresh, so what it then shows is what the window wrote - consistent, not
+    silently wrong - and the atomic replace means the file is never half-written.
+
+    `applied` keeps its meaning and now earns it: the installation exists, the file is ours to
+    write, and the change reaches the game at its next start.
+    """
     if profile.preset != "A" and not _weights_state(profile, profile.preset)["ready"]:
         # A daemon started for it would find no weights and end, and the game run without NR.
         return {"ok": False, "error": f"Preset {profile.preset}'s weights are not in this release: "
@@ -1585,13 +1678,14 @@ def set_pacing(profile):
     env_file = folder / ENV_FILE
     applied = owns and (folder / OWNER_NAME).is_file() and env_file.is_file()
     if applied:
-        lines = [line for line in env_file.read_text(encoding="utf-8").splitlines()
-                 if line.split("=", 1)[0] not in PACING]
-        lines += [f"{name}={value}" for name, value in layer_environment(profile).items()
-                  if name in PACING]
-        temporary = env_file.with_name(ENV_FILE + ".new")
-        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-        os.replace(temporary, env_file)
+        try:
+            _rewrite_pacing_lines(env_file, layer_environment(profile))
+        except OSError as exc:
+            # The profile is already saved, so the window is not lying about what it holds; what
+            # failed is telling the game. Say so rather than reporting a success that will not
+            # arrive - which is the exact shape of the bug being fixed here.
+            return {"ok": True, "error": None, "applied": False, "profile": profile.to_dict(),
+                    "presets": _presets_ready(profile), "write_error": str(exc)}
     return {"ok": True, "error": None, "applied": bool(applied), "profile": profile.to_dict(),
             "presets": _presets_ready(profile)}
 
@@ -1880,12 +1974,27 @@ def _daemon_answering(profile):
         return False
 
 
-def speed_test(profile, emit=None):
+def speed_test(profile, emit=None, preset=None):
     """NR's own speed on this PC, the daemon alone with no game, at the settings a release starts
     at: src/bench/speed_test.py with the release's Python. Kept in SPEED_TEST, with the PC, for
-    Save report, so testers' reports say what each GPU does at its best."""
-    if not _weights_state(profile, profile.preset)["ready"]:
-        return {"ok": False, "error": "Install NR first: the speed test runs the model it extracts"}
+    Save report, so testers' reports say what each GPU does at its best.
+
+    `preset` is the network to measure, A or B; the profile's own when left out. The two are
+    asked for separately because the speed test is the one place a user may want to compare them
+    on this machine - the window offers the choice beside the button, with B greyed unless its
+    weights are here - while the network a GAME runs stays the one the settings chose. A run
+    records which network it measured, so a report cannot be read as the other one."""
+    wanted = preset or profile.preset
+    if not isinstance(wanted, str) or wanted not in PRESETS:
+        return {"ok": False, "error": "Measure which network? " + " or ".join(PRESETS)}
+    if not _weights_state(profile, wanted)["ready"]:
+        if wanted == "A":
+            # The original network is the one Install NR always extracts: without it nothing
+            # here can run, and the sentence says what to do rather than naming a choice.
+            return {"ok": False, "error": "Install NR first: the speed test runs the model it extracts"}
+        return {"ok": False, "error": f"Network {wanted}'s weights are not in this release: "
+                                      "install them first, or measure A",
+                "presets": _presets_ready(profile)}
     script = profile.root / "src/bench/speed_test.py"
     if not script.is_file():
         return {"ok": False, "error": f"This release has no speed test: {script} is missing"}
@@ -1901,9 +2010,9 @@ def speed_test(profile, emit=None):
         emit("Measuring NR on this GPU, without a game\n")
     run = profile.root / "work/windows-wizard/speed-test-run.json"
     run.unlink(missing_ok=True)
-    # The network a game started now would run.
+    # The network the user asked to measure; it may differ from the one a game would run.
     got = _run([profile.python, "-I", script, "--root", profile.root, "--json", run,
-                "--preset", profile.preset], timeout=900, emit=emit, cwd=profile.root)
+                "--preset", wanted], timeout=900, emit=emit, cwd=profile.root)
     try:
         measured = _read_json(run, limit=256 * 1024)
     except (OSError, ValueError):

@@ -21,6 +21,7 @@ $script:PendingSettings = @{}
 $script:LoadingSettings = $false
 $script:SettingsReload = $false
 $script:SpeedTestDue = $false
+$script:PresetReady = @{A=$true; B=$false}
 $script:PacingDue = $false
 $script:ApplyingProfile = $false
 $script:SettingsDue = [DateTime]::MaxValue
@@ -251,6 +252,7 @@ $script:SettingsStateKey = 'SettingsLoading'
    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
     <ComboBox x:Name="Language" Width="110" ToolTip="">
      <ComboBoxItem Content="English" Tag="en"/>
+     <ComboBoxItem Content="中文" Tag="zh"/>
      <ComboBoxItem Content="Русский" Tag="ru"/>
      <ComboBoxItem Content="Español" Tag="es"/>
     </ComboBox>
@@ -300,7 +302,7 @@ $script:SettingsStateKey = 'SettingsLoading'
       <Border Style="{StaticResource CardBox}">
        <StackPanel>
         <TextBlock x:Name="CompareHeading" Style="{StaticResource Heading}"/>
-        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SpeedTest"/></WrapPanel>
+        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SpeedTest"/><ComboBox x:Name="SpeedNetwork" Margin="8,0,6,6" MinWidth="150" VerticalAlignment="Top" Height="{Binding ActualHeight, ElementName=SpeedTest}" ToolTip=""/></WrapPanel>
         <TextBlock x:Name="EffectState" Text="" FontWeight="SemiBold" Margin="0,4,0,2"/>
         <TextBlock x:Name="RuntimeState" Text="" Style="{StaticResource Note}" FontSize="13"/>
         <TextBlock x:Name="FpsHint" Style="{StaticResource Note}" Margin="0,6,0,0"/>
@@ -369,10 +371,14 @@ $script:SettingsStateKey = 'SettingsLoading'
 '@
 $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
 $script:Ui = @{}
-foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
+foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
     $script:Ui[$name] = $script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
+# The network is chosen once, on the controls page's own row (the daemon's `weights`
+# knob, which names the model file directly and hot-swaps). A second chooser here
+# answered the same question with a second value and the two disagreed; NR_PRESET
+# stays what the profile says (A) and the saved settings decide the rest.
 foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
@@ -420,7 +426,7 @@ function Set-Theme([string]$Name) {
 # Windows UI culture selects the initial language. Switching never edits a profile,
 # runtime setting or Steam option; only app-owned labels and messages change.
 $script:Language=[Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName
-if($script:Language -notin @('ru','es')) { $script:Language='en' }
+if($script:Language -notin @('ru','es','zh')) { $script:Language='en' }
 $script:ChangingLanguage=$false
 $script:ProgressKey='ChooseFiles'
 $script:RuntimeKey='RuntimeInitial'
@@ -507,6 +513,9 @@ $script:Strings=@{
   'Loading.preset'='Saving the network…'; 'Done.preset'='Network saved; it takes effect when the game starts next.'
   'Done.preset-later'='Network saved; Install NR gives it to the game.'
   SpeedPreset='{0}, network {1}'
+  SpeedNetworkA='A: the original model'; SpeedNetworkB='B: the faster model'
+  SpeedNetworkMissing='weights not in this release'
+  SpeedNetworkTip='Which network the speed test measures. A is the model NR has always run; B is the smaller one nvngx_dlssnr.dll 310.9.16 carries, which takes about half of A''s time on this GPU. A game runs whichever network NR controls chose; this only decides what the test measures.'
   'Warn.preset_b_extraction'='NR is installed with network A: network B could not be taken out of nvngx_dlssnr.dll {0}. What the extractor said is in Check details and in Save report.'
   'Loading.settings'='Loading NR settings…'; 'Loading.settings-save'='Saving NR controls…'; 'Loading.settings-reset'='Restoring NR defaults…'
   'Done.settings'='NR settings loaded.'; 'Done.settings-save'='NR settings saved.'; 'Done.settings-reset'='NR defaults restored.'
@@ -515,7 +524,7 @@ $script:Strings=@{
   'Knob.hold'='Hold unchanged pixels'; 'Knob.release'='Release moving pixels'; 'Knob.cut_limit'='Scene-cut threshold'
   'Hint.render_scale'='Fraction of each dimension processed by the network. Lower is cheaper, with coarser detail; minimum padding can limit the reduction.'
   'Hint.min_extent'='Minimum padded network side. 320 matches the vendor; 128 costs less for small frames and changes the surrounding mirrored context.'
-  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights; neutral greatly reduces the effect.'
+  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights.'
   'Hint.intensity'='Blend strength: 0 keeps the game image, 1 uses the model result, above 1 exaggerates the change.'
   'Hint.detail_strength'='Strength of fine detail. Zero keeps only broad tone changes; above 1 adds more sharpening.'
   'Hint.colour_strength'='Strength of tone and colour changes. Higher values can reduce saturation; zero preserves the game tone.'
@@ -523,10 +532,12 @@ $script:Strings=@{
   'Hint.hold'='Keep the previous result where the game pixels did not change, reducing flicker in still areas.'
   'Hint.release'='Pixel change in levels of 255 that releases history. 16–24 is a useful starting range; zero disables this protection.'
   'Hint.cut_limit'='Average frame change that discards history for a scene cut. Lower reacts sooner; 1 never cuts.'
+  'Knob.weights'='Network'; 'Hint.weights'='Which network the daemon runs. Unset, the installer''s network choice decides: A runs HT, B runs CC small FP8, the faster model a 310.9.16-or-later DLL carries. Naming one here overrides that and reloads the model without restarting the game; a name whose file is missing falls back to the one that is here.'
   Uninstall='Remove NR'; 'Loading.uninstall'='Removing NR from the game…'; 'Done.uninstall'='NR removed. The game folder is as it was before installation.'
   'Done.uninstall-steam'='Steam''s launch options restored and NR removed. The game folder is as it was before installation.'
   UninstallConfirm='Remove NR from this game? Setup deletes the dlss-nr folder and the files it put beside the game, and puts back the game files it set aside. If Steam still starts the game through an earlier setup''s launch options, they go back first, and Steam restarts. Your weights and settings stay in the DLSS-NR folder.'
-  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.neutral'='Neutral'
+  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'
+  'Choice.weights.ht'='A: HT, the model this project reproduces'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, the faster model'
  }
  ru=@{
   Title='DLSS-NR — установка и запуск'; LanguageTip='Выберите язык мастера.'
@@ -608,6 +619,9 @@ $script:Strings=@{
   'Loading.preset'='Сохраняем выбор нейросети…'; 'Done.preset'='Нейросеть сохранена и применится при следующем запуске игры.'
   'Done.preset-later'='Нейросеть сохранена; «Установить NR» передаст её игре.'
   SpeedPreset='{0}, сеть {1}'
+  SpeedNetworkA='A: исходная модель'; SpeedNetworkB='B: более быстрая модель'
+  SpeedNetworkMissing='весов нет в этой сборке'
+  SpeedNetworkTip='Какую сеть измеряет тест скорости. A — модель, с которой NR работал всегда; B — меньшая из nvngx_dlssnr.dll 310.9.16, на этой видеокарте она тратит примерно половину времени A. Игра запускает ту сеть, что выбрана в «Управлении NR»; здесь выбирается только то, что измеряет тест.'
   'Warn.preset_b_extraction'='NR установлен с сетью A: сеть B не удалось извлечь из nvngx_dlssnr.dll {0}. Что сообщил извлекатель, есть в «Подробностях проверки» и в «Сохранить отчёт».'
   'Loading.settings'='Загружаем настройки NR…'; 'Loading.settings-save'='Сохраняем настройки NR…'; 'Loading.settings-reset'='Возвращаем настройки NR…'
   'Done.settings'='Настройки NR загружены.'; 'Done.settings-save'='Настройки NR сохранены.'; 'Done.settings-reset'='Настройки NR сброшены.'
@@ -624,10 +638,12 @@ $script:Strings=@{
   'Hint.hold'='Сохраняет предыдущий результат там, где пиксели игры не менялись, уменьшая мерцание неподвижных участков.'
   'Hint.release'='Изменение пикселя в уровнях из 255, которое освобождает историю. Начните с 16–24; ноль выключает эту защиту.'
   'Hint.cut_limit'='Среднее изменение кадра для сброса истории при смене сцены. Меньше — быстрее реагирует; 1 никогда не сбрасывает.'
+  'Knob.weights'='Сеть'; 'Hint.weights'='Какую сеть запускает демон. Не задано — решает выбор сети в установщике: A запускает HT, B — CC small FP8, быструю модель из DLL 310.9.16 или новее. Заданное здесь имя имеет приоритет, и модель перезагружается без перезапуска игры; имя без файла откатывается к тому, что есть.'
   Uninstall='Удалить NR'; 'Loading.uninstall'='Удаляем NR из игры…'; 'Done.uninstall'='NR удалён. Папка игры такая же, как до установки.'
   'Done.uninstall-steam'='Параметры запуска Steam возвращены, NR удалён. Папка игры такая же, как до установки.'
   UninstallConfirm='Удалить NR из этой игры? Мастер удалит папку dlss-nr и файлы, которые положил рядом с игрой, и вернёт отложенные файлы игры. Если Steam ещё запускает игру с параметрами от прежней версии мастера, сначала вернутся они, и Steam перезапустится. Веса и настройки останутся в папке DLSS-NR.'
-  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.neutral'='Нейтральный'
+  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'
+  'Choice.weights.ht'='A: HT, модель, которую воспроизводит проект'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, быстрая модель'
  }
  es=@{
   Title='DLSS-NR — instalación e inicio'; LanguageTip='Cambie el idioma del instalador.'
@@ -709,6 +725,9 @@ $script:Strings=@{
   'Loading.preset'='Guardando la red neuronal…'; 'Done.preset'='Red neuronal guardada; se aplica la próxima vez que se inicie el juego.'
   'Done.preset-later'='Red neuronal guardada; Instalar NR se la pasa al juego.'
   SpeedPreset='{0}, red {1}'
+  SpeedNetworkA='A: el modelo original'; SpeedNetworkB='B: el modelo rápido'
+  SpeedNetworkMissing='sus pesos no están en esta versión'
+  SpeedNetworkTip='Qué red mide la prueba de velocidad. A es el modelo con el que NR funciona desde siempre; B es el más pequeño que trae nvngx_dlssnr.dll 310.9.16, que en esta GPU tarda más o menos la mitad que A. El juego ejecuta la red elegida en «Controles de NR»; esto solo decide qué mide la prueba.'
   'Warn.preset_b_extraction'='NR está instalado con la red A: no se pudo extraer la red B de nvngx_dlssnr.dll {0}. Lo que dijo el extractor está en Detalles de la comprobación y en Guardar informe.'
   'Loading.settings'='Cargando la configuración de NR…'; 'Loading.settings-save'='Guardando los controles de NR…'; 'Loading.settings-reset'='Restaurando los valores predeterminados de NR…'
   'Done.settings'='Configuración de NR cargada.'; 'Done.settings-save'='Configuración de NR guardada.'; 'Done.settings-reset'='Se restauraron los valores predeterminados de NR.'
@@ -725,11 +744,119 @@ $script:Strings=@{
   'Hint.hold'='Mantiene el resultado anterior donde los píxeles del juego no cambiaron, lo que reduce el parpadeo en las zonas quietas.'
   'Hint.release'='Cambio de un píxel, en niveles de 255, que libera el historial. 16–24 es un buen punto de partida; cero desactiva esta protección.'
   'Hint.cut_limit'='Cambio medio del fotograma que descarta el historial en un cambio de escena. Menos reacciona antes; 1 nunca corta.'
+  'Knob.weights'='Red'; 'Hint.weights'='Qué red ejecuta el demonio. Sin definir, decide la elección de red del instalador: A ejecuta HT, B ejecuta CC small FP8, el modelo rápido de un DLL 310.9.16 o posterior. Nombrar una aquí tiene prioridad y recarga el modelo sin reiniciar el juego; un nombre sin archivo retrocede al que esté.'
   Uninstall='Quitar NR'; 'Loading.uninstall'='Quitando NR del juego…'; 'Done.uninstall'='NR quitado. La carpeta del juego está como antes de la instalación.'
   'Done.uninstall-steam'='Se restauraron las opciones de inicio de Steam y se quitó NR. La carpeta del juego está como antes de la instalación.'
   UninstallConfirm='¿Quitar NR de este juego? El instalador borra la carpeta dlss-nr y los archivos que puso junto al juego, y devuelve los archivos del juego que guardó aparte. Si Steam todavía inicia el juego con las opciones de un instalador anterior, primero se restauran, y Steam se reinicia. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
-  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.neutral'='Neutro'
+  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'
+  'Choice.weights.ht'='A: HT, el modelo que reproduce el proyecto'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, el modelo rápido'
  }
+ zh=@{
+   Title='DLSS-NR — 安装与启动'; LanguageTip='更改安装程序语言。'
+   Subtitle='在 Intel Xe2 上安装并试运行'; FilesHeading='1. 选择文件'
+   DllLabel='你的 NVIDIA DLL'; GameLabel='游戏程序'; PythonLabel='64 位 Python'; Browse='浏览…'
+   DllTip='选择你自己的 nvngx_dlssnr.dll。该文件不随安装包提供，也不会被下载。'
+   GameTip='游戏的 .exe，64 位或 32 位均可。对于 DirectX 8–11，安装程序会同时放入 DXVK。'
+   PythonTip='请选择原生 64 位 Windows Python，而不是 MinGW/MSYS2 的解释器。'
+   FindPython='查找 Python'; GetPython='Python 官网'
+   PythonHint='Python 通常会自动检测到。如果缺少，请从 python.org 安装 Windows x64 版 Python。'
+   ConnectHeading='2. 将 NR 连接到游戏'; ApiLabel='图形 API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11（安装程序会添加 DXVK）'
+   LaunchOptions='启动选项'
+   ArgsLabel='游戏参数（可选）'; ArgsTip='普通的游戏参数；此处不执行 shell 命令。'
+   Fossilize='针对 NR 的 Steam 着色器缓存规避方案'
+   FossilizeTip='安装 NR 会在本游戏中关闭 Steam 的 Fossilize 层。Steam 覆盖界面仍然可用。'
+   FirstTestHint='首次测试请选择 800×450 的游戏窗口；网络以 0.4 的比例开始运行。安装程序会把它的 vulkan-1.dll 放到游戏旁，并为 DirectX 8–11 放入 DXVK，同时把被替换的文件收起来；移除 NR 会把一切还原。像平常一样启动游戏即可。DirectX 12 游戏目前无法在 Windows 上运行。'
+   Check='检查'; Dependencies='准备 Python'; Install='安装 NR'; CompareHeading='3. 启动并对比'
+   Launch='启动游戏'; Enable='启用 NR'; Disable='禁用 NR'
+   EffectOn='效果已启用'; EffectOff='效果已禁用'
+   RuntimeInitial='游戏尚未测试。启用 NR 后，请等待处理完成的帧。'
+   FpsHint='NR 会处理每一帧，可能明显降低 FPS。请在效果启用与禁用时对比同一场景。'
+   Report='保存报告'; CheckDetails='检查详情'; ChooseFiles='请选择你的游戏和 DLL。'
+   PythonMissing='未找到 Python。请安装 Windows x64 版 Python 或选择 python.exe。'
+   ActionFailed='操作无法完成。'; NoResult='操作结束了，但没有结果。请打开详情。'
+   ResultMissing='没有产生结果。'; FixChecks='请修正报告中指出的问题。请打开检查详情。'
+   StatusUnavailable='当前无法获取状态。已保留上一次已知的效果状态。'
+   Network='网络：{0}×{1}。'; Frames='帧数'; TailFrames='日志最新段落中的帧数'
+   Processing='游戏正在处理。{0}：{1}；已拒绝：{2}。{3}'
+   Historical='日志中包含 {0} 个已处理帧；已拒绝：{1}。目前尚未确认有新的帧。'
+   WaitingFrames='尚未有新的已处理帧。请进入游戏场景并启用 NR。'
+   BusyClose='请等待当前操作完成。'
+   PickDll='你的 nvngx_dlssnr.dll'; PickGame='游戏程序'; PickPython='64 位 Windows Python'
+   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|DLL 文件|*.dll'; GameFilter='游戏程序|*.exe'
+   PythonFilter='Python 解释器|python.exe;python3.exe|可执行文件|*.exe'; ReportFilter='JSON 报告|*.json'
+   ReportTitle='保存诊断报告'
+   'Loading.discover'='正在查找合适的 Python…'; 'Loading.check'='正在检查文件和依赖…'
+   'Loading.dependencies'='正在准备本地 Python…'; 'Loading.install'='正在解出权重并安装 NR…'
+   'Loading.launch'='正在启动游戏…'
+   'Loading.on'='正在启用 NR…'; 'Loading.off'='正在禁用 NR…'
+   'Loading.report'='正在保存报告…'; 'Loading.save'='正在保存设置…'
+   'Done.discover'='已找到 Python。请选择你的游戏和 DLL。'; 'Done.check'='检查通过。可以安装 NR 了。'
+   'Done.dependencies'='Python 已就绪。现在可以安装 NR。'; 'Done.install'='NR 已安装。像平常一样启动游戏，或使用“启动游戏”。'
+   'Done.launch'='已请求启动。请进入游戏场景。'; 'Done.install-steam'='已恢复此前安装留下的 Steam 启动选项，并装好了 NR。像平常一样启动游戏即可。'
+   'Done.on'='NR 已启用。请等待前几个处理完成的帧。'
+   'Done.off'='NR 已禁用。'; 'Done.report'='报告已保存。'; 'Done.save'='设置已保存。'
+   SetupTab='安装'; ControlsTab='NR 控制'; ControlsHeading='实时 NR 控制'
+   ControlsHint='调整完成后会自动保存。守护进程会在帧之间读取，无需重启游戏。请求的比例与实际补齐的网络尺寸可能不同。'
+   ResetSettings='全部重置'; DefaultKnob='默认'; MoreSettings='更多设置'; ThemeTip='浅色或深色主题'
+   SettingsLoading='正在加载 NR 设置…'; SettingsReady='当前设置已加载。'; SettingsUnsaved='有更改等待保存…'
+   SettingsSaved='已保存。在下一个处理帧上生效。'; SettingsFailed='设置无法保存。请查看“安装 → 检查详情”。'
+   UnsavedClose='有部分 NR 更改尚未保存。关闭并放弃这些更改吗？'
+   InvalidSetting='请输入支持范围内的有限数值。'; FrameReadout='上一个神经帧：输出 {0}×{1}；网络 {3}×{4}；处理 {2} 毫秒。这不是游戏 FPS。'
+   PackagesLater='Python 可用。安装 NR 会向独立的 Python 添加 numpy 和 safetensors。'
+   GameWithoutNr='游戏正在没有 NR 的情况下运行。请重启它；如果 NR 仍未出现，请用“启动游戏”启动。'
+   GameElevated='游戏以管理员身份运行，此时 Windows 的 Vulkan 加载器会忽略 NR 的位置，因此 NR 无法接入。请关闭游戏，以非管理员身份重新启动，Steam 或启动它的启动器也要如此。'
+   GameElevatedUacOff='由于 UAC 已关闭，游戏以管理员身份运行，此时 Windows 的 Vulkan 加载器会忽略 NR 的位置，因此 NR 无法接入。NR 需要 UAC 开启，即 Windows 的默认状态。'
+   'Warn.vulkan_executable'='{0} 本身不加载 Vulkan 加载器，NR 只能接入此处选择的 .exe。如果游戏是在另一个 .exe 中以 Vulkan 绘制的，请改选那个。'
+   'Warn.vulkan_executable_other'='{0} 本身不加载 Vulkan 加载器，NR 只能接入此处选择的 .exe。它旁边的 {1} 会：如果游戏是以 Vulkan 在那里绘制的，请改选它。'
+   'Warn.window_elevated'='本窗口以管理员身份运行，用“启动游戏”启动的游戏也会如此：NR 无法接入以管理员身份运行的游戏。请以非管理员身份启动游戏，以及启动它的 Steam 或启动器。'
+   'Warn.uac_off'='UAC 已关闭，Windows 会以管理员身份运行每个程序，NR 无法接入这样运行的游戏。NR 需要 UAC 开启，即 Windows 的默认状态。'
+   SpeedTest='速度测试'; SpeedTestTip='在有游戏之前，单独在这块 GPU 上测量 NR，覆盖四种窗口尺寸：这里能达到的最好水平。保存报告会带上该结果。'
+   'Loading.speedtest'='正在这块 GPU 上无游戏地测量 NR…'; 'Done.speedtest'='速度测试已保存；保存报告会带上它。'
+   SpeedHead='本机（{0}）上网络本身的每帧耗时：'; SpeedScale='渲染比例 {0}：{1}'
+   SpeedCase='{0}×{1} {2} 毫秒（最高 {3} fps）'
+   SpeedNote='从游戏取每一帧再交回去也要花时间，而且游戏在同一块 GPU 上绘制：在游戏中的帧率会低于这些数字。'
+   PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
+   AsyncMode='异步：网络在游戏绘制下一帧时工作'
+   AsyncModeTip='每秒帧数更多，而屏幕上显示的比处理结果落后一帧。'
+   GpuImagePath='实验性：帧保留在 GPU 上'
+   GpuImagePathTip='帧保留在 GPU 上，从捕获到屏幕都不经过 CPU 拷贝。需要游戏与网络在同一块 Arc 上，且游戏使用 Vulkan 1.1 或更高版本（DirectX 游戏经 DXVK 即属于此）。如果不能如此，NR 会走常规路径，保存报告会说明原因。'
+   GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
+   PresetHeading='网络'; PresetA='A：NR 一直运行的模型'; PresetB='B：nvngx_dlssnr.dll 310.9.16 中的更快模型'
+   PresetTip='nvngx_dlssnr.dll 310.9.16 携带两个网络：A，NR 一直运行的模型；B，NVIDIA 后来加入的更小网络，在这块 GPU 上耗时约为 A 的一半。「安装 NR」会把 B 从该 DLL 中提取出来，与 A 并存。'
+   PresetNote='B 需要 310.9.16 或更新版的 nvngx_dlssnr.dll，在「安装」页选择，按「安装 NR」时生效。在游戏下次启动时生效。'
+   'Loading.preset'='正在保存网络…'; 'Done.preset'='网络已保存；在游戏下次启动时生效。'
+   'Done.preset-later'='网络已保存；安装 NR 会把它交给游戏。'
+   SpeedPreset='{0}, 网络 {1}'
+   SpeedNetworkA='A：原始模型'; SpeedNetworkB='B：更快的模型'
+   SpeedNetworkMissing='此版本不含其权重'
+   SpeedNetworkTip='速度测试测量哪个网络。A 是 NR 一直运行的模型；B 是 nvngx_dlssnr.dll 310.9.16 携带的更小网络，在这块 GPU 上耗时约为 A 的一半。游戏运行的是「NR 控制」里选中的网络；这里只决定测试测量什么。'
+   'Warn.preset_b_extraction'='NR 已按网络 A 安装：无法从 nvngx_dlssnr.dll {0} 提取网络 B。提取器的输出在「检查详情」和「保存报告」里。'
+   EveryLabel='网络运行于'; EveryTip='其间各帧重复上一次结果：游戏跑得更快，画面只在网络出帧时变化。'
+   Every1='每帧'; Every2='每 2 帧'; Every3='每 3 帧'; Every4='每 4 帧'
+   'Loading.pacing'='正在保存帧节奏…'; 'Done.pacing'='帧节奏已保存；在游戏下次启动时生效。'
+   'Done.pacing-later'='帧节奏已保存；安装 NR 会把它交给游戏。'
+   'Loading.settings'='正在加载 NR 设置…'; 'Loading.settings-save'='正在保存 NR 控制…'; 'Loading.settings-reset'='正在恢复 NR 默认值…'
+   'Done.settings'='NR 设置已加载。'; 'Done.settings-save'='NR 设置已保存。'; 'Done.settings-reset'='NR 默认值已恢复。'
+   'Knob.render_scale'='渲染比例'; 'Knob.min_extent'='最小网络边长'; 'Knob.profile'='配置风格'; 'Knob.intensity'='强度'
+   'Knob.detail_strength'='细节强度'; 'Knob.colour_strength'='色彩强度'; 'Knob.temporal'='时域历史'
+   'Knob.hold'='保持未变像素'; 'Knob.release'='释放运动像素'; 'Knob.cut_limit'='转场阈值'
+   'Hint.render_scale'='网络处理的每个维度的比例。越低越省，细节也更粗；最小补齐可能限制降低幅度。'
+   'Hint.min_extent'='补齐后的最小网络边长。320 与原厂一致；128 对小帧更省，但会改变周围镜像的上下文。'
+   'Hint.profile'='标准增加纹理；自然与电影保留更多高光。'
+   'Hint.intensity'='混合强度：0 保留游戏画面，1 使用模型结果，大于 1 会夸大变化。'
+   'Hint.detail_strength'='细节强度。零只保留大体的色调变化；大于 1 增加更多锐化。'
+   'Hint.colour_strength'='色调与色彩变化的强度。更高会降低饱和度；零保留游戏色调。'
+   'Hint.temporal'='回馈多少上一次的输出。零则忘记历史，逐帧独立绘制。'
+   'Hint.hold'='在游戏像素未变处保留上一次结果，减少静止区域的闪烁。'
+   'Hint.release'='以 255 级表示的像素变化量，达到则释放历史。16–24 是有用的起始范围；零则关闭该保护。'
+   'Hint.cut_limit'='平均帧变化量，达到则因转场丢弃历史。越低反应越快；1 从不切换。'
+   'Knob.weights'='网络'; 'Hint.weights'='守护进程运行哪个网络。未设置时由安装器的网络选择决定：A 运行 HT，B 运行 CC small FP8——310.9.16 或更新 DLL 里的更快模型。在此命名则覆盖安装器的选择，且不重启游戏即可换模型；名字没有对应文件时回退到已有的那个。'
+   Uninstall='移除 NR'; 'Loading.uninstall'='正在从游戏移除 NR…'; 'Done.uninstall'='NR 已移除。游戏文件夹恢复如初。'
+   'Done.uninstall-steam'='Steam 启动选项已恢复，NR 已移除。游戏文件夹恢复如初。'
+   UninstallConfirm='要从本游戏移除 NR 吗？安装程序会删除 dlss-nr 文件夹和它放到游戏旁的文件，并还原它收起来的游戏文件。如果 Steam 仍通过此前安装的启动选项启动游戏，它们会先被恢复，然后 Steam 重启。你的权重和设置保留在 DLSS-NR 文件夹中。'
+   'Profile.standard'='标准'; 'Profile.natural'='自然'; 'Profile.cinematic'='电影'
+   'Choice.weights.ht'='A：HT（本项目复现的模型）'; 'Choice.weights.cc_small_fp8'='B：CC small FP8（更快的模型）'
+  }
 }
 $script:TextBindings=@{
  Subtitle='Subtitle'; FilesHeading='FilesHeading'; DllLabel='DllLabel'; GameLabel='GameLabel'; PythonLabel='PythonLabel'
@@ -755,6 +882,18 @@ $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTi
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
     return [string]$script:Strings[$script:Language][$Key]
+}
+# The label of one value of a `choice` knob. A choice knob's values are not always profiles: the
+# weight model's are `ht` and `cc_small_fp8`, so the general key is `Choice.<knob>.<value>` and
+# `Profile.<value>` stays what `profile` reads. A value with neither key is shown as it is spelled,
+# because a missing translation throws above and a settings page that will not open is worse than a
+# row that says `ht`.
+function ChoiceLabel([string]$Name,[string]$Value) {
+    $key='Choice.'+$Name+'.'+$Value
+    if($script:Strings[$script:Language].ContainsKey($key)) { return [string]$script:Strings[$script:Language][$key] }
+    $key='Profile.'+$Value
+    if($script:Strings[$script:Language].ContainsKey($key)) { return [string]$script:Strings[$script:Language][$key] }
+    return $Value
 }
 function Set-Progress([string]$Key) {
     $script:ProgressKey=$Key
@@ -820,12 +959,12 @@ function Update-KnobLanguage {
         # The description once, on the name: it was printed under the slider and was the
         # slider's tooltip as well.
         $row.Label.ToolTip=T ('Hint.'+$name)
-        $defaultLabel=$(if($row.Model.kind -eq 'choice'){T ('Profile.'+[string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
+        $defaultLabel=$(if($row.Model.kind -eq 'choice'){ChoiceLabel $name ([string]$row.Model.default)}else{Format-KnobValue $row.Model.default})
         $row.Default.ToolTip=(T 'DefaultKnob')+': '+$defaultLabel
         [Windows.Automation.AutomationProperties]::SetName($row.Default,(T 'DefaultKnob')+' '+$defaultLabel)
         if($row.Choice) {
             [Windows.Automation.AutomationProperties]::SetName($row.Choice,(T ('Knob.'+$name)))
-            foreach($item in $row.Choice.Items) { $item.Content=T ('Profile.'+[string]$item.Tag) }
+            foreach($item in $row.Choice.Items) { $item.Content=ChoiceLabel $name ([string]$item.Tag) }
         } else {
             $row.Input.ToolTip=(T ('Knob.'+$name))+' ['+$row.Model.runtime_low+' – '+$row.Model.runtime_high+']'
             [Windows.Automation.AutomationProperties]::SetName($row.Input,(T ('Knob.'+$name)))
@@ -878,6 +1017,12 @@ function Apply-NrSettings($Result) {
         $name=[string]$model.name
         if(-not $script:PendingSettings.ContainsKey($name)) { Set-KnobDisplay $name $Result.settings.$name }
     }
+    # Which networks this release can measure, from the same settings answer: the check that
+    # says whether B's weights are here is the backend's, not a file listing done in the window.
+    if($Result.presets) {
+        $script:PresetReady=@{A=$true; B=[bool]$Result.presets.B}
+        Update-SpeedNetwork
+    }
     Set-SettingsState $(if($script:PendingSettings.Count){'SettingsUnsaved'}else{'SettingsReady'})
 }
 function Save-NrSettings {
@@ -906,13 +1051,25 @@ function Set-Language([string]$Language) {
     $script:ChangingLanguage=$true
     try {
         $script:Language=$Language
-        $script:Ui.Language.SelectedIndex=[array]::IndexOf(@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag }), $Language)
+        # The index, or English when the tag is not in the list.
+        #
+        # `IndexOf` returns -1 for a language the combo does not offer, and `SelectedIndex = -1`
+        # leaves a ComboBox showing NOTHING - the control is blank, which is exactly the reported
+        # "the language box shows nothing". It happened because the combo's items were hardcoded in
+        # XAML with three entries while the language table had four, so a Chinese system found no
+        # `zh` item to select. The list is now built from the table (see below), but the fallback
+        # stays: an unsupported language should show English, not an empty box.
+        $tags=@($script:Ui.Language.Items | ForEach-Object { [string]$_.Tag })
+        $index=[array]::IndexOf($tags, $Language)
+        $script:Ui.Language.SelectedIndex=$(if($index -ge 0){$index}else{0})
+        # The tooltip is set by the TipBindings loop below, which already names 'Language'.
         $script:Window.Title=T 'Title'
         foreach($name in $script:TextBindings.Keys) { $script:Ui[$name].Text=T $script:TextBindings[$name] }
         foreach($name in $script:ContentBindings.Keys) { $script:Ui[$name].Content=T $script:ContentBindings[$name] }
         foreach($name in $script:HeaderBindings.Keys) { $script:Ui[$name].Header=T $script:HeaderBindings[$name] }
         foreach($name in $script:TipBindings.Keys) { $script:Ui[$name].ToolTip=T $script:TipBindings[$name] }
         Update-KnobLanguage
+        Update-SpeedNetwork
         Set-SettingsState $script:SettingsStateKey
         Set-Progress $script:ProgressKey
         $runtimeKey=$script:RuntimeKey
@@ -979,6 +1136,38 @@ function Show-Presets($Presets) {
         try { $script:Ui.PresetChoice.SelectedItem=$script:Ui.PresetA } finally { $script:ApplyingProfile=$false }
     }
 }
+# The speed test's own choice of network, beside its button. It asks which network to MEASURE,
+# which is not the question the `weights` knob asks (which network a GAME runs): a tester
+# comparing the two on one PC would otherwise have to change the game's network to measure the
+# other. A is always offered; B only where this release carries its weights, because a test of
+# weights that are not here has nothing to measure - the backend refuses it as well.
+function Update-SpeedNetwork {
+    $combo=$script:Ui.SpeedNetwork
+    if(-not $combo) { return }
+    # The list is rebuilt rather than relabelled in place: B is dropped when its weights are
+    # absent, so the combo is never left on a choice the backend would refuse.
+    $chosen=Get-SpeedNetwork
+    $combo.Items.Clear()
+    foreach($preset in @('A','B')) {
+        $ready=[bool]$script:PresetReady[$preset]
+        if(-not $ready) { continue }
+        $item=[Windows.Controls.ComboBoxItem]::new()
+        $item.Tag=$preset
+        $item.Content=T ('SpeedNetwork'+$preset)
+        $null=$combo.Items.Add($item)
+    }
+    # A release without B offers A alone, which is what it can measure.
+    $index=-1
+    for($i=0; $i -lt $combo.Items.Count; $i++) { if([string]$combo.Items[$i].Tag -eq $chosen) { $index=$i } }
+    $combo.SelectedIndex=$(if($index -ge 0){$index}else{0})
+    $combo.ToolTip=T 'SpeedNetworkTip'
+}
+# What the button asks to measure, read from the combo when it is pressed: the choice belongs to
+# the control, and a second copy of it is how the two would come to disagree.
+function Get-SpeedNetwork {
+    if($script:Ui.SpeedNetwork -and $script:Ui.SpeedNetwork.SelectedItem) { return [string]$script:Ui.SpeedNetwork.SelectedItem.Tag }
+    return 'A'
+}
 # The GPU image path takes every frame, in step with the game, or stands aside (issue #17):
 # with it on, asynchronous mode and every Nth frame are greyed and kept for when it is off.
 function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
@@ -988,12 +1177,59 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
 # Asynchronous mode and every Nth frame are read by the layer when the game starts: a change
 # is saved at once, into the installed game's nr-env.txt too, and waits for a running action.
 # The network is saved the same way, as 'preset', which words its own progress.
+# ---- a pacing field the user did NOT touch takes the file's value ----
+#
+# `Profile-FromWindow` reads this window's controls, and those hold the values the profile had
+# when the window started: `Apply-Profile` runs after discover/dependencies/install and never on
+# the `status` poll. The in-game panel writes both `nr-env.txt` and `windows-profile.json` while
+# the window sits open. So sending every control's current value would write a stale pacing over
+# the panel's - the exact regression that made this file stop writing `nr-env.txt` in the first
+# place.
+#
+# The distinction that matters is "did the user move this control", and `$script:LastProfile`
+# answers it: it is the profile the controls were last filled from, so a control still showing
+# that value was not touched. Only those fields take the file's value. A field the user DID change
+# keeps the user's choice, which is what the controls are for.
+#
+# Its own function so the self-test can call it: this decision is the thing that has to be right,
+# and a check that reproduces the logic instead of calling it would pass with the logic deleted.
+#
+# **`$RequestValues` is the ordered dictionary `Profile-FromWindow` builds**, and the assignment
+# below relies on that - `[ordered]@{}` takes `$dict[$key]=`, a `[pscustomobject]` does not and
+# throws "Unable to index into an object of type PSObject". The first version of the self-test
+# passed a PSObject and the function silently threw, which is why the check proved nothing: it
+# caught the exception only when the test itself was hardened.
+function Merge-PacingFromProfile($RequestValues, $LastProfile, $Fresh) {
+    if(-not $Fresh) { return $RequestValues }
+    foreach($key in @('nr_async','nr_every','gpu_image_path','preset')) {
+        if(-not ($Fresh.PSObject.Properties.Name -contains $key)) { continue }
+        $was=$null
+        if($LastProfile -and ($LastProfile.PSObject.Properties.Name -contains $key)) {
+            $was=$LastProfile.$key
+        }
+        $now=$RequestValues[$key]
+        # A field the window does not carry at all (the network, which is the panel's) is taken
+        # from the file unconditionally: there is no control here that could have been moved.
+        # `Contains` belongs to the OrderedDictionary; a PSObject has properties instead. Both are
+        # handled because the first version of this reached for `Contains` on everything and threw
+        # on a PSObject - and a throw inside the `if` condition is a silently skipped check.
+        $carried = $true
+        if($RequestValues -is [System.Collections.IDictionary]) {
+            $carried = $RequestValues.Contains($key)
+        } elseif($RequestValues.PSObject.Properties.Name -notcontains $key) {
+            $carried = $false
+        }
+        if(-not $carried -or "$was" -eq "$now") { $RequestValues[$key]=$Fresh.$key }
+    }
+    return $RequestValues
+}
+
 function Request-Pacing([string]$Action='pacing') {
     if($script:ApplyingProfile) { return }
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
     Update-PacingState $Busy
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
@@ -1018,6 +1254,11 @@ function Start-Bridge([string]$Action,[string]$Destination='', [bool]$Quiet=$fal
         if($Action -ne 'discover') {
             $requestValues=Profile-FromWindow
             if($Extra) { foreach($key in $Extra.Keys) { $requestValues[$key]=$Extra[$key] } }
+            if($Action -in @('pacing','preset')) {
+                $fresh=$null
+                try { $fresh=Read-Json (Join-Path $script:Work 'windows-profile.json') } catch { $fresh=$null }
+                $requestValues=Merge-PacingFromProfile $requestValues $script:LastProfile $fresh
+            }
             Write-Json $request $requestValues; $args+=@('--input',$request)
         }
         if($Destination) { $args+=@('--destination',$Destination) }
@@ -1267,6 +1508,37 @@ if($SelfTest) {
         if($missing.Count -or -not $speed.EndsWith((T 'SpeedNote'))) { throw "The speed test was not worded ($($missing -join ', ')): $speed" }
         Show-Speed $null
         if($script:Ui.SpeedState.Text) { throw 'No speed test left words behind' }
+        # The network chooser beside the speed test: A alone in a release without B, both where
+        # B's weights are here, the labels in this language, and the choice kept.
+        $shown=$script:PresetReady
+        $script:PresetReady=@{A=$true;B=$false}
+        $script:Ui.SpeedNetwork.SelectedIndex=-1
+        Update-SpeedNetwork
+        if($script:Ui.SpeedNetwork.Items.Count -ne 1 -or [string]$script:Ui.SpeedNetwork.Items[0].Tag -ne 'A') { throw "A release without B did not offer A alone" }
+        if([string]$script:Ui.SpeedNetwork.SelectedItem.Tag -ne 'A') { throw 'A release without B did not select the network it can measure' }
+        $script:PresetReady=@{A=$true;B=$true}
+        Update-SpeedNetwork
+        if($script:Ui.SpeedNetwork.Items.Count -ne 2) { throw 'A release with B did not offer both networks' }
+        if([string]$script:Ui.SpeedNetwork.SelectedItem.Tag -ne 'A') { throw 'Filling in B moved the choice away from A' }
+        foreach($item in $script:Ui.SpeedNetwork.Items) { if(-not $item.Content -or $item.Content -eq ('SpeedNetwork'+[string]$item.Tag)) { throw "Untranslated network choice $($item.Tag)" } }
+        if(-not $script:Ui.SpeedNetwork.ToolTip) { throw 'The network chooser has no tooltip' }
+        # Line up with the buttons it sits beside: same top and same height. The combo's own
+        # style asks for a 28px minimum and its content is centred, which left it 3.7px lower
+        # and 1.3px shorter than the buttons - visible as a list floating out of line.
+        $script:Window.Show(); $script:Window.UpdateLayout()
+        try {
+            $top=$script:Ui.SpeedTest.TranslatePoint([Windows.Point]::new(0,0),$script:Ui.CompareHeading).Y
+            $listTop=$script:Ui.SpeedNetwork.TranslatePoint([Windows.Point]::new(0,0),$script:Ui.CompareHeading).Y
+            if([Math]::Abs($top-$listTop) -gt 0.5) { throw "The network chooser sits $([Math]::Round($listTop-$top,1)) px below the buttons" }
+            $buttonHeight=$script:Ui.SpeedTest.ActualHeight
+            if([Math]::Abs($buttonHeight-$script:Ui.SpeedNetwork.ActualHeight) -gt 0.5) { throw "The network chooser is $([Math]::Round($script:Ui.SpeedNetwork.ActualHeight,1)) px tall beside $([Math]::Round($buttonHeight,1)) px buttons" }
+        } finally { $script:Window.Hide() }
+        # What the button asks to measure is read from the combo, so selecting B must reach it.
+        $script:Ui.SpeedNetwork.SelectedIndex=1
+        if((Get-SpeedNetwork) -ne 'B') { throw 'Choosing B in the combo did not reach the request' }
+        $script:PresetReady=@{A=$true;B=$true}; $script:Ui.SpeedNetwork.SelectedIndex=0
+        if((Get-SpeedNetwork) -ne 'A') { throw 'Choosing A in the combo did not reach the request' }
+        $script:PresetReady=$shown
         # Frame pacing reaches the backend, a profile without it is every frame in step, and
         # neither a profile applied to the window nor a change during an action starts a save.
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true})
@@ -1301,6 +1573,7 @@ if($SelfTest) {
         Set-Busy $true
         if($script:Ui.PresetChoice.IsEnabled) { throw 'The network could be changed during an action' }
         Set-Busy $false
+        foreach($item in $script:Ui.PresetChoice.Items) { if(-not $item.Content) { throw "Untranslated network choice $($item.Tag)" } }
         Set-Language $(if($language -eq 'en'){'ru'}else{'en'})
         if($script:Ui.Toggle.Content -ne (T 'Disable')) { throw 'Language switch changed the displayed effect state' }
         Show-Status ([pscustomobject]@{trigger_exists=$false;processed=12;rejected=1;fresh_frames=$false})
@@ -1309,6 +1582,41 @@ if($SelfTest) {
         Set-RuntimeText 'StatusUnavailable'
         Set-Language $language
         if($script:Ui.Progress.Text -ne (T 'Loading.install') -or $script:Ui.RuntimeState.Text -ne (T 'StatusUnavailable')) { throw 'Dynamic messages did not switch languages' }
+    }
+    # ---- a pacing field the user did not touch defers to the profile on disk ----
+    #
+    # The panel writes both files while this window is open and nothing refreshes these controls,
+    # so a request built from the controls alone would put a stale pacing back over the panel's.
+    # `Merge-PacingFromProfile` is the decision, CALLED here rather than described here - an
+    # earlier version of this check rebuilt the logic inline and passed with the function's guard
+    # deleted.
+    #
+    # The request values have to be an ordered dictionary, because that is what
+    # `Profile-FromWindow` returns and what the function's `[$key]=` assignment needs. A PSObject
+    # throws there, and the first version of this block used one, so it proved nothing.
+    {
+        # The window opened on async off / every 1; the panel moved it to async on / every 3.
+        $last=[pscustomobject]@{nr_async=$false; nr_every=1; gpu_image_path=$false; preset='A'}
+        $fresh=[pscustomobject]@{nr_async=$true; nr_every=3; gpu_image_path=$true; preset='B'}
+        $shown=[ordered]@{nr_async=$false; nr_every=1; gpu_image_path=$false; preset='A'}
+        $merged=Merge-PacingFromProfile $shown $last $fresh
+        if(-not $merged.nr_async -or $merged.nr_every -ne 3 -or -not $merged.gpu_image_path -or $merged.preset -ne 'B') {
+            throw 'An untouched pacing control did not take the profile on disk'
+        }
+        # And a control the user DID move keeps the user's choice: it differs from what the
+        # controls were filled from, so it is the user's.
+        $moved=[ordered]@{nr_async=$false; nr_every=2; gpu_image_path=$false; preset='A'}
+        $merged=Merge-PacingFromProfile $moved $last $fresh
+        if($merged.nr_every -ne 2) { throw 'A pacing control the user moved was overwritten' }
+        # With no profile to read, the controls' own values stand - that is the old behaviour, and
+        # it is better than discarding a request because a file could not be read.
+        $merged=Merge-PacingFromProfile ([ordered]@{nr_async=$false; nr_every=2; gpu_image_path=$false; preset='A'}) $last $null
+        if($merged.nr_every -ne 2) { throw 'A missing profile discarded the request' }
+        # A key the window does not carry - the network - is taken from the file, because no
+        # control here could have been moved.
+        $noPreset=[ordered]@{nr_async=$false; nr_every=1; gpu_image_path=$false}
+        $merged=Merge-PacingFromProfile $noPreset $last $fresh
+        if($merged.preset -ne 'B') { throw 'A key the window does not carry was not taken from the file' }
     }
     Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. '+($languages -join '/').ToUpper()+' coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
     exit 0
@@ -1329,7 +1637,7 @@ $script:Ui.Uninstall.Add_Click({
     if([Windows.MessageBox]::Show($script:Window,(T 'UninstallConfirm'),(T 'Uninstall'),'OKCancel','Question') -eq 'OK') { Start-Bridge 'uninstall' }
 })
 $script:Ui.Launch.Add_Click({ Start-Bridge 'launch' })
-$script:Ui.SpeedTest.Add_Click({ Start-Bridge 'speedtest' })
+$script:Ui.SpeedTest.Add_Click({ Start-Bridge 'speedtest' '' $false @{preset=(Get-SpeedNetwork)} })
 $script:Ui.Toggle.Add_Click({ $action=$(if($script:Ui.Toggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsToggle.Add_Click({ $action=$(if($script:Ui.ControlsToggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsLaunch.Add_Click({ Start-Bridge 'launch' })
