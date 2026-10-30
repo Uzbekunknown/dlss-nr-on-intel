@@ -261,6 +261,7 @@ $script:SettingsStateKey = 'SettingsLoading'
    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
     <TextBlock Text="DLSS-NR" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
     <TextBlock x:Name="Subtitle" Text="" Foreground="{DynamicResource Muted}" Margin="10,4,0,0" VerticalAlignment="Center"/>
+    <Button x:Name="UpdateBanner" Style="{StaticResource Link}" Margin="12,4,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
    </StackPanel>
   </DockPanel>
   <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
@@ -365,6 +366,35 @@ $script:SettingsStateKey = 'SettingsLoading'
      </StackPanel>
     </ScrollViewer>
    </TabItem>
+   <TabItem x:Name="AboutTab" Header="">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+     <StackPanel>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <TextBlock Text="DLSS-NR on Intel" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock x:Name="AboutVersion" Style="{StaticResource Note}" FontSize="13" Margin="0,2,0,8"/>
+        <TextBlock x:Name="AboutText" TextWrapping="Wrap"/>
+        <WrapPanel Margin="0,10,0,0"><Button x:Name="OpenRepository"/><Button x:Name="OpenReleases"/><Button x:Name="OpenIssues"/></WrapPanel>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <TextBlock x:Name="UpdatesHeading" Style="{StaticResource Heading}"/>
+        <TextBlock x:Name="UpdateState" TextWrapping="Wrap" Margin="0,0,0,8"/>
+        <WrapPanel><Button x:Name="CheckUpdates"/><Button x:Name="OpenUpdate" Style="{StaticResource Primary}" Visibility="Collapsed"/></WrapPanel>
+        <CheckBox x:Name="UpdateAtStart" Content="" IsChecked="True" Margin="0,8,0,0"/>
+        <TextBlock x:Name="UpdateNote" Style="{StaticResource Note}" Margin="0,6,0,0"/>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource CardBox}">
+       <StackPanel>
+        <TextBlock x:Name="CreditsHeading" Style="{StaticResource Heading}"/>
+        <TextBlock x:Name="CreditsText" TextWrapping="Wrap"/>
+       </StackPanel>
+      </Border>
+     </StackPanel>
+    </ScrollViewer>
+   </TabItem>
   </TabControl>
  </DockPanel>
 </Window>
@@ -379,7 +409,7 @@ foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','B
 # knob, which names the model file directly and hot-swaps). A second chooser here
 # answered the same question with a second value and the two disagreed; NR_PRESET
 # stays what the profile says (A) and the saved settings decide the rest.
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -447,7 +477,7 @@ $script:Strings=@{
   ArgsLabel='Game arguments (optional)'; ArgsTip='Ordinary game arguments; shell commands are not executed here.'
   Fossilize='Steam shader-cache workaround for NR'
   FossilizeTip='Install NR turns off Steam''s Fossilize layer in this game. Steam Overlay remains available.'
-  FirstTestHint='For the first test, choose an 800×450 game window; the network starts at scale 0.4. Setup puts its vulkan-1.dll beside the game, and DXVK for DirectX 8–11, setting aside any file it replaces; Remove NR puts everything back. Start the game as you usually do. DirectX 12 games do not work on Windows yet.'
+  FirstTestHint='For the first test, choose an 800×450 game window; the network starts at scale 0.4. Setup puts its vulkan-1.dll beside the game, and DXVK for DirectX 8–11, setting aside any file it replaces; for DirectX 12 it puts NR''s libxess.dll in front of the game''s XeSS, so choose XeSS in the game. Remove NR puts everything back. Start the game as you usually do.'
   Check='Check'; Dependencies='Prepare Python'; Install='Install NR'; CompareHeading='3. Launch and compare'
   Launch='Launch game'; Enable='Enable NR'; Disable='Disable NR'
   EffectOn='Effect enabled'; EffectOff='Effect disabled'
@@ -467,6 +497,18 @@ $script:Strings=@{
   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|DLL files|*.dll'; GameFilter='Game executable|*.exe'
   PythonFilter='Python interpreter|python.exe;python3.exe|Executable|*.exe'; ReportFilter='JSON report|*.json'
   ReportTitle='Save diagnostic report'
+  AboutTab='About'; AboutVersion='Version {0} · build {1}'; AboutVersionDev='Development build, version {0}'
+  AboutText='NVIDIA''s DLSS 5 neural rendering network, run on an Intel Xe2 GPU: in Vulkan games, in DirectX 8–11 games through DXVK, and in DirectX 12 games through their own XeSS. An independent project, not affiliated with NVIDIA or Intel. NVIDIA''s DLL and its weights are not included: setup takes them from your own copy.'
+  OpenRepository='GitHub page'; OpenReleases='All releases'; OpenIssues='Report a problem'
+  UpdatesHeading='Updates'; CheckUpdates='Check now'; OpenUpdate='Open the release page'
+  UpdateAtStart='Check for a new version when setup starts'
+  UpdateNote='Setup asks GitHub for its latest release, at most once a day, and sends nothing else. It downloads nothing: to update, use Remove NR here, extract the new ZIP into a folder of its own and install from there.'
+  UpdateNotChecked='Not checked yet.'; UpdateChecking='Checking GitHub…'; UpdateCurrent='This is the latest version ({0}).'
+  UpdateAvailable='Version {0} is available; you have {1}.'; UpdateFailed='Could not reach GitHub: {0}'
+  UpdateUnknown='There is no version to compare: this is not a release.'; UpdateOff='The check at startup is off.'
+  UpdateBanner='Version {0} is available'
+  CreditsHeading='Credits and licences'
+  CreditsText='DLSS-NR on Intel: uzbekunknown and contributors, Apache License 2.0. The in-game panel: Paimonshen. The network''s graph follows MLX-DLSS by iamwavecut (Apache 2.0). DXVK: Philip Rebohle and contributors (zlib). Dear ImGui: Omar Cornut (MIT). DLSS and nvngx_dlssnr.dll are NVIDIA''s, XeSS is Intel''s. Every notice is in this release''s LICENSE and NOTICE files and its licenses folder.'
   'Loading.discover'='Looking for suitable Python…'; 'Loading.check'='Checking files and dependencies…'
   'Loading.dependencies'='Preparing local Python…'; 'Loading.install'='Extracting weights and installing NR…'
   'Loading.launch'='Launching the game…'
@@ -509,7 +551,7 @@ $script:Strings=@{
   'Done.pacing-later'='Frame pacing saved; Install NR gives it to the game.'
   PresetHeading='Network'; PresetA='A: the model NR has always run'; PresetB='B: the faster model of nvngx_dlssnr.dll 310.9.16'
   PresetTip='nvngx_dlssnr.dll 310.9.16 carries two networks: A, the model NR has always run, and B, a smaller one NVIDIA added, which takes about half of A''s time on this GPU. Install NR takes B out of that DLL beside A.'
-  PresetNote='B needs nvngx_dlssnr.dll 310.9.16 or later, chosen on Setup when you press Install NR. Takes effect when the game starts next.'
+  PresetNote='B needs nvngx_dlssnr.dll 310.9.16 or later, chosen on Setup when you press Install NR. Takes effect when the game starts next; in a DirectX 12 game that is running, at once.'
   'Loading.preset'='Saving the network…'; 'Done.preset'='Network saved; it takes effect when the game starts next.'
   'Done.preset-later'='Network saved; Install NR gives it to the game.'
   SpeedPreset='{0}, network {1}'
@@ -553,7 +595,7 @@ $script:Strings=@{
   ArgsLabel='Аргументы игры (необязательно)'; ArgsTip='Обычные аргументы игры; команды оболочки здесь не выполняются.'
   Fossilize='Обход Steam shader-cache для NR'
   FossilizeTip='«Установить NR» отключит в этой игре слой Fossilize от Steam. Steam Overlay остаётся доступен.'
-  FirstTestHint='Для первого теста выберите в игре окно 800×450; сеть начнёт с масштаба 0.4. Мастер положит рядом с игрой свою vulkan-1.dll, а для DirectX 8–11 ещё и DXVK, и отложит файлы, которые заменит; «Удалить NR» всё вернёт. Запускайте игру как обычно. Игры на DirectX 12 в Windows пока не работают.'
+  FirstTestHint='Для первого теста выберите в игре окно 800×450; сеть начнёт с масштаба 0.4. Мастер положит рядом с игрой свою vulkan-1.dll, а для DirectX 8–11 ещё и DXVK, и отложит файлы, которые заменит; для DirectX 12 он поставит свою libxess.dll перед XeSS игры, поэтому в игре выберите XeSS. «Удалить NR» всё вернёт. Запускайте игру как обычно.'
   Check='Проверить'; Dependencies='Подготовить Python'; Install='Установить NR'; CompareHeading='3. Запустите и сравните'
   Launch='Запустить игру'; Enable='Включить NR'; Disable='Выключить NR'
   EffectOn='Эффект включён'; EffectOff='Эффект выключен'
@@ -573,6 +615,18 @@ $script:Strings=@{
   DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|Файлы DLL|*.dll'; GameFilter='Программа игры|*.exe'
   PythonFilter='Интерпретатор Python|python.exe;python3.exe|Программа|*.exe'; ReportFilter='Отчёт JSON|*.json'
   ReportTitle='Сохранить диагностический отчёт'
+  AboutTab='О программе'; AboutVersion='Версия {0} · сборка {1}'; AboutVersionDev='Сборка для разработки, версия {0}'
+  AboutText='Нейросеть нейрорендеринга DLSS 5 от NVIDIA на GPU Intel Xe2: в играх на Vulkan, в играх на DirectX 8–11 через DXVK и в играх на DirectX 12 через их собственный XeSS. Независимый проект, не связанный с NVIDIA или Intel. DLL NVIDIA и её веса не входят в комплект: мастер берёт их из вашей копии.'
+  OpenRepository='Страница на GitHub'; OpenReleases='Все релизы'; OpenIssues='Сообщить о проблеме'
+  UpdatesHeading='Обновления'; CheckUpdates='Проверить сейчас'; OpenUpdate='Открыть страницу релиза'
+  UpdateAtStart='Проверять новую версию при запуске мастера'
+  UpdateNote='Мастер спрашивает у GitHub последний релиз не чаще раза в день и больше ничего не отправляет. Сам он ничего не скачивает: чтобы обновиться, нажмите здесь «Удалить NR», распакуйте новый ZIP в отдельную папку и установите из неё.'
+  UpdateNotChecked='Ещё не проверялось.'; UpdateChecking='Проверяю GitHub…'; UpdateCurrent='Это последняя версия ({0}).'
+  UpdateAvailable='Доступна версия {0}; у вас {1}.'; UpdateFailed='Не удалось связаться с GitHub: {0}'
+  UpdateUnknown='Сравнивать не с чем: это не релиз.'; UpdateOff='Проверка при запуске выключена.'
+  UpdateBanner='Доступна версия {0}'
+  CreditsHeading='Авторы и лицензии'
+  CreditsText='DLSS-NR on Intel: uzbekunknown и участники проекта, лицензия Apache 2.0. Панель в игре: Paimonshen. Граф сети повторяет MLX-DLSS от iamwavecut (Apache 2.0). DXVK: Philip Rebohle и участники (zlib). Dear ImGui: Omar Cornut (MIT). DLSS и nvngx_dlssnr.dll принадлежат NVIDIA, XeSS принадлежит Intel. Все уведомления лежат в файлах LICENSE и NOTICE и в папке licenses этого релиза.'
   'Loading.discover'='Ищем подходящий Python…'; 'Loading.check'='Проверяем файлы и зависимости…'
   'Loading.dependencies'='Готовим локальный Python…'; 'Loading.install'='Извлекаем веса и устанавливаем NR…'
   'Loading.launch'='Запускаем игру…'
@@ -615,7 +669,7 @@ $script:Strings=@{
   'Done.pacing-later'='Подача кадров сохранена; «Установить NR» передаст её игре.'
   PresetHeading='Нейросеть'; PresetA='A: модель, с которой NR работал всегда'; PresetB='B: быстрая модель из nvngx_dlssnr.dll 310.9.16'
   PresetTip='В nvngx_dlssnr.dll 310.9.16 две сети: A — модель, с которой NR работал всегда, и B — меньшая, добавленная NVIDIA; на этой видеокарте она тратит примерно половину времени A. «Установить NR» извлекает B из этой DLL рядом с A.'
-  PresetNote='Для B нужна nvngx_dlssnr.dll 310.9.16 или новее, выбранная на вкладке «Установка» при нажатии «Установить NR». Применится при следующем запуске игры.'
+  PresetNote='Для B нужна nvngx_dlssnr.dll 310.9.16 или новее, выбранная на вкладке «Установка» при нажатии «Установить NR». Применится при следующем запуске игры, а в запущенной игре на DirectX 12 — сразу.'
   'Loading.preset'='Сохраняем выбор нейросети…'; 'Done.preset'='Нейросеть сохранена и применится при следующем запуске игры.'
   'Done.preset-later'='Нейросеть сохранена; «Установить NR» передаст её игре.'
   SpeedPreset='{0}, сеть {1}'
@@ -659,7 +713,7 @@ $script:Strings=@{
   ArgsLabel='Argumentos del juego (opcional)'; ArgsTip='Argumentos normales del juego; aquí no se ejecutan comandos de la consola.'
   Fossilize='Solución para la caché de sombreadores de Steam con NR'
   FossilizeTip='Instalar NR desactiva la capa Fossilize de Steam en este juego. El Steam Overlay sigue disponible.'
-  FirstTestHint='Para la primera prueba, elija en el juego una ventana de 800×450; la red empieza con escala 0.4. El instalador pone su vulkan-1.dll junto al juego, y DXVK para DirectX 8–11, y guarda aparte los archivos que reemplaza; Quitar NR lo devuelve todo. Inicie el juego como siempre. Los juegos DirectX 12 todavía no funcionan en Windows.'
+  FirstTestHint='Para la primera prueba, elija en el juego una ventana de 800×450; la red empieza con escala 0.4. El instalador pone su vulkan-1.dll junto al juego, y DXVK para DirectX 8–11, y guarda aparte los archivos que reemplaza; para DirectX 12 pone su libxess.dll delante del XeSS del juego, así que elija XeSS en el juego. Quitar NR lo devuelve todo. Inicie el juego como siempre.'
   Check='Comprobar'; Dependencies='Preparar Python'; Install='Instalar NR'; CompareHeading='3. Inicie y compare'
   Launch='Iniciar el juego'; Enable='Activar NR'; Disable='Desactivar NR'
   EffectOn='Efecto activado'; EffectOff='Efecto desactivado'
@@ -679,6 +733,18 @@ $script:Strings=@{
   DllFilter='DLL de NVIDIA DLSS-NR|nvngx_dlssnr.dll|Archivos DLL|*.dll'; GameFilter='Ejecutable del juego|*.exe'
   PythonFilter='Intérprete de Python|python.exe;python3.exe|Ejecutable|*.exe'; ReportFilter='Informe JSON|*.json'
   ReportTitle='Guardar el informe de diagnóstico'
+  AboutTab='Acerca de'; AboutVersion='Versión {0} · compilación {1}'; AboutVersionDev='Compilación de desarrollo, versión {0}'
+  AboutText='La red de renderizado neuronal DLSS 5 de NVIDIA en una GPU Intel Xe2: en juegos Vulkan, en juegos DirectX 8–11 a través de DXVK y en juegos DirectX 12 a través de su propio XeSS. Un proyecto independiente, sin relación con NVIDIA ni con Intel. La DLL de NVIDIA y sus pesos no se incluyen: el instalador los toma de su propia copia.'
+  OpenRepository='Página en GitHub'; OpenReleases='Todas las versiones'; OpenIssues='Informar de un problema'
+  UpdatesHeading='Actualizaciones'; CheckUpdates='Comprobar ahora'; OpenUpdate='Abrir la página de la versión'
+  UpdateAtStart='Buscar una versión nueva al iniciar el instalador'
+  UpdateNote='El instalador pregunta a GitHub por su última versión, como mucho una vez al día, y no envía nada más. No descarga nada: para actualizar, use aquí Quitar NR, descomprima el ZIP nuevo en una carpeta propia e instale desde ella.'
+  UpdateNotChecked='Aún no se ha comprobado.'; UpdateChecking='Comprobando GitHub…'; UpdateCurrent='Esta es la última versión ({0}).'
+  UpdateAvailable='Hay disponible la versión {0}; usted tiene la {1}.'; UpdateFailed='No se pudo contactar con GitHub: {0}'
+  UpdateUnknown='No hay versión que comparar: esto no es una versión publicada.'; UpdateOff='La comprobación al iniciar está desactivada.'
+  UpdateBanner='Versión {0} disponible'
+  CreditsHeading='Créditos y licencias'
+  CreditsText='DLSS-NR on Intel: uzbekunknown y colaboradores, licencia Apache 2.0. El panel del juego: Paimonshen. El grafo de la red sigue MLX-DLSS de iamwavecut (Apache 2.0). DXVK: Philip Rebohle y colaboradores (zlib). Dear ImGui: Omar Cornut (MIT). DLSS y nvngx_dlssnr.dll son de NVIDIA; XeSS es de Intel. Todos los avisos están en los archivos LICENSE y NOTICE y en la carpeta licenses de esta versión.'
   'Loading.discover'='Buscando un Python adecuado…'; 'Loading.check'='Comprobando archivos y dependencias…'
   'Loading.dependencies'='Preparando el Python local…'; 'Loading.install'='Extrayendo los pesos e instalando NR…'
   'Loading.launch'='Iniciando el juego…'
@@ -721,7 +787,7 @@ $script:Strings=@{
   'Done.pacing-later'='Ritmo de fotogramas guardado; Instalar NR se lo pasa al juego.'
   PresetHeading='Red neuronal'; PresetA='A: el modelo con el que NR funciona desde siempre'; PresetB='B: el modelo rápido de nvngx_dlssnr.dll 310.9.16'
   PresetTip='nvngx_dlssnr.dll 310.9.16 trae dos redes: A, el modelo con el que NR funciona desde siempre, y B, uno más pequeño que añadió NVIDIA, que en esta GPU tarda más o menos la mitad que A. Instalar NR extrae B de esa DLL junto a A.'
-  PresetNote='B necesita nvngx_dlssnr.dll 310.9.16 o posterior, elegida en Instalación al pulsar Instalar NR. Se aplica la próxima vez que se inicie el juego.'
+  PresetNote='B necesita nvngx_dlssnr.dll 310.9.16 o posterior, elegida en Instalación al pulsar Instalar NR. Se aplica la próxima vez que se inicie el juego, y en un juego DirectX 12 en marcha, al instante.'
   'Loading.preset'='Guardando la red neuronal…'; 'Done.preset'='Red neuronal guardada; se aplica la próxima vez que se inicie el juego.'
   'Done.preset-later'='Red neuronal guardada; Instalar NR se la pasa al juego.'
   SpeedPreset='{0}, red {1}'
@@ -765,7 +831,7 @@ $script:Strings=@{
    ArgsLabel='游戏参数（可选）'; ArgsTip='普通的游戏参数；此处不执行 shell 命令。'
    Fossilize='针对 NR 的 Steam 着色器缓存规避方案'
    FossilizeTip='安装 NR 会在本游戏中关闭 Steam 的 Fossilize 层。Steam 覆盖界面仍然可用。'
-   FirstTestHint='首次测试请选择 800×450 的游戏窗口；网络以 0.4 的比例开始运行。安装程序会把它的 vulkan-1.dll 放到游戏旁，并为 DirectX 8–11 放入 DXVK，同时把被替换的文件收起来；移除 NR 会把一切还原。像平常一样启动游戏即可。DirectX 12 游戏目前无法在 Windows 上运行。'
+   FirstTestHint='首次测试请选择 800×450 的游戏窗口；网络以 0.4 的比例开始运行。安装程序会把它的 vulkan-1.dll 放到游戏旁，并为 DirectX 8–11 放入 DXVK，同时把被替换的文件收起来；对于 DirectX 12，它会把 NR 的 libxess.dll 放在游戏的 XeSS 前面，因此请在游戏中选择 XeSS。移除 NR 会把一切还原。像平常一样启动游戏即可。'
    Check='检查'; Dependencies='准备 Python'; Install='安装 NR'; CompareHeading='3. 启动并对比'
    Launch='启动游戏'; Enable='启用 NR'; Disable='禁用 NR'
    EffectOn='效果已启用'; EffectOff='效果已禁用'
@@ -785,6 +851,18 @@ $script:Strings=@{
    DllFilter='NVIDIA DLSS-NR DLL|nvngx_dlssnr.dll|DLL 文件|*.dll'; GameFilter='游戏程序|*.exe'
    PythonFilter='Python 解释器|python.exe;python3.exe|可执行文件|*.exe'; ReportFilter='JSON 报告|*.json'
    ReportTitle='保存诊断报告'
+   AboutTab='关于'; AboutVersion='版本 {0} · 构建 {1}'; AboutVersionDev='开发构建，版本 {0}'
+   AboutText='在 Intel Xe2 GPU 上运行 NVIDIA 的 DLSS 5 神经渲染网络：支持 Vulkan 游戏，通过 DXVK 支持 DirectX 8–11 游戏，并通过游戏自带的 XeSS 支持 DirectX 12 游戏。这是一个独立项目，与 NVIDIA 和 Intel 无关。不包含 NVIDIA 的 DLL 及其权重：安装程序会从您自己的副本中提取。'
+   OpenRepository='GitHub 页面'; OpenReleases='所有版本'; OpenIssues='报告问题'
+   UpdatesHeading='更新'; CheckUpdates='立即检查'; OpenUpdate='打开版本页面'
+   UpdateAtStart='安装程序启动时检查新版本'
+   UpdateNote='安装程序最多每天向 GitHub 查询一次最新版本，不发送其他任何内容。它不会下载任何东西：如需更新，请先在此处移除 NR，再把新的 ZIP 解压到单独的文件夹并从中安装。'
+   UpdateNotChecked='尚未检查。'; UpdateChecking='正在检查 GitHub…'; UpdateCurrent='这是最新版本（{0}）。'
+   UpdateAvailable='有新版本 {0} 可用；当前为 {1}。'; UpdateFailed='无法连接 GitHub：{0}'
+   UpdateUnknown='没有可比较的版本：这不是发布版本。'; UpdateOff='启动时检查已关闭。'
+   UpdateBanner='新版本 {0} 可用'
+   CreditsHeading='致谢与许可'
+   CreditsText='DLSS-NR on Intel：uzbekunknown 及贡献者，采用 Apache 2.0 许可证。游戏内面板：Paimonshen。网络结构遵循 iamwavecut 的 MLX-DLSS（Apache 2.0）。DXVK：Philip Rebohle 及贡献者（zlib）。Dear ImGui：Omar Cornut（MIT）。DLSS 与 nvngx_dlssnr.dll 属于 NVIDIA，XeSS 属于 Intel。所有声明见本版本的 LICENSE、NOTICE 文件及 licenses 文件夹。'
    'Loading.discover'='正在查找合适的 Python…'; 'Loading.check'='正在检查文件和依赖…'
    'Loading.dependencies'='正在准备本地 Python…'; 'Loading.install'='正在解出权重并安装 NR…'
    'Loading.launch'='正在启动游戏…'
@@ -823,7 +901,7 @@ $script:Strings=@{
    GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
    PresetHeading='网络'; PresetA='A：NR 一直运行的模型'; PresetB='B：nvngx_dlssnr.dll 310.9.16 中的更快模型'
    PresetTip='nvngx_dlssnr.dll 310.9.16 携带两个网络：A，NR 一直运行的模型；B，NVIDIA 后来加入的更小网络，在这块 GPU 上耗时约为 A 的一半。「安装 NR」会把 B 从该 DLL 中提取出来，与 A 并存。'
-   PresetNote='B 需要 310.9.16 或更新版的 nvngx_dlssnr.dll，在「安装」页选择，按「安装 NR」时生效。在游戏下次启动时生效。'
+   PresetNote='B 需要 310.9.16 或更新版的 nvngx_dlssnr.dll，在「安装」页选择，按「安装 NR」时生效。在游戏下次启动时生效；正在运行的 DirectX 12 游戏会立即生效。'
    'Loading.preset'='正在保存网络…'; 'Done.preset'='网络已保存；在游戏下次启动时生效。'
    'Done.preset-later'='网络已保存；安装 NR 会把它交给游戏。'
    SpeedPreset='{0}, 网络 {1}'
@@ -865,6 +943,7 @@ $script:TextBindings=@{
  FpsHint='FpsHint'; ControlsHeading='ControlsHeading'
  PacingHeading='PacingHeading'; EveryLabel='EveryLabel'; PacingNote='PacingNote'; GpuImageNote='GpuImageNote'
  PresetHeading='PresetHeading'; PresetNote='PresetNote'
+ AboutText='AboutText'; UpdatesHeading='UpdatesHeading'; UpdateNote='UpdateNote'; CreditsHeading='CreditsHeading'; CreditsText='CreditsText'
 }
 $script:ContentBindings=@{
  BrowseDll='Browse'; BrowseGame='Browse'; BrowsePython='Browse'; FindPython='FindPython'; GetPython='GetPython'
@@ -873,8 +952,10 @@ $script:ContentBindings=@{
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
  AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
  PresetA='PresetA'; PresetB='PresetB'
+ OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
+ OpenUpdate='OpenUpdate'; UpdateAtStart='UpdateAtStart'
 }
-$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings'}
+$script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings';AboutTab='AboutTab'}
 $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
  PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'; SpeedTest='SpeedTestTip'
  AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
@@ -1085,6 +1166,9 @@ function Set-Language([string]$Language) {
             Set-RuntimeText $runtimeKey $script:RuntimeValues
         }
         Show-Speed $script:LastSpeed
+        Show-AboutVersion
+        Set-UpdateText $script:UpdateKey $script:UpdateValues
+        Show-UpdateBanner
     } finally { $script:ChangingLanguage=$false }
 }
 
@@ -1437,7 +1521,118 @@ function Find-BootPython {
 }
 
 
+# What this release is, from the release-metadata.json build_release.py writes; a checkout has
+# none, and says its VERSION.
+$script:Repository='https://github.com/Uzbekunknown/dlss-nr-on-intel'
+$script:LatestRelease='https://api.github.com/repos/Uzbekunknown/dlss-nr-on-intel/releases/latest'
+function Get-ReleaseInfo {
+    $info=[ordered]@{version=''; commit=''; release=$false}
+    try {
+        $metadata=Join-Path $script:Root 'release-metadata.json'
+        if(Test-Path -LiteralPath $metadata) {
+            $values=Read-Json $metadata
+            $info.version=[string]$values.version; $info.commit=[string]$values.source_commit; $info.release=$true
+        } else {
+            $file=Join-Path $script:Root 'VERSION'
+            if(Test-Path -LiteralPath $file) { $info.version=([string](Get-Content -LiteralPath $file -TotalCount 1)).Trim() }
+        }
+    } catch { }
+    return $info
+}
+# 1, 0 or -1 as version A comes after, with or before B, part by part as numbers: 0.0.10 after
+# 0.0.9, and 0.0.2 after 0.0.1.3. A tag's leading v is not part of it. Anything else that is not
+# a number throws, and a version that cannot be compared is never offered as newer.
+function Compare-Version([string]$A,[string]$B) {
+    $x=@(($A.Trim() -replace '^[vV]','').Split('.') | ForEach-Object { [int]::Parse($_) })
+    $y=@(($B.Trim() -replace '^[vV]','').Split('.') | ForEach-Object { [int]::Parse($_) })
+    for($i=0; $i -lt [Math]::Max($x.Count,$y.Count); $i++) {
+        $p=$(if($i -lt $x.Count){$x[$i]}else{0}); $q=$(if($i -lt $y.Count){$y[$i]}else{0})
+        if($p -ne $q) { return [Math]::Sign($p-$q) }
+    }
+    return 0
+}
+function Show-AboutVersion {
+    $info=$script:ReleaseInfo
+    if($info.release) {
+        $build=$(if($info.commit){$info.commit.Substring(0,[Math]::Min(7,$info.commit.Length))}else{'?'})
+        $script:Ui.AboutVersion.Text=[string]::Format((T 'AboutVersion'),$info.version,$build)
+    } else { $script:Ui.AboutVersion.Text=[string]::Format((T 'AboutVersionDev'),$(if($info.version){$info.version}else{'?'})) }
+}
+function Set-UpdateText([string]$Key,[object[]]$Values=@()) {
+    $script:UpdateKey=$Key; $script:UpdateValues=$Values
+    $script:Ui.UpdateState.Text=[string]::Format((T $Key),[object[]]$Values)
+}
+function Save-UiPrefs {
+    try {
+        [IO.Directory]::CreateDirectory($script:Work) | Out-Null
+        Write-Json $script:UiPrefs @{theme=$script:Theme; update_check=[bool]$script:Ui.UpdateAtStart.IsChecked}
+    } catch { }
+}
+function Show-UpdateBanner {
+    $shown=[bool]$script:UpdateLatest
+    $script:Ui.OpenUpdate.Visibility=$(if($shown){'Visible'}else{'Collapsed'})
+    $script:Ui.UpdateBanner.Visibility=$(if($shown){'Visible'}else{'Collapsed'})
+    if($shown) { $script:Ui.UpdateBanner.Content=[string]::Format((T 'UpdateBanner'),$script:UpdateLatest) }
+}
+# GitHub's latest release: when it is newer than this one the window says so at the top and in
+# About, with its page to open. Only this repository's own pages are opened.
+function Show-UpdateResult([string]$Latest,[string]$Url) {
+    $newer=$false
+    try { $newer=(Compare-Version $Latest $script:ReleaseInfo.version) -gt 0 } catch { }
+    $script:UpdateUrl=$(if($Url -like ($script:Repository+'/*')){$Url}else{$script:Repository+'/releases'})
+    $script:UpdateLatest=$(if($newer){$Latest.Trim() -replace '^[vV]',''}else{''})
+    if($newer) { Set-UpdateText 'UpdateAvailable' @($script:UpdateLatest,$script:ReleaseInfo.version) }
+    else { Set-UpdateText 'UpdateCurrent' @($script:ReleaseInfo.version) }
+    Show-UpdateBanner
+}
+# At most once a day unless asked, and in the background: the window never waits for GitHub.
+function Start-UpdateCheck([bool]$Manual) {
+    if($script:UpdateTask) { return }
+    if(-not $script:ReleaseInfo.release -or -not $script:ReleaseInfo.version) { Set-UpdateText 'UpdateUnknown'; return }
+    if(-not $Manual) {
+        if(-not $script:Ui.UpdateAtStart.IsChecked) { Set-UpdateText 'UpdateOff'; return }
+        try {
+            $last=Read-Json (Join-Path $script:Work 'update-check.json')
+            $age=[DateTime]::UtcNow - [DateTime]::Parse([string]$last.checked_utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AdjustToUniversal)
+            if($age.TotalHours -ge 0 -and $age.TotalHours -lt 24 -and $last.latest) { Show-UpdateResult ([string]$last.latest) ([string]$last.url); return }
+        } catch { }
+    }
+    Set-UpdateText 'UpdateChecking'
+    try {
+        Add-Type -AssemblyName System.Net.Http
+        [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $client=[Net.Http.HttpClient]::new()
+        $client.Timeout=[TimeSpan]::FromSeconds(15)
+        $null=$client.DefaultRequestHeaders.UserAgent.TryParseAdd('DLSS-NR-setup/'+$script:ReleaseInfo.version)
+        $null=$client.DefaultRequestHeaders.Accept.TryParseAdd('application/vnd.github+json')
+        $script:UpdateClient=$client
+        $script:UpdateTask=$client.GetStringAsync($script:LatestRelease)
+    } catch { Set-UpdateText 'UpdateFailed' @($_.Exception.Message) }
+}
+function Finish-UpdateCheck {
+    $task=$script:UpdateTask; $script:UpdateTask=$null
+    try {
+        if($task.IsFaulted -or $task.IsCanceled) {
+            Set-UpdateText 'UpdateFailed' @($(if($task.Exception){$task.Exception.GetBaseException().Message}else{'no answer in 15 s'}))
+            return
+        }
+        $release=$task.Result | ConvertFrom-Json
+        $latest=[string]$release.tag_name
+        if(-not $latest) { throw 'GitHub named no release' }
+        try {
+            [IO.Directory]::CreateDirectory($script:Work) | Out-Null
+            Write-Json (Join-Path $script:Work 'update-check.json') @{checked_utc=[DateTime]::UtcNow.ToString('o'); latest=$latest; url=[string]$release.html_url}
+        } catch { }
+        Show-UpdateResult $latest ([string]$release.html_url)
+    } catch { Set-UpdateText 'UpdateFailed' @($_.Exception.Message) }
+    finally { if($script:UpdateClient) { $script:UpdateClient.Dispose(); $script:UpdateClient=$null } }
+}
+$script:ReleaseInfo=Get-ReleaseInfo
+$script:UpdateKey='UpdateNotChecked'; $script:UpdateValues=@(); $script:UpdateLatest=''; $script:UpdateUrl=''
+$script:UpdateTask=$null; $script:UpdateClient=$null
+
 try { $prefs=Read-Json $script:UiPrefs } catch { $prefs=$null }
+$script:Ui.UpdateAtStart.IsChecked=-not ($prefs -and $prefs.update_check -eq $false)
 Set-Theme $(if($prefs -and $prefs.theme -in @('light','dark')){[string]$prefs.theme}else{Get-SystemTheme})
 Set-Language $script:Language
 if($SelfTest) {
@@ -1618,6 +1813,22 @@ if($SelfTest) {
         $merged=Merge-PacingFromProfile $noPreset $last $fresh
         if($merged.preset -ne 'B') { throw 'A key the window does not carry was not taken from the file' }
     }
+    # Versions compare part by part as numbers, a tag's v aside, and one that is not numbers throws.
+    if((Compare-Version 'v0.0.2' '0.0.1.3') -ne 1 -or (Compare-Version '0.0.10' '0.0.9') -ne 1 -or
+       (Compare-Version '0.0.2' 'v0.0.2.0') -ne 0 -or (Compare-Version '0.0.1.3' '0.0.2') -ne -1) { throw 'Versions compare wrongly' }
+    $threw=$false; try { $null=Compare-Version 'v0.0.3-beta' '0.0.2' } catch { $threw=$true }
+    if(-not $threw) { throw 'A version that is not numbers was compared' }
+    # A newer release is offered, at the top too, and only this repository's page opens; the same
+    # one is not offered. No request is made here: the result is handed in.
+    $kept=$script:ReleaseInfo
+    $script:ReleaseInfo=[ordered]@{version='0.0.2'; commit='0123456789abcdef'; release=$true}
+    Show-UpdateResult 'v0.0.3' 'https://example.com/elsewhere'
+    if($script:Ui.UpdateBanner.Visibility -ne 'Visible' -or $script:UpdateUrl -ne ($script:Repository+'/releases')) { throw 'A newer release was not offered, or another site would open' }
+    Show-UpdateResult 'v0.0.2' ($script:Repository+'/releases/tag/v0.0.2')
+    if($script:Ui.UpdateBanner.Visibility -ne 'Collapsed' -or $script:UpdateUrl -ne ($script:Repository+'/releases/tag/v0.0.2')) { throw 'The same version was offered as an update' }
+    Show-AboutVersion
+    if($script:Ui.AboutVersion.Text -notmatch '0\.0\.2' -or $script:Ui.AboutVersion.Text -notmatch '0123456') { throw 'About does not show the version and build' }
+    $script:ReleaseInfo=$kept
     Write-Output ('WPF layout loaded; '+$script:Ui.Count+' named controls; '+$script:KnobUi.Count+' live NR controls. '+($languages -join '/').ToUpper()+' coverage: '+$script:Strings.en.Count+' keys; automatic language: '+$autoLanguage+'.')
     exit 0
 }
@@ -1652,8 +1863,16 @@ $script:Ui.EveryFrame.Add_SelectionChanged({ Request-Pacing })
 $script:Ui.PresetChoice.Add_SelectionChanged({ Request-Pacing 'preset' })
 $script:Ui.Theme.Add_Click({
     Set-Theme $(if($script:Theme -eq 'dark'){'light'}else{'dark'})
-    try { [IO.Directory]::CreateDirectory($script:Work) | Out-Null; Write-Json $script:UiPrefs @{theme=$script:Theme} } catch { }
+    Save-UiPrefs
 })
+$script:Ui.OpenRepository.Add_Click({ Start-Process $script:Repository })
+$script:Ui.OpenReleases.Add_Click({ Start-Process ($script:Repository+'/releases') })
+$script:Ui.OpenIssues.Add_Click({ Start-Process ($script:Repository+'/issues/new/choose') })
+$script:Ui.CheckUpdates.Add_Click({ Start-UpdateCheck $true })
+$script:Ui.OpenUpdate.Add_Click({ if($script:UpdateUrl) { Start-Process $script:UpdateUrl } })
+$script:Ui.UpdateBanner.Add_Click({ $script:Ui.Pages.SelectedItem=$script:Ui.AboutTab })
+$script:Ui.UpdateAtStart.Add_Checked({ Save-UiPrefs })
+$script:Ui.UpdateAtStart.Add_Unchecked({ Save-UiPrefs; if(-not $script:UpdateTask -and -not $script:UpdateLatest) { Set-UpdateText 'UpdateOff' } })
 $script:Window.Add_SourceInitialized({ Set-TitleBar })
 $script:Ui.Report.Add_Click({
     $dialog=[Microsoft.Win32.SaveFileDialog]::new(); $dialog.Title=T 'ReportTitle'; $dialog.Filter=T 'ReportFilter'; $dialog.FileName='DLSS-NR-report.json'
@@ -1662,6 +1881,7 @@ $script:Ui.Report.Add_Click({
 $script:Timer=[Windows.Threading.DispatcherTimer]::new(); $script:Timer.Interval=[TimeSpan]::FromMilliseconds(500)
 $script:Timer.Add_Tick({
     try {
+        if($script:UpdateTask -and $script:UpdateTask.IsCompleted) { Finish-UpdateCheck }
         if($script:Busy -and $script:Busy.Process.HasExited) { Finish-Bridge $script:Busy $false }
         if($script:StatusJob -and $script:StatusJob.Process.HasExited) { Finish-Bridge $script:StatusJob $true }
         if(-not $script:Busy -and $script:SettingsReload) { $script:SettingsReload=$false; Start-Bridge 'settings' }
@@ -1697,6 +1917,7 @@ $script:Window.Add_ContentRendered({
         $script:BootPython=Find-BootPython
         if($script:BootPython) { if(-not $script:Ui.PythonPath.Text) { $script:Ui.PythonPath.Text=$script:BootPython }; Start-Bridge 'discover' }
         else { Set-Progress 'PythonMissing' }
+        Start-UpdateCheck $false
     }
 })
 $script:Timer.Start()

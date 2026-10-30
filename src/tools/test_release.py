@@ -55,6 +55,7 @@ class ReleaseTests(unittest.TestCase):
         for name in release.PROXIES:
             self.write("work/" + name, name)
         self.write(release.XESS_PROXY[0], "NR's libxess.dll")
+        self.write("VERSION", "0.0.2\n")
         for name in release.DXVK:
             self.write(name, "dxvk:" + name)
         self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
@@ -95,6 +96,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual((self.target / "dxvk/x32/d3d9.dll").read_text(), "dxvk:work/dxvk/x32/d3d9.dll")
         self.assertTrue((self.target / "dxvk/LICENSE").is_file())
         self.assertEqual(json.loads((self.target / "release-metadata.json").read_text())["dxvk"], "3.1.1")
+        # The number the setup window shows and compares with GitHub's latest release.
+        self.assertEqual(json.loads((self.target / "release-metadata.json").read_text())["version"], "0.0.2")
         self.assertTrue((self.target / "work/half_probe.spv").is_file())
         self.assertTrue((self.target / "work/mlx-dlss/LICENSE").is_file())
         self.assertTrue((self.target / "work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py").is_file())

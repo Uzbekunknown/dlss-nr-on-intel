@@ -1871,8 +1871,33 @@ def set_pacing(profile):
             # arrive - which is the exact shape of the bug being fixed here.
             return {"ok": True, "error": None, "applied": False, "profile": profile.to_dict(),
                     "presets": _presets_ready(profile), "write_error": str(exc)}
-    return {"ok": True, "error": None, "applied": bool(applied), "profile": profile.to_dict(),
+    live = applied and profile.api == "d3d12" and _preview_preset(profile)
+    return {"ok": True, "error": None, "applied": bool(applied), "live": bool(live), "profile": profile.to_dict(),
             "presets": _presets_ready(profile)}
+
+
+def _preview_preset(profile):
+    """In a DirectX 12 game that runs, the network now, as the in-game panel changes it in a Vulkan one.
+
+    The daemon takes `preset` from its settings' preview while the process named in it runs
+    (nr_daemon.Settings.refresh), and swaps the network between two frames. The game's process is the
+    one the daemon ends with; once it has ended the preview is nobody's, and the next start reads
+    NR_PRESET, which set_pacing has just written. A DirectX 12 game has no panel of its own whose
+    preview this could overwrite."""
+    target = _canonical(profile.game_exe)
+    try:
+        pid = next((item.get("ProcessId") for item in _process_snapshot()
+                    if item.get("ExecutablePath") and _canonical(item["ExecutablePath"]) == target), None)
+    except ValueError:
+        return False
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        _atomic_json(Path(layer_environment(profile)["NR_SETTINGS"] + ".live"),
+                     {"menu_pid": pid, "menu_confirmed": 0, "preset": profile.preset})
+    except OSError:
+        return False
+    return True
 
 
 def set_effect(profile, enabled):

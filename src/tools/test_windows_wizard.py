@@ -428,6 +428,32 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual((xess / core.XESS_NAME).read_bytes(), intel)
         self.assertFalse(installed.exists())
 
+    def test_d3d12_network_changes_in_the_running_game(self):
+        profile, _ = self.unreal_game()
+        write_weights(self.root / core.PRESETS["B"][0], count=core.PRESETS["B"][1])
+        self.assertTrue(core.install(profile)["ok"])
+        preview = Path(core.layer_environment(profile)["NR_SETTINGS"] + ".live")
+        # Not running: the next start takes it, from nr-env.txt, and no preview is left for one.
+        result = core.set_pacing(replace(profile, preset="B"))
+        self.assertTrue(result["applied"] and not result["live"], result)
+        self.assertFalse(preview.exists())
+        # Running: the daemon is told now, by the game's process, as the panel tells it.
+        self.processes.return_value = [{"ProcessId": 4321, "ExecutablePath": str(profile.game_exe)}]
+        result = core.set_pacing(replace(profile, preset="A"))
+        self.assertTrue(result["applied"] and result["live"], result)
+        self.assertEqual(json.loads(preview.read_text(encoding="utf-8")),
+                         {"menu_pid": 4321, "menu_confirmed": 0, "preset": "A"})
+        lines = (core.installed_path(profile) / core.ENV_FILE).read_text(encoding="utf-8").splitlines()
+        self.assertIn("NR_PRESET=A", lines)
+        # A Vulkan game's panel keeps its own preview: the window does not write over it.
+        vulkan = replace(self.profile, preset="B")
+        preview.unlink()
+        self.processes.return_value = []
+        self.assertTrue(core.install(vulkan)["ok"])
+        self.processes.return_value = [{"ProcessId": 99, "ExecutablePath": str(self.game)}]
+        self.assertFalse(core.set_pacing(vulkan)["live"])
+        self.assertFalse(preview.exists())
+
     def test_d3d12_takes_only_an_xess_nrs_libxess_can_stand_in_front_of(self):
         profile, xess = self.unreal_game()
         write_pe(self.game, x64=False)

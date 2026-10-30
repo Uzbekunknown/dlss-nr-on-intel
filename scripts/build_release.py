@@ -150,6 +150,8 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         root / "src/layer/VkLayer_dlss_nr.json", root / "scripts/get_weights.py",
         root / UNPACK_PRESET, root / "dist-tools/setup.sh", root / "dist-tools/setup.bat",
         root / "docs/RELEASE-QUICKSTART.md", root / "docs/WEIGHTS.md", root / "LICENSE", root / "NOTICE",
+        # The release's number, which the setup window shows and compares with GitHub's latest.
+        root / "VERSION",
         root / "work/mlx-dlss/LICENSE", package / "features.py",
         package / "tools/extract_dlssnr_weights.py",
         package / "tools/unpack_dlssnr_weights.py",
@@ -219,7 +221,8 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         # Bug reports from a prebuilt package do not require an installed Git.
         commit = source_commit(root)
         (stage / "release-metadata.json").write_text(
-            json.dumps({"schema_version": 1, "source_commit": commit,
+            json.dumps({"schema_version": 1, "version": (root / "VERSION").read_text(encoding="utf-8").strip(),
+                        "source_commit": commit,
                         "platform": platform, "windows_wizard": windows,
                         "dxvk": (root / "work/dxvk/VERSION").read_text(encoding="utf-8").strip()
                         if windows else None}, indent=2) + "\n",
