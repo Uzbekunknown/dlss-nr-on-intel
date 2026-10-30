@@ -66,6 +66,17 @@ START_FOLDERS = "start-folders.txt"
 # aside to do so, which Remove NR puts back.
 GAME_FILES = "game-files.json"
 GAME_BACKUP = "game-backup"
+# DirectX 12, through the game's own XeSS (src/xess/nr_xess.c): NR's libxess.dll, XESS_PROXY in a
+# release, goes in front of the game's, which stays beside it as XESS_ORIGINAL. It reads
+# XESS_SETTINGS there, and from the ENV_FILE named in them starts the daemon, as the layer does in a
+# Vulkan game; the trigger in it turns NR on and off. It writes XESS_LOG beside itself.
+XESS_PROXY = "nr_xess.dll"
+XESS_NAME = "libxess.dll"
+XESS_ORIGINAL = "libxess_nr_orig.dll"
+XESS_SETTINGS = "nr-xess.txt"
+XESS_LOG = "nr-xess.log"
+# The XeSS versions the proxy has run in a game: Hogwarts Legacy's 2.0.2.53 (2026-10-28 and -30).
+TESTED_XESS = ("2.0.2",)
 RUNTIME_MODULES = (
     "src/layer/nr_daemon.py", "src/layer/nr_alloc.py", "src/layer/nr_pipe.py",
     "src/layer/nr_paths.py", "src/layer/nr_knobs.py", "src/ref/nr_frame.py",
@@ -551,6 +562,76 @@ def pe_architecture(path):
         return None
 
 
+def _pe_layout(read):
+    """A PE file's data directory `index` as an address, or None, and a file offset for an address;
+    None when it is not a PE file this reads. `read(offset, size)` reads the file."""
+    dos = read(0, 64)
+    if len(dos) != 64 or dos[:2] != b"MZ":
+        return None
+    pe = struct.unpack_from("<I", dos, 60)[0]
+    header = read(pe, 24)
+    if len(header) != 24 or header[:4] != b"PE\0\0":
+        return None
+    count = struct.unpack_from("<H", header, 6)[0]
+    optional_size = struct.unpack_from("<H", header, 20)[0]
+    optional = read(pe + 24, optional_size)
+    # The data directories follow NumberOfRvaAndSizes: at 96 in PE32, at 112 in PE32+.
+    first = {0x10B: 96, 0x20B: 112}.get(struct.unpack_from("<H", optional, 0)[0] if len(optional) >= 2 else 0)
+    if first is None or len(optional) < first:
+        return None
+    directories = struct.unpack_from("<I", optional, first - 4)[0]
+    table = read(pe + 24 + optional_size, 40 * count)
+    # Each section's VirtualSize, VirtualAddress, SizeOfRawData and PointerToRawData.
+    sections = [struct.unpack_from("<IIII", table, 40 * index + 8) for index in range(len(table) // 40)]
+
+    def directory(index):
+        if directories <= index or len(optional) < first + 8 * index + 8:
+            return None
+        return struct.unpack_from("<I", optional, first + 8 * index)[0] or None
+
+    def offset(rva):
+        for size, address, raw_size, raw in sections:
+            if address <= rva < address + max(size, raw_size):
+                return raw + rva - address
+        return None
+
+    return directory, offset
+
+
+def pe_exports(path):
+    """The names a DLL exports, read from its headers and export table alone; None when it is not
+    a PE file this reads."""
+    try:
+        with Path(path).open("rb") as handle:
+            def read(offset, size):
+                handle.seek(offset)
+                return handle.read(size)
+
+            layout = _pe_layout(read)
+            if layout is None:
+                return None
+            directory, offset = layout
+            rva = directory(0)
+            start = offset(rva) if rva else None
+            if start is None:
+                return set()
+            # The export directory: NumberOfNames at 24, AddressOfNames at 32.
+            table = read(start, 40)
+            if len(table) != 40:
+                return None
+            count, names = struct.unpack_from("<I", table, 24)[0], offset(struct.unpack_from("<I", table, 32)[0])
+            if names is None or count > 65536:
+                return None
+            exported = set()
+            for (name,) in struct.iter_unpack("<I", read(names, 4 * count)):
+                at = offset(name)
+                if at is not None:
+                    exported.add(read(at, 260).split(b"\0", 1)[0].decode("ascii", "replace"))
+            return exported
+    except (OSError, struct.error):
+        return None
+
+
 def pe_imports(path):
     """The DLLs an executable names in its import and delay-load tables, in lower case, read from
     its headers and those tables alone; None when it is not a PE file this reads."""
@@ -560,38 +641,15 @@ def pe_imports(path):
                 handle.seek(offset)
                 return handle.read(size)
 
-            dos = read(0, 64)
-            if len(dos) != 64 or dos[:2] != b"MZ":
+            layout = _pe_layout(read)
+            if layout is None:
                 return None
-            pe = struct.unpack_from("<I", dos, 60)[0]
-            header = read(pe, 24)
-            if len(header) != 24 or header[:4] != b"PE\0\0":
-                return None
-            count = struct.unpack_from("<H", header, 6)[0]
-            optional_size = struct.unpack_from("<H", header, 20)[0]
-            optional = read(pe + 24, optional_size)
-            # The data directories follow NumberOfRvaAndSizes: at 96 in PE32, at 112 in PE32+.
-            first = {0x10B: 96, 0x20B: 112}.get(struct.unpack_from("<H", optional, 0)[0] if len(optional) >= 2 else 0)
-            if first is None or len(optional) < first:
-                return None
-            directories = struct.unpack_from("<I", optional, first - 4)[0]
-            table = read(pe + 24 + optional_size, 40 * count)
-            # Each section's VirtualSize, VirtualAddress, SizeOfRawData and PointerToRawData.
-            sections = [struct.unpack_from("<IIII", table, 40 * index + 8) for index in range(len(table) // 40)]
-
-            def offset(rva):
-                for size, address, raw_size, raw in sections:
-                    if address <= rva < address + max(size, raw_size):
-                        return raw + rva - address
-                return None
-
+            directory, offset = layout
             names = []
             # Directory 1, imports: 20 bytes an entry, the name's address at 12. Directory 13,
             # delay-loaded: 32 bytes, at 4. Each list ends with an entry of zeros.
             for index, entry, at in ((1, 20, 12), (13, 32, 4)):
-                if directories <= index or len(optional) < first + 8 * index + 8:
-                    continue
-                rva = struct.unpack_from("<I", optional, first + 8 * index)[0]
+                rva = directory(index)
                 start = offset(rva) if rva else None
                 for number in range(4096 if start is not None else 0):
                     data = read(start + entry * number, entry)
@@ -633,6 +691,74 @@ def _vulkan_elsewhere(game_exe):
     return sorted(path.name for path in Path(game_exe).parent.glob("*.exe")
                   if path.name.lower() != Path(game_exe).name.lower()
                   and "vulkan-1.dll" in (pe_imports(path) or ()))
+
+
+def xess_libraries(game_exe):
+    """Each libxess.dll the game ships, the one beside its executable first.
+
+    Unreal's games keep XeSS in a plug-in, under the project's Plugins or the engine's, from an
+    executable in <game>\\<project>\\Binaries\\Win64: Hogwarts Legacy's is in
+    Engine\\Plugins\\Runtime\\Intel\\XeSS\\Binaries\\ThirdParty\\Win64."""
+    folder = Path(game_exe).parent
+    found = [folder / XESS_NAME] if (folder / XESS_NAME).is_file() else []
+    if folder.name.lower() == "win64" and folder.parent.name.lower() == "binaries":
+        project = folder.parent.parent
+        for root in (project / "Plugins", project.parent / "Engine" / "Plugins"):
+            for path, _, names in os.walk(root):
+                found += [Path(path) / name for name in names if name.lower() == XESS_NAME]
+    return found
+
+
+def _xess_placed(record):
+    """The folder NR's libxess.dll went into, by an installation's record, or None."""
+    entry = record["files"].get(XESS_NAME, {})
+    return Path(entry["folder"]) if entry.get("placed") and entry.get("folder") else None
+
+
+def _xess_original(profile, folder, record, stage=None):
+    """The game's own libxess.dll: in its folder until NR's takes its place, then set aside in the
+    installation, or in its stage while one is being made."""
+    if _xess_placed(record) and record["files"][XESS_NAME].get("backup"):
+        return Path(stage or installed_path(profile)) / GAME_BACKUP / XESS_NAME
+    return folder / XESS_NAME
+
+
+def _xess_check(profile, record=None):
+    """Whether NR can go in front of the game's XeSS: (its folder, what it is), or (None, why not).
+
+    NR's libxess.dll must export every name the game's does, since the game may call any of them; a
+    game's older XeSS exports fewer, and the ones it lacks answer XESS_RESULT_ERROR_NOT_IMPLEMENTED."""
+    if pe_architecture(profile.game_exe) != "x64":
+        return None, "DirectX 12 through XeSS is for 64-bit games"
+    try:
+        record = record or _game_record(installed_path(profile))
+    except (OSError, ValueError) as error:
+        return None, str(error)
+    folder = _xess_placed(record)
+    if folder is None:
+        found = xess_libraries(profile.game_exe)
+        if not found:
+            return None, ("No libxess.dll in the game's folders. NR reaches a DirectX 12 game through the "
+                          "game's own XeSS, and this one has none, or keeps it where setup does not look")
+        if len(found) > 1 and found[0].parent != profile.game_exe.parent:
+            return None, "Several libxess.dll, none beside the game: " + ", ".join(map(str, found))
+        folder = found[0].parent
+    original, ours = _xess_original(profile, folder, record), profile.root / XESS_PROXY
+    if not original.is_file():
+        return None, f"{original} is missing; the game's file check (Steam's, or its launcher's) restores it"
+    if ours.is_file() and original.stat().st_size == ours.stat().st_size and _sha256(original) == _sha256(ours):
+        return None, (f"{folder / XESS_NAME} is NR's, from an installation setup has no record of. Restore "
+                      "the game's own with its file check (Steam's, or its launcher's), then Install NR")
+    theirs, provided = pe_exports(original), pe_exports(ours) if ours.is_file() else None
+    if not theirs or provided is None or pe_architecture(original) != "x64":
+        return None, f"{original} is not a 64-bit XeSS library setup can read"
+    version = _file_version(original) or "of unknown version"
+    missing = sorted(theirs - provided)
+    if missing:
+        return None, (f"This game's XeSS, {version}, has functions NR's does not: " + ", ".join(missing[:8])
+                      + ("..." if len(missing) > 8 else ""))
+    tested = any(version.startswith(prefix + ".") for prefix in TESTED_XESS)
+    return folder, f"XeSS {version} in {folder}" + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
 
 
 def discover_python():
@@ -873,7 +999,8 @@ def validate(profile):
 
     check("release_root", profile.root.is_dir() and str(profile.root).isascii(),
           "The permanent release root must exist and use an ASCII path")
-    check("api", profile.api in ("vulkan", "dxvk"), "Native Vulkan or an existing x64 DXVK configuration")
+    check("api", profile.api in ("vulkan", "dxvk", "d3d12"),
+          "Native Vulkan, DirectX 8-11 through DXVK, or DirectX 12 through the game's own XeSS")
     check("launch_mode", profile.launch_mode in ("direct", "steam") and (
         profile.launch_mode != "steam" or not profile.steam_app_id or profile.steam_app_id.isdecimal()),
         "Direct launch, or Steam with an optional numeric app ID; blank uses autodetection")
@@ -892,6 +1019,8 @@ def validate(profile):
     proxy = PROXIES.get(arch, PROXIES["x64"])
     shader_names = _shader_names(profile.root)
     required = [layer, proxy, *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
+    if profile.api == "d3d12":
+        required.append(XESS_PROXY)
     missing = [name for name in required if not (profile.root / name).is_file()]
     missing.extend("src/" + name for name in SOURCE_DIRS if not (profile.root / "src" / name).is_dir())
     check("runtime_files", not missing, "Missing: " + ", ".join(missing) if missing else "Complete local release runtime and extractors")
@@ -899,6 +1028,9 @@ def validate(profile):
     for name in (layer, proxy):
         if arch in LAYERS and (profile.root / name).is_file() and pe_architecture(profile.root / name) != arch:
             bad_arch.append(name)
+    if profile.api == "d3d12" and (profile.root / XESS_PROXY).is_file() \
+            and pe_architecture(profile.root / XESS_PROXY) != "x64":
+        bad_arch.append(XESS_PROXY)
     check("runtime_architecture", not bad_arch, "Wrong architecture: " + ", ".join(bad_arch) if bad_arch
           else f"Native libraries are x64; {layer} and {proxy} for this {arch or 'unidentified'} game")
     dependency = _load_dependencies(profile) if _native_python(info) and not bad_arch else {"ok": False, "failures": {"probe": "Requires native x64 Python and x64 runtime"}}
@@ -955,6 +1087,9 @@ def validate(profile):
         check("dxvk_files", arch in LAYERS and not wrong,
               f"DXVK for this {arch} game, from {folder}" if arch in LAYERS and not wrong
               else "The release's DXVK is missing or of another architecture: " + ", ".join(wrong))
+    if profile.api == "d3d12":
+        folder, detail = _xess_check(profile)
+        check("xess_library", folder is not None, detail)
     files_ok, files_detail = _game_files_check(profile, arch)
     check("game_files", files_ok, files_detail)
     if profile.api == "vulkan" and arch in LAYERS:
@@ -1108,13 +1243,32 @@ def _game_record(folder):
     return record
 
 
-def _game_sources(profile, arch):
-    """What goes beside the game, by name: the proxy for every game, and DXVK for DirectX 8-11."""
-    sources = {PROXY_NAME: profile.root / PROXIES[arch]}
+def _game_sources(profile, arch, stage=None):
+    """What goes into the game's folders, by name: (source, the folder it goes into).
+
+    Beside the executable, the proxy for every Vulkan or DirectX 8-11 game, and DXVK for DirectX 8-11.
+    For DirectX 12, in the folder of the game's XeSS: a copy of its libxess.dll under another name,
+    NR's in its place, and NR's settings for it, which install writes into `stage` first."""
+    game = profile.game_exe.parent
+    if profile.api == "d3d12":
+        record = _game_record(stage or installed_path(profile))
+        folder, detail = _xess_check(profile, record)
+        if folder is None:
+            raise ValueError(detail)
+        # The copy first, while the game's own is still where it was.
+        return {XESS_ORIGINAL: (_xess_original(profile, folder, record, stage), folder),
+                XESS_NAME: (profile.root / XESS_PROXY, folder),
+                XESS_SETTINGS: (Path(stage or installed_path(profile)) / XESS_SETTINGS, folder)}
+    sources = {PROXY_NAME: (profile.root / PROXIES[arch], game)}
     if profile.api == "dxvk":
         folder = profile.root / "dxvk" / DXVK_DIRS[arch]
-        sources.update((name, folder / name) for name in DXVK_FILES)
+        sources.update((name, (folder / name, game)) for name in DXVK_FILES)
     return sources
+
+
+def _game_target(profile, name, entry):
+    """Where a file NR placed went: its record's folder, or beside the game."""
+    return (Path(entry["folder"]) if entry.get("folder") else profile.game_exe.parent) / name
 
 
 def _game_files_check(profile, arch):
@@ -1125,18 +1279,25 @@ def _game_files_check(profile, arch):
         return False, str(error)
     if arch not in LAYERS:
         return True, "Nothing is put beside the game"
-    sources = _game_sources(profile, arch)
+    try:
+        sources = _game_sources(profile, arch)
+    except (OSError, ValueError) as error:
+        return False, str(error)
     placed = [name for name, entry in record["files"].items() if entry.get("placed")]
     # An installation from before the proxy has fewer files placed, and gains it; one with
     # DXVK's files placed for DirectX cannot become a Vulkan one without Remove NR first.
     if placed and (not set(placed) <= set(sources) or record.get("arch") != arch):
         return False, "Remove NR from this game before changing its graphics API or executable"
     aside = []
-    for name, source in sources.items():
-        target = profile.game_exe.parent / name
+    for name, (source, folder) in sources.items():
+        target = folder / name
         entry = record["files"].get(name, {})
         if target.is_symlink() or (target.exists() and not target.is_file()):
             return False, f"{target} is not a regular file"
+        if name == XESS_NAME and entry.get("placed") and target.is_file() \
+                and _sha256(target) != entry.get("sha256"):
+            return False, ("The game has replaced NR's libxess.dll, in an update most likely: Remove NR, "
+                           "then Install NR again")
         if target.is_file() and not entry.get("placed") and source.is_file() \
                 and _sha256(target) != _sha256(source):
             aside.append(name)
@@ -1145,8 +1306,8 @@ def _game_files_check(profile, arch):
 
 
 def _place_game_files(profile, arch, folder):
-    """Put the proxy, and DXVK for DirectX 8-11, beside the game, each step recorded in
-    `folder`'s GAME_FILES first.
+    """Put the proxy, and DXVK for DirectX 8-11, beside the game, or NR's libxess.dll in front of
+    the game's for DirectX 12 (_game_sources), each step recorded in `folder`'s GAME_FILES first.
 
     A file of the same name that NR did not put there is moved into `folder`'s GAME_BACKUP
     and comes back with Remove NR; an identical copy someone else put there is left alone.
@@ -1164,8 +1325,8 @@ def _place_game_files(profile, arch, folder):
     files = record["files"]
     done = []
     try:
-        for name, source in _game_sources(profile, arch).items():
-            target = game / name
+        for name, (source, place) in _game_sources(profile, arch, folder).items():
+            target = place / name
             ours = _sha256(source)
             entry = files.get(name, {})
             if target.is_symlink() or (target.exists() and not target.is_file()):
@@ -1182,7 +1343,7 @@ def _place_game_files(profile, arch, folder):
                     undo = folder / ".undo"
                     undo.mkdir(exist_ok=True)
                     os.replace(target, undo / name)
-                    done.append((name, "replaced", dict(entry)))
+                    done.append((name, "replaced", dict(entry), target))
                 else:
                     backup = folder / GAME_BACKUP
                     backup.mkdir(exist_ok=True)
@@ -1190,14 +1351,16 @@ def _place_game_files(profile, arch, folder):
                         raise ValueError(f"{backup / name} already holds a set-aside file")
                     os.replace(target, backup / name)
                     entry = {"backup": True, "previous_sha256": current}
-                    done.append((name, "set-aside", None))
+                    done.append((name, "set-aside", None, target))
             else:
-                done.append((name, "added", None))
-            temporary = game / (name + ".dlss-nr-new")
+                done.append((name, "added", None, target))
+            temporary = place / (name + ".dlss-nr-new")
             shutil.copy2(source, temporary)
             os.replace(temporary, target)
             files[name] = {"placed": True, "sha256": ours, "backup": bool(entry.get("backup")),
                            "previous_sha256": entry.get("previous_sha256")}
+            if place != game:
+                files[name]["folder"] = str(place)
             _atomic_json(folder / GAME_FILES, record)
     except BaseException:
         _undo_game_files(profile, folder, done)
@@ -1208,7 +1371,9 @@ def _place_game_files(profile, arch, folder):
 def _write_proxy_environment(profile, stage, destination):
     """ENV_FILE, which the proxy reads in the game's process: the layer's environment, the game
     it is for, where to record a launch, and the game's own loader if one was set aside."""
-    lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process.",
+    lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process."
+             if profile.api != "d3d12" else
+             "# Read by NR's libxess.dll beside the game's XeSS (src/xess/nr_xess.c), in the game's process.",
              "NR_GAME_EXE=" + str(profile.game_exe),
              "NR_LAUNCH_STATE=" + str(profile.root / "work/windows-wizard/launch-state.json")]
     if _game_record(stage)["files"].get(PROXY_NAME, {}).get("backup"):
@@ -1217,12 +1382,19 @@ def _write_proxy_environment(profile, stage, destination):
     (stage / ENV_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def _write_xess_settings(profile, stage, destination):
+    """XESS_SETTINGS, which NR's libxess.dll reads beside it: NR after XeSS, on its output, the
+    daemon's pipe, and the ENV_FILE to start the daemon from, whose trigger turns NR on and off."""
+    lines = ["# Read by NR's libxess.dll beside it (src/xess/nr_xess.c); Install NR writes it.",
+             "mode=after", "pipe=" + layer_environment(profile)["NR_LAYER_SOCKET"],
+             "env=" + str(destination / ENV_FILE)]
+    (stage / XESS_SETTINGS).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def _undo_game_files(profile, folder, done):
     """Reverse _place_game_files' steps, last first, with the record where `folder` now is."""
-    game = profile.game_exe.parent
     folder = Path(folder)
-    for name, kind, entry in reversed(done):
-        target = game / name
+    for name, kind, entry, target in reversed(done):
         target.unlink(missing_ok=True)
         if kind == "set-aside" and (folder / GAME_BACKUP / name).is_file():
             os.replace(folder / GAME_BACKUP / name, target)
@@ -1230,7 +1402,7 @@ def _undo_game_files(profile, folder, done):
             os.replace(folder / ".undo" / name, target)
     try:
         record = _game_record(folder)
-        for name, kind, entry in done:
+        for name, kind, entry, _ in done:
             if kind == "replaced":
                 record["files"][name] = entry
             else:
@@ -1261,15 +1433,22 @@ def uninstall(profile, emit=None):
             pending = True
         if pending:
             return {"ok": False, "error": "Restore Steam's launch options before removing NR"}
-    game = profile.game_exe.parent
-    kept, lost = [], []
+    kept, lost, updated = [], [], []
     try:
         record = _game_record(destination)
         placed_any = any(entry.get("placed") for entry in record["files"].values())
+        xess = _xess_placed(record)
         for name in sorted(record["files"]):
             entry = record["files"][name]
             if entry.get("placed"):
-                target = game / name
+                target = _game_target(profile, name, entry)
+                if name == XESS_NAME and target.is_file() and _sha256(target) != entry.get("sha256"):
+                    # The game put its own back over NR's, in an update: it stays, and the one set
+                    # aside, which it replaces, goes with the installation.
+                    updated.append(name)
+                    del record["files"][name]
+                    _atomic_json(destination / GAME_FILES, record)
+                    continue
                 if target.is_file() and _sha256(target) != entry.get("sha256"):
                     kept.append(name)
                     continue
@@ -1285,6 +1464,8 @@ def uninstall(profile, emit=None):
             _atomic_json(destination / GAME_FILES, record)
         if placed_any:
             _remove_dxvk_logs(profile, destination, record)
+        if xess and not kept:
+            (xess / XESS_LOG).unlink(missing_ok=True)
         if kept:
             return {"ok": False, "error": "Changed since NR put them there, so left as they are: "
                     + ", ".join(kept) + ". The dlss-nr folder keeps the game's originals.", "kept": kept}
@@ -1295,6 +1476,8 @@ def uninstall(profile, emit=None):
     if emit:
         emit("NR removed from the game\n")
     result = {"ok": True, "error": None, "removed": True, "trigger_exists": False}
+    if updated:
+        result["updated_by_game"] = updated
     if lost:
         # The set-aside copies were deleted from dlss-nr by hand; Steam's file check restores them.
         result["missing_originals"] = lost
@@ -1549,6 +1732,8 @@ def install(profile, emit=None):
         if destination.exists():
             shutil.copytree(destination, stage, dirs_exist_ok=True)
         _copy_runtime(profile, stage, destination)
+        if profile.api == "d3d12":
+            _write_xess_settings(profile, stage, destination)
         placed = _place_game_files(profile, pe_architecture(profile.game_exe), stage)
         _write_proxy_environment(profile, stage, destination)
         # What the game's process writes into: DXVK's logs, and the proxy's launch record,
@@ -1710,12 +1895,14 @@ def set_effect(profile, enabled):
         result = {"ok": True, "error": None, "trigger_exists": bool(enabled),
                   "trigger": str(trigger), "processing_confirmed": False,
                   "detail": "Trigger changed; fresh processed frames must confirm processing"}
-        if enabled and _game_running_without_nr(profile, launch):
+        # Both read the record vulkan-1.dll makes at a launch; in a DirectX 12 game NR's libxess.dll
+        # takes the trigger whenever the game started, and needs no administrator's loader.
+        if enabled and profile.api != "d3d12" and _game_running_without_nr(profile, launch):
             result.update(warning="game_without_nr",
                           detail="The game is running without NR's layer: it was started before NR "
                                  "was installed, or it does not load the Vulkan loader from its own "
                                  "folder. Restart it; if that does not help, use Launch game.")
-        elif enabled and _elevated_game(profile, launch):
+        elif enabled and profile.api != "d3d12" and _elevated_game(profile, launch):
             uac = _uac_enabled()
             result.update(warning="game_elevated", uac_enabled=uac,
                           detail="The game runs as administrator, where Windows' Vulkan loader ignores "
@@ -1935,6 +2122,10 @@ def status(profile):
             active = bool(running) and _canonical(running) == _canonical(profile.game_exe)
         except (OSError, ValueError):
             process_error = "The launch PID could not be verified"
+    if profile.api == "d3d12" and not active:
+        # vulkan-1.dll makes the launch record, and a DirectX 12 game has none: frames the daemon
+        # answered since the last look, seconds ago, say the game runs with NR.
+        active = bool(fresh_processed > 0 and mtime is not None and time.time() - mtime < 10)
     # The game's integrity level, from the proxy's record: as administrator NR cannot reach it.
     level = launch.get("integrity") if matching_launch else None
     elevated = bool(active and _high(level))

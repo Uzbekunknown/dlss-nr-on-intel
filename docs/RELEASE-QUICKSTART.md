@@ -26,14 +26,25 @@ separate **Prepare Python** button also creates that local environment; it does
 not install packages globally. A missing Python installation still needs to be
 installed from [python.org](https://www.python.org/downloads/windows/).
 
-Choose **Vulkan** for a game with its own Vulkan renderer, and **DirectX 8–11** for the
-rest. Installation puts a `vulkan-1.dll` beside every game, and for DirectX 8–11 DXVK
+Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
+**DirectX 12 (games with XeSS)** for a DirectX 12 game that offers Intel XeSS. For Vulkan and
+DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for DirectX 8–11 DXVK
 3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
 file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
 these files and puts the set-aside ones back; a file that changed since, for example in a
 game update, is left as it is and named.
-DirectX 12 games do not work on Windows yet: DXVK covers DirectX 8–11, and VKD3D-Proton,
-tried with Mortal Kombat 1, stopped the game at startup.
+
+**DirectX 12 works through the game's own XeSS.** Installation puts NR's `libxess.dll` in
+front of the game's, in whichever folder the game keeps it (an Unreal plug-in's too), and
+the game's own stays beside it as `libxess_nr_orig.dll`. In the game, choose **XeSS** as
+the upscaler: NR then runs on XeSS's output, the upscaled scene before the game draws its
+interface, so the interface stays as the game drew it. The first frame through XeSS starts
+NR's daemon, which takes a few seconds to load the network; **Enable NR** and **Disable NR**
+work while the game runs. NR has run in Hogwarts Legacy (XeSS 2.0.2): at 1280×720 with network
+B about 26 frames a second at render scale 0.4 and 21 at 0.5 on the Arc 140V, and with the
+game's frame generation on. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
+puts the game's `libxess.dll` back; when a game update has replaced NR's, use **Remove NR**
+and then **Install NR** again.
 
 For a Vulkan game, choose the executable that draws with Vulkan: NR works only in the one
 chosen. Steam starts DOOM (2016)'s `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the

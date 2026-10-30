@@ -148,7 +148,7 @@ def install(core, profile):
         raise
     # Remove only the old proxy we temporarily set aside, never an arbitrary
     # directory's contents. The game's original stays in game-backup until removal.
-    for name, kind, entry in done:
+    for name, kind, entry, _ in done:
         if kind == "replaced":
             (destination / ".undo" / name).unlink()
     undo = destination / ".undo"

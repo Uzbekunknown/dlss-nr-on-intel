@@ -20,6 +20,9 @@
  *                       the frame before as the daemon was told it (two float32 a pixel), for
  *                       frames whose history followed it
  *     --every N         write every Nth frame (default 1)
+ *     --env FILE        a release's nr-env.txt, as Install NR names it in nr-xess.txt (`env=`):
+ *                       no daemon need be running, the proxy starts one, and the file's
+ *                       NR_LAYER_TRIGGER turns NR on and off
  *     --inputs DIR      also the colour XeSS was handed, the proxy's change in it, to
  *                       DIR\%04u.ppm: whether something in the output came in with the
  *                       change or grew in XeSS's own history
@@ -173,12 +176,16 @@ int main(int argc, char **argv)
 			config.match_from = (float)atof(argv[++i]);
 			config.match_to = (float)atof(argv[++i]);
 		}
+		else if (!strcmp(argv[i], "--env") && i + 1 < argc) snprintf(config.env, sizeof config.env, "%s", argv[++i]);
 	}
 	if (every < 1) every = 1;
 	CreateDirectoryA(out, NULL);
 	char path[MAX_PATH + 64];
 	snprintf(path, sizeof path, "%s\\replay.log", out);
 	MultiByteToWideChar(CP_UTF8, 0, path, -1, log_path, MAX_PATH + 16);
+	/* As a release's nr-xess.txt names it: the proxy starts the daemon itself, and the trigger
+	 * in it turns NR on and off */
+	if (config.env[0]) read_env_file();
 	build_tables();
 	nr_split_set_log(say_line);
 	config.enabled = !off;

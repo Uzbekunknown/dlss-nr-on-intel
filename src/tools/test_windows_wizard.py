@@ -69,6 +69,41 @@ def write_pe_importing(path, imports=(), delayed=(), x64=True, text=b""):
     return path
 
 
+def write_pe_exporting(path, exports, suffix=b""):
+    """An x64 PE whose export table names `exports`, as a libxess.dll's does, with `suffix` after it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    optional = bytearray(112 + 16 * 8)
+    struct.pack_into("<H", optional, 0, 0x20B)
+    struct.pack_into("<I", optional, 108, 16)
+    base, raw = 0x1000, 0x400
+    pointers, strings = bytearray(), bytearray()
+    for name in exports:
+        pointers += struct.pack("<I", base + 40 + 4 * len(exports) + len(strings))
+        strings += name.encode("ascii") + b"\0"
+    # The export directory: NumberOfNames at 24, AddressOfNames at 32.
+    directory = struct.pack("<IIHHIIIIIII", 0, 0, 0, 0, 0, 1, len(exports), len(exports), 0, base + 40, 0)
+    section = directory + bytes(pointers) + bytes(strings) + suffix
+    struct.pack_into("<II", optional, 112, base, 40)
+    dos = bytearray(64)
+    dos[:2] = b"MZ"
+    struct.pack_into("<I", dos, 60, 64)
+    coff = bytearray(24)
+    coff[:4] = b"PE\0\0"
+    struct.pack_into("<HH", coff, 4, 0x8664, 1)
+    struct.pack_into("<H", coff, 20, len(optional))
+    table = bytearray(40)
+    table[:6] = b".rdata"
+    struct.pack_into("<IIII", table, 8, len(section), base, len(section), raw)
+    data = bytes(dos + coff + optional + table)
+    path.write_bytes(data + bytes(raw - len(data)) + section)
+    return path
+
+
+XESS_EXPORTS = ("xessD3D12CreateContext", "xessD3D12Init", "xessD3D12Execute", "xessGetVersion",
+                "xessSetVelocityScale", "xessSetJitterScale", "xessDestroyContext")
+
+
 def write_weights(path, count=649):
     """Format-only zero-sized tensors; deliberately contain no real weights."""
     path = Path(path)
@@ -339,6 +374,96 @@ class WizardFixture(unittest.TestCase):
             self.assertEqual(values[name], value, name)
         self.assertTrue(core.uninstall(self.profile)["ok"])
         self.assertEqual(sorted(path.name for path in game.iterdir()), [self.game.name])
+
+    def unreal_game(self):
+        """A DirectX 12 game laid out as Unreal's are, Hogwarts Legacy's among them: the executable
+        in Binaries\\Win64 under the project, XeSS in a plug-in under the engine. NR's libxess.dll in
+        the release exports more than the game's older one does."""
+        top = self.base / "Unreal game (test)"
+        exe = write_pe(top / "Project" / "Binaries" / "Win64" / "Project-Win64-Shipping.exe")
+        xess = top / "Engine" / "Plugins" / "Runtime" / "Intel" / "XeSS" / "Binaries" / "ThirdParty" / "Win64"
+        write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"Intel's XeSS")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        return replace(self.profile, api="d3d12", game_exe=exe), xess
+
+    def test_d3d12_puts_nrs_libxess_in_front_of_the_games_and_remove_puts_it_back(self):
+        profile, xess = self.unreal_game()
+        intel = (xess / core.XESS_NAME).read_bytes()
+        checks = self.checks(profile)
+        self.assertTrue(checks["xess_library"]["ok"], checks["xess_library"])
+        self.assertIn(str(xess), checks["xess_library"]["detail"])
+        self.assertIn(core.XESS_NAME, checks["game_files"]["detail"])
+        result = core.install(profile)
+        self.assertTrue(result["ok"], result)
+        installed = core.installed_path(profile)
+        self.assertEqual((xess / core.XESS_NAME).read_bytes(), (self.root / core.XESS_PROXY).read_bytes())
+        self.assertEqual((xess / core.XESS_ORIGINAL).read_bytes(), intel)
+        self.assertEqual((installed / core.GAME_BACKUP / core.XESS_NAME).read_bytes(), intel)
+        # Nothing for Vulkan beside the executable: a DirectX 12 game does not load the loader.
+        self.assertFalse((profile.game_exe.parent / core.PROXY_NAME).exists())
+        settings = (xess / core.XESS_SETTINGS).read_text(encoding="utf-8").splitlines()
+        self.assertIn("mode=after", settings)
+        self.assertIn("pipe=" + core.layer_environment(profile)["NR_LAYER_SOCKET"], settings)
+        self.assertIn("env=" + str(installed / core.ENV_FILE), settings)
+        lines = (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines()
+        self.assertIn("nr_xess.c", lines[0])
+        values = dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+        for name in ("NR_PYTHON", "NR_DAEMON", "NR_ROOT", "NR_SETTINGS", "NR_LAYER_LOG", "NR_LAYER_TRIGGER"):
+            self.assertEqual(values[name], core.layer_environment(profile)[name], name)
+        # Installed again, the game's own is still the one set aside, once, and copied beside NR's.
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((installed / core.GAME_BACKUP / core.XESS_NAME).read_bytes(), intel)
+        self.assertEqual((xess / core.XESS_ORIGINAL).read_bytes(), intel)
+        self.assertFalse((installed / ".undo").exists())
+        # The trigger turns NR on in the game whenever it started: no launch record to warn about.
+        self.processes.return_value = [{"ProcessId": 4321, "ExecutablePath": str(profile.game_exe)}]
+        toggled = core.set_effect(profile, True)
+        self.assertTrue(toggled["ok"] and toggled["trigger_exists"], toggled)
+        self.assertNotIn("warning", toggled)
+        self.processes.return_value = []   # Remove NR waits for the game to close
+        (xess / core.XESS_LOG).write_text("what NR's libxess.dll said in the game\n")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(sorted(path.name for path in xess.iterdir()), [core.XESS_NAME])
+        self.assertEqual((xess / core.XESS_NAME).read_bytes(), intel)
+        self.assertFalse(installed.exists())
+
+    def test_d3d12_takes_only_an_xess_nrs_libxess_can_stand_in_front_of(self):
+        profile, xess = self.unreal_game()
+        write_pe(self.game, x64=False)
+        self.assertFalse(self.checks(replace(profile, game_exe=self.game))["xess_library"]["ok"])
+        (xess / core.XESS_NAME).unlink()
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("No libxess.dll", detail["detail"])
+        # A newer XeSS, with a function NR's does not carry, which the game may call.
+        write_pe_exporting(xess / core.XESS_NAME, (*XESS_EXPORTS, "xessD3D12GetNewThing"))
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("xessD3D12GetNewThing", detail["detail"])
+        # NR's own in the game's place, with no record of it: set aside, it would load itself.
+        shutil.copy2(self.root / core.XESS_PROXY, xess / core.XESS_NAME)
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("is NR's", detail["detail"])
+        self.assertFalse(core.install(profile)["ok"])
+        self.assertEqual(sorted(path.name for path in xess.iterdir()), [core.XESS_NAME])
+
+    def test_d3d12_game_update_over_nrs_libxess_stays_and_remove_takes_the_rest(self):
+        profile, xess = self.unreal_game()
+        self.assertTrue(core.install(profile)["ok"])
+        write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"Intel's XeSS, updated")
+        detail = self.checks(profile)["game_files"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Remove NR, then Install NR", detail["detail"])
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(removed["updated_by_game"], [core.XESS_NAME])
+        self.assertEqual(sorted(path.name for path in xess.iterdir()), [core.XESS_NAME])
+        self.assertTrue((xess / core.XESS_NAME).read_bytes().endswith(b"updated"))
+        self.assertFalse(core.installed_path(profile).exists())
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertTrue((xess / core.XESS_ORIGINAL).read_bytes().endswith(b"updated"))
 
     def test_pacing_in_the_profile_the_environment_and_an_installed_game(self):
         # Asynchronous mode and every Nth frame: kept in the profile, set for the layer either

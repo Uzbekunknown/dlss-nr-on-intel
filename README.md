@@ -56,7 +56,7 @@ and since 2026-10-01 Intel's Windows driver and Mesa compute the graph bit for b
 | --- | --- | --- |
 | Install | the release ZIP and its setup window, in English, Russian or Spanish | built from source with `make` or CMake |
 | GPU driver | Intel's own; tested with 32.0.101.9033 | Mesa ANV |
-| Games | native Vulkan, and DirectX 8–11 through the DXVK 3.1.1 that setup puts beside the game; 64- and 32-bit; **no DirectX 12 yet** | whatever Proton runs, since DXVK and VKD3D-Proton come with it: DirectX 12 too (Mortal Kombat 1) |
+| Games | native Vulkan, and DirectX 8–11 through the DXVK 3.1.1 that setup puts beside the game, 64- and 32-bit; **DirectX 12 through the game's own XeSS**, NR on XeSS's output (Hogwarts Legacy so far) | whatever Proton runs, since DXVK and VKD3D-Proton come with it: DirectX 12 too (Mortal Kombat 1) |
 | Starting the game | any way at all — Steam, a shortcut, another launcher: setup puts a `vulkan-1.dll` beside the game that gives it NR | with NR's environment: the Steam launch option `nr-photo --steam` prints, or `nr-photo` itself |
 | Controls | the setup window: Enable NR and the ten settings, while the game runs | `nr-panel`, `nr-ctl`, and `nr-toggle` on a key |
 | Modes | live | live, and the photo mode |

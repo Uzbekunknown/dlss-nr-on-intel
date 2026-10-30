@@ -184,11 +184,16 @@ static struct {
 	 * (BEFORE; `cut` says the same): cut before it, NR on the colour XeSS upscales. `mode=carry`
 	 * (CARRY): the change to an earlier frame carried along motion. Read once, as the pipe is. */
 	int cut;
-} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER };
+	/* `env=`: the nr-env.txt Install NR wrote into the game's dlss-nr folder, from which this
+	 * starts the daemon when none answers, and whose trigger turns NR on and off. Read once. */
+	char env[MAX_PATH * 3];
+} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER, "" };
 
 static volatile LONG record_asked;      /* frames to record, set by the settings, taken by the hook */
 
 static FILETIME settings_time;
+
+static void read_env_file(void);
 
 /* key=value lines; re-read by the worker when the file changes, so strength and white
  * can be set while the game runs. The pipe is read once. */
@@ -235,9 +240,12 @@ static void read_settings(int first)
 			config.record = atoi(value);
 		else if (!strcmp(line, "record_dir"))
 			snprintf(config.record_dir, sizeof config.record_dir, "%s", value);
+		else if (!strcmp(line, "env") && first)
+			snprintf(config.env, sizeof config.env, "%s", value);
 	}
 	if (config.record > 0 && config.record_dir[0]) InterlockedExchange(&record_asked, config.record);
 	fclose(file);
+	if (first && config.env[0]) read_env_file();
 	if (!(config.white > 0)) config.white = 1;
 	if (!(config.strength >= 0)) config.strength = 0;
 	if (!(config.match_from >= 0)) config.match_from = 0;
@@ -247,6 +255,184 @@ static void read_settings(int first)
 	    config.cut == AFTER ? "after" : config.cut == BEFORE ? "before" : "carry", config.enabled, config.white,
 	    config.strength, config.warp, config.motion_history, config.match_from, config.match_to,
 	    config.sync, config.pipe);
+}
+
+/* ---- The daemon, which this starts when none answers, as the layer does in a Vulkan game ---- */
+
+/* The lines of nr-env.txt, which Install NR writes into the game's dlss-nr folder and names here as
+ * `env=`: the daemon's interpreter, script, root, settings file and log, the network (NR_PRESET),
+ * and the trigger the setup window's Enable NR makes. vulkan-1.dll beside a Vulkan game gives the
+ * layer the same file (nr_vulkan_proxy.c). */
+#define ENV_LINES 64
+static struct { wchar_t name[64]; wchar_t value[1024]; } env_lines[ENV_LINES];
+static int env_count;
+/* NR_LAYER_TRIGGER: NR runs while that file exists, as in a Vulkan game. Without `env=` there is
+ * none, and `enabled` alone decides (the test scripts). */
+static wchar_t trigger[MAX_PATH];
+static volatile LONG trigger_on = 1;
+static ULONGLONG trigger_checked;
+
+static const wchar_t *env_value(const wchar_t *name)
+{
+	for (int i = 0; i < env_count; i++)
+		if (!_wcsicmp(env_lines[i].name, name)) return env_lines[i].value;
+	return NULL;
+}
+
+static void read_env_file(void)
+{
+	wchar_t path[MAX_PATH * 3];
+	FILE *file = MultiByteToWideChar(CP_UTF8, 0, config.env, -1, path, MAX_PATH * 3)
+		? _wfopen(path, L"rb") : NULL;
+	if (!file) {
+		say("cannot read %s, which env= names; no daemon is started from here\n", config.env);
+		return;
+	}
+	char line[2048];
+	while (env_count < ENV_LINES && fgets(line, sizeof line, file)) {
+		line[strcspn(line, "\r\n")] = '\0';
+		char *equals = strchr(line, '=');
+		if (line[0] == '#' || !equals || equals == line) continue;
+		*equals = '\0';
+		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, line, -1, env_lines[env_count].name, 64)
+		    && MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, equals + 1, -1,
+					   env_lines[env_count].value, 1024))
+			env_count++;
+	}
+	fclose(file);
+	const wchar_t *named = env_value(L"NR_LAYER_TRIGGER");
+	if (named && wcslen(named) < MAX_PATH) {
+		wcscpy(trigger, named);
+		trigger_on = GetFileAttributesW(trigger) != INVALID_FILE_ATTRIBUTES;
+	}
+	say("%d settings from %s; NR is %s\n", env_count, config.env, !trigger[0] ? "on"
+	    : trigger_on ? "on (the setup window's Enable NR)" : "off until the setup window's Enable NR");
+}
+
+static HANDLE daemon_process;    /* the daemon this started, until it is seen to have ended */
+static int daemon_starts;
+static ULONGLONG daemon_started;
+
+/* No daemon answered at the pipe: start one with nr-env.txt's environment, when env= names it. Not
+ * while one this started is alive, since a daemon listens only once its network is loaded, some
+ * seconds on; and three times a game at most, 30 s apart: one that ends at once says why in its
+ * log, and starting it again does not change that. It ends with the game (NR_LAYER_SPAWNED). */
+static void start_daemon(void)
+{
+	if (!env_count) return;
+	if (daemon_process) {
+		if (WaitForSingleObject(daemon_process, 0) == WAIT_TIMEOUT) return;
+		DWORD code = 0;
+		GetExitCodeProcess(daemon_process, &code);
+		CloseHandle(daemon_process);
+		daemon_process = NULL;
+		say("the daemon this started has ended (exit code %lu); its log says why\n", code);
+	}
+	if (daemon_starts >= 3 || (daemon_starts && GetTickCount64() - daemon_started < 30000)) return;
+	const wchar_t *python = env_value(L"NR_PYTHON"), *script = env_value(L"NR_DAEMON");
+	const wchar_t *root = env_value(L"NR_ROOT"), *settings = env_value(L"NR_SETTINGS");
+	const wchar_t *log = env_value(L"NR_LAYER_LOG");
+	if (!python || !script || !root || !settings) {
+		say("%s names no daemon to start (NR_PYTHON, NR_DAEMON, NR_ROOT, NR_SETTINGS); Install NR "
+		    "again\n", config.env);
+		daemon_starts = 3;
+		return;
+	}
+	daemon_starts++;
+	daemon_started = GetTickCount64();
+	wchar_t pipe[256], command[4096];
+	MultiByteToWideChar(CP_UTF8, 0, config.pipe, -1, pipe, 256);
+	int length = _snwprintf(command, 4096, L"\"%ls\" \"%ls\" --socket \"%ls\" --settings \"%ls\" --root \"%ls\"",
+				python, script, pipe, settings, root);
+	if (length < 0 || length >= 4096) {
+		say("the daemon's command line is longer than 4096 characters; none is started\n");
+		return;
+	}
+	/* The game's environment without NR's names, the Vulkan layer's or a Python of its own; then
+	 * nr-env.txt's, but for the game's side of a Vulkan install; then what a D3D12 game's daemon
+	 * needs: its frames on the GPU (protocol 3), and the game's process, which it ends with. */
+	static const wchar_t *const game_side[] = { L"NR_GAME_EXE", L"NR_LAUNCH_STATE", L"NR_REAL_VULKAN",
+		L"NR_GPU_IMAGE", L"NR_GPU_TRANSPORT", L"NR_LAYER_SPAWNED", L"ENABLE_NR_LAYER" };
+	wchar_t added[3][48];
+	swprintf(added[0], 48, L"NR_GPU_IMAGE=1");
+	swprintf(added[1], 48, L"NR_GPU_TRANSPORT=1");
+	swprintf(added[2], 48, L"NR_LAYER_SPAWNED=%lu", GetCurrentProcessId());
+	wchar_t *current = GetEnvironmentStringsW();
+	size_t need = 1;
+	for (wchar_t *e = current; e && *e; e += wcslen(e) + 1) need += wcslen(e) + 1;
+	for (int i = 0; i < env_count; i++) need += wcslen(env_lines[i].name) + wcslen(env_lines[i].value) + 2;
+	for (int i = 0; i < 3; i++) need += wcslen(added[i]) + 1;
+	wchar_t *block = malloc(need * sizeof *block);
+	if (!block) {
+		if (current) FreeEnvironmentStringsW(current);
+		say("out of memory for the daemon's environment; none is started\n");
+		return;
+	}
+	size_t used = 0;
+	for (wchar_t *e = current; e && *e; e += wcslen(e) + 1) {
+		if (!_wcsnicmp(e, L"NR_", 3) || !_wcsnicmp(e, L"VK_", 3) || !_wcsnicmp(e, L"ENABLE_NR_LAYER=", 16)
+		    || !_wcsnicmp(e, L"DISABLE_NR_LAYER=", 17) || !_wcsnicmp(e, L"PYTHONHOME=", 11)
+		    || !_wcsnicmp(e, L"PYTHONPATH=", 11))
+			continue;
+		size_t size = wcslen(e) + 1;
+		memcpy(block + used, e, size * sizeof *block);
+		used += size;
+	}
+	if (current) FreeEnvironmentStringsW(current);
+	for (int i = 0; i < env_count; i++) {
+		int skip = !_wcsnicmp(env_lines[i].name, L"VK_", 3);
+		for (size_t k = 0; k < sizeof game_side / sizeof *game_side; k++)
+			skip |= !_wcsicmp(env_lines[i].name, game_side[k]);
+		if (!skip)
+			used += (size_t)swprintf(block + used, need - used, L"%ls=%ls", env_lines[i].name,
+						 env_lines[i].value) + 1;
+	}
+	for (int i = 0; i < 3; i++) used += (size_t)swprintf(block + used, need - used, L"%ls", added[i]) + 1;
+	block[used] = L'\0';
+	/* stdin NUL and the output into the daemon's log, as the layer does: inheritable, or the
+	 * child's streams are invalid and its log stays empty. Only these two are inherited, not
+	 * whatever else the game holds open that way. */
+	SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+	HANDLE in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+	HANDLE out = log ? CreateFileW(log, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+				       OPEN_ALWAYS, 0, NULL) : INVALID_HANDLE_VALUE;
+	if (out == INVALID_HANDLE_VALUE)
+		out = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+	STARTUPINFOEXW si;
+	memset(&si, 0, sizeof si);
+	si.StartupInfo.cb = sizeof si;
+	si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	si.StartupInfo.hStdInput = in;
+	si.StartupInfo.hStdOutput = out;
+	si.StartupInfo.hStdError = out;
+	HANDLE inherited[2] = { in, out };
+	SIZE_T size = 0;
+	InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+	si.lpAttributeList = in != INVALID_HANDLE_VALUE && out != INVALID_HANDLE_VALUE ? malloc(size) : NULL;
+	int listed = si.lpAttributeList && InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &size);
+	PROCESS_INFORMATION pi;
+	memset(&pi, 0, sizeof pi);
+	/* A console without a window, as the layer's: a venv's python.exe starts the interpreter as
+	 * its own child, which would otherwise get a visible console over the game. */
+	BOOL ok = listed
+		&& UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited,
+					     sizeof inherited, NULL, NULL)
+		&& CreateProcessW(NULL, command, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT
+				  | EXTENDED_STARTUPINFO_PRESENT, block, NULL, &si.StartupInfo, &pi);
+	DWORD error = ok ? 0 : GetLastError();
+	if (listed) DeleteProcThreadAttributeList(si.lpAttributeList);
+	free(si.lpAttributeList);
+	free(block);
+	if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+	if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+	if (!ok) {
+		say("could not start the daemon (error %lu): %ls\n", error, command);
+		return;
+	}
+	CloseHandle(pi.hThread);
+	daemon_process = pi.hProcess;
+	say("no daemon answered at %s, so this started one (process %lu); it answers once its network "
+	    "is loaded\n", config.pipe, pi.dwProcessId);
 }
 
 /* ---- Pixels on the CPU: the proxy NR is given, and its change ---- */
@@ -1790,6 +1976,7 @@ static void say_hello(void)
 	}
 	cut.retry = GetTickCount64() + 5000;
 	InterlockedExchange(&cut.hello, 0);
+	if (!ok) start_daemon();
 	char why[96];
 	snprintf(why, sizeof why, "no daemon at %s took a D3D12 session (%s); asked again every 5 s",
 		 config.pipe, ok ? "it declined, and its log says why" : "no answer");
@@ -2263,7 +2450,14 @@ xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsComm
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
 	handed = params ? params->pColorTexture : NULL;
 	cut_now = 0;
-	if (nr.broken || !config.enabled || !list || !params || !params->pColorTexture)
+	/* The setup window's Enable NR, looked at once a second: a file's attributes, on this thread */
+	if (trigger[0] && GetTickCount64() - trigger_checked >= 1000) {
+		trigger_checked = GetTickCount64();
+		LONG on = GetFileAttributesW(trigger) != INVALID_FILE_ATTRIBUTES;
+		if (InterlockedExchange(&trigger_on, on) != on)
+			say("NR %s by the setup window\n", on ? "turned on" : "turned off");
+	}
+	if (nr.broken || !config.enabled || !trigger_on || !list || !params || !params->pColorTexture)
 		return real_execute(context, list, params);
 	if (config.cut == AFTER) {
 		/* XeSS's work goes into the list first, and the cut after it */

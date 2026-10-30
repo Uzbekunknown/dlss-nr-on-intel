@@ -287,7 +287,7 @@ $script:SettingsStateKey = 'SettingsLoading'
        <StackPanel>
         <TextBlock x:Name="ConnectHeading" Style="{StaticResource Heading}"/>
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-         <TextBlock x:Name="ApiLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/></ComboBox>
+         <TextBlock x:Name="ApiLabel" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/><ComboBox x:Name="Api" Grid.Column="1" SelectedIndex="0"><ComboBoxItem x:Name="ApiVulkan" Content=""/><ComboBoxItem x:Name="ApiDxvk" Content=""/><ComboBoxItem x:Name="ApiD3d12" Content=""/></ComboBox>
         </Grid>
         <Expander x:Name="LaunchOptions" Header="" Margin="0,8,0,0">
          <StackPanel Margin="18,2,0,4">
@@ -371,7 +371,7 @@ $script:SettingsStateKey = 'SettingsLoading'
 '@
 $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
 $script:Ui = @{}
-foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
+foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ApiD3d12','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
     $script:Ui[$name] = $script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -442,7 +442,7 @@ $script:Strings=@{
   PythonTip='Choose native 64-bit Windows Python, not the MinGW/MSYS2 interpreter.'
   FindPython='Find Python'; GetPython='Python website'
   PythonHint='Python is usually detected automatically. If it is missing, install Windows x64 Python from python.org.'
-  ConnectHeading='2. Connect NR to your game'; ApiLabel='Graphics API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (setup adds DXVK)'
+  ConnectHeading='2. Connect NR to your game'; ApiLabel='Graphics API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (setup adds DXVK)'; ApiD3d12='DirectX 12 (games with XeSS)'
   LaunchOptions='Launch options'
   ArgsLabel='Game arguments (optional)'; ArgsTip='Ordinary game arguments; shell commands are not executed here.'
   Fossilize='Steam shader-cache workaround for NR'
@@ -548,7 +548,7 @@ $script:Strings=@{
   PythonTip='Выберите обычный 64-битный Windows Python, а не интерпретатор MinGW/MSYS2.'
   FindPython='Найти Python'; GetPython='Сайт Python'
   PythonHint='Python обычно определяется автоматически. Если его нет, установите Windows x64 Python с python.org.'
-  ConnectHeading='2. Подключите NR к игре'; ApiLabel='Графический API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (мастер добавит DXVK)'
+  ConnectHeading='2. Подключите NR к игре'; ApiLabel='Графический API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (мастер добавит DXVK)'; ApiD3d12='DirectX 12 (игры с XeSS)'
   LaunchOptions='Параметры запуска'
   ArgsLabel='Аргументы игры (необязательно)'; ArgsTip='Обычные аргументы игры; команды оболочки здесь не выполняются.'
   Fossilize='Обход Steam shader-cache для NR'
@@ -654,7 +654,7 @@ $script:Strings=@{
   PythonTip='Elija Python nativo de Windows de 64 bits, no el intérprete de MinGW/MSYS2.'
   FindPython='Buscar Python'; GetPython='Sitio web de Python'
   PythonHint='Python suele detectarse automáticamente. Si falta, instale Python para Windows x64 desde python.org.'
-  ConnectHeading='2. Conecte NR a su juego'; ApiLabel='API gráfica'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (el instalador añade DXVK)'
+  ConnectHeading='2. Conecte NR a su juego'; ApiLabel='API gráfica'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (el instalador añade DXVK)'; ApiD3d12='DirectX 12 (juegos con XeSS)'
   LaunchOptions='Opciones de inicio'
   ArgsLabel='Argumentos del juego (opcional)'; ArgsTip='Argumentos normales del juego; aquí no se ejecutan comandos de la consola.'
   Fossilize='Solución para la caché de sombreadores de Steam con NR'
@@ -760,7 +760,7 @@ $script:Strings=@{
    PythonTip='请选择原生 64 位 Windows Python，而不是 MinGW/MSYS2 的解释器。'
    FindPython='查找 Python'; GetPython='Python 官网'
    PythonHint='Python 通常会自动检测到。如果缺少，请从 python.org 安装 Windows x64 版 Python。'
-   ConnectHeading='2. 将 NR 连接到游戏'; ApiLabel='图形 API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11（安装程序会添加 DXVK）'
+   ConnectHeading='2. 将 NR 连接到游戏'; ApiLabel='图形 API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11（安装程序会添加 DXVK）'; ApiD3d12='DirectX 12（带 XeSS 的游戏）'
    LaunchOptions='启动选项'
    ArgsLabel='游戏参数（可选）'; ArgsTip='普通的游戏参数；此处不执行 shell 命令。'
    Fossilize='针对 NR 的 Steam 着色器缓存规避方案'
@@ -868,7 +868,7 @@ $script:TextBindings=@{
 }
 $script:ContentBindings=@{
  BrowseDll='Browse'; BrowseGame='Browse'; BrowsePython='Browse'; FindPython='FindPython'; GetPython='GetPython'
- ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; Fossilize='Fossilize'
+ ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ApiD3d12='ApiD3d12'; Fossilize='Fossilize'
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
  AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
@@ -1101,7 +1101,7 @@ function Write-Json([string]$Path, $Value) {
 }
 function Profile-FromWindow {
     $dll = $script:Ui.DllPath.Text.Trim()
-    return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(if($script:Ui.Api.SelectedIndex -eq 1){'dxvk'}else{'vulkan'}); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked
+    return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(switch($script:Ui.Api.SelectedIndex){ 1 {'dxvk'} 2 {'d3d12'} default {'vulkan'} }); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked
         nr_async=[bool]$script:Ui.AsyncMode.IsChecked; nr_every=[int]$script:Ui.EveryFrame.SelectedItem.Tag;
         gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag}
 }
@@ -1111,7 +1111,7 @@ function Apply-Profile($Profile) {
     $script:Ui.PythonPath.Text=[string]$Profile.python
     $script:Ui.GamePath.Text=[string]$Profile.game_exe
     $script:Ui.DllPath.Text=[string]$Profile.dll
-    $script:Ui.Api.SelectedIndex=$(if($Profile.api -eq 'dxvk'){1}else{0})
+    $script:Ui.Api.SelectedIndex=$(switch($Profile.api){ 'dxvk' {1} 'd3d12' {2} default {0} })
     $script:Ui.Fossilize.IsChecked=[bool]$Profile.disable_fossilize
     if($Profile.game_args) { $script:Ui.GameArgs.Text=(@($Profile.game_args | ForEach-Object { Quote-Argument ([string]$_) }) -join ' ') }
     # A profile from before frame pacing has neither: every frame, in step with the game.

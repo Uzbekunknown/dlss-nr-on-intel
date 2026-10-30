@@ -54,6 +54,7 @@ class ReleaseTests(unittest.TestCase):
         self.write("work/nr_layer32.dll", "nr_layer32.dll")
         for name in release.PROXIES:
             self.write("work/" + name, name)
+        self.write(release.XESS_PROXY[0], "NR's libxess.dll")
         for name in release.DXVK:
             self.write(name, "dxvk:" + name)
         self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
@@ -88,6 +89,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual((self.target / "nr_layer32.dll").read_text(), "nr_layer32.dll")
         for name in release.PROXIES:
             self.assertEqual((self.target / name).read_text(), name)
+        # DirectX 12's, under the name the setup window looks for in a release.
+        self.assertEqual((self.target / release.XESS_PROXY[1]).read_text(), "NR's libxess.dll")
+        self.assertEqual(release.XESS_PROXY[1], "nr_xess.dll")
         self.assertEqual((self.target / "dxvk/x32/d3d9.dll").read_text(), "dxvk:work/dxvk/x32/d3d9.dll")
         self.assertTrue((self.target / "dxvk/LICENSE").is_file())
         self.assertEqual(json.loads((self.target / "release-metadata.json").read_text())["dxvk"], "3.1.1")
@@ -175,7 +179,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_windows_release_needs_dxvk_and_the_32bit_layer(self):
         for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE",
-                     "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll"):
+                     "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll", release.XESS_PROXY[0]):
             path = self.root / name
             saved = path.read_bytes()
             path.unlink()

@@ -23,6 +23,9 @@ WINDOWS_TOOLS = ("windows_wizard.py", "windows_wizard_core.py", "windows_launch.
 # Preset B's weights out of a 310.9.16 or later DLL, beside A's (scripts/get_weights.py).
 UNPACK_PRESET = "src/tools/unpack_preset.py"
 PROXIES = ("nr_vulkan_proxy.dll", "nr_vulkan_proxy32.dll")
+# DirectX 12 through the game's own XeSS: src/xess/build_xess.bat builds this libxess.dll, which
+# the setup window puts in front of a game's, and a release carries it as nr_xess.dll.
+XESS_PROXY = ("work/xess/libxess.dll", "nr_xess.dll")
 # DXVK for DirectX 8-11 games, from scripts/fetch_dxvk.py: the setup window puts it beside them.
 DXVK = tuple(f"work/dxvk/{directory}/{name}" for directory in ("x64", "x32")
              for name in ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"))
@@ -157,6 +160,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         files.append(root / "work/nr_layer32.dll")
         # vulkan-1.dll beside each game, which gives it NR's environment however it starts.
         files += [root / "work" / name for name in PROXIES]
+        files.append(root / XESS_PROXY[0])
         files += [root / name for name in (*DXVK, *DXVK_INFO)]
         files += [root / "dist-tools" / name for name in WINDOWS_UI]
         files += [root / "src/tools" / name for name in WINDOWS_TOOLS]
@@ -203,6 +207,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
             shutil.copy2(root / "work/nr_layer32.dll", stage / "nr_layer32.dll")
             for name in PROXIES:
                 shutil.copy2(root / "work" / name, stage / name)
+            shutil.copy2(root / XESS_PROXY[0], stage / XESS_PROXY[1])
             for name in (*DXVK, *DXVK_INFO):
                 destination = stage / "dxvk" / Path(name).relative_to("work/dxvk")
                 destination.parent.mkdir(parents=True, exist_ok=True)
