@@ -1666,6 +1666,7 @@ def install(profile, emit=None):
     if not checked["ok"]:
         return checked
     commands = []
+    preset_b_before = _weights_state(profile, "B")["ready"]
 
     def keep_log():
         # Kept for Save report: the window shows it only until the next action (issue #12).
@@ -1706,11 +1707,6 @@ def install(profile, emit=None):
         keep_log()
         if extracted["returncode"] == 0 and not extracted["timed_out"] and fresh.is_file():
             os.replace(fresh, target)
-            # B is the faster network and the first choice where a release has it: the installation
-            # that takes it out of the DLL runs it. Before that the window could offer only A;
-            # after it, the window's Network decides (the owner, 2026-10-31).
-            if profile.preset == "A" and _weights_state(profile, "B")["ready"]:
-                profile = replace(profile, preset="B")
         fresh.unlink(missing_ok=True)
         if not _weights_state(profile, "B")["ready"]:
             preset_b_failed = (f"Preset B's extraction failed, from nvngx_dlssnr.dll version "
@@ -1719,6 +1715,12 @@ def install(profile, emit=None):
             if profile.preset == "B":
                 return {"ok": False, "error": preset_b_failed, "commands": commands,
                         "output": extracted["output"]}
+    # B is the faster network and the first choice where a release has it: the installation that
+    # brings it runs it, whether get_weights.py took it out beside A or unpack_preset.py after.
+    # Before that the window could offer only A; from then on, its Network decides (the owner,
+    # 2026-10-31).
+    if not preset_b_before and profile.preset == "A" and _weights_state(profile, "B")["ready"]:
+        profile = replace(profile, preset="B")
     # Recheck every input and destination after extraction, before any game write.
     checked = validate(profile)
     if not checked["ok"]:

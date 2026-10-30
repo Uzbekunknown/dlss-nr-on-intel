@@ -765,6 +765,29 @@ class WizardFixture(unittest.TestCase):
                     "output": "unpacked" if succeed else "no decoder", "timed_out": False}
         return run
 
+    def test_the_installation_that_brings_b_with_a_runs_it(self):
+        # get_weights.py takes every network a 310.9.16 DLL carries, B beside A, so B is there
+        # before unpack_preset.py is needed: the installation still brought it, and runs it.
+        dll = write_pe(self.base / "owned DLL (fixture)" / "nvngx_dlssnr.dll")
+        self.weights.unlink()
+        calls = []
+
+        def extract(command, timeout=10, env=None, emit=None, cwd=None):
+            calls.append([str(part) for part in command])
+            write_weights(self.weights)
+            write_weights(self.preset_b_weights(), count=core.PRESETS["B"][1])
+            return {"command": command, "returncode": 0, "stdout": "", "stderr": "", "output": "both",
+                    "timed_out": False}
+        with patch.object(core, "_file_version", return_value="310.9.16.0"), \
+                patch.object(core, "_run", side_effect=extract):
+            result = core.install(replace(self.profile, dll=dll))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("get_weights.py", calls[0][2])
+        self.assertEqual(result["profile"]["preset"], "B")
+        self.assertIn("NR_PRESET=B", (core.installed_path(self.profile) / core.ENV_FILE).read_text(encoding="utf-8"))
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
     def test_install_takes_preset_b_out_of_a_dll_that_carries_it_beside_a(self):
         dll = write_pe(self.base / "owned DLL (fixture)" / "nvngx_dlssnr.dll")
         profile = replace(self.profile, dll=dll)
