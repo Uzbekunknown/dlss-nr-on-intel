@@ -59,7 +59,9 @@ When the dated entries grow long, move the older ones the same way, into a new a
   for another preset, is taken back by the proxy 5 s later, on a new fence (below, 10-28 evening);
   in Hogwarts A to B left 5.5 s without NR, most of it the new daemon's start, and the owner saw
   NR come back. Since 10-30 a preset changes in the running daemon instead, as the in-game panel
-  changes it, and in Hogwarts NR stayed on through A to B and back (below, 10-30).
+  changes it, and in Hogwarts NR stayed on through A to B and back (below, 10-30). Since that
+  evening the setup window installs it, **DirectX 12 (games with XeSS)**, and the proxy starts the
+  daemon itself (`6c503ae`, below).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -111,6 +113,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
+- `6c503ae`: `make test` in both memory modes and CTest. The setup window's core changed (its PE
+  readers, the folder of each placed file), and the release builder with its test. Below, 10-30
+  evening.
 - ~~`dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
   modes and CTest~~: green at `cc2b8b7` (10-30), which is `newnr` with them and PR #20: `make test`
   60 of 60 in both memory modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`.
@@ -180,10 +185,14 @@ under that date. When an item is done, strike it through here and name the commi
 - `windows_launch.py`'s Configure Steam, Restore Steam and their wrapper can go, with their tests,
   once no release with those buttons is in testers' hands. The GitHub releases have none. Archive,
   10-09.
-- DirectX 12 is not offered by the release. VKD3D-Proton does not run Hogwarts Legacy on Windows
-  (below, 10-16); the route taken instead is the game's own upscaler, `src/xess` (below, 10-16 to
-  10-30), for games with XeSS. A game that runs elevated, or any game with UAC off, never gets the
-  layer; the HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
+- ~~DirectX 12 is not offered by the release~~: the setup window's **DirectX 12 (games with
+  XeSS)**, `6c503ae` (below, 10-30 evening). VKD3D-Proton does not run Hogwarts Legacy on Windows
+  (below, 10-16).
+- A Vulkan or DirectX 8–11 game that runs elevated, or any with UAC off, never gets the layer; the
+  HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
+- DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
+  whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
+  out as 2.0's. Below, 10-30 evening.
 - ~~`dx12`: record a real Hogwarts sequence with the owner~~: recorded and replayed on 10-16,
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Below, 10-16.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
@@ -220,6 +229,46 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12 through the release: the setup window's third API, and the proxy starts the daemon (2026-10-30, evening, branch `newnr`)
+
+**What a user does** (`6c503ae`). The setup window offers **DirectX 12 (games with XeSS)** beside
+Vulkan and DirectX 8–11. **Check** finds the game's `libxess.dll` beside the executable or, for an
+executable in `<game>\<project>\Binaries\Win64`, under the project's or the engine's `Plugins`
+(Hogwarts: `Engine\Plugins\Runtime\Intel\XeSS\Binaries\ThirdParty\Win64`). It refuses one with an
+export NR's proxy lacks (both export tables read, `pe_exports`), NR's own with no record of it (set
+aside, it would load itself), and a 32-bit game. **Install NR** copies the game's DLL to
+`libxess_nr_orig.dll` beside it, sets it aside in `dlss-nr\game-backup`, puts the release's
+`nr_xess.dll` in its place and writes `nr-xess.txt` (`mode=after`, the release's pipe, `env=` the
+game's `dlss-nr\nr-env.txt`); no `vulkan-1.dll`. **Remove NR** puts it back; a `libxess.dll` a game
+update put over NR's stays, and the rest goes (`updated_by_game`). `game-files.json` now records
+each placed file's folder.
+
+**The proxy starts the daemon.** With `env=` set, `nr_xess.c` reads `nr-env.txt`, and when no daemon
+answers its HELLO starts one as the layer does: `NR_PYTHON NR_DAEMON --socket --settings --root`,
+its output into `NR_LAYER_LOG`, `NR_LAYER_SPAWNED` for `end_with_game`, `NR_GPU_IMAGE=1` and
+`NR_GPU_TRANSPORT=1` over the file's, and none of the Vulkan layer's names, so the daemon loads no
+layer (`CreateProcessW` with a UTF-16 environment, only its stdin and log inherited). Not while one
+it started lives, and three times a game at most. `NR_LAYER_TRIGGER` is looked at once a second in
+`xessD3D12Execute`, so Enable and Disable NR work in the running game. Without `env=` nothing
+changes (the test scripts); `replay_nr_xess --env` takes the same path.
+
+- Offline, the orbit recording with no daemon running (`work/tools-win/run_replay_spawn.py`): the
+  proxy started one, whose session began 5.4 s later; 60 frames answered, the trigger removed (1
+  in flight), put back, 121 more; the daemon ended with the replay.
+- **Hogwarts from a release build** (`build_release.py` of this tree, installed through the bridge
+  as the window does; preset B, render scale 0.4, 1280x720, the owner playing): the daemon started
+  at the first XeSS frame and took the session 6 s later. 26-27 frames a second were answered, each
+  on its own frame, 34-69 ms from copy to answer, the daemon's frame 33-40 ms at 512x320. Disable NR
+  stopped it within a second and Enable NR brought it back. The daemon ended with the game, and
+  after Remove NR the game's 568 files matched the listing taken before, Epic's own `.egstore`
+  record apart. The owner: it looks good.
+- Tests: `test_windows_wizard.py` 91 (3 new: the Unreal layout, the refusals, an update over NR's),
+  the bridge, controls, setup, launch and release suites; the window's self-test (75 controls, 179
+  keys in four languages); `test_nr_xess.exe`; MSVC `build_win.bat` with the three known C4068.
+
+**Next on Windows:** the release, at the owner's word.
+**Next on Linux:** `make test` in both memory modes and CTest at `6c503ae` (Open items).
 
 ## DirectX 12 takes PR #20's live network swap, and `newnr` goes into `dx12` (2026-10-30, branch `dx12`)
 
