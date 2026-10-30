@@ -28,10 +28,10 @@ When the dated entries grow long, move the older ones the same way, into a new a
   setup window, DXVK 3.1.1, both layers and a `vulkan-1.dll` proxy. 0.0.1.3 adds preset B in the
   setup window. It went out as a pre-release without Linux's `make test` at its head, on the
   owner's word, as a Windows-only release, and the owner made it the latest release the same
-  day so that the repository's front page shows it. `master` still holds 0.0.1.2. Linux users
-  build from source (README).
+  day so that the repository's front page shows it. `master` held 0.0.1.2 until it caught up with
+  `newnr` on 10-30. Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
-  - `master`, the default: 0.0.1.2 (`2f90064`);
+  - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`;
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
