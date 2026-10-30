@@ -1629,6 +1629,8 @@ int nr_menu_layer_present(struct device_data *data, VkQueue queue,
 		}
 		nr_menu_set_key_levels(data->menu, keys);
 		if (data->menu_ui) {
+			/* Events for ImGui only while the panel is open: it queues them until it draws. */
+			nrex_listen(data->menu_ui, data->menu && nr_menu_is_open(data->menu));
 			for (int vk = 0; vk < 256; ++vk)
 				nrex_key(data->menu_ui, vk, keys[vk]);
 		}

@@ -225,6 +225,34 @@ int main(void)
         check(fabs(after_reset - 1.0) < 1e-6, "Reset restores the defaults", detail);
     }
 
+    /* ---- 4a. keys given while the panel is shut are not played back when it opens ----
+     *
+     * ImGui queues key events until `NewFrame`, which runs only while the panel is drawn: Left
+     * pressed in the game while it was shut moved a row on the next opening, one press a frame
+     * (Mortal Kombat 11, 2026-10-31). First a Left while open, to know a row has the focus and
+     * would move; then four while shut, and frames after opening in which none may move. */
+    {
+        int live = 0, replayed = 0;
+        nrex_key(nullptr, 0x25, 1); STEP();
+        for (int r = 0; r < ROWS; ++r) if (rows[r].changed) live = 1;
+        nrex_key(nullptr, 0x25, 0); STEP();
+        nr_menu_bridge_reset(bridge);
+        STEP();
+        nrex_listen(nullptr, 0);
+        for (int i = 0; i < 4; ++i) { nrex_key(nullptr, 0x25, 1); nrex_key(nullptr, 0x25, 0); }
+        nrex_listen(nullptr, 1);
+        for (int f = 0; f < 10; ++f) {
+            STEP();
+            for (int r = 0; r < ROWS; ++r) if (rows[r].changed) replayed = 1;
+        }
+        if (!live) {
+            printf("  (no row had the focus; the playback case is not exercised)\n");
+        } else {
+            check(!replayed, "keys given while the panel was shut are not played back when it opens",
+                  replayed ? "a row moved after opening" : "no row moved");
+        }
+    }
+
     /* ---- 4. Close keeps the changes and stops the panel ---- */
     {
         nr_menu_bridge_close(bridge);

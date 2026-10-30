@@ -1380,6 +1380,28 @@ extern "C" NREX_API void nrex_render(nrex_ui *ui, uint64_t cmd_handle)
  * needing a layout lookup) still move focus; they simply do not type. */
 static unsigned char s_key_down[256];
 
+/* Whether the panel is open, as the layer says before it hands over each frame's keys.
+ *
+ * ImGui keeps key events in a queue that only `NewFrame` empties, and `NewFrame` runs only while the
+ * panel is drawn. Keys handed over while it was shut piled up there, and the next opening played
+ * them back, one a frame: arrows pressed in the game since then moved the panel's rows (the owner,
+ * Mortal Kombat 11, 2026-10-31). So while shut a key only updates the level kept above, and opening
+ * empties the queue and starts every key released. Open by default, for a caller that drives the
+ * panel without saying (the fixtures). */
+static int s_listening = 1;
+
+extern "C" NREX_API void nrex_listen(nrex_ui *ui, int open)
+{
+    (void)ui;
+    int now = open != 0;
+    if (now && !s_listening) {
+        ImGuiIO &io = ImGui::GetIO();
+        io.ClearEventsQueue();
+        io.ClearInputKeys();
+    }
+    s_listening = now;
+}
+
 extern "C" NREX_API void nrex_key(nrex_ui *ui, int vk, int down)
 {
     (void)ui;
@@ -1387,6 +1409,7 @@ extern "C" NREX_API void nrex_key(nrex_ui *ui, int vk, int down)
     int now = down != 0;
     if (s_key_down[vk] == (unsigned char)now) return;   /* no change: not an event */
     s_key_down[vk] = (unsigned char)now;
+    if (!s_listening) return;                            /* shut: remembered, not queued */
 
     ImGuiIO &io = ImGui::GetIO();
     ImGuiKey key = ImGuiKey_None;

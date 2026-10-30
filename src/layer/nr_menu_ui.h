@@ -153,6 +153,9 @@ void nrex_render(nrex_ui *ui, uint64_t cmd_handle);
 /* The key state, fed by the C side's GetAsyncKeyState polling. ImGui derives edges itself. */
 void nrex_key(nrex_ui *ui, int vk, int down);
 void nrex_mouse(nrex_ui *ui, float x, float y, int down);
+/* Whether the panel is open, said every frame before the keys: while it is shut a key is only
+ * remembered, and opening empties ImGui's queue, so nothing typed in the game is played back. */
+void nrex_listen(nrex_ui *ui, int open);
 
 /* Whether the menu should draw its own pointer.
  *
