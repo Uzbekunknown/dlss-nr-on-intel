@@ -360,6 +360,22 @@ def host_write(buffer, array, rows=None):
     return buffer.upload(array)
 
 
+def linear_grid(workgroups, limit=65535):
+    """The `(x, y)` workgroup grid for `workgroups` groups of one invocation each.
+
+    A device takes at most `maxComputeWorkGroupCount` groups in a dimension - 65535 on everything
+    that matters - and a per-pixel image pass at 4K is 7 million invocations, or 110 000 groups at
+    64 to a group. `xmx_rec_image_pipeline` refused that outright ("image dispatch exceeds device
+    limits"), which is why an earlier pixel ceiling sat at 1 << 22: 65535 x 64 = 4 194 240. The
+    image shaders turn a two-dimensional group id back into the same linear index the one-
+    dimensional form used, so a dispatch that fits is unchanged and one that does not simply has
+    more rows.
+    """
+    if workgroups <= limit:
+        return int(workgroups), 1
+    return int(limit), int((workgroups + limit - 1) // limit)
+
+
 class ImagePipeline:
     """A cached image compute pipeline on the resident device.
 
@@ -367,7 +383,6 @@ class ImagePipeline:
     layouts belong to the typed image wrappers; referenced buffers must remain alive.
     Pipelines are cached for the lifetime of the shared resident runtime.
     """
-
     def __init__(self, path):
         self._lib = _load()
         self.id = self._lib.xmx_image_pipeline_init(os.fsencode(path))

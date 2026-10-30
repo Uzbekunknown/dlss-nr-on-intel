@@ -77,7 +77,17 @@ def main():
     if what == "--print":
         print("\n\n".join(markdown(name) for name in BLOCKS))
         return 0
-    text = README.read_text() if README.exists() else ""
+    # UTF-8 explicitly, both ways.
+    #
+    # `Path.read_text()` with no encoding uses the LOCALE's preferred encoding - UTF-8 on the Linux
+    # box this was written on, GBK on a Chinese Windows. README.md is UTF-8, so there the read threw
+    # `UnicodeDecodeError: 'gbk' codec can't decode byte 0x94`, and the tool that is supposed to say
+    # "the README is out of date" instead reported a codec error. `write_text` had the same problem
+    # in the other direction: it would have re-encoded the whole file to GBK on the way out.
+    #
+    # A generated-file tool has to pin its encoding, because the file it edits is not in the
+    # locale's encoding and the locale is not something the tool can know.
+    text = README.read_text(encoding="utf-8") if README.exists() else ""
     try:
         fresh = rendered(text)
     except LookupError as missing:
@@ -89,7 +99,7 @@ def main():
             return 1
         return 0
     if what == "--write":
-        README.write_text(fresh)
+        README.write_text(fresh, encoding="utf-8")
         print(f"wrote the generated blocks into {README}")
         return 0
     print(__doc__.strip())

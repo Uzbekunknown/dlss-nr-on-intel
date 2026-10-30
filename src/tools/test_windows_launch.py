@@ -71,6 +71,10 @@ class LaunchTests(unittest.TestCase):
         self.process.wait.return_value = 0
         self.popen = patch.object(launch.subprocess, "Popen", return_value=self.process).start()
         patch.object(launch.subprocess, "run", side_effect=AssertionError("No real commands in tests")).start()
+        # The real helper reads this machine's Steam install; each test that wants it calls it
+        # directly with its own localconfig, and the launch tests say what it returns.
+        self.real_steam_arguments = launch._steam_game_arguments
+        self.steam_arguments = patch.object(launch, "_steam_game_arguments", return_value=[]).start()
         self.stop = patch.object(launch, "_stop_steam", return_value=False).start()
         self.restart = patch.object(launch, "_restart_steam", return_value=789).start()
         self.steam = self.base / "Steam (client)/steam.exe"
@@ -182,6 +186,45 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(result["command"], [str(self.exe), "+set", "old_option", "two words",
                                              *self.profile.game_args])
         self.assertEqual(result["steam_original_exe"], str(self.default_exe))
+        # Steam already passed its own options: nothing is added on top.
+        self.assertEqual(result["steam_arguments"], [])
+
+    def test_a_steam_launch_option_reaches_a_launch_started_by_setup(self):
+        """A game whose API switch lives in Steam's launch options needs it here too.
+
+        Aperture Desk Job has `-VULKAN` in LaunchOptions and opens in Direct3D without it; NR's
+        layer hooks Vulkan, so the effect never reaches it even though the proxy set up its
+        environment. The launch records what it added, so a report says why it was added.
+        """
+        self.steam_arguments.return_value = ["-VULKAN"]
+        result = launch.launch(self.profile)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self.popen.call_args.args[0],
+                         [str(self.exe), "-VULKAN", *self.profile.game_args])
+        self.assertEqual(result["steam_arguments"], ["-VULKAN"])
+        self.assertEqual(self.steam_arguments.call_args.args[1], list(self.profile.game_args))
+
+    def test_steam_launch_options_are_read_only_when_they_are_ordinary_switches(self):
+        """`_steam_game_arguments` takes switches, never an earlier setup's wrapper."""
+        with patch.object(launch, "detect_steam_app_id", return_value="379720"), \
+             patch.object(launch, "_steam_exe", return_value=self.steam):
+            self.assertEqual(self.real_steam_arguments(self.profile, []),
+                             ["+set", "test", "1"])
+            self.config.write_bytes(localconfig(
+                '"%command%" -vulkan'))
+            self.assertEqual(self.real_steam_arguments(self.profile, []), [])
+            self.config.write_bytes(localconfig(None))
+            self.assertEqual(self.real_steam_arguments(self.profile, []), [])
+            # A switch the user already typed is not passed twice.
+            self.config.write_bytes(localconfig("-vulkan -novid"))
+            self.assertEqual(self.real_steam_arguments(self.profile, ["-VULKAN"]), ["-novid"])
+
+    def test_unreadable_steam_configuration_does_not_block_a_launch(self):
+        with patch.object(launch, "detect_steam_app_id", return_value=None):
+            self.assertEqual(self.real_steam_arguments(self.profile, []), [])
+        with patch.object(launch, "detect_steam_app_id", return_value="379720"), \
+             patch.object(launch, "_steam_exe", side_effect=launch.LaunchError("no Steam")):
+            self.assertEqual(self.real_steam_arguments(self.profile, []), [])
 
     def test_foreign_original_executable_is_not_executed(self):
         foreign = self.base / "custom wrapper.exe"

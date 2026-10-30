@@ -110,17 +110,25 @@ def main() -> int:
 
     if not args.skip_extract:
         tools = ensure_mlx(work)
-        mlxw.mkdir(parents=True, exist_ok=True)
-        extract = tools / EXTRACT
-        unpack = tools / UNPACK
-        if run([sys.executable, str(extract), str(dll), str(packed)]).returncode != 0:
+        # One call now, because the DLL may carry more than one weight resource: 310.8 has
+        # `WEIGHTS_HT` alone and 310.9.16 has `WEIGHTS_HT` and `WEIGHTS_CC_SMALL_FP8`.
+        # `nr_weights.py` reads the DLL's resource directory, extracts each one it finds, and writes
+        # the manifest the daemon and the panel read. The file this project has always used -
+        # `mlxw/dlssnr-logical.safetensors` from `WEIGHTS_HT` - comes out of it unchanged, so a
+        # single-weight DLL installs exactly as it did before.
+        if run([sys.executable, str(ROOT / "scripts" / "nr_weights.py"),
+                "--extract", str(dll), "--work-dir", str(work),
+                "--tools", str(tools)]).returncode != 0:
             sys.exit("weight extraction failed; see the extractor's output above.")
+        run([sys.executable, str(ROOT / "scripts" / "nr_weights.py"),
+             "--list", "--work-dir", str(work)])
+    elif not logical.is_file():
+        # `--skip-extract` means the packed file is already here; unpack just that one, as before.
         if not packed.is_file():
-            sys.exit(f"extractor finished but {packed} was not produced.")
-
-    if run([sys.executable, str(unpack if args.skip_extract else (ensure_mlx(work) / UNPACK)),
-           str(packed), str(logical)]).returncode != 0:
-        sys.exit("weight unpacking failed; see the extractor's output above.")
+            sys.exit(f"--skip-extract was given but {packed} is not here either.")
+        if run([sys.executable, str(ensure_mlx(work) / UNPACK),
+                str(packed), str(logical)]).returncode != 0:
+            sys.exit("weight unpacking failed; see the extractor's output above.")
 
     if not logical.is_file():
         sys.exit(f"unpack finished but {logical} was not produced.")

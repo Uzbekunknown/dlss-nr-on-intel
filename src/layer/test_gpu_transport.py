@@ -175,7 +175,7 @@ class ProtocolTests(unittest.TestCase):
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)
-        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), 4096 * 4096, enabled=True)
+        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), enabled=True)
 
     def process(self, pid):
         value = Process(pid, self.events)
@@ -203,7 +203,7 @@ class ProtocolTests(unittest.TestCase):
     def test_memory_indices_and_packet_layout(self):
         p = packet()
         self.assertEqual(T.PACKET.size, 128)
-        got = T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)
+        got = T.unpack_packet(encoded(p), 1280, 720, 44)
         self.assertEqual(got["input_memory_type"], 1)
         self.assertEqual(got["output_memory_type"], 2)
         connection, result = self.request(p)
@@ -231,7 +231,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_v2_fence_protocol_imports_memory_without_semaphores(self):
         p = packet(version=2, ready_sem=0, done_sem=0)
-        parsed = T.unpack_packet(encoded(p), 1280, 720, 44, 4096 * 4096)
+        parsed = T.unpack_packet(encoded(p), 1280, 720, 44)
         self.assertEqual(parsed["version"], 2)
         connection, _ = self.request(p)
         self.assertEqual(connection.replies[-1][0], 0)
@@ -318,7 +318,67 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.request(packet(T.FRAME, output_memory=555))
         self.assertNotIn("acquire", [e[0] for e in self.events])
-        self.assertEqual(self.events[-1], ("reply", 2))
+
+    def test_model_swap_rebinds_the_engine_and_keeps_the_imports(self):
+        """The network chooser must not be able to stop NR dead.
+
+        A swap closes the image engine - it wraps the backend of the model it was built with -
+        and the daemon used to close the whole transport with it. The `contexts` are the GAME's
+        imports: buffers, semaphores and an authenticated process lifetime established by a
+        HELLO the layer sent. Closing them leaves the layer holding handles to objects this
+        daemon has already given back, so its next frame is answered `GPU frame has no matching
+        imported session`, `gpu_blocked` is latched for the session, and NR stops processing -
+        in a release whose strict mode was on, the game's own frame is what the player sees.
+
+        The fix is that a swap rebinds the engine and leaves the contexts standing. This asserts
+        both halves: the imports survive, and the engine that is rebuilt is the new model's. """
+        self.request(packet())
+        contexts, imports = dict(self.transport.contexts), len(self.imports)
+        fresh = Backend(self.lib, self.events)
+        built = []
+        with patch.object(T, "GPUImagePipeline", side_effect=lambda backend:
+                          built.append(backend) or self.images):
+            self.events.clear()
+            self.transport.rebind_backend(fresh)
+
+            # The game's imports are untouched: same contexts, same buffers, no new ones.
+            self.assertEqual(list(self.transport.contexts), list(contexts))
+            self.assertEqual(len(self.imports), imports)
+            self.assertNotIn("close_buffer", [e[0] for e in self.events])
+            self.assertNotIn(("close_process", 42), self.events)
+            self.assertIn(("close_images",), self.events)
+            # The engine went, and the backend follows the new model.
+            self.assertIsNone(self.transport.images)
+            self.assertIs(self.transport.backend, fresh)
+
+            # And a frame still works - which is the whole point: no "no matching imported session".
+            self.events.clear()
+            connection, _ = self.request(packet(T.FRAME))
+            self.assertEqual(connection.replies[-1][0], 0)
+            self.assertIn("process", [e[0] for e in self.events])
+            # Rebuilt from the NEW backend, not the one the session was opened against.
+            self.assertEqual([id(b) for b in built], [id(fresh)])
+            self.assertEqual(len(self.imports), imports)
+
+    def test_rebinding_the_same_backend_is_a_no_op(self):
+        self.request(packet())
+        self.events.clear()
+        self.transport.rebind_backend(self.transport.backend)
+        self.assertIsNotNone(self.transport.images)
+        self.assertNotIn("close_images", self.events)
+
+    def test_rebind_after_the_engine_was_already_dropped(self):
+        """The daemon drops the engine on the swap and rebinds after it: neither step alone is
+        enough, and doing them in this order must still leave a working transport. """
+        self.request(packet())
+        self.transport.images.close()
+        self.transport.images = None
+        self.events.clear()
+        fresh = Backend(self.lib, self.events)
+        self.transport.rebind_backend(fresh)
+        connection, _ = self.request(packet(T.FRAME))
+        self.assertEqual(connection.replies[-1][0], 0)
+        self.assertIn("process", [e[0] for e in self.events])
 
     def test_release_frees_imports_before_acknowledgement(self):
         self.request(packet())
@@ -351,7 +411,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn((p["pid"], p["session"]), self.transport.contexts)
 
     def test_disabled_transport_is_opt_in_and_allocates_no_gpu_pipeline(self):
-        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), 4096 * 4096)
+        self.transport = T.GPUSharedTransport(Backend(self.lib, self.events))
         connection, result = self.request(packet())
         self.assertIsNone(result)
         self.assertEqual(connection.replies[-1][0], 1)

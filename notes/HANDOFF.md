@@ -191,6 +191,491 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
+## PR #20 narrowed to the panel: one Windows-only file, one keyboard reader (2026-10-26, branch `menu-on-e4m3`)
+
+The maintainer looked at five rounds of fixes and proposed the opposite of a sixth: shrink the PR.
+Nearly every defect had come from four parts a keyboard-driven panel does not need, so those went.
+
+- **One panel, keyboard only.** The hand-drawn renderer is deleted - `nr_menu.c`'s font, glyph
+  atlas, composite pass and cursor - and so is the mouse path and the cursor pin. What stays is the
+  state machine the ImGui panel's input goes through, and `nr_menu_draw_overlay`, which is how the
+  ImGui image reaches the frame. `nr_menu.c` 1756 -> 1395 lines.
+- **One keyboard reader.** Keys were read in `nr_layer.c`, `nr_menu.c` and `nr_menu_ui.cpp`, so the
+  focus gate had to be remembered in three places and two of them forgot. `nr_layer.c` now sweeps
+  256 levels once per frame behind one gate; `nr_menu_set_key_levels` hands them to the state
+  machine and `nrex_key` to ImGui. Zero `GetAsyncKeyState` outside one macro.
+- **Windows only.** The menu's glue (`menu_composite`, `menu_read_keys`, `menu_build`, the mouse)
+  moved to `nr_menu_layer.c`, built only on Windows; `nr_menu_layer.h` gives the layer three empty
+  hooks elsewhere and `nr_layer_state.h` holds the two structs both files need. `nr_layer.c`
+  3920 -> 2255 lines, against 2102 on `newnr`. Linux gets no ImGui, no `libstdc++`, no STORAGE on
+  a swapchain - verified by configuring with `WIN32` off: zero menu sources in every `build.make`.
+- **One network setting.** The `weights` knob, its model table and the manifest are gone;
+  `NR_PRESET` maps to one file per preset. This is what fixed `NR_PRESET=B` running A on an install
+  whose B had never been extracted, and "network preset A" logged beside a B model.
+
+The architecture is in `docs/MENU-ARCHITECTURE.md`; this is the state and the traps. The one worth
+carrying forward: **a check that cannot see the file the defect lived in is not a check.** An
+assertion for "exactly one keyboard reader" read three files and not `nr_menu.c`, and the mutation
+that put a reader back there passed.
+
+---
+
+## PR #20: the maintainer's review answered, the menu in a real Windows game (2026-10-18, branch `menu-on-e4m3`)
+
+The maintainer reviewed the in-game menu on 10-18 with four asks before merging #20. All four are
+answered here, in his order.
+
+**1. Raw mouse input.** `nr_raw_mouse_start` registered the mouse over the game's own registration
+and `nr_raw_mouse_stop` removed it, so a WM_INPUT game had no mouse after one panel open. The
+game's registration is read with `GetRegisteredRawInputDevices` before ours goes in and put back,
+target window and flags, when ours comes out; removed only when there was nothing to restore
+(`981a519`).
+
+**2. Hotkeys while another window is in front.** INS, L, Home, S and R were `GetAsyncKeyState`
+polls with no focus gate, so an L in a chat window rewrote the settings file and Home in an editor
+turned NR off in the game behind it. L now also requires the panel open - a language write goes
+around "Save is the only thing that writes", so it is a settings action. Each latch is re-armed
+while gated, so the first press after returning to the game acts (`981a519`).
+
+**3. Rebased onto `newnr`** (his third ask, and the one that carries preset B): 30 commits over
+`newnr`'s tip, one conflict in `build_release.py` where both sides add files to the release list;
+kept both. A full build, 203 Python tests and the C fixtures are green from the rebase (`ef643f5`
+lineage). **4. Authorship:** all 30 commits re-authored to
+`137417967+Paimonshen@users.noreply.github.com`, dates and messages unchanged.
+
+**What the first real launch found**, and what it cost:
+
+- The daemon died at start-up with `xmx_low_latency` not found. `build_win.bat --layer` skips the
+  libxmx step, so the fast path kept the pre-rebase DLL while the daemon came from the rebase and
+  expected the new symbol. A full build regenerates the export list; the function answers false on
+  Windows, where the low-latency hint is Linux Mesa's. (`f785182`)
+- **The setup window's bridge lives in `scripts\`, and only the packer copied it there.** Every
+  change to the wizard's backend was verified against `src\tools` and tested there while the
+  window kept running the packer's old copy - which reads exactly like the feature being broken,
+  and produced `weights must be one of ht, cc_small_fp8` from a Reset with the tree already
+  correct. `sync_release.bat` now copies `windows_wizard.py`, `windows_wizard_core.py` and
+  `windows_launch.py` and clears a stale `__pycache__` beside them. (`d67dbfd`)
+- The cadence combo opened showing `*Unknown item*` as its fourth entry: the row declared four
+  options with a store of three names, so the terminator was written over an entry the count still
+  counted. Second time this shape has cost something, the first being the profiles combo;
+  `test_menu_choices` now asserts the layer's cadence row and every choice knob the bridge
+  produces, mutation-tested with the buggy shape. The panel defaulted to 560x380, which fit eleven
+  knobs and not fourteen rows, and dragging the border past the swapchain image is an access
+  violation: the default is the picture minus a margin clamped to 640x720, and the window is
+  NoResize with a scrollbar for the case where the picture is smaller. (`7eff40a`)
+
+**One network, one chooser.** The setup page had a second network dropdown beside the controls
+page's network knob, and the two disagreed the first time they were used together. The setup card
+is gone; the knob saves into the settings file, which the daemon reads live and at start-up - the
+start-up read is new, so a user who chose B last session comes up on B rather than loading A and
+swapping on the first settings refresh. A Reset of the knob writes null, and null returns to the
+model the daemon came up on. (`1e3ddb3`, `ef643f5`)
+
+**The model table.** Preset B has been loadable since the topology started coming from the weights
+themselves; the manifest's "not loadable yet" was stale. `cc_small_fp8` is supported, its logical
+file is `dlssnr-b-logical.safetensors` - the name `PRESET_WEIGHTS["B"]` and the installer both use,
+so `NR_PRESET=B` at start-up and the panel's knob read one file - and B unpacks through
+`unpack_preset.py`, whose role-renaming decoder is the only one that can read B's records.
+(`f48912d`)
+
+**Still to do, and it is not the menu's logic:** the wizard's own test suites are non-deterministic
+under Windows when several files run in one pytest process. Both files pass alone and pass in a
+trio; in the larger combination the failures wander between runs and every traceback is the same
+thing - `TemporaryDirectory.cleanup` raising `WinError 145`, a directory not empty, over
+`release (candidate)\dxvk\x64` and friends. The failures move, they move with the teardown errors,
+and no product assertion is among them: re-running the same command that failed passed 106. The
+shape says a handle is still open at cleanup time - the fixtures' own `shutil.copy2` of a DXVK file
+into the game folder, or the antivirus, and the assertion failures are unittest reporting both the
+error and the abort. A check after a `TearDown` failure is not a check that passed, so this is
+filed here rather than assumed away.
+
+**The GPU row also turned on strict mode, which is the bug issue #17 removed** (2026-10-18, same
+branch). Found by writing a check for the four variables the panel writes rather than assuming
+they were what their names say. `write_pacing` wrote `NR_GPU_ONLY` as a copy of
+`NR_GPU_IMAGE`/`NR_GPU_TRANSPORT`; but `NR_GPU_ONLY` is the **strict** half of the path, not the
+same switch: with it on, `host_pixel_path_allowed` refuses the CPU pixel fallback and the game's
+own image is kept, with the reason going only to stderr — which on Windows is nobody's. That is
+precisely the tester's report that became issue #17 (DOOM at 1080p, "with the GPU option on NR did
+nothing"), and `a31efe6` answered it by making the window never set strict mode: "Never strict:
+where a game cannot keep its frames on the GPU, NR takes its usual path and the layer's line in
+the log says why". The panel had put the strictness back, so **turning that row on could make the
+effect stop working** in exactly the games the fallback exists for — and the row that did it is
+the one promising more speed. `NR_GPU_ONLY` is now written as `0`, always, and deliberately not
+omitted: an install that had it on is cleared by the next pacing write.
+
+**Four behaviours, each pinned by a check that is mutation-tested.** Driving the bridge directly
+(a real `nr_menu_bridge`, real files, no menu) rather than reading it:
+
+| Behaviour | Check | Mutation that must fail it |
+|---|---|---|
+| a row moved writes `nr-env.txt` at once | "a row moved writes the file with no Save pressed" | drop the `write_pacing` call |
+| Save does not touch pacing | "Save leaves the pacing file byte for byte" | add `write_pacing` to `nr_menu_bridge_save` |
+| Reset does not touch pacing | "Reset leaves the pacing file byte for byte" | add it to `nr_menu_bridge_reset` |
+| a restart reads back what was written | "a restart reads back the cadence that was written" | (round trip; guarded by the reader) |
+
+Each mutation was applied, built, and run: all four go red. **One of them first passed for the
+wrong reason** — "Reset leaves the pacing file unchanged" was green because the Reset never ran,
+not because it left the file alone, and the injected mutation made no difference. The check now
+proves Reset ran first, by its preview file (`nr_settings.json.live`), and only then that the
+pacing file is identical. That is the second time in this work a check passed by doing nothing;
+the shape is worth remembering.
+
+The other two mutations on the table are for the two Reset/Save paths that a headless bridge
+cannot reach: the menu's `nr_menu_take_reset` / `nr_menu_take_save_request` branches in
+`nr_menu_bridge_update`. Mutating those does **not** fail the checks, because the fixture has no
+`nr_menu` — so what is covered is the headless functions, which the menu branches call, and the
+shared body they run. Said plainly rather than implied.
+
+## `nr-env.txt` is the panel's, and the profile follows it (2026-10-20, branch `menu-on-e4m3`)
+
+**Two writers, one file, no ordering.** `windows_wizard_core.set_pacing` rewrote the pacing lines
+of the game's `nr-env.txt` from the profile, and `nr_menu_bridge_set_pacing` (the in-game panel)
+wrote the same lines from what the user changed. Neither knew about the other, so a change made in
+the panel and then any pacing save in the setup window silently reverted it. Measured on this
+machine before the fix: the file said `NR_GPU_IMAGE=1 NR_LAYER_ASYNC=0 NR_LAYER_LIVE=1` while the
+profile still said `gpu_image_path=false nr_async=true nr_every=4` — the window's checkbox and the
+panel's row describing different settings with equal confidence.
+
+**One owner, and it is the panel** (the owner's rule). It is the only writer that can see what the
+layer is actually running; the profile is a record of what the user asked for, not of what is
+happening. So:
+
+- The panel writes the file **and** the same three values into `work/windows-profile.json`, editing
+  that file in place so the game, the Python, the DLL and the launch options survive
+  (`write_profile_pacing`). Keys a profile from before lacks are added inside the object, not after
+  its closing brace — a profile the window cannot parse is a window that cannot open.
+- `set_pacing` writes **only the profile**. It no longer touches the file, so the revert is gone
+  rather than merely reordered.
+- `NR_ROOT` in `nr-env.txt` is how the panel finds the profile; a release without one keeps working
+  and simply has no profile to keep in step.
+
+**The GPU row now says why it is not running.** `gpu_image_compose.fallback_reason` declines a
+frame whose `detail_strength` or `colour_strength` is not 1, and that sentence went only to the
+daemon's log — the row read "on" while every frame was composed on the CPU, which cost 0.05-0.07 s
+a frame against 0.014-0.016 s on the shared path (measured here, same scene). Same shape as issue
+#17: a reason nobody can see. `nr_menu_bridge_pacing_gpu_blocker` returns that sentence in the
+panel's language while the path is on and one of the two strengths is not 1, and the row's hint
+becomes it; off, there is nothing to explain.
+
+**Not fixed, and it is a feature rather than a bug:** the two strengths themselves are still
+CPU-path-only. `compose_detail` is `source + colour*lowpass(change) + detail*highpass(change)` with
+a radius-4 Gaussian separable blur, and the GPU composer has no blur pass, so porting it means a
+25-tap two-axis convolution, an intermediate buffer and a bit-exact rounding story. Until then the
+honest thing is the sentence above, and it is what the panel now says.
+
+Checks: `test_menu_pacing` grew the profile-projection block (the profile carries the three values,
+the file and the profile agree, keys the panel does not own survive, a profile without them gains
+them and still closes), the blocker block, and "the real installation is reachable again" after the
+odd-shape override — that last one exists because the override is process-wide and leaving it set
+made two later blocks fail for a reason unrelated to what they tested. Mutation-tested by removing
+the profile write, by forcing the blocker to never fire, and by dropping the brace in the append
+path; each turns the suite red. The three wizard tests that asserted the old "`set_pacing` writes
+the file" behaviour now assert the new contract instead.
+
+## PR #20 round three: the plan, and the architecture it is aimed at (2026-10-23, branch `menu-on-e4m3`)
+
+The maintainer's second review listed 13 items. Two documents now exist for it, and neither is a
+promise that the work is done:
+
+- **`notes/ROADMAP-PR20-ROUND3.md`** — the order, the dependencies and the verification gate for
+  each stage. Five stages, key path 0→1→2→3→5, stage 4 free to interleave.
+- **`docs/MENU-ARCHITECTURE.md`** — the first description of this subsystem *as* a subsystem:
+  two UIs over one data authority, the C/C++ ABI boundary, the three input paths, the two files
+  and their two readers, and the localisation generator. `docs/ARCHITECTURE.md` covers the network
+  itself and never covered this layer.
+
+**Three things the investigation settled that the review did not state:**
+
+1. **The build failures have one cause, and it is not a missing stub.** Five tests
+   (`test_device_teardown.c:25`, `test_exchange.c:8`, `test_gpu_only.c:22`, `test_settled.c:6`,
+   `test_transfer_resources.c:3`) `#include "nr_layer.c"` rather than linking the library, so they
+   inherit every menu symbol the layer calls. `test_gpu_present` already links `nr_layer` via
+   `add_dependencies` — the pattern exists, those five did not follow it. So the fix is to link the
+   menu sources, not to write no-op arms.
+
+2. **But the no-op arms for `nr_menu_ui.cpp` do not exist, so linking is not enough on Linux.**
+   That file's `menu_ui_keys` (L1316-1339) uses `GetAsyncKeyState`, `ToUnicode`, `BYTE`/`SHORT`/
+   `WCHAR` and its timer uses `LARGE_INTEGER`/`QueryPerformanceCounter` (L647-651), all without a
+   platform gate. The claim in `nr_layer.c` that the menu headers "bring their own no-op arm" is
+   true of `nr_focus.h`, `nr_raw_mouse.c`, `nr_menu_font.c` and `nr_menu.c`'s key functions, and
+   false of `nr_menu_ui.cpp`. Gate first, link second.
+
+3. **A dispatch layer to decouple the menu is not worth it.** `nr_layer.c` calls into it at 89
+   lines from L2125 to L3310, and several of those pass C structures rather than scalars
+   (`nrex_row rows[]`, the `nr_menu_strings[lang][key]` tables). Rejected in the roadmap with the
+   count, so the next person does not re-propose it.
+
+Also recorded there: the pacing conflict (item 6) is the consequence of last round's
+"one owner" decision and is resolved by the window writing both files again, which works because
+`write_profile_pacing` keeps the profile current; and the base-branch item (13) is not a rebase —
+the local branch is already identical to `upstream/newnr`, so it is a pushed-state and PR-setting
+problem.
+
+**All thirteen items are now done, in six stages on `menu-on-e4m3`.** The roadmap is what was
+done; the architecture document still describes the tree, defects included, because the parts of
+it that were wrong are worth keeping as the record of what was wrong.
+
+- `3f5e7b6` stage 0 — the build links again. Five fixtures `#include "nr_layer.c"` and were given
+  no menu sources; CMake and the Makefile now link what `build_win.bat` always did. Also
+  `nr_menu_ui.cpp` compiles off Windows (its `menu_ui_keys` had no platform gate at all),
+  `test_focus_gate` runs in the Windows build for the first time, and the CTest entry pointing at
+  a `test_menu_keys.py` that does not exist is withdrawn.
+- `d953809` stage 1 — the 32-bit crash. Three defects, not the one reported: no `VKAPI_PTR` on the
+  GPA typedef, `nrex_image`/`nrex_image_view` returning `void *` where a Vulkan non-dispatchable
+  handle is `uint64_t` on x86, and a loader context of `void *` slots holding `VkDevice` and
+  `VkInstance`. Fixed and pinned by negative assertions in `test_menu_keys.cpp`.
+- `7e5b187` stage 2 — the input path. The raw-mouse `cbSize` (24 against 16 on x64, so the game's
+  registration was never saved and the stop path stripped its mouse every time), plus the
+  `(UINT)-1` truthiness and the missing `ERROR_INSUFFICIENT_BUFFER` retry. The focus gate on
+  `nr_menu.c`'s own reader, which had none at all, and `nr_menu_release_keys` so the gate does not
+  cost the first press after alt-tab. Item 7 is documented as impossible rather than fixed.
+- `ba8571a` stage 3 — the window writes `nr-env.txt` again, so its frame pacing reaches an
+  installed game. Safe now because `write_profile_pacing` keeps the profile current; four test
+  assertions flipped.
+- `99cae31` stage 4 — the Russian cadence (27 bytes against a 24-byte store, and three plural
+  forms where one `{}` cannot choose), the lost newline at `nr_layer.c:88`, the proxy's
+  non-appending and unconditional launch trace, and the hardcoded `F:\Downloads` path.
+- `984754d` stage 4b — the panel's Network row shows `A: HT …` / `B: CC small FP8 …` instead of
+  `ht` / `cc_small_fp8`, with the raw name still what gets written.
+- `5b46fd2` stage 5 — the PR's base moved from `master` to `newnr`, and all 57 commits re-authored
+  to `Paimonshen`; the tree is byte-identical to before the rewrite.
+
+**One trap worth carrying forward.** `nr_menu_extra_key_for` returns `NR_MENU_KNOB_COUNT +
+position`, so its hand-written name list must be in the generated table's order. The choice labels
+were first put at the END of that list while the generator emits them in the middle, and the
+panel showed the GPU-blocker sentence as its two Network options - every entry a valid string, so
+nothing was blank and no existing check could see it. `test_menu_choices.cpp` now asks for that
+key by name; verified by putting the wrong order back.
+
+**Two more the verification pass found, both fixed here.** They are worth recording because neither
+failed anything, and both are the same shape as the bug above - a value that is wrong but valid.
+
+- **The choice-name store was 32 bytes and every label is 33 to 75.** `NR_KNOB_CHOICE_NAME_SIZE`
+  was sized for the raw names (`cc_small_fp8` is 12) and then started holding a label. The panel
+  showed "A: HT, the model this project r", and the Chinese one was cut inside a 3-byte character
+  and rendered as a replacement glyph. Nothing crashed, nothing was written wrong. It is 96 now,
+  and the check measures bytes rather than characters - the English label is 41 characters and 40
+  bytes, the Russian 43 and 75, which is the same trap the cadence row had.
+- **`nr_menu_extra_key_for`'s prototype was in the GENERATED header.** Running
+  `tools/gen_menu_strings.py` deleted it, leaving an implicit declaration in `nr_menu_bridge.c` that
+  MSVC warns about (C4013) and links anyway. It is in `nr_menu_strings_extra.h` now, which the
+  generator does not write, and the sequence that matters - regenerate, then build - is what was
+  checked.
+
+Both were found by a teammate reading the code rather than by a test, which is the point of doing
+that pass at all.
+
+
+## The panel spoke two languages over a four-language enum (2026-10-21, branch `menu-on-e4m3`)
+
+Reported from a game with the panel set to Español: the three frame-pacing rows, the GPU row's
+refusal message and their tooltips were all in English, beside eleven knobs that were translated.
+
+`nr_layer.c` selected them with `nr_menu_language(...) == NR_LANG_ZH ? "chinese" : "english"` —
+eleven sites, including the four cadence option names. The language enum has four values
+(EN/ZH/RU/ES), so Russian and Spanish fell through to the English arm. They are table keys now
+(`async`, `async_hint`, `gpu_image`, `gpu_image_hint`, `every`, `every_hint`, `every_frame`,
+`every_nth`, and the three `gpu_blocked_*` reasons), generated for all four languages from `OWN` in
+`tools/gen_menu_strings.py` and read through `nr_menu_text` like the knobs. The cadence options are
+formatted from `every_nth`'s `{}`, so a language with a different word order needs no C.
+
+**The generated header gained `extern "C"`.** The tables live in a `.c` file and the menu's UI is
+C++, so a C++ caller looked for `?nr_menu_text@@YAPEBDHH@Z`, which nothing defines. It linked only
+because every caller had been C; the first C++ fixture to touch the table failed to link, which is
+how it was found.
+
+The fixture now walks those eleven keys through all four languages: each non-empty, none still
+equal to the English row, and every_nth keeps its `{}`. Mutation-tested by copying the English row
+into Spanish (`1 of 11 still English in es`) and by blanking a Russian row.
+
+**A translation that was behind its English, which no check can see.** The setup window's
+`GpuImagePathTip` said, in English, Russian and Spanish, that where the shared path cannot be used
+NR "takes its usual path, and Save report says why". The Chinese still described the behaviour
+issue #17 removed — "the effect is skipped and the game's original frame is shown" — because it was
+written before `a31efe6` and never revisited. A Chinese reader was told the option disables NR when
+it in fact falls back, which is the opposite of what happens. Aligned to the other three.
+
+The lesson is not the string: it is that **a check for "is every key translated" cannot see a
+translation that is merely out of date.** Comparing values catches a copy of the English row;
+nothing mechanical catches a Chinese sentence about behaviour that changed underneath it. English
+and the other languages carry the same risk, and this one was found by reading all four side by
+side, which is what the pacing rows made worth doing.
+
+## Two bugs the first run in a game found (2026-10-21, branch `menu-on-e4m3`)
+
+Both were in the work above, and neither was caught by the checks that shipped with it.
+
+**Writing the profile ate the commas.** `write_profile_pacing` replaced a member by copying the
+line up to the key and then `": %s"`, dropping whatever followed the value — including the comma
+that separates it from the next member. The result was
+
+```
+  "nr_async": false
+  "nr_every": 1
+```
+
+which is not JSON. The setup window then could not read its own profile and refused to launch the
+game with `nr_every must be a whole number from 1 to 4` — a message that names neither the file nor
+the panel that wrote it. Found when the owner asked for a relaunch at 800x600 and the launcher
+failed. Restored from the backup taken before the session, and fixed by keeping the tail of the
+original line past the value.
+
+The check that should have caught it only compared key VALUES, which were all correct; nothing
+asserted the file was still JSON. It now counts members and commas in both the replace path and
+the append path, and the written file is confirmed against the real Python parser. Mutation-tested
+by restoring the comma-eating `snprintf`, which turns it red.
+
+**Reset put the network back to A.** `load_defaults` gives a choice knob index 0, and
+`CHOICES["weights"]` is `("ht", "cc_small_fp8")` — so Reset moved a user who had chosen B onto A,
+the slower model, with the row simply showing the other name. Seen here as a Reset taking `weights`
+from `cc_small_fp8` to `ht` alongside detail 1.75 -> 0.75 and intensity 2.0 -> 1.0, with the
+daemon's next start logging `network preset A, 71 blocks`.
+
+The network is a choice about *what runs*, not how much of it is applied, so Reset leaves it
+(`load_reset_defaults`); every picture parameter still returns to its default. The owner's call,
+and the right one. An install carrying one network behaves exactly as before.
+
+**What this says about the earlier checks.** The profile bug shipped because the tests compared
+values and never the file's shape; the Reset bug shipped because no test ever pressed Reset and
+then looked at the network. Both are the same mistake in different clothes — a check that
+exercises the thing you changed rather than the thing that broke.
+
+
+
+## Frame pacing's three rows: not Save's, and the settings file could hide them (2026-10-18, branch `menu-on-e4m3`)
+
+Three questions asked of the panel's pacing rows — do Save and Reset govern them, does Save leave
+a file, does what it left take effect at the next start — answered by driving the bridge directly
+rather than by reading it, because two of the three answers are about files.
+
+**Save and Reset do not govern them, by design.** The three rows (asynchronous, GPU image path,
+every Nth frame) are the *layer's* start-up settings and live in the proxy's `nr-env.txt`; the
+knobs and Save live in `work/nr_settings.json`. `nr_menu_bridge_set_pacing` writes `nr-env.txt`
+**the moment a row moves** and never touches the settings file, with the reason in the code: "there
+is no Save path for them, so a change that was not written would be lost and the panel would be
+lying". Measured:
+
+- **Moving a row writes immediately.** No Save press needed — one `set_pacing` call rewrote
+  `NR_LAYER_ASYNC=1` and `NR_LAYER_LIVE=3` while `nr_settings.json` stayed byte-identical.
+- **Save leaves `work/nr_settings.json`** and writes nothing to `nr-env.txt`: the pacing rows are
+  already in their own file.
+- **Reset leaves both alone.** It returns the knobs to defaults on screen and in the preview and
+  deliberately does not write the saved file; `nr-env.txt` is not its business, so a pacing change
+  stands through a Reset. Coherent — they are next-launch settings, not previews — but it does
+  mean Reset is not an undo for them.
+- **The next start really applies them.** The proxy reads `nr-env.txt` and calls
+  `SetEnvironmentVariableW` for every line; the layer reads `NR_LAYER_ASYNC` / `NR_LAYER_LIVE` /
+  `NR_GPU_IMAGE` once before the first present. Verified on the real installed game: its
+  `nr-env.txt` holds `NR_LAYER_ASYNC=1` and `NR_LAYER_LIVE=4`, which is the panel's "on" and
+  "every 4th frame".
+
+**What was wrong: the three rows could vanish for a reason unconnected to them.** `read_pacing(b)`
+was called from inside `load_settings`'s `if (nr_settings_parse(...))` branch. The pacing values
+are in `nr-env.txt`; the settings file is the daemon's and unrelated. So a settings file that was
+absent, empty, or half-written left `pacing_ok = 0`, `nr_menu_bridge_pacing_available` returned
+false, and the panel drew **no pacing rows at all** while `set_pacing` refused to write — the three
+settings that decide how the network is fed became unreachable because an unrelated JSON file was
+missing. Install always writes that file, so a normal installation never showed it; a release whose
+`work/` had been cleared, or a settings file a tool truncated, did.
+
+`read_pacing` now runs first in `load_settings`, unconditionally, before the settings file is even
+opened, and `pacing_ok` depends only on whether `nr-env.txt` was located and read — the only thing
+it ever meant. `test_menu_pacing` gained three checks (a missing settings file leaves the rows
+readable and writable; an empty one likewise), **mutation-tested** by putting the call back inside
+the parse branch, which reports all three failing with `available=0`.
+
+## Model swap took the GPU transport down with it (2026-10-20, branch `menu-on-e4m3`)
+
+The owner reported NR failing with the GPU image path on. The log named the failure exactly:
+
+```
+frame rejected/failed; game keeps original: GPU frame has no matching imported session
+[nr_layer] GPU transport fallback: frame exchange failed; original frame retained
+[nr_layer] GPU-only: CPU pixel path disabled (shared processing unavailable); original GPU image retained
+```
+
+The image engine wraps a `ResidentBackend`, so a new model means a new engine — and
+`close_gpu_images` closed the **whole transport** with it. But the transport's `contexts` are the
+**game's** imports: buffers, semaphores and an authenticated process lifetime established by a
+HELLO the layer sent. Closing them leaves the layer holding handles to objects the daemon has
+already given back, so its next frame has no matching session, `gpu_blocked` latches for the
+session (it is cleared only when the reply said "unsupported"), and NR never processes again. In a
+release built before the strict-mode fix, the player then sees the game's own frame — which is the
+combination this machine was running. **The panel's network chooser was the trigger**: it is the
+only thing that changes the model mid-game.
+
+Two halves, because either alone is wrong (`1b26be3`):
+
+- `close_gpu_images(keep_sessions=True)` drops the engine, leaves the contexts. Shutdown still
+  takes the transport — nobody sends another frame after it.
+- `rebind_backend` follows the model: the engine is rebuilt lazily from `self.backend`, so
+  leaving it on the replaced model would rebuild the pipeline on the model it just replaced.
+
+**Both are mutation-tested, and the call site needed a test of its own.** The transport's own
+tests cover `rebind_backend`, and they caught nothing when `keep_sessions=True` was removed from
+the daemon — because the daemon was not under test. `test_daemon.model_swap_gpu_tests` drives
+`refresh_model` itself with the real weights on disk, which is what catches it; removing either
+half now goes red. The first version of that test called `close_gpu_images` directly and passed
+with the regression reintroduced, which is the third time in this work a check passed for the
+wrong reason.
+
+**The game folder was stale, and that is its own finding.** `nr_layer.dll` beside the game was
+from 10-18 while `work` held the 10-19 build, so the panel was running code that predated both
+the strict-mode fix and the pacing-rows fix. Updated through the installer (`install` action with
+a request built from `work/windows-profile.json`), not by hand: the installer backs up the game's
+files and owns the copy. `nr_layer32.dll` is still the older build — that is correct, not an
+oversight: `_copy_runtime` installs one layer, chosen by `pe_architecture(game_exe)`, and this
+game is x64.
+
+**A second, separate bug found on the way, still open.** The window's `set_pacing` rewrites the
+PACING lines of `nr-env.txt` from `layer_environment(profile)`, so it overwrites whatever the
+panel wrote for the same keys. The two writers disagree about `nr-env.txt` with no ordering
+between them: a panel change followed by any window pacing save silently reverts it. The profile
+on this machine says `gpu_image_path: false`, `nr_async: true`, `nr_every: 4` — so the panel's
+GPU row and the window's checkbox are currently saying different things. Not fixed here because
+it needs a decision about which of the two owns the file, and that is the owner's call.
+
+**The GPU path does work on this hardware**, and it is worth recording since the owner asked:
+the same log has `[nr_layer] GPU transport ready: 800x600 format 43 family 0 daemon 6252
+sync=semaphore; pixels remain on GPU`, followed by 1110 consecutive frames on
+`transport=gpu-shared` with `image prep` and `compose` populated and `change ~0.021` — the
+picture really was being rewritten, not passed through. The failure above is a mid-session
+model swap, not the path being unavailable.
+
+**Also still open, from the same session:** turning the GPU row on while `detail_strength` /
+`colour_strength` are not 1 makes the daemon decline with `GPU composition requires detail and
+colour strength 1`, and the panel says nothing about why. The owner confirmed those two knobs
+behave normally with the GPU path off, so the constraint is specific to GPU composition — but a
+row that silently does nothing is the same failure shape as issue #17.
+
+**The speed test measures the network it is asked for** (2026-10-18, after the review). The test
+only ever ran network A: `windows_wizard_core.speed_test` took no network and `speed_test.py`
+defaulted to A, so a tester with B installed measured A and could not tell. The two networks are
+measurably different here — B is 0.46-0.53 of A's network time — which is exactly what a tester
+would want to compare on their own GPU, so the window now has a chooser beside the Speed test
+button: A always, B only where `get_settings()` reports its weights are present.
+
+The choice is the **test's** own, and deliberately not the `weights` knob's. The knob asks which
+network a game runs; the test asks what to measure. They are separate because comparing the two
+networks would otherwise mean changing what the game runs, and because a run records which
+network it measured (`work/speed-test.json`, `preset`) so a report cannot be read as the other.
+`get_settings` now returns `presets: {A: bool, B: bool}`, read through the same
+`_weights_state_file` check everything else uses — a second copy of "is this a whole model" is how
+the window and the backend would come to disagree about whether B can be measured at all.
+
+On the bridge, `preset` in a speed-test request names the network to measure and is removed
+before the profile is parsed, so one word cannot mean two things in one request; absent, the
+profile's own network is measured, which is what the window did before the chooser existed. A
+value that is not a network is refused before anything runs; a network whose weights are absent is
+the backend's own refusal ("Network B's weights are not in this release: install them first, or
+measure A"). `test_the_speed_test_measures_the_network_it_is_asked_for_or_says_which_is_here` and
+`test_the_window_chooses_which_network_the_speed_test_measures` cover both directions and the
+A-only release; the window's self-test covers the combo's contents, its labels in four languages,
+and that the selection reaches the button's request. B in a release without B is **absent from the
+list**, not greyed: a choice that cannot run is worse than no choice. These two tests also found
+that `speed_test(preset=[...])` raised `TypeError` out of a dict lookup instead of returning a
+refusal; that is fixed.
+
 ## `e803624` in Hogwarts, `sync=1`, and the owner's call: NR's answer on its own frame, on the GPU (2026-10-18, branch `newnr`)
 
 **In the game** (A, render scale 0.5, XeSS Performance 835x522). The first run's daemon came from

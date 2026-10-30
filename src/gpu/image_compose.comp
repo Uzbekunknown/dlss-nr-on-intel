@@ -85,7 +85,11 @@ void axis(uint dest, uint src_extent, uint dest_extent, float ratio,
     weight = clamp(centre - float(lo), 0.0, 1.0);
 }
 void main() {
-    uint index = gl_GlobalInvocationID.x;
+    /* The linear pixel this invocation owns, from a TWO-dimensional workgroup grid: see the same
+     * form in image_preprocess.comp, which explains why one dimension is not enough. A dispatch
+     * that fits in one dimension is unchanged, because the y row is then always zero. */
+    uint index = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * gl_WorkGroupSize.x
+               + gl_LocalInvocationID.x;
     uint frame_width = pc.p[0], frame_height = pc.p[1];
     if (index >= frame_width * frame_height) return;
     uint x = index % frame_width, y = index / frame_width;

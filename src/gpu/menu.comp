@@ -1,0 +1,208 @@
+#version 450
+/* The menu's overlay: coloured and textured quads written straight into the swapchain image, plus
+ * the picture comparison.
+ *
+ * A COMPUTE shader, not a graphics pipeline, and that is the central decision in this file. A
+ * render pass would need a framebuffer, a render pass object, a view of the game's swapchain
+ * image, and a pipeline layout - all of it created against objects the application owns, inside a
+ * command buffer the application is recording. A layer that makes a render pass out of somebody
+ * else's image has to guess its usage flags, its layout and its load op, and gets it wrong on the
+ * game that matters.
+ *
+ * A compute pass needs none of it: the image is a storage image, the pipeline is bound into the
+ * layer's own command buffer, and the write is a plain store.
+ *
+ * **Four descriptor bindings, and no buffer device addresses.** The quads and the font atlas
+ * arrive as storage buffers rather than as addresses in push constants. The first version used
+ * addresses - the resident graph's trick - and it does not work here for a reason worth writing
+ * down: `vkGetBufferDeviceAddress` is core in Vulkan 1.1 and a loader only exposes it to a device
+ * whose instance declared 1.1, and the game this was tested in declares less. The obvious repair
+ * was to have the layer add `VK_KHR_buffer_device_address` to the game's device create info, and
+ * that is the wrong trade for a settings menu: it changes what the application asked for, to draw
+ * a panel. Plain storage buffers need no extension at all, work on a Vulkan 1.0 device, and bind
+ * into the layer's own descriptor set - which the layer owns and the application never sees.
+ *
+ * The two images are storage images because the pass writes pixels and, for the comparison, reads
+ * them back. A storage image's declared format has to match the image's, so this file is built
+ * twice - see `NR_MENU_TARGET_RGB10A2` below.
+ *
+ * Three passes share the shader, told apart by `compare_mode`:
+ *
+ *   compare_mode == 0   the panel. Quads from the atlas, over the panel's own rectangle.
+ *   compare_mode == 1   the wipe. One frame cut at `compare_split`: the game's own frame on one
+ *                       side, the image's own pixels on the other, nothing resampled. Playable.
+ *   compare_mode == 2   side by side. The whole frame in each half, squeezed horizontally.
+ */
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+/* One drawable rectangle: where it is, where its texture is, what colour, and how it is filled.
+ *
+ * The panel, the selection highlight, every glyph, every value and the comparison's full-screen
+ * quad are all this one primitive, drawn in order, back to front. Keeping one primitive is what
+ * keeps one pipeline and one dispatch. */
+struct Quad {
+    vec4 rect;      /* x, y, width, height in panel pixels */
+    vec4 uv;        /* u0, v0, u1, v1 in the atlas, normalised */
+    vec4 colour;    /* straight alpha, already in the swapchain's channel order */
+    uint flags;     /* bit 0: solid fill (ignore the atlas) */
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+/* `std430`, not `scalar`: scalar layout is VK_EXT_scalar_block_layout, an extension this layer
+ * does not enable on the game's device, and a block that asks for it without the extension has an
+ * undefined layout. This driver defined it differently from what the struct on the host assumed,
+ * which is why the panel drew in colours nothing in the palette contained. std430 needs nothing and
+ * packs this struct identically - vec4s at 16-byte alignment, scalars at 4. */
+layout(set = 0, binding = 2, std430) readonly buffer QuadBuf {
+    Quad q[];
+} quads;
+
+/* The atlas is R8: one byte a texel, four to the uint this reads. Built byte-packed on the host,
+ * so a texel is a shift rather than an array of bytes - a `uint8_t[]` member needs the 8-bit
+ * storage extension used exactly right, and the spellings that compile on one driver are not the
+ * ones that compile on another. */
+layout(set = 0, binding = 3, std430) readonly buffer AtlasBuf {
+    uint w[];
+} atlas;
+
+layout(push_constant, std430) uniform Push {
+    uint    count;          /* how many quads, drawn in order */
+    vec2    panel_origin;   /* where this pass is drawing, in image pixels */
+    vec2    panel_size;
+    uvec2   atlas_size;
+    float   compare_split;  /* 0..1 across the image */
+    uint    compare_swap;
+    uint    compare_mode;   /* 0 panel, 1 wipe, 2 side by side */
+    uint    _pad;
+} pc;
+
+/* The target, in the format this build was compiled for.
+ *
+ * `rgb10_a2` - with the underscore - is the GLSL qualifier for
+ * `VK_FORMAT_A2B10G10R10_UNORM_PACK32`; the spelling without one is not a layout identifier at all
+ * and glslang rejects the file. It is a floating-point image (`rgb10_a2ui` is the integer one and
+ * refuses `vec4` stores), which is what the panel wants.
+ *
+ * This matters because a real game presents that format: Aperture Desk Job's swapchain is
+ * `VK_FORMAT_A2B10G10R10_UNORM_PACK32` - an HDR surface - and the first game test refused the menu
+ * with "not BGRA8". */
+#ifdef NR_MENU_TARGET_RGB10A2
+layout(set = 0, binding = 0, rgb10_a2) uniform image2D target;
+layout(set = 0, binding = 1, rgb10_a2) uniform readonly image2D reference;
+#else
+layout(set = 0, binding = 0, rgba8) uniform image2D target;
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D reference;
+#endif
+
+float atlas_coverage(uvec2 at)
+{
+    if (at.x >= pc.atlas_size.x || at.y >= pc.atlas_size.y) return 0.0;
+    uint index = at.y * pc.atlas_size.x + at.x;
+    uint word = atlas.w[index >> 2u];
+    uint byte = (word >> (8u * (index & 3u))) & 0xFFu;
+    return float(byte) / 255.0;
+}
+
+/* The comparison.
+ *
+ * `wipe` cuts one frame: the pixels left of the split come from the game's own frame and the rest
+ * are the image as NR left it, or the other way round when swapped. Nothing is resampled, so the
+ * geometry is exactly the game's and it can be played in.
+ *
+ * `side_by_side` squeezes the whole frame into each half, which shows the two at once at the cost
+ * of the aspect ratio. */
+vec4 comparison_pixel(ivec2 at)
+{
+    bool swapped = pc.compare_swap != 0u;
+    ivec2 size = ivec2(pc.panel_size);
+
+    /* Mode 3: the ImGui overlay.
+     *
+     * The menu is no longer drawn by this file - Dear ImGui rasterises it into an image of its own
+     * with a graphics pipeline, and this pass is what puts that image on the game's frame. It is
+     * the only mode that runs over every pixel, and the only one whose source is `reference`.
+     *
+     * Straight alpha over: the ImGui image is transparent where no window is, so the game shows
+     * through untouched and the panel composites normally. */
+    if (pc.compare_mode == 3u) {
+        vec4 src = imageLoad(reference, at);
+        if (src.a <= 0.0) return imageLoad(target, at);   /* nothing here: keep the frame */
+        /* PREMULTIPLIED, because that is what the ImGui backend writes: its blend state uses
+         * VK_BLEND_FACTOR_ONE for the source colour, so `rgb` already carries the alpha. Treating
+         * it as straight alpha multiplies by alpha twice - every window comes out dim and every
+         * half-covered edge comes out dark. Compositing premultiplied over is exactly
+         * `src + dst * (1 - src.a)`, with no further division or multiplication. */
+        return vec4(src.rgb + imageLoad(target, at).rgb * (1.0 - src.a), 1.0);
+    }
+
+    if (pc.compare_mode == 1u) {
+        bool left = float(at.x) < pc.compare_split * pc.panel_size.x;
+        bool use_reference = swapped ? !left : left;
+        /* A hairline at the join, so which half is which is not a guess. Drawn over both sides. */
+        if (abs(float(at.x) - pc.compare_split * pc.panel_size.x) < 1.5)
+            return vec4(0.6, 0.6, 0.6, 1.0);
+        return use_reference ? imageLoad(reference, at) : imageLoad(target, at);
+    }
+
+    bool left = float(at.x) < pc.panel_size.x * 0.5;
+    bool use_reference = swapped ? !left : left;
+    float local = left ? (float(at.x) / (pc.panel_size.x * 0.5))
+                       : ((float(at.x) - pc.panel_size.x * 0.5) / (pc.panel_size.x * 0.5));
+    ivec2 source = ivec2(clamp(local, 0.0, 1.0) * float(size.x - 1), float(at.y));
+
+    if (abs(float(at.x) - pc.panel_size.x * 0.5) < 1.5)
+        return vec4(0.6, 0.6, 0.6, 1.0);
+    return use_reference ? imageLoad(reference, source) : imageLoad(target, source);
+}
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= int(pc.panel_size.x) || local.y >= int(pc.panel_size.y)) return;
+
+    /* IMAGE coordinates: the caller builds quads in image space, so the test must match. */
+    vec2 pixel = vec2(pc.panel_origin) + vec2(local) + 0.5;
+    ivec2 at = ivec2(pc.panel_origin) + local;
+
+    /* The comparison is a whole-image pass, so it writes its pixel and returns. It runs after the
+     * panel, in its own dispatch, so the menu stays readable over it. */
+    if (pc.compare_mode != 0u) {
+        imageStore(target, at, comparison_pixel(at));
+        return;
+    }
+
+    /* Composite back to front.
+     *
+     * The caller pushes the quads in that order - border, then the panel fill, then each row, then
+     * the text - so index 0 is the back-most and the loop runs UPWARD. Walking it downward puts the
+     * opaque border on top of everything and the `break` stops there, which is what made the panel
+     * read as a light grey glyph colour at a pixel that should have been its dark background:
+     * nothing after the border was ever composited.
+     *
+     * The `break` is correct once the order is right - the first opaque quad in list order really
+     * is the front-most thing at that pixel. */
+    vec4 out_colour = vec4(0.0);
+    for (int i = 0; i < int(pc.count); ++i) {
+        Quad q = quads.q[i];
+        if (pixel.x < q.rect.x || pixel.y < q.rect.y ||
+            pixel.x >= q.rect.x + q.rect.z || pixel.y >= q.rect.y + q.rect.w)
+            continue;
+
+        vec2 t = (pixel - q.rect.xy) / max(q.rect.zw, vec2(1.0));
+        float coverage = 1.0;
+        if ((q.flags & 1u) == 0u) {
+            vec2 uv = mix(q.uv.xy, q.uv.zw, t);
+            coverage = atlas_coverage(uvec2(uv * vec2(pc.atlas_size)));
+        }
+
+        vec4 ink = vec4(q.colour.rgb, q.colour.a * coverage);
+        out_colour = ink + out_colour * (1.0 - ink.a);
+        if (out_colour.a >= 0.999) break;
+    }
+
+
+    if (out_colour.a <= 0.0) return;        /* nothing here: leave the game's pixel alone */
+    imageStore(target, at, out_colour);
+}

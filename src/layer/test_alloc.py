@@ -191,7 +191,7 @@ def daemon_frames():
         args = argparse.Namespace(
             socket=None, profile="standard", intensity=1.0, detail_strength=1.0,
             colour_strength=1.0, settings=None, render_scale=1.0, temporal=1.0, hold=1.0,
-            release=24.0, min_extent=320.0, cut_limit=0.15, max_pixels=1920 * 1200, dump=None,
+            release=24.0, min_extent=320.0, cut_limit=0.15, dump=None,
             meter=None, timeout=600.0)
         args.live = nr_daemon.Settings(args)
         args.history = nr_daemon.History()

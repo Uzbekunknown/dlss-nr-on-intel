@@ -39,6 +39,10 @@ class ReleaseTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
         for name in ("src/layer/nr_daemon.py", "src/ref/nr_frame.py", "src/bench/probe.py",
+                     # The weights table and the tool an install extracts through: a release that
+                     # installs weights and then cannot name the model it installed is exactly what
+                     # `assemble` is meant to refuse.
+                     "src/ref/nr_weight_models.py", "scripts/nr_weights.py", "docs/WEIGHTS.md",
                      "work/mlx-dlss/LICENSE", "work/mlx-dlss/python/mlxdlss/features.py",
                      "work/mlx-dlss/python/mlxdlss/tools/extract_dlssnr_weights.py",
                      "work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py"):
@@ -54,6 +58,10 @@ class ReleaseTests(unittest.TestCase):
             self.write(name, "dxvk:" + name)
         self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
         self.write("work/dxvk/VERSION", "3.1.1\n")
+        # The notices a package must carry beside LICENSE and NOTICE, named by NOTICE and by
+        # the shipped shader sources. Their own text is irrelevant here; their presence is not.
+        for source, _ in release.LICENCES:
+            self.write(source, "third-party licence fixture: " + source)
         for name in release.required_shaders(self.root):
             self.write("work/" + name, "shader:" + name)
 
@@ -240,6 +248,41 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nr_knobs"):
             release.assemble(self.root, self.target, "windows")
         self.assertFalse(self.target.exists())
+
+    def test_licences_named_by_notice_and_by_shipped_sources_are_packaged(self):
+        """`licenses/` and ImGui's notice travel with the package, not just with the checkout.
+
+        `src/gpu/publish.glsl` and `src/bench/e4m3_probe.comp` are both shipped and both cite
+        `licenses/rdna3-e4m3-MIT.txt`; the layer links ImGui. A release carrying neither is a
+        package whose own sources point at a file it does not contain.
+        """
+        release.assemble(self.root, self.target, "windows")
+        for _, destination in release.LICENCES:
+            path = self.target / destination
+            self.assertTrue(path.is_file(), destination)
+            self.assertIn("licence fixture", path.read_text())
+
+    def test_a_fetch_stub_is_refused_rather_than_packaged(self):
+        """A placeholder file passes is_file() and is not the file it claims to be.
+
+        `work/dxvk` and `work/mlx-dlss/LICENSE` are written by fetch_dxvk.py and get_weights.py.
+        A checkout where those have not run holds short stubs, and a release built from it
+        shipped a DXVK no game can load and a licence that is not MLX-DLSS's.
+        """
+        for name in ("work/dxvk/x64/d3d11.dll", "work/mlx-dlss/LICENSE"):
+            with self.subTest(stub=name):
+                path = self.root / name
+                saved = path.read_bytes()
+                path.write_text("placeholder for " + name + " - another script supplies it\n",
+                                encoding="utf-8")
+                try:
+                    with self.assertRaisesRegex(ValueError, "placeholder stubs") as error:
+                        release.assemble(self.root, self.target, "windows")
+                    self.assertIn(str(Path(name)), str(error.exception))
+                    self.assertFalse(self.target.exists())
+                finally:
+                    path.write_bytes(saved)
+        release.assemble(self.root, self.target, "windows")
 
     def test_source_overlap_is_refused(self):
         for name in ("src/release", "work/release", "scripts/release", "dist-tools/release"):

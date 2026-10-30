@@ -13,7 +13,14 @@ import collections
 
 Knob = collections.namedtuple("Knob", "name label kind low high step default summary detail")
 
-PROFILES = ("standard", "natural", "cinematic", "neutral")
+PROFILES = ("standard", "natural", "cinematic")
+
+# The choices behind a `choice` knob other than `profile`. `profile` reads PROFILES. **`weights` is
+# no longer one of them:** the network is `NR_PRESET`, one setting, chosen in the setup window and
+# switched live by the panel's Network row. It named a model file and resolved it through a
+# manifest, which gave the project two settings for one fact - and `NR_PRESET=B` running A on an
+# install with no manifest is what that cost.
+CHOICES = {}
 
 KNOBS = (
     Knob(
@@ -52,9 +59,9 @@ KNOBS = (
         "texture; `natural` and `cinematic` keep more of the highlights, and on very bright "
         "scenes `cinematic` can smooth fine detail rather than add it. After the network, "
         "as NVIDIA grades them, `natural` comes out a little darker, flatter and less "
-        "saturated and `cinematic` less saturated. `neutral` all but switches the effect "
-        "off. The profile is an input to the network, so it takes effect on the next frame "
-        "the network draws; the knobs below act after it.",
+        "saturated and `cinematic` less saturated. The profile is an input to the network, "
+        "so it takes effect on the next frame the network draws; the knobs below act after "
+        "it.",
     ),
     Knob(
         "intensity", "intensity", "number", 0.0, 2.0, 0.05, 1.0,

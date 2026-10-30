@@ -731,6 +731,33 @@ def _ready(profile):
         raise LaunchError("A game using this release is already running; its trigger and launch state were preserved.")
 
 
+def _steam_game_arguments(profile, already):
+    """The arguments Steam would pass this game, for a launch that does not go through Steam.
+
+    Launch game starts the executable itself, so Steam's `LaunchOptions` for the app never reach
+    it. A game that needs one to choose Vulkan therefore starts in Direct3D instead, and NR's
+    layer - which hooks Vulkan - is never loaded: Aperture Desk Job has `-VULKAN` there, and
+    without it it opens through D3D11 and NR does nothing. The proxy beside the game supplies
+    NR's environment but cannot change which API the game picks, so the switch has to be passed.
+
+    Only ordinary switches are used, by `_ordinary_options`' rule: a `%command%` wrapper or a
+    shell command is an earlier setup's own launch options, not this game's, and is left alone.
+    Anything unreadable means no arguments rather than a refused launch.
+    """
+    try:
+        app_id = detect_steam_app_id(profile.game_exe)
+        if not app_id:
+            return []
+        options = _options(_localconfig(_steam_exe()).read_bytes(), app_id)
+        if not options or not _ordinary_options(options):
+            return []
+        present = {argument.casefold() for argument in already}
+        return [argument for argument in _split_commandline(options)
+                if argument and argument.casefold() not in present]
+    except (OSError, ValueError, UnicodeError, KeyError, LaunchError, subprocess.SubprocessError):
+        return []
+
+
 def _launch_direct(profile, emit=None, original_command=None):
     _ready(profile)
     tail = []
@@ -747,6 +774,9 @@ def _launch_direct(profile, emit=None, original_command=None):
     arguments = list(getattr(profile, "game_args", []) or [])
     if not all(isinstance(item, str) and "\0" not in item for item in tail + arguments):
         raise LaunchError("Game arguments must be strings without NUL characters.")
+    # Started by setup itself, not through Steam: give it the switches Steam would have.
+    from_steam = [] if original_command is not None else _steam_game_arguments(
+        profile, tail + arguments)
     environment = _core().runtime_env(profile)
     if environment.get("NR_PYTHON") != str(profile.python):
         raise LaunchError("Runtime Python does not match the user's selected interpreter.")
@@ -757,7 +787,7 @@ def _launch_direct(profile, emit=None, original_command=None):
     token = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     stdout_path = directory / (token + ".game.stdout.log")
     stderr_path = directory / (token + ".game.stderr.log")
-    command = [str(profile.game_exe), *tail, *arguments]
+    command = [str(profile.game_exe), *tail, *from_steam, *arguments]
     daemon_log = Path(environment["NR_LAYER_LOG"])
     daemon_offset = daemon_log.stat().st_size if daemon_log.exists() else 0
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
@@ -765,6 +795,7 @@ def _launch_direct(profile, emit=None, original_command=None):
                                    stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, shell=False)
     state = {"ok": True, "mode": "steam-wrapper" if original_command is not None else "direct",
              "pid": process.pid, "command": command, "command_display": subprocess.list2cmdline(command),
+             "steam_arguments": from_steam,
              "stdout_log": str(stdout_path), "stderr_log": str(stderr_path),
              "daemon_log": str(daemon_log), "daemon_start_bytes": daemon_offset,
              "root": str(profile.root), "game_exe": str(profile.game_exe),

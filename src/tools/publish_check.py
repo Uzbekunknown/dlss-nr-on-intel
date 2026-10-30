@@ -38,6 +38,16 @@ DELIBERATE = {
     # notes/ptx-kernel-configs.md and notes/MODEL-SPEC.txt rest on. Owner's call, and
     # the reasoning is in notes/phase58-before-publishing.md.
     "notes/ptx-demangled.txt",
+    # Dear ImGui 1.93.0, vendored whole and byte-identical to upstream - MIT, and
+    # `check_imgui_pristine.py` proves the copy unmodified against the release ZIP. The
+    # build compiles six of these files; the size limit is about what nobody meant to
+    # commit, and this was meant, checked, and is the only way an upgrade is a swap.
+    "third_party/imgui/imgui.cpp",
+    "third_party/imgui/imgui.h",
+    "third_party/imgui/imgui_draw.cpp",
+    "third_party/imgui/imgui_internal.h",
+    "third_party/imgui/imgui_tables.cpp",
+    "third_party/imgui/imgui_widgets.cpp",
 }
 # Before/after comparison frames, on the orphan `media` branch so the code history stays
 # text only. Each one is chosen by the owner, not by whoever builds the image — they are

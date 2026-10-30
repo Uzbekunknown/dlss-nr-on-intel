@@ -237,6 +237,18 @@ button, Mortal Kombat Komplete Edition from its own executable, and DOOM through
 - A game that loads System32's loader by its path, or keeps its DLL search to System32, never
   loads the proxy. Setup's **Launch game** still starts such a game with the variables.
 
+**Launch game passes the game's Steam launch options, because it starts the executable itself.**
+The proxy gives the game NR's environment however it is started, but it cannot change which
+graphics API the game picks, and some games choose that with a launch option. Aperture Desk Job
+has `-VULKAN` in Steam's LaunchOptions for app 1902490; started without it, it opens in Direct3D
+11 and loads `rendersystemdx11.dll`, so the layer — which hooks Vulkan — is never loaded and NR
+does nothing, while the setup window still reports a successful launch. Setup therefore reads
+the app's LaunchOptions from Steam's `localconfig.vdf` and appends the switches, after the
+arguments Steam would pass and before the ones typed in the window. Only ordinary switches
+(`-flag`, `+set x y`) are taken: a `%command%` wrapper is an earlier setup's own launch options
+and is left alone. Anything unreadable means no arguments, never a refused launch, and the
+launch record keeps what was added in `steam_arguments`.
+
 **A game that runs as administrator gets the proxy and never the layer.** Windows' Vulkan
 loader reads `VK_LAYER_PATH` and `VK_ADD_LAYER_PATH` through `loader_secure_getenv`, which in a
 process at High integrity or above returns nothing (Vulkan-Loader's `is_high_integrity`); it
