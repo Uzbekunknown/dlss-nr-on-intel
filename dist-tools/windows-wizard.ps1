@@ -347,7 +347,7 @@ $script:SettingsStateKey = 'SettingsLoading'
        <StackPanel>
         <TextBlock x:Name="PacingHeading" Style="{StaticResource Heading}"/>
         <CheckBox x:Name="AsyncMode" Content="" ToolTip=""/>
-        <CheckBox x:Name="GpuImagePath" Content="" ToolTip="" Margin="0,8,0,0"/>
+        <CheckBox x:Name="GpuImagePath" Content="" ToolTip="" Margin="0,8,0,0" IsChecked="True"/>
         <TextBlock x:Name="GpuImageNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
         <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
          <TextBlock x:Name="EveryLabel" VerticalAlignment="Center" ToolTip=""/>
@@ -547,7 +547,7 @@ $script:Strings=@{
   PacingHeading='Frame pacing'; PacingNote='Takes effect when the game starts next.'
   AsyncMode='Asynchronous: the network works while the game draws its next frame'
   AsyncModeTip='More frames a second, and what is on screen is one processed frame behind.'
-  GpuImagePath='Experimental: frames remain on the GPU'
+  GpuImagePath='Keep frames on the GPU'
   GpuImagePathTip='Frames stay on the GPU from capture to the screen, with no copy through the CPU. Needs the game and the network on the same Arc, and a game on Vulkan 1.1 or newer, as DirectX games through DXVK are. Where that is not so, NR takes its usual path, and Save report says why.'
   GpuImageNote='Takes effect at the next game start. NR then works on every frame, in step: asynchronous mode and every Nth frame wait until this is off.'
   EveryLabel='Network on'; EveryTip='The frames between repeat the last result: the game runs faster, and the picture changes only on the network''s frames.'
@@ -665,7 +665,7 @@ $script:Strings=@{
   PacingHeading='Подача кадров'; PacingNote='Применится при следующем запуске игры.'
   AsyncMode='Асинхронно: сеть работает, пока игра рисует следующий кадр'
   AsyncModeTip='Больше кадров в секунду, а на экране результат на один обработанный кадр позже.'
-  GpuImagePath='Экспериментально: кадры остаются на GPU'
+  GpuImagePath='Кадры остаются на GPU'
   GpuImagePathTip='Кадры остаются на GPU от захвата до экрана, без копии через процессор. Нужны игра и сеть на одной Arc и игра на Vulkan 1.1 или новее, как игры DirectX через DXVK. Где это не так, NR идёт обычным путём, а «Сохранить отчёт» говорит почему.'
   GpuImageNote='Применится при следующем запуске игры. NR тогда работает на каждом кадре, синхронно: асинхронный режим и сеть на каждом N-м кадре ждут, пока это выключено.'
   EveryLabel='Сеть на'; EveryTip='Кадры между ними повторяют последний результат: игра идёт быстрее, а картинка меняется только на кадрах сети.'
@@ -783,7 +783,7 @@ $script:Strings=@{
   PacingHeading='Ritmo de fotogramas'; PacingNote='Se aplica la próxima vez que se inicie el juego.'
   AsyncMode='Asíncrono: la red trabaja mientras el juego dibuja el siguiente fotograma'
   AsyncModeTip='Más fotogramas por segundo, y lo que se ve va un fotograma procesado por detrás.'
-  GpuImagePath='Experimental: los fotogramas permanecen en la GPU'
+  GpuImagePath='Los fotogramas permanecen en la GPU'
   GpuImagePathTip='Los fotogramas permanecen en la GPU desde la captura hasta la pantalla, sin copia por la CPU. Requiere el juego y la red en la misma Arc, y un juego con Vulkan 1.1 o posterior, como los juegos DirectX a través de DXVK. Si no es así, NR usa su ruta habitual y «Guardar informe» dice por qué.'
   GpuImageNote='Se aplica al próximo inicio del juego. NR trabaja entonces en cada fotograma y en sincronía: el modo asíncrono y la red cada N fotogramas esperan a que esto se desactive.'
   EveryLabel='Red en'; EveryTip='Los fotogramas intermedios repiten el último resultado: el juego va más rápido, y la imagen cambia solo en los fotogramas de la red.'
@@ -901,7 +901,7 @@ $script:Strings=@{
    PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
    AsyncMode='异步：网络在游戏绘制下一帧时工作'
    AsyncModeTip='每秒帧数更多，而屏幕上显示的比处理结果落后一帧。'
-   GpuImagePath='实验性：帧保留在 GPU 上'
+   GpuImagePath='帧保留在 GPU 上'
    GpuImagePathTip='帧保留在 GPU 上，从捕获到屏幕都不经过 CPU 拷贝。需要游戏与网络在同一块 Arc 上，且游戏使用 Vulkan 1.1 或更高版本（DirectX 游戏经 DXVK 即属于此）。如果不能如此，NR 会走常规路径，保存报告会说明原因。'
    GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
    PresetHeading='网络'; PresetA='A：NR 一直运行的模型'; PresetB='B：nvngx_dlssnr.dll 310.9.16 中的更快模型'

@@ -493,7 +493,9 @@ class WizardFixture(unittest.TestCase):
 
     def test_pacing_in_the_profile_the_environment_and_an_installed_game(self):
         # Asynchronous mode and every Nth frame: kept in the profile, set for the layer either
-        # way, and written into an installed game's ENV_FILE without its other lines moving.
+        # way, and written into an installed game's ENV_FILE without its other lines moving. They
+        # act with the GPU path off, which is on unless turned off.
+        self.profile = replace(self.profile, gpu_image_path=False)
         self.assertEqual((self.profile.nr_async, self.profile.nr_every), (False, 1))
         env = core.layer_environment(self.profile)
         self.assertEqual((env["NR_LAYER_LIVE"], env["NR_LAYER_ASYNC"]), ("1", "0"))
@@ -553,21 +555,23 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(written()[0], after)
         self.assertTrue(core.uninstall(self.profile)["ok"])
 
-    def test_gpu_image_profile_is_opt_in_and_updates_installed_environment(self):
-        self.assertFalse(self.profile.gpu_image_path)
+    def test_gpu_image_profile_is_on_by_default_and_updates_installed_environment(self):
+        # On unless turned off since 0.0.2, in a profile from before the option too.
+        self.assertTrue(self.profile.gpu_image_path)
         old = self.profile.to_dict()
         del old["gpu_image_path"]
         self.assertEqual(core.Profile.from_dict(old), self.profile)
         for value in ("true", 1, None, []):
             with self.assertRaises(ValueError):
                 core.Profile.from_dict({**old, "gpu_image_path": value})
+        plain = replace(self.profile, gpu_image_path=False)
         for flag in ("NR_GPU_IMAGE", "NR_GPU_TRANSPORT", "NR_GPU_ONLY"):
-            self.assertEqual(core.runtime_env(self.profile)[flag], "0")
+            self.assertEqual(core.runtime_env(plain)[flag], "0")
         with patch.dict(os.environ, {"NR_GPU_ONLY": "1"}):
-            self.assertEqual(core.runtime_env(self.profile)["NR_GPU_ONLY"], "0")
+            self.assertEqual(core.runtime_env(plain)["NR_GPU_ONLY"], "0")
         enabled = replace(self.profile, gpu_image_path=True, nr_async=True, nr_every=3)
         self.assertEqual(core.Profile.from_dict(enabled.to_dict()), enabled)
-        self.assertTrue(core.install(self.profile)["ok"])
+        self.assertTrue(core.install(plain)["ok"])
         path = core.installed_path(self.profile) / core.ENV_FILE
         before = path.read_text(encoding="utf-8").splitlines()
         # The profile carries the choice and the window writes the game's file too, so the file the
@@ -675,6 +679,8 @@ class WizardFixture(unittest.TestCase):
         because the decision is what has to be right; the PowerShell around it is one property
         read.
         """
+        # The pacing in question acts with the GPU path off, which is on unless turned off.
+        self.profile = replace(self.profile, gpu_image_path=False)
         self.assertTrue(core.install(self.profile)["ok"])
         path = core.installed_path(self.profile) / core.ENV_FILE
 
@@ -783,10 +789,15 @@ class WizardFixture(unittest.TestCase):
                          sorted([self.weights.name, self.preset_b_weights().name]))
         self.assertEqual(self.weights.read_bytes(), weights)
         self.assertIn("unpacked", (self.root / core.WEIGHTS_LOG).read_text(encoding="utf-8"))
-        # Once there, not again.
+        # The installation that takes B out runs it, the faster network: the window could not
+        # offer it before, so the A it asked for was no one's choice.
+        self.assertEqual(result["profile"]["preset"], "B")
+        self.assertEqual(core.load_profile(self.root).preset, "B")
+        self.assertIn("NR_PRESET=B", (core.installed_path(profile) / core.ENV_FILE).read_text(encoding="utf-8"))
+        # Once there, not again; and A chosen after that stays A.
         with patch.object(core, "_file_version", return_value="310.9.16.0"), \
                 patch.object(core, "_run", side_effect=self.unpacking(calls)):
-            self.assertTrue(core.install(profile)["ok"])
+            self.assertEqual(core.install(profile)["profile"]["preset"], "A")
         self.assertEqual(len(calls), 1)
         self.assertTrue(core.uninstall(profile)["ok"])
 

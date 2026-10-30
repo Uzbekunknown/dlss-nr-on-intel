@@ -79,6 +79,30 @@ int main(void)
         Sleep(150);
     }
 
+    /* The clip guard lets go of a clip the panel holds once its window is not in front, from a
+     * thread of its own, as a paused game would need. The clip here leaves out only the screen's
+     * last column, so nobody at this machine is held by it. */
+    {
+        RECT box = {GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
+        box.right = box.left + GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
+        box.bottom = box.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        RECT held = {0, 0, 0, 0}, after = {0, 0, 0, 0};
+        ClipCursor(&box);
+        GetClipCursor(&held);
+        nr_clip_guard_start(NULL);   /* a null window is never in front */
+        Sleep(200);
+        GetClipCursor(&after);
+        nr_clip_guard_stop();
+        nr_clip_guard_stop();        /* twice, as a panel closing after its device went does */
+        ClipCursor(NULL);
+        if (held.right != box.right) {
+            printf("  (the clip did not take here; the guard is not exercised)\n");
+        } else {
+            CHECK("the clip guard lets go of a clip while the window is not in front",
+                  after.right != box.right);
+        }
+    }
+
     DestroyWindow(ours);
     printf("\n%s\n", fails ? "FAILED" : "ok");
     return fails;

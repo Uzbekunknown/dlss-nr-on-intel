@@ -40,10 +40,18 @@ int nr_window_is_ours(void *h);
  * or the panel would take input before the game's window exists. */
 int nr_window_is_foreground(void *hwnd);
 
+/* While the panel holds the cursor in its one-pixel box: a thread of its own that lets go of the
+ * clip the moment `hwnd` is not in front, whether or not the game is still presenting. Start may be
+ * called every frame; stop waits for the thread to end, so none of this runs once the layer is gone. */
+void nr_clip_guard_start(void *hwnd);
+void nr_clip_guard_stop(void);
+
 #else
 
 static inline int nr_window_is_ours(void *h) { (void)h; return 1; }
 static inline int nr_window_is_foreground(void *hwnd) { (void)hwnd; return 1; }
+static inline void nr_clip_guard_start(void *hwnd) { (void)hwnd; }
+static inline void nr_clip_guard_stop(void) { }
 
 #endif /* _WIN32 */
 

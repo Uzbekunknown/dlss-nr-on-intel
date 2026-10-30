@@ -616,6 +616,30 @@ static nr_ui_window window_for_thread_for_ui(void)
 }
 #endif
 
+static void menu_cursor_show(void)
+{
+#ifdef _WIN32
+	ShowCursor(TRUE);
+	ClipCursor(NULL);
+#endif
+}
+
+/* Give the system cursor back, whatever holds it: shown, unclipped, the clip's guard thread ended
+ * and raw input handed back to the game. The next frame that wants it seeds the pointer afresh. */
+static void menu_cursor_free(struct device_data *data)
+{
+	nr_clip_guard_stop();
+	if (data->menu_ui_cursor_hidden) {
+		menu_cursor_show();
+		data->menu_ui_cursor_hidden = 0;
+	}
+	if (data->menu_ui_have_pointer) {
+		data->menu_ui_have_pointer = 0;
+		nr_raw_mouse_stop();
+	}
+	data->menu_ui_push = 0.0f;
+}
+
 static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain,
                           const unsigned char *keys)
 {
@@ -655,14 +679,10 @@ static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain
 		/* The panel is still open but another window has the focus, so the pointer belongs to that
 		 * window: give it back. The layer re-takes it on the first frame the game is in front
 		 * again, and a cursor confined to a game nobody is looking at is the one thing that would
-		 * be worse than the bug this is fixing. */
-		if (data->menu_ui_cursor_hidden) {
-			ShowCursor(TRUE);
-			data->menu_ui_cursor_hidden = 0;
-			ClipCursor(NULL);
-			data->menu_ui_have_pointer = 0;
-			nr_raw_mouse_stop();
-		}
+		 * be worse than the bug this is fixing. A game that stops presenting when it loses the
+		 * focus never gets here, which is what `nr_clip_guard` covers. */
+		menu_cursor_free(data);
+		data->menu_ui_outside = 0;
 		return;
 	}
 
@@ -695,6 +715,18 @@ static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain
 				(long)origin.x, (long)origin.y, (long)screen.x, (long)screen.y);
 	}
 #undef UI_MOUSE_STOP
+
+	/* The pointer went out past the picture's edge (below): the panel waits for the cursor to come
+	 * back into the window, and takes it again where it comes in. */
+	if (panel_open && data->menu_ui_outside) {
+		if (screen.x < origin.x || screen.y < origin.y || screen.x >= origin.x + (LONG)cw ||
+		    screen.y >= origin.y + (LONG)ch) {
+			nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
+			nrex_set_software_cursor(data->menu_ui, 0);
+			return;
+		}
+		data->menu_ui_outside = 0;
+	}
 
 	/* Client pixels -> swapchain pixels. A game rendering at a lower resolution than its window is
 	 * the common case, and this is what keeps the pointer aligned when it does. */
@@ -784,6 +816,36 @@ static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain
 			}
 		}
 
+		/* Pushed on past the picture's edge, the pointer goes out there, as a cursor leaves any
+		 * window: the pin had held it in the window until the panel was closed, so the Start menu,
+		 * another window or a screenshot's selection could not be reached (the owner, Mortal
+		 * Kombat 11, 2026-10-31). A little push is taken as the edge, about 48 pixels as leaving.
+		 * Not where the window fills the screen: there is no outside to put the cursor in. */
+		{
+			float w = (float)chain->extent.width - 1.0f, h = (float)chain->extent.height - 1.0f;
+			float px = data->menu_ui_pointer_x, py = data->menu_ui_pointer_y;
+			float over = (px < 0.0f ? -px : px > w ? px - w : 0.0f) + (py < 0.0f ? -py : py > h ? py - h : 0.0f);
+			data->menu_ui_push = over > 0.0f ? data->menu_ui_push + over : 0.0f;
+			if (data->menu_ui_push > 48.0f) {
+				POINT out;
+				out.x = origin.x + (LONG)((px < 0.0f ? 0.0f : px > w ? w : px) / sx);
+				out.y = origin.y + (LONG)((py < 0.0f ? 0.0f : py > h ? h : py) / sy);
+				if (px < 0.0f) out.x = origin.x - 8;
+				else if (px > w) out.x = origin.x + (LONG)cw + 8;
+				if (py < 0.0f) out.y = origin.y - 8;
+				else if (py > h) out.y = origin.y + (LONG)ch + 8;
+				if (MonitorFromPoint(out, MONITOR_DEFAULTTONULL)) {
+					menu_cursor_free(data);
+					SetCursorPos(out.x, out.y);
+					data->menu_ui_outside = 1;
+					nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
+					nrex_set_software_cursor(data->menu_ui, 0);
+					return;
+				}
+				data->menu_ui_push = 0.0f;
+			}
+		}
+
 		/* Clamp to the picture: outside it there is no panel to point at, and the pin would be
 		 * somewhere the player cannot see. */
 		if (data->menu_ui_pointer_x < 0.0f) data->menu_ui_pointer_x = 0.0f;
@@ -814,6 +876,7 @@ static void menu_ui_mouse(struct device_data *data, struct swapchain_data *chain
 			    held.right != box.right || held.bottom != box.bottom) {
 				ClipCursor(&box);
 			}
+			nr_clip_guard_start(hwnd);
 			/* And put it there, so a re-centre that happened before the pin is undone now. */
 			SetCursorPos(pin.x, pin.y);
 		}
@@ -874,14 +937,8 @@ static void menu_cursor_release(struct device_data *data)
 {
 	if (!data) return;
 	if (data->menu && nr_menu_is_open(data->menu)) return;   /* still the panel's */
-	if (!data->menu_ui_cursor_hidden) return;
-#ifdef _WIN32
-	ShowCursor(TRUE);
-	ClipCursor(NULL);
-#endif
-	data->menu_ui_cursor_hidden = 0;
-	data->menu_ui_have_pointer = 0;
-	nr_raw_mouse_stop();
+	data->menu_ui_outside = 0;
+	menu_cursor_free(data);
 }
 static int menu_read_keys(struct device_data *data, const unsigned char *keys)
 {
@@ -1599,6 +1656,9 @@ int nr_menu_layer_present(struct device_data *data, VkQueue queue,
 void nr_menu_layer_destroy(struct device_data *data)
 {
 	if (!data) return;
+	/* A panel open when its device goes must not leave the cursor held, nor the guard's thread
+	 * running in a layer about to be unloaded. */
+	menu_cursor_free(data);
 	/* The bridge goes FIRST: it is what the panel reads its rows through, and it is also what
 	 * removes the live preview - the daemon's view of what the user is trying RIGHT NOW. Leaving
 	 * that behind made a Save look like it had not happened. */

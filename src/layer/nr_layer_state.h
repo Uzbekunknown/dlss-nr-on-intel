@@ -235,6 +235,10 @@ struct device_data {
 	float menu_ui_pointer_x;
 	float menu_ui_pointer_y;
 	int menu_ui_have_pointer;
+	/* The pointer was pushed out past the picture's edge, and the panel waits for the cursor to
+	 * come back in; and how far it has been pushed against an edge so far, in swapchain pixels. */
+	int menu_ui_outside;
+	float menu_ui_push;
 	/* The OS position the last delta was measured from.
 	 *
 	 * Two `long`s, not a `POINT`: this struct is declared in every translation unit that includes

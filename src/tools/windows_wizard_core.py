@@ -114,7 +114,9 @@ class Profile:
     # NR_LAYER_LIVE, every how many presents one goes through it.
     nr_async: bool = False
     nr_every: int = 1
-    gpu_image_path: bool = False
+    # Frames kept on the GPU from capture to the screen: on unless turned off, since 0.0.2 (the
+    # owner, 2026-10-31). Where a game cannot keep them there, NR takes its usual path (issue #17).
+    gpu_image_path: bool = True
     # The network, NR_PRESET: one of PRESETS, read by the daemon when the game starts it.
     preset: str = "A"
 
@@ -147,7 +149,7 @@ class Profile:
         pipelined = values.get("nr_async", False)
         if not isinstance(pipelined, bool):
             raise ValueError("nr_async must be a boolean")
-        gpu_image_path = values.get("gpu_image_path", False)
+        gpu_image_path = values.get("gpu_image_path", True)
         if not isinstance(gpu_image_path, bool):
             raise ValueError("gpu_image_path must be a boolean")
         every = values.get("nr_every", 1)
@@ -1704,6 +1706,11 @@ def install(profile, emit=None):
         keep_log()
         if extracted["returncode"] == 0 and not extracted["timed_out"] and fresh.is_file():
             os.replace(fresh, target)
+            # B is the faster network and the first choice where a release has it: the installation
+            # that takes it out of the DLL runs it. Before that the window could offer only A;
+            # after it, the window's Network decides (the owner, 2026-10-31).
+            if profile.preset == "A" and _weights_state(profile, "B")["ready"]:
+                profile = replace(profile, preset="B")
         fresh.unlink(missing_ok=True)
         if not _weights_state(profile, "B")["ready"]:
             preset_b_failed = (f"Preset B's extraction failed, from nvngx_dlssnr.dll version "
@@ -1822,7 +1829,7 @@ def _rewrite_pacing_lines(path, wanted):
 
 
 def set_pacing(profile):
-    """Keep frame pacing and the experimental GPU path in the profile AND in the game's env file.
+    """Keep frame pacing and the GPU path in the profile AND in the game's env file.
 
     **Both, and this is a reversal of an earlier decision.** The file used to be the in-game
     panel's alone, on the reasoning that two writers for one file need ordering and none existed:

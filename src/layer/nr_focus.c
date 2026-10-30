@@ -29,4 +29,43 @@ int nr_window_is_foreground(void *hwnd)
 	return fg_pid == GetCurrentProcessId();
 }
 
+/* The clip the panel holds on the cursor, let go of as soon as the game is not in front.
+ *
+ * The layer runs only when the game presents, and a game that pauses when it loses the focus
+ * presents nothing. The clip is system-wide, so it stayed on the panel's one pixel over whatever
+ * the user had turned to - the Start menu, a screenshot's selection - and the mouse could do
+ * nothing there (Mortal Kombat 11, 2026-10-31). This thread only releases: taking the cursor back
+ * stays the layer's, on the game's next frame in front. */
+static volatile LONG g_guarding;
+static HWND volatile g_guarded;
+static HANDLE g_guard;
+
+static DWORD WINAPI clip_guard(LPVOID unused)
+{
+	(void)unused;
+	while (g_guarding) {
+		if (!nr_window_is_foreground(g_guarded)) ClipCursor(NULL);
+		Sleep(25);
+	}
+	return 0;
+}
+
+void nr_clip_guard_start(void *hwnd)
+{
+	g_guarded = (HWND)hwnd;
+	if (g_guard) return;
+	InterlockedExchange(&g_guarding, 1);
+	g_guard = CreateThread(NULL, 0, clip_guard, NULL, 0, NULL);
+	if (!g_guard) InterlockedExchange(&g_guarding, 0);
+}
+
+void nr_clip_guard_stop(void)
+{
+	if (!g_guard) return;
+	InterlockedExchange(&g_guarding, 0);
+	WaitForSingleObject(g_guard, 1000);
+	CloseHandle(g_guard);
+	g_guard = NULL;
+}
+
 #endif /* _WIN32 */

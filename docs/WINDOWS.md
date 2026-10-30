@@ -4,8 +4,8 @@ For installation and a first game test, start with the
 [Windows user quick start](WINDOWS-QUICKSTART.md). This file records the port's
 status, driver findings and alternative build paths.
 
-Release 0.0.1.2 adds an opt-in same-Arc GPU image path, still off by
-default. Full-model swapchain smoke passed on Intel 101.9150 with resize, effect
+Release 0.0.1.2 added a same-Arc GPU image path, off by default; since 0.0.2 it is
+on unless turned off. Full-model swapchain smoke passed on Intel 101.9150 with resize, effect
 and scale changes, and synchronization validation. Since issue #17 the window's
 option runs every frame in step (asynchronous mode and every Nth frame wait, kept
 in the profile) and is no longer strict: where the shared path stands aside, as in

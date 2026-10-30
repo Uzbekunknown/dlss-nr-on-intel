@@ -101,15 +101,21 @@ there the network's own time is most of every frame. Asynchronous should gain mo
 game's frame and the network's take similar time, as on a discrete card; that is not measured
 yet.
 
+**Frames on the GPU**, on unless turned off, keeps each frame on the GPU from the game to the
+network and back, with no copy through the CPU: in Mortal Kombat 11 it took network B from 19–20
+processed frames a second to 37–38. Where a game cannot keep its frames there, NR takes its usual
+path, and Save report says why.
+
 **Network.** `nvngx_dlssnr.dll` 310.9.16 carries two networks: **A**, the one NR has always
 run, and **B**, a smaller one NVIDIA added. With that DLL, **Install NR** takes B out of it
-beside A, and **NR controls** offers both under **Network**; the choice is saved and read when
-the game starts next, as frame pacing is, and the speed test measures the one chosen. On the
+beside A and runs B, the faster one; **NR controls** offers both under **Network**, and the
+choice is saved and read when the game starts next, as frame pacing is, and the speed test
+measures the one chosen. With an older DLL NR runs A. On the
 Arc 140V B's network takes about half of A's time: at 1280×720 and render scale 0.4, 16 ms
 against 32–34, frames sent back to back. With time between frames, as a game leaves, the GPU
 clocks down, and the further for B: with 25 ms between frames B took 37–39 ms a round trip
-there against 22–23 back to back, and A 42–45 against 39–42. B has not been tried in a game on
-Windows yet.
+there against 22–23 back to back, and A 42–45 against 39–42. B has run in Mortal Kombat 11 and
+Hogwarts Legacy.
 
 The button beside a control returns it to its default; **Reset all** writes the
 daemon's defaults, including render scale **1.0**. The release starts at **0.4** for
