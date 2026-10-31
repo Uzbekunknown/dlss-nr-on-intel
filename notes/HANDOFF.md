@@ -29,7 +29,8 @@ When the dated entries grow long, move the older ones the same way, into a new a
   `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through XeSS, the in-game panel (PR #20),
   network B and frames on the GPU by default, and an About tab that checks GitHub for a newer
   release (below, 10-31). It went out on the owner's word before Linux's `make test` at its head,
-  as 0.0.1.3 did. Linux users build from source (README).
+  as 0.0.1.3 did; Linux ran green after, at `eb9b281` (Open items). Linux users build from source
+  (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31);
@@ -115,10 +116,13 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `81b0a59` (0.0.2): `make test` in both memory modes and CTest. Since `cc2b8b7` the setup
-  window's core changed (its PE readers, the folder of each placed file, frames on the GPU and B by
-  default), the release builder (`VERSION`, the icon) with its tests, and `nr_focus.h` and
-  `nr_layer_state.h`, which Linux compiles. Below, 10-30 evening and 10-31.
+- ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
+  which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
+  PE readers, the folder of each placed file, frames on the GPU and B by default), the release
+  builder (`VERSION`, the icon) with its tests, and `nr_focus.h` and `nr_layer_state.h`, which
+  Linux compiles. Both layers and CMake build with no warning; `make test` 60 of 60 in both memory
+  modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`; the Python suites of
+  `src/tools` 217 tests, the 24 skipped all Windows-only. Below, 10-30 evening and 10-31.
 - ~~`dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
   modes and CTest~~: green at `cc2b8b7` (10-30), which is `newnr` with them and PR #20: `make test`
   60 of 60 in both memory modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`.
@@ -329,8 +333,8 @@ new check, and the MinGW CMake build (CTest carries no menu fixture).
 **Next on Windows:** the release, at the owner's word. The panel could take its clicks from the
 guard's button messages, so a click shorter than a frame is not lost; not done. DirectX 12 in
 other XeSS games.
-**Next on Linux:** `make test` in both memory modes and CTest: `nr_focus.h` and `nr_layer_state.h`
-changed, which Linux compiles (`nr_panel.c` is Windows-only).
+**Next on Linux:** ~~`make test` in both memory modes and CTest: `nr_focus.h` and `nr_layer_state.h`
+changed, which Linux compiles (`nr_panel.c` is Windows-only)~~: green at `eb9b281` (Open items).
 
 ## 0.0.2 released, and what Mortal Kombat 11 found in the panel (2026-10-31, branch `newnr`)
 
@@ -364,7 +368,8 @@ owner's word:
   left the game's 10 024 files as they were.
 
 **Next on Windows:** the panel inside DirectX 12 games, and the panel's input kept from the game.
-**Next on Linux:** `make test` in both memory modes and CTest at `81b0a59` (Open items).
+**Next on Linux:** ~~`make test` in both memory modes and CTest at `81b0a59`~~: green at `eb9b281`
+(Open items).
 
 ## DirectX 12 through the release: the setup window's third API, and the proxy starts the daemon (2026-10-30, evening, branch `newnr`)
 
@@ -404,7 +409,8 @@ changes (the test scripts); `replay_nr_xess --env` takes the same path.
   keys in four languages); `test_nr_xess.exe`; MSVC `build_win.bat` with the three known C4068.
 
 **Next on Windows:** the release, at the owner's word.
-**Next on Linux:** `make test` in both memory modes and CTest at `6c503ae` (Open items).
+**Next on Linux:** ~~`make test` in both memory modes and CTest at `6c503ae`~~: green at `eb9b281`
+(Open items).
 
 ## DirectX 12 takes PR #20's live network swap, and `newnr` goes into `dx12` (2026-10-30, branch `dx12`)
 
