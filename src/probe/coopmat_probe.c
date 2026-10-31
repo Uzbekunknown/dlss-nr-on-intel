@@ -19,6 +19,7 @@
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
+#include <wchar.h>
 #else
 #define _DEFAULT_SOURCE         /* readlink, under -std=c11 */
 #include <unistd.h>
@@ -155,28 +156,40 @@ static uint16_t half_of(float f)
 static float a_value(int i, int k) { return (float)((i * 7 + k * 3) % 5 - 2) * 0.5f; }
 static float b_value(int k, int j) { return (float)((k * 5 + j * 3) % 7 - 3) * 0.25f; }
 
-/* The shader beside this program (a build's work/) or in work/ beside it (a release). */
+/* The shader beside this program (a build's work/) or in work/ beside it (a release). Windows gives
+ * the program's path in UTF-16: its ANSI form turns a folder outside the code page, Cyrillic on an
+ * English Windows say, into question marks, and nothing is found there. */
 static FILE *open_beside(const char *name)
 {
-	char path[4096];
-	size_t n = 0;
+	static const char *const where[] = { "", "work/" };
 #ifdef _WIN32
-	n = GetModuleFileNameA(NULL, path, sizeof path);
-	if (n >= sizeof path)
+	wchar_t path[4096], full[4200];
+	DWORD n = GetModuleFileNameW(NULL, path, 4096);
+	if (n >= 4096)
 		n = 0;
+	path[n] = 0;
+	wchar_t *slash = wcsrchr(path, L'\\'), *forward = wcsrchr(path, L'/');
+	if (!slash || (forward && forward > slash))
+		slash = forward;
+	size_t dir = slash ? (size_t)(slash - path) + 1 : 0;
+	for (int i = 0; i < 2; i++) {
+		char rest[256];
+		snprintf(rest, sizeof rest, "%s%s", where[i], name);
+		wmemcpy(full, path, dir);
+		if (!MultiByteToWideChar(CP_UTF8, 0, rest, -1, full + dir, (int)(4200 - dir)))
+			continue;
+		FILE *f = _wfopen(full, L"rb");
+		if (f)
+			return f;
+	}
+	return NULL;
 #else
+	char path[4096];
 	ssize_t got = readlink("/proc/self/exe", path, sizeof path - 1);
-	n = got > 0 ? (size_t)got : 0;
-#endif
+	size_t n = got > 0 ? (size_t)got : 0;
 	path[n] = 0;
 	char *slash = strrchr(path, '/');
-#ifdef _WIN32
-	char *back = strrchr(path, '\\');
-	if (!slash || (back && back > slash))
-		slash = back;
-#endif
 	int dir = slash ? (int)(slash - path) : 0;
-	static const char *const where[] = { "", "work/" };
 	for (int i = 0; i < 2; i++) {
 		char full[4200];
 		snprintf(full, sizeof full, "%.*s%s%s%s", dir, path, slash ? "/" : "", where[i], name);
@@ -185,6 +198,7 @@ static FILE *open_beside(const char *name)
 			return f;
 	}
 	return NULL;
+#endif
 }
 
 static VkShaderModule load_module(struct bench *b, const char *name)
