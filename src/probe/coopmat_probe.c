@@ -30,6 +30,7 @@
 #include <vulkan/vulkan.h>
 
 static FILE *report;
+static int shader_missing;      /* a bench shader was not found, so the bench is incomplete */
 
 /* Everything the probe says goes to the terminal and to the report file. */
 static void say(const char *fmt, ...)
@@ -467,6 +468,7 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 			sizes[nsizes++] = s;
 
 	int ours = 0;                       /* NR's kernels: 8x16x16 at subgroup 32, exact */
+	int unchecked = 0;                  /* 8x16x16 offered, but its shader is missing */
 	VkShaderModule kept = VK_NULL_HANDLE;
 	for (int shape = 0; shape < 2; shape++) {
 		const int n = shape ? 16 : 8;
@@ -478,6 +480,8 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 		VkShaderModule mod = load_module(&b, spv);
 		if (!mod) {
 			say("    matrix 8x%dx16: %s was not found beside the probe or in work/\n", n, spv);
+			shader_missing = 1;
+			unchecked |= n == 16;
 			continue;
 		}
 		uint16_t *bh = b.map[1];
@@ -554,8 +558,60 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 	if (b.lost)
 		say("    a dispatch failed or ran past 10 s, so nothing more was measured\n");
 	say("    NR's kernels (float16 8x16x16 at subgroup 32): %s\n",
-	    ours ? "run here" : "do NOT run here; please send this report");
+	    ours ? "run here" : unchecked ? "not checked, without coopmat_bench16.spv"
+					  : "do NOT run here; please send this report");
 	bench_close(&b);
+}
+
+/* Where the report went, in full. Windows names it through the wide API, so a folder in Cyrillic or
+ * Chinese reaches the console whatever its code page; the file and a redirected stdout take UTF-8. */
+static void say_where(void)
+{
+	if (!report) {
+		say("\nnr-gpu-report.txt could not be written in this folder: copy the text above instead.\n");
+		return;
+	}
+#ifdef _WIN32
+	wchar_t wide[1024];
+	char utf8[3 * 1024];
+	DWORD n = GetFullPathNameW(L"nr-gpu-report.txt", 1024, wide, NULL);
+	if (n && n < 1024 && WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, (int)sizeof utf8, NULL, NULL)) {
+		HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+		DWORD mode, wrote;
+		fprintf(report, "\nThis report is also in %s\n", utf8);
+		if (GetConsoleMode(out, &mode)) {
+			printf("\nThis report is also in ");
+			fflush(stdout);
+			WriteConsoleW(out, wide, n, &wrote, NULL);
+			printf("\n");
+		} else {
+			printf("\nThis report is also in %s\n", utf8);
+		}
+		return;
+	}
+	say("\nThis report is also in nr-gpu-report.txt\n");
+#else
+	char *full = realpath("nr-gpu-report.txt", NULL);
+	say("\nThis report is also in %s\n", full ? full : "nr-gpu-report.txt");
+	free(full);
+#endif
+}
+
+/* Every way out: a double click gives the probe a console of its own, which closes with it, so
+ * it stays open until Enter, a failure included. */
+static int finish(int code)
+{
+	if (report)
+		fclose(report);
+	report = NULL;
+#ifdef _WIN32
+	DWORD procs[2];
+	if (GetConsoleProcessList(procs, 2) == 1) {   /* a console of its own: started by a double click */
+		printf("\nPress Enter to close.");
+		getchar();
+	}
+#endif
+	return code;
 }
 
 int main(void)
@@ -570,8 +626,8 @@ int main(void)
 	VkResult r = vkCreateInstance(&ici, NULL, &inst);
 
 	if (r != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateInstance failed: %d\n", r);
-		return 1;
+		say("vkCreateInstance failed: %d. No Vulkan driver answered: is the GPU's driver installed?\n", r);
+		return finish(1);
 	}
 
 	PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR get_coopmat =
@@ -715,17 +771,12 @@ int main(void)
 		free(exts);
 	}
 	vkDestroyInstance(inst, NULL);
-	say("\n%sFor an Arc A-series card, please post it with the template at\n"
-	    "https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new?template=arc-a-series.yml\n",
-	    report ? "This report is also in nr-gpu-report.txt. " : "");
-	if (report)
-		fclose(report);
-#ifdef _WIN32
-	DWORD procs[2];
-	if (GetConsoleProcessList(procs, 2) == 1) {   /* a console of its own: started by a double click */
-		printf("\nPress Enter to close.");
-		getchar();
-	}
-#endif
-	return 0;
+	if (shader_missing)
+		say("\nNot everything was measured: coopmat_bench8.spv and coopmat_bench16.spv belong beside\n"
+		    "the probe or in the work folder beside it. From a release, unpack the whole ZIP first and\n"
+		    "run the probe in that folder.\n");
+	say_where();
+	say("For an Arc A-series card, please post it with the template at\n"
+	    "https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new?template=arc-a-series.yml\n");
+	return finish(0);
 }
