@@ -120,7 +120,7 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `alchemist`'s GPU report fixes (`8f96b58`, `eab7eb3`, below, 10-31 evening): `make test`.
+- `alchemist`'s GPU report fixes (`8f96b58`, `eab7eb3`, `c231bdc`, below, 10-31 evening): `make test`.
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -296,20 +296,22 @@ closed it with 0.
   code page 1252) found no shader at all: the probe built their path from the ANSI form of its
   own, all question marks. It asks for it in UTF-16 now (`eab7eb3`). Before `8f96b58` that, too,
   read "do NOT run here".
-- The last lines give the report's full path, through the wide API on a console; a failed
+- The last lines give the report's full path, through the wide API on a console, and on the
+  terminal only (`c231bdc`): the file is what gets posted, and a path names the user. A failed
   `vkCreateInstance` goes into the report, and a double-clicked console stays open after it too.
 - Checked: MSVC (also `/W4`) and MinGW gcc at the Makefile's `-Wall -Wextra`, no warning. A release
-  of `eab7eb3` unpacked under `проба\` and double-clicked: "run here", the path right on the console
-  (read back from its screen buffer), Enter closes it. With the loader pointed at no driver: the
-  failure on the console until Enter, exit 1.
+  of `c231bdc` unpacked under `проба\` and double-clicked: "run here", the path right on the console
+  (read back from its screen buffer) and not in the file, Enter closes it. With the loader pointed
+  at no driver: the failure on the console until Enter, exit 1.
 
 **Not tested:** any A-series card: 8x8x16 has never run anywhere here.
 
 **Next on Windows:** ~~`build_win.bat`, `work\coopmat_probe.exe` on the Arc 140V, a release built
 with it, and a double click on `nr_gpu_probe.exe` in the unpacked ZIP~~: done on 11-01 (above).
 Then into the next release, at the owner's word.
-**Next on Linux:** `make test` for `8f96b58` and `eab7eb3`: Linux compiles `say_where`'s `realpath`
-arm and `open_beside`'s, the latter rearranged around the Windows one but doing what it did.
+**Next on Linux:** `make test` for `8f96b58`, `eab7eb3` and `c231bdc`: Linux compiles `say_where`'s
+`realpath` arm and `open_beside`'s, the latter rearranged around the Windows one but doing what it
+did.
 
 ## The panel inside DirectX 12, and the panel's keys and clicks kept from the game (2026-10-31, later, branch `newnr`)
 
