@@ -94,13 +94,13 @@ int main(void)
      * the honest check is that the branch exists and still guards on the string rather than the
      * index. `nr_layer.c` is read as text, the way `test_menu_keys.cpp` already checks call sites. */
     {
-        /* Both files: the cadence row is built in `nr_menu_layer.c` since the menu's glue moved
-         * there. See test_menu_keys.cpp for why the read is a concatenation. */
+        /* The files: the cadence row is built in `nr_panel.c` since the menu's logic moved there
+         * from `nr_menu_layer.c`. See test_menu_keys.cpp for why the read is a concatenation. */
         static char lsrc[900000];
         size_t ln = 0;
         {
             static const char *const files[] = {
-                "src/layer/nr_layer.c", "src/layer/nr_menu_layer.c",
+                "src/layer/nr_layer.c", "src/layer/nr_menu_layer.c", "src/layer/nr_panel.c",
             };
             for (int fi = 0; fi < (int)(sizeof files / sizeof files[0]); ++fi) {
                 FILE *layer = fopen(files[fi], "rb");

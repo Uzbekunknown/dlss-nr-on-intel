@@ -114,10 +114,9 @@ void nrex_destroy(nrex_ui *ui);
 
 /* The frame's window. Call between nrex_new_frame and nrex_render.
  *
- * `hint` is the panel-level line the footer shows - the panel's own keys, and the fact that the
- * game still receives them. NULL or empty draws nothing. It was not here at all, which is why the
- * answer to "the keys also reach the game" never reached a player: the sentence lives in
- * `NR_STR_HINT`, and only the hand-drawn menu is handed it. */
+ * `hint` is the panel-level line the footer shows - the panel's own keys. NULL or empty draws
+ * nothing. It was not here at all, which is why the key list never reached a player of the ImGui
+ * panel: the sentence lives in `NR_STR_HINT`, and only the hand-drawn menu was handed it. */
 void nrex_begin_panel(nrex_ui *ui, const char *title, int language, const char *hint);
 /* The language the panel's selector is on. The caller compares it with the branch's own and, when
  * they differ, asks for the new one through the menu - the same flag the L key sets. */
@@ -203,6 +202,32 @@ int nrex_resize(nrex_ui *ui, uint32_t width, uint32_t height);
 
 /* Language name for the tab the C side shows. */
 const char *nrex_language_name(int language);
+
+/* ------------------------------------------------------------------ Direct3D 12
+ *
+ * The same panel drawn by the DirectX 12 proxy (src/xess/nr_xess_panel.cpp) over a DXGI back buffer
+ * (nr_menu_ui_d3d12.cpp): ImGui into an image of the panel's own, then that image over the back
+ * buffer in its encoding. Everything above but the Vulkan creation, render and image calls works on
+ * the handle it returns; nrex_new_frame and the panel's calls build the frame, this draws it. */
+
+/* How the back buffer holds light: SDR as drawn; scRGB, linear with 1.0 at 80 nits; HDR10, BT.2020
+ * under the PQ curve. Over the last two the panel's white is shown at 203 nits. */
+enum { NREX_ENCODING_SDR = 0, NREX_ENCODING_SCRGB = 1, NREX_ENCODING_HDR10 = 2 };
+
+/* Frames the renderer keeps upload buffers for. The caller records frame N into slot N % this, and
+ * has waited for that slot's previous frame to finish on the GPU before it does. */
+#define NREX_D3D12_FRAMES 3
+
+/* `device` is the game's ID3D12Device. The font is adopted, as by nrex_create. */
+nrex_ui *nrex_create_d3d12(void *device, const char *font_bytes, size_t font_size,
+                           const int *codepoints, int codepoint_count, const char **why);
+/* Every frame the renderer recorded has finished on the GPU before this is called. */
+void nrex_destroy_d3d12(nrex_ui *ui);
+/* Record the frame built since nrex_new_frame into `list` (an open ID3D12GraphicsCommandList of the
+ * direct type, to be executed on the queue that presents `target`), over `target` - the swap chain's
+ * current back buffer, an ID3D12Resource in PRESENT, left in PRESENT. `format` is the back buffer's
+ * DXGI format, or 0 to take it from the resource. Returns 1 when something was recorded. */
+int nrex_render_d3d12(nrex_ui *ui, void *list, int frame, void *target, uint32_t format, int encoding);
 
 #ifdef __cplusplus
 }

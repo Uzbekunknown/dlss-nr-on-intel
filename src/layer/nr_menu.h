@@ -123,6 +123,12 @@ nr_menu *nr_menu_create(void *device, void *physical_device, uint32_t queue_fami
                         uint32_t format, nr_menu_resolve_fn resolve_device,
                         nr_menu_resolve_fn resolve_instance, const char **why);
 
+/* The menu's state alone, with no Vulkan device and nothing of its own to draw with: open or shut,
+ * the language, the keys' latches and every request a key or a button raises. For the DirectX 12
+ * proxy, whose panel is drawn by a Direct3D 12 renderer (nr_menu_ui_d3d12.cpp). Everything but the
+ * drawing works on it; the drawing calls must not be made. */
+nr_menu *nr_menu_create_headless(void);
+
 void nr_menu_destroy(nr_menu *menu);
 
 /* ------------------------------------------------------------------ per frame */

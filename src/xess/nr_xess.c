@@ -66,6 +66,7 @@
 #include "nr_xess_compose.h"
 #ifndef NR_XESS_TEST
 #include "nr_xess_exports.h"
+#include "nr_xess_panel.h"
 #endif
 
 /* ---- The XeSS SDK's types, as far as this file reads them (xess.h, xess_d3d12.h) ---- */
@@ -434,6 +435,87 @@ static void start_daemon(void)
 	say("no daemon answered at %s, so this started one (process %lu); it answers once its network "
 	    "is loaded\n", config.pipe, pi.dwProcessId);
 }
+
+#ifndef NR_XESS_TEST
+/* ---- The in-game panel (nr_xess_panel.cpp), INS, as in a Vulkan game ---- */
+
+/* The trigger, for the panel: the file the setup window's Enable NR makes, which the Home key and the
+ * panel's checkbox move as well. A change made here is taken up at once, not at the next look a
+ * second later. -1 without `env=`: no trigger, and `enabled` alone decides. */
+static int panel_trigger_get(void *user)
+{
+	(void)user;
+	if (!trigger[0]) return -1;
+	return GetFileAttributesW(trigger) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void panel_trigger_set(void *user, int on)
+{
+	(void)user;
+	if (!trigger[0]) return;
+	if (on) {
+		HANDLE file = CreateFileW(trigger, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+					  NULL, OPEN_ALWAYS, 0, NULL);
+		if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+	} else {
+		DeleteFileW(trigger);
+	}
+	if (InterlockedExchange(&trigger_on, on ? 1 : 0) != (on ? 1 : 0))
+		say("NR %s from the panel\n", on ? "turned on" : "turned off");
+}
+
+static void panel_said(const char *line)
+{
+	say("panel: %s\n", line);
+}
+
+/* A path for the C runtime's fopen, which the panel's settings code uses: the ANSI code page, where a
+ * Cyrillic user name still has its letters on a Russian Windows. Empty when it does not fit. */
+static void ansi_path(const wchar_t *wide, char *out, size_t size)
+{
+	BOOL lost = FALSE;
+	out[0] = '\0';
+	if (wide && (!WideCharToMultiByte(CP_ACP, 0, wide, -1, out, (int)size, NULL, &lost) || lost))
+		out[0] = '\0';
+}
+
+/* The panel, unless NR_MENU=0 in nr-env.txt or in the game's environment: it finds DXGI's Present
+ * on a thread of its own and draws on the first frame a swap chain presents. The probe that finds
+ * Present is at the release's root beside nr_xess.dll (NR_ROOT), or beside this DLL for a test; its
+ * answer is kept beside nr-env.txt, in the game's dlss-nr folder, which Remove NR takes away whole. */
+static void start_panel(void)
+{
+	const wchar_t *off = env_value(L"NR_MENU");
+	const char *off_here = getenv("NR_MENU");
+	if ((off && !wcscmp(off, L"0")) || (off_here && !strcmp(off_here, "0"))) {
+		say("the panel is off (NR_MENU=0)\n");
+		return;
+	}
+	static nr_xess_panel_host host;
+	memset(&host, 0, sizeof host);
+	host.say = panel_said;
+	host.trigger_get = panel_trigger_get;
+	host.trigger_set = panel_trigger_set;
+	const wchar_t *root = env_value(L"NR_ROOT");
+	if (root) _snwprintf(host.probe, 1024, L"%ls\\nr_present_probe.exe", root);
+	else _snwprintf(host.probe, 1024, L"%lsnr_present_probe.exe", here);
+	wchar_t folder[1024];
+	folder[0] = L'\0';
+	if (config.env[0] && MultiByteToWideChar(CP_UTF8, 0, config.env, -1, folder, 1024)) {
+		wchar_t *slash = wcsrchr(folder, L'\\');
+		if (slash) slash[1] = L'\0';
+		else folder[0] = L'\0';
+	}
+	_snwprintf(host.answer, 1024, L"%lsnr-present.txt", folder[0] ? folder : here);
+	ansi_path(env_value(L"NR_SETTINGS"), host.settings, sizeof host.settings);
+	if (config.env[0]) {
+		wchar_t env[1024];
+		if (MultiByteToWideChar(CP_UTF8, 0, config.env, -1, env, 1024))
+			ansi_path(env, host.env_file, sizeof host.env_file);
+	}
+	nr_xess_panel_start(&host);
+}
+#endif
 
 /* ---- Pixels on the CPU: the proxy NR is given, and its change ---- */
 
@@ -2448,6 +2530,9 @@ xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsComm
 			       const xess_d3d12_execute_params_t *params)
 {
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
+#ifndef NR_XESS_TEST
+	nr_xess_panel_list(list);
+#endif
 	handed = params ? params->pColorTexture : NULL;
 	cut_now = 0;
 	/* The setup window's Enable NR, looked at once a second: a file's attributes, on this thread */
@@ -2557,6 +2642,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 	nr_split_set_log(say_line);
 	read_settings(1);
 	say("NR in front of XeSS, process %lu\n", GetCurrentProcessId());
+	start_panel();
 	return TRUE;
 }
 #endif

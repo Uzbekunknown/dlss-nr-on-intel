@@ -65,42 +65,13 @@ typedef pthread_mutex_t nr_mutex_t;
 #endif
 #define LAYER_ERROR(...) fprintf(stderr, __VA_ARGS__)
 
-#ifdef _WIN32
-#define nr_key_down(vk) ((GetAsyncKeyState(vk) & 0x8000) != 0)
-#else
-#define nr_key_down(vk) (0)
-#endif
-
-static inline double nr_now_seconds(void)
-{
-#ifdef _WIN32
-	static int have_frequency;
-	static LARGE_INTEGER cached;
-	LARGE_INTEGER counter;
-	if (!have_frequency) {
-		QueryPerformanceFrequency(&cached);
-		have_frequency = 1;
-	}
-	if (QueryPerformanceCounter(&counter) && cached.QuadPart > 0)
-		return (double)counter.QuadPart / (double)cached.QuadPart;
-	return 0.0;
-#else
-	struct timespec ts;
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
-		return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
-	return 0.0;
-#endif
-}
+/* `nr_key_down` and `nr_now_seconds`, which the panel's logic shares with the DirectX 12 proxy. */
+#include "nr_focus.h"
 
 #define MAX_SWAPCHAINS 8
 #define MAX_IMAGES 8
 
-/* The panel's own array bounds. `MENU_UI_MAX_ROWS` is the widest knob list the bridge can hand over,
- * with room to spare; `MENU_UI_MAX_CHOICES` the widest option list any knob has. They lived beside
- * the code that filled them, which moved to `nr_menu_layer.c`, so they are here where both the
- * struct (which holds the name store) and the filler can see them. */
-#define MENU_UI_MAX_ROWS 24
-#define MENU_UI_MAX_CHOICES 8
+struct nr_panel;
 
 struct device_data {
 	VkDevice device;
@@ -181,7 +152,6 @@ struct device_data {
 	 * `menu_rows` and the strings behind them are the bridge's, refreshed once a frame while the
 	 * menu is open: the knob list lives in Python and this file must not keep a second copy. */
 	nr_menu *menu;
-	nr_menu_bridge *menu_bridge;
 	int menu_state;
 	const char *menu_reason;
 	/* Why this device cannot carry the panel at all, decided at vkCreateDevice from what the game
@@ -195,68 +165,9 @@ struct device_data {
 	VkCommandBuffer menu_commands;
 	VkFence menu_fence;
 	nrex_ui *menu_ui;               /* the ImGui UI, when it started; NULL means the quad path */
-	int menu_ui_l_was_down;         /* L's previous state: the language key is level-polled, so
-	                                 * cycling it needs an edge of its own */
-	int menu_ui_ins_was_down;       /* the same, for INS: the panel's only way in */
-	/* The same, for the three keys the ImGui build has to own itself.
-	 *
-	 * **This comment used to say all three live inside `nr_menu_update`'s
-	 * `if (m->open && m->read_keys)` block, and that was never true of all three.** S and R were
-	 * moved OUT of that block on purpose, because the ImGui build sets `read_keys` to 0 and they
-	 * were dead inside it; Home was never in it at all. What was true is that the ImGui build gets
-	 * none of the three from `nr_menu.c`, so this file reads them - which is the only part that
-	 * matters here.
-	 *
-	 * The consequence nobody noticed at the time: being outside the block also left S, R and Home
-	 * with NO focus check, so an unfocused Home toggled the effect and an S typed in a chat window
-	 * wrote the settings file. `nr_menu.c` now gates all three on `read_keys`, and the layer holds
-	 * that off while the game is not in front (see `menu_read_keys`), so the two readers agree
-	 * about when the keyboard is the game's.
-	 *
-	 * The report that produced the move, for the record: "S does not save, R does not reset, END
-	 * does nothing", with the panel drawing and its buttons working fine. INS and L already lived
-	 * here for the same reason and kept working, which is what made the three the odd ones out
-	 * rather than the pattern.
-	 *
-	 * Home is the effect toggle. It was END, and END is bound by enough games that the key
-	 * never arrived; Home was the comparison, and the comparison is what this replaces - so
-	 * the key is free and already means "change the picture", which is what the toggle does. */
-	int menu_ui_toggle_was_down;
-	int menu_ui_save_was_down;
-	int menu_ui_reset_was_down;
-	/* The pointer the panel uses, in swapchain pixels, read from the system cursor while the
-	 * panel owns it (see `menu_ui_mouse`: the layer confines the cursor to the window and writes
-	 * its position every frame, so this is one source of truth rather than an accumulated guess).
-	 *
-	 * Only meaningful while `menu_ui_have_pointer` is set. */
-	/* Whether the OS pointer is currently hidden for the panel. `ShowCursor` is a counter,
-	 * so it is pushed down once on open and restored once on close rather than every frame. */
-	int menu_ui_cursor_hidden;
-	float menu_ui_pointer_x;
-	float menu_ui_pointer_y;
-	int menu_ui_have_pointer;
-	/* The pointer was pushed out past the picture's edge, and the panel waits for the cursor to
-	 * come back in; and how far it has been pushed against an edge so far, in swapchain pixels. */
-	int menu_ui_outside;
-	float menu_ui_push;
-	/* The OS position the last delta was measured from.
-	 *
-	 * Two `long`s, not a `POINT`: this struct is declared in every translation unit that includes
-	 * the layer's header, `POINT` exists only under `windows.h`, and a Windows type here made the
-	 * Linux build fail at a place nothing to do with the window code - the field is used only by
-	 * `menu_ui_mouse`, which is itself Windows-only now. Plain integers are portable and the
-	 * conversion happens in the one place that reads them. */
-	long menu_ui_last_cursor_x;
-	long menu_ui_last_cursor_y;
-	/* When this device's panel was last drawn, in seconds from the same clock `nrex_repeat`
-	 * uses, so ImGui's keyboard repeat is timed on the real interval between presents.
-	 *
-	 * Per device, not a file static: the layer runs several devices in one process (the
-	 * Vulkan loader hands a game's devices to the same layer), and two devices presenting
-	 * alternately would otherwise make each one's delta the time since the OTHER one drew
-	 * a panel - a value with nothing to do with its own present rate. Zero means "not drawn
-	 * yet", which is what makes the first frame fall back to the fixed step. */
-	double menu_ui_last_draw;
+	/* The panel's logic - the keys, the rows, the pointer, the bridge - shared with the DirectX 12
+	 * proxy (`nr_panel.c`); NULL until the menu is built. This file keeps the drawing. */
+	struct nr_panel *panel;
 };
 
 struct swapchain_data {

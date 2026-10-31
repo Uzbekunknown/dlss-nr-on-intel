@@ -102,10 +102,11 @@ int main(void)
           find(source, "if (key_pressed(m, NR_KEY_C))") ? "NR_KEY_C still handled" : "removed");
 
     /* The layer reads Home, S and R itself for the ImGui build, next to INS and L. */
-    /* Both files, concatenated. The menu's glue moved to `nr_menu_layer.c`, and these checks are
-     * about a SHAPE being present in the layer's code - which is now two files. Naming one would
-     * fail the next time a function moved, which is a worse test than one that says "somewhere in
-     * the layer". */
+    /* The files, concatenated. The menu's glue moved to `nr_menu_layer.c` and then, all but the
+     * drawing, to `nr_panel.c`, which the DirectX 12 proxy shares; the key reader and the clock went
+     * to `nr_focus.h` with it. These checks are about a SHAPE being present in the layer's code -
+     * which is now several files. Naming one would fail the next time a function moved, which is a
+     * worse test than one that says "somewhere in the layer". */
     static char lsource[1600000];
     size_t ln = 0;
     {
@@ -116,6 +117,7 @@ int main(void)
         static const char *const files[] = {
             "src/layer/nr_layer.c", "src/layer/nr_menu_layer.c", "src/layer/nr_layer_state.h",
             "src/layer/nr_menu.c", "src/layer/nr_menu_font.c", "src/layer/nr_menu_bridge.c",
+            "src/layer/nr_panel.c", "src/layer/nr_focus.h", "src/layer/nr_input_guard.c",
         };
         for (int fi = 0; fi < (int)(sizeof files / sizeof files[0]); ++fi) {
             FILE *layer = fopen(files[fi], "rb");
@@ -186,15 +188,26 @@ int main(void)
      *
      * With the panel open, ImGui treats Home as "focus the first item", so the key moved the
      * selection instead of reaching the toggle. Claiming it for the window is what stops nav. */
-    FILE *ui_src = fopen("src/layer/nr_menu_ui.cpp", "rb");
-    if (!ui_src) {
-        printf("  FAIL  nr_menu_ui.cpp was not readable\n");
-        return 1;
+    /* The panel and its Vulkan renderer, which were one file until the Direct3D 12 renderer came:
+     * the Home claim is the panel's, the handle widths below the Vulkan renderer's. */
+    static char usource[800000];
+    size_t un = 0;
+    {
+        static const char *const ui_files[] = {
+            "src/layer/nr_menu_ui.cpp", "src/layer/nr_menu_ui_vk.cpp",
+        };
+        for (int fi = 0; fi < (int)(sizeof ui_files / sizeof ui_files[0]); ++fi) {
+            FILE *ui_src = fopen(ui_files[fi], "rb");
+            if (!ui_src) {
+                printf("  FAIL  %s was not readable\n", ui_files[fi]);
+                return 1;
+            }
+            un += fread(usource + un, 1, sizeof usource - 1 - un, ui_src);
+            fclose(ui_src);
+            if (un + 1 < sizeof usource) usource[un++] = '\n';
+        }
+        usource[un] = '\0';
     }
-    static char usource[400000];
-    size_t un = fread(usource, 1, sizeof usource - 1, ui_src);
-    usource[un] = '\0';
-    fclose(ui_src);
 
     /* **The result is stored before it is used twice, and that is not style.**
      *
@@ -227,6 +240,15 @@ int main(void)
         check(cursor_gated, "the cursor release is gated",
               cursor_gated ? "ShowCursor and ClipCursor inside #ifdef _WIN32"
                            : "MISSING - a Linux build reaches ShowCursor");
+        /* And the release gives a game back the box it held the cursor in, not none. Unreal
+         * confines the cursor once, when it takes the mouse, so a bare `ClipCursor(NULL)` on close
+         * let the cursor out of Hogwarts Legacy's window for the rest of the session (2026-10-31).
+         * A running test would have to take the user's real cursor to see it. */
+        int clip_returned = find(lsource, "if (read && !ours) game_clip_note(data, &held, origin);")
+                            && find(lsource, "\t\tClipCursor(&box);\n\t} else\n\t\tClipCursor(NULL);\n#endif");
+        check(clip_returned, "closing the panel gives the game its cursor box back",
+              clip_returned ? "read under the pin, put back on close"
+                            : "MISSING - closing frees a cursor the game had confined");
         int timer_shared = find(lsource, "double nr_now_seconds(void)")
                            && find(lsource, "clock_gettime(CLOCK_MONOTONIC, &ts)");
         check(timer_shared, "the frame timer has a non-Windows arm",

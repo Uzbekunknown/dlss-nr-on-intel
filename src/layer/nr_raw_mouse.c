@@ -3,6 +3,8 @@
  * See nr_raw_mouse.h. The short version: once `ClipCursor` holds the cursor inside a one-pixel
  * box, `GetCursorPos` cannot report movement - it returns the box. The movement still arrives as
  * raw input, which is independent of where the cursor is being held, and that is what this reads.
+ * The keyboard's registration is taken with it, so a game that reads its keys as raw input gets
+ * none while the panel has them (nr_input_guard.h).
  */
 #include "nr_raw_mouse.h"
 
@@ -49,15 +51,25 @@ static int ensure_window(void)
     return g_window != NULL;
 }
 
-/* The game's own registration for the mouse (usage page 1, usage 2), if it has one.
+/* The game's own registrations for the mouse (usage page 1, usage 2) and the keyboard (usage 6),
+ * if it has them.
  *
  * A process holds ONE registration per usage: registering here REPLACES the game's, and a plain
  * `RIDEV_REMOVE` on the way out would leave the game with none - a game that reads the mouse
  * through `WM_INPUT` (most do, UE4 among them) has no mouse after the panel has been opened once.
  * So the game's registration is read before ours goes in, and put back, target window and flags,
- * when ours comes out. PR #20 review, item 1. */
-static RAWINPUTDEVICE g_saved_device;
-static int            g_have_saved;
+ * when ours comes out. PR #20 review, item 1.
+ *
+ * The keyboard's is taken too since 2026-10-31, and there replacing the game's is the point: while
+ * ours is in, the game's raw keys go to our window, where `nr_raw_mouse_take` drains them with the
+ * mouse's, so a game that reads its keyboard as raw input - by `WM_INPUT` or by `GetRawInputBuffer`
+ * - does not act on what is typed into the panel. -1 in `g_have_saved` is a registration of ours
+ * that did not go in, with nothing to put back. */
+#define RAW_MOUSE 0
+#define RAW_KEYBOARD 1
+static const USHORT   g_usage[2] = { 0x02, 0x06 };
+static RAWINPUTDEVICE g_saved_device[2];
+static int            g_have_saved[2];
 
 /* The game's own mouse registration, read before ours goes in so it can be put back.
  *
@@ -76,9 +88,9 @@ static int            g_have_saved;
  * **`ERROR_INSUFFICIENT_BUFFER` is retried.** The count the first call reports is a snapshot; a
  * game that registers a device between the two calls would have its entry dropped. The retry
  * costs one allocation and makes the read honest. */
-static void save_game_registration(void)
+static void save_game_registration(int which)
 {
-    g_have_saved = 0;
+    g_have_saved[which] = 0;
     UINT count = 0;
     if (GetRegisteredRawInputDevices(NULL, &count, sizeof(RAWINPUTDEVICE)) == (UINT)-1 || !count)
         return;
@@ -90,9 +102,9 @@ static void save_game_registration(void)
         UINT got = count;
         if (GetRegisteredRawInputDevices(devices, &got, sizeof(RAWINPUTDEVICE)) != (UINT)-1) {
             for (UINT i = 0; i < got && i < count; ++i) {
-                if (devices[i].usUsagePage == 0x01 && devices[i].usUsage == 0x02) {
-                    g_saved_device = devices[i];
-                    g_have_saved = 1;
+                if (devices[i].usUsagePage == 0x01 && devices[i].usUsage == g_usage[which]) {
+                    g_saved_device[which] = devices[i];
+                    g_have_saved[which] = 1;
                     break;
                 }
             }
@@ -109,7 +121,8 @@ int nr_raw_mouse_start(void)
 {
     if (g_registered) return 1;
     if (!ensure_window()) return 0;
-    save_game_registration();
+    save_game_registration(RAW_MOUSE);
+    save_game_registration(RAW_KEYBOARD);
 
     RAWINPUTDEVICE device;
     device.usUsagePage = 0x01;
@@ -117,6 +130,10 @@ int nr_raw_mouse_start(void)
     device.dwFlags = RIDEV_INPUTSINK;   /* also while the game, not us, is foreground */
     device.hwndTarget = g_window;
     if (!RegisterRawInputDevices(&device, 1, sizeof device)) return 0;
+    /* The keyboard's too, so the game's raw keys come here while the panel is open. Not fatal when
+     * it fails: the pointer works without it, and the window's messages are held either way. */
+    device.usUsage = 0x06;
+    if (!RegisterRawInputDevices(&device, 1, sizeof device)) g_have_saved[RAW_KEYBOARD] = -1;
 
     g_registered = 1;
     g_pending_x = 0;
@@ -138,28 +155,36 @@ int nr_raw_mouse_start(void)
 void nr_raw_mouse_stop(void)
 {
     if (!g_registered) return;
-    RAWINPUTDEVICE device;
-    if (g_have_saved) {
-        /* The game had its own registration: put it back exactly as it was - same target window,
-         * same flags - rather than removing it. A REMOVE here is what would strip a WM_INPUT game
-         * of its mouse. A restore can fail if the game's target window died while the panel was
-         * open; nothing recoverable is left either way, and the state is cleared regardless. */
-        device = g_saved_device;
-    } else {
-        device.usUsagePage = 0x01;
-        device.usUsage = 0x02;
-        device.dwFlags = RIDEV_REMOVE;
-        device.hwndTarget = NULL;
+    for (int which = RAW_MOUSE; which <= RAW_KEYBOARD; ++which) {
+        if (g_have_saved[which] < 0) {   /* ours never went in: nothing to put back */
+            g_have_saved[which] = 0;
+            continue;
+        }
+        RAWINPUTDEVICE device;
+        if (g_have_saved[which]) {
+            /* The game had its own registration: put it back exactly as it was - same target
+             * window, same flags - rather than removing it. A REMOVE here is what would strip a
+             * WM_INPUT game of its mouse. A restore can fail if the game's target window died while
+             * the panel was open; nothing recoverable is left either way, and the state is cleared
+             * regardless. */
+            device = g_saved_device[which];
+        } else {
+            device.usUsagePage = 0x01;
+            device.usUsage = g_usage[which];
+            device.dwFlags = RIDEV_REMOVE;
+            device.hwndTarget = NULL;
+        }
+        /* The restore is the whole point of this file, so a failure to restore is worth a line. It
+         * used to be silent: the comment already conceded a restore can fail when the game's target
+         * window died, and nobody would have known. A line on stderr costs nothing and this runs
+         * once per panel open. */
+        if (!RegisterRawInputDevices(&device, 1, sizeof device))
+            fprintf(stderr, "[dlss-nr] raw %s: could not put the game's registration back "
+                            "(err %lu); a WM_INPUT game may have no %s until restarted\n",
+                    which == RAW_MOUSE ? "mouse" : "keyboard", GetLastError(),
+                    which == RAW_MOUSE ? "mouse" : "keyboard");
+        g_have_saved[which] = 0;
     }
-    /* The restore is the whole point of this file, so a failure to restore is worth a line. It
-     * used to be silent: the comment already conceded a restore can fail when the game's target
-     * window died, and nobody would have known. A line on stderr costs nothing and this runs
-     * once per panel open. */
-    if (!RegisterRawInputDevices(&device, 1, sizeof device))
-        fprintf(stderr, "[dlss-nr] raw mouse: could not put the game's registration back "
-                        "(err %lu); a WM_INPUT game may have no mouse until restarted\n",
-                GetLastError());
-    g_have_saved = 0;
     g_registered = 0;
     g_pending_x = 0;
     g_pending_y = 0;

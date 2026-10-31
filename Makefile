@@ -103,7 +103,7 @@ endif
 MENU_TESTS :=
 ifeq ($(OS),Windows_NT)
 MENU_TESTS := work/test_menu_rows work/test_menu_persist work/test_soft_cursor \
-              work/test_menu_hints work/test_settings_writer
+              work/test_menu_hints work/test_settings_writer work/test_input_guard
 endif
 
 # The in-game menu, as sources the layer links - **Windows only**.
@@ -121,12 +121,14 @@ IMGUI_SOURCES :=
 ifeq ($(OS),Windows_NT)
 MENU_SOURCES := src/layer/nr_menu_layer.c src/layer/nr_menu.c src/layer/nr_menu_font.c \
                 src/layer/nr_menu_strings.c src/layer/nr_menu_strings_lookup.c \
-                src/layer/nr_menu_bridge.c src/layer/nr_raw_mouse.c
+                src/layer/nr_menu_bridge.c src/layer/nr_raw_mouse.c src/layer/nr_panel.c \
+                src/layer/nr_input_guard.c
 # The ImGui panel behind it, including the C++ translation unit behind a plain-C interface. The
 # vendored sources want IMGUI_DEFINE_MATH_OPERATORS and nothing else defines it.
 IMGUI_SOURCES := third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp \
                  third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp \
-                 third_party/imgui/imgui_impl_vulkan.cpp src/layer/nr_menu_ui.cpp
+                 third_party/imgui/imgui_impl_vulkan.cpp src/layer/nr_menu_ui.cpp \
+                 src/layer/nr_menu_ui_vk.cpp
 endif
 
 # `nr_file.c` and `nr_focus.c` are not menu code and the layer uses them on both platforms: the
@@ -184,6 +186,11 @@ work/test_focus_gate: src/layer/test_focus_gate.c src/layer/nr_focus.c
 # `cbSize` bug it covers passed on 32-bit and failed on every 64-bit process.
 work/test_raw_mouse: src/layer/test_raw_mouse.c src/layer/nr_raw_mouse.c
 	$(CC) $(CFLAGS) -o $@ src/layer/test_raw_mouse.c src/layer/nr_raw_mouse.c $(MENU_LIBS)
+
+# The panel's keys and clicks kept from the game's window while it is open (nr_input_guard.h): a
+# window of its own and messages sent to itself, so no focus moves and no input is synthesised.
+work/test_input_guard: src/layer/test_input_guard.c src/layer/nr_input_guard.c
+	$(CC) $(CFLAGS) -o $@ src/layer/test_input_guard.c src/layer/nr_input_guard.c $(MENU_LIBS)
 
 work/test_soft_cursor: src/layer/test_soft_cursor.cpp $(IMGUI_SOURCES)
 	$(CXX) $(CXXFLAGS) -Ithird_party/imgui -Isrc/layer -o $@ src/layer/test_soft_cursor.cpp \
@@ -309,6 +316,7 @@ ifeq ($(OS),Windows_NT)
 	work/test_focus_gate
 	work/test_settings_writer
 	work/test_menu_hints
+	work/test_input_guard
 endif
 	python3 src/layer/test_daemon.py
 	python3 src/layer/test_daemon_owner.py

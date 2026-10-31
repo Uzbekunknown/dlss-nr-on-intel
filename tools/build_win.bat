@@ -147,12 +147,12 @@ rem makes the panel's reporting and the bridge's handoff checkable on any machin
 rem file. `test_exchange.c` is the opposite shape and stays in the /TC block below: it is C, and it
 rem #includes nr_layer.c so its symbols are already inside its own object.
 echo [3/6] building nr_layer.dll ...
-cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /DVK_NO_PROTOTYPES /D_WIN32 /D_IMGUI_DEFINE_MATH_OPERATORS /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fd"%REPO%\imgui.pdb" /c "%REPO%\third_party\imgui\imgui.cpp" "%REPO%\third_party\imgui\imgui_draw.cpp" "%REPO%\third_party\imgui\imgui_tables.cpp" "%REPO%\third_party\imgui\imgui_widgets.cpp" "%REPO%\third_party\imgui\imgui_impl_vulkan.cpp" "%REPO%\src\layer\nr_menu_ui.cpp" "%REPO%\src\layer\test_menu_panel.cpp" "%REPO%\src\layer\test_menu_side.cpp" "%REPO%\src\layer\test_menu_keys.cpp" "%REPO%\src\layer\test_menu_language.cpp" "%REPO%\src\layer\test_menu_actions.cpp" "%REPO%\src\layer\test_menu_pacing.cpp" "%REPO%\src\layer\test_menu_choices.cpp"
+cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /DVK_NO_PROTOTYPES /D_WIN32 /D_IMGUI_DEFINE_MATH_OPERATORS /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fd"%REPO%\imgui.pdb" /c "%REPO%\third_party\imgui\imgui.cpp" "%REPO%\third_party\imgui\imgui_draw.cpp" "%REPO%\third_party\imgui\imgui_tables.cpp" "%REPO%\third_party\imgui\imgui_widgets.cpp" "%REPO%\third_party\imgui\imgui_impl_vulkan.cpp" "%REPO%\src\layer\nr_menu_ui.cpp" "%REPO%\src\layer\nr_menu_ui_vk.cpp" "%REPO%\src\layer\test_menu_panel.cpp" "%REPO%\src\layer\test_menu_side.cpp" "%REPO%\src\layer\test_menu_keys.cpp" "%REPO%\src\layer\test_menu_language.cpp" "%REPO%\src\layer\test_menu_actions.cpp" "%REPO%\src\layer\test_menu_pacing.cpp" "%REPO%\src\layer\test_menu_choices.cpp"
 if errorlevel 1 ( echo ERROR: imgui objects failed & exit /b 1 )
 rem The objects landed in the current directory (cl /c with no /Fo). Move each by name and fail
 rem loudly if any is missing: a stale object from an earlier build, linked in place of a fresh one,
 rem cost this menu a full day of symptoms that matched no source change.
-for %%F in (imgui.obj imgui_draw.obj imgui_tables.obj imgui_widgets.obj imgui_impl_vulkan.obj nr_menu_ui.obj test_menu_panel.obj test_menu_side.obj test_menu_keys.obj test_menu_language.obj test_menu_actions.obj test_menu_pacing.obj test_menu_choices.obj) do (
+for %%F in (imgui.obj imgui_draw.obj imgui_tables.obj imgui_widgets.obj imgui_impl_vulkan.obj nr_menu_ui.obj nr_menu_ui_vk.obj test_menu_panel.obj test_menu_side.obj test_menu_keys.obj test_menu_language.obj test_menu_actions.obj test_menu_pacing.obj test_menu_choices.obj) do (
   if exist "%%F" ( move /Y "%%F" "%REPO%\" >nul ) else if exist "%REPO%\third_party\imgui\%%F" (
     move /Y "%REPO%\third_party\imgui\%%F" "%REPO%\" >nul
   ) else if exist "%REPO%\src\layer\%%F" (
@@ -168,18 +168,18 @@ rem function with no prototype, C assuming it returns `int`, and a 64-bit pointe
 rem its top half gone. The first one crashed a game inside a frame; the second stopped MinGW and
 rem Linux from compiling the layer at all. GCC treats it as an error already (14 made it one), so
 rem this is only bringing MSVC up to the standard the other two compilers hold.
-cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\test_exchange.c"
+cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
 if errorlevel 1 ( echo ERROR: layer C objects failed & exit /b 1 )
 rem link.exe, not cl, for the mixed C/C++ link: cl with /TC recompiles .obj inputs it is handed
 rem on the same command line (C2018, reading the binary as source), which is not a link at all.
-link /nologo /DLL /OUT:"%WORK%\nr_layer.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%REPO%\nr_layer.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" user32.lib gdi32.lib
+link /nologo /DLL /OUT:"%WORK%\nr_layer.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%REPO%\nr_layer.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: nr_layer.dll failed & exit /b 1 )
 rem The layer's own exchange(), as a fixture: `test_exchange.c` INCLUDES nr_layer.c, so nr_layer.obj
 rem is left out of THIS link - its symbols are already in test_exchange.obj. The masked case in
 rem src/layer/test_daemon.py exists nowhere else: the request carries a mask plane the answer does
 rem not, so send and receive have different sizes. CMake builds this on the Linux line and nothing
 rem built it on Windows, which is why the daemon's exchange tests could not run here at all.
-link /nologo /OUT:"%WORK%\test_exchange.exe" "%REPO%\test_exchange.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" user32.lib gdi32.lib
+link /nologo /OUT:"%WORK%\test_exchange.exe" "%REPO%\test_exchange.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_exchange.exe failed & exit /b 1 )
 echo   test_exchange.exe
 rem The menu's own two fixtures, headless. Same object set as the DLL's link, with nr_layer.obj left
@@ -249,6 +249,16 @@ if errorlevel 1 ( echo ERROR: nr_raw_mouse compilation failed & exit /b 1 )
 link /nologo /OUT:"%WORK%\test_raw_mouse.exe" "%WORK%\test_raw_mouse.obj" "%WORK%\nr_raw_mouse_for_probe.obj" user32.lib
 if errorlevel 1 ( echo ERROR: test_raw_mouse.exe failed & exit /b 1 )
 echo   test_raw_mouse.exe
+rem The panel keeps its keys and clicks from the game's window while it is open: a press the
+rem game never saw gets no release, one it saw does. Its own window, messages sent to itself;
+rem no focus moves and no input is synthesised, so it runs anywhere.
+cl /nologo /O2 /TC /D_WIN32 /I"%REPO%\src\layer" /Fo:"%WORK%\test_input_guard.obj" /c "%REPO%\src\layer\test_input_guard.c"
+if errorlevel 1 ( echo ERROR: test_input_guard compilation failed & exit /b 1 )
+cl /nologo /O2 /TC /D_WIN32 /I"%REPO%\src\layer" /Fo:"%WORK%\nr_input_guard_for_test.obj" /c "%REPO%\src\layer\nr_input_guard.c"
+if errorlevel 1 ( echo ERROR: nr_input_guard compilation failed & exit /b 1 )
+link /nologo /OUT:"%WORK%\test_input_guard.exe" "%WORK%\test_input_guard.obj" "%WORK%\nr_input_guard_for_test.obj" user32.lib
+if errorlevel 1 ( echo ERROR: test_input_guard.exe failed & exit /b 1 )
+echo   test_input_guard.exe
 del /Q "%REPO%\*.obj" >nul 2>&1
 echo   nr_layer.dll
 echo   nr_layer.dll  (with the INS settings menu: user32, gdi32)
@@ -284,11 +294,11 @@ rem /TP, into a scratch directory of their own - an x86 imgui.obj in the repo ro
 rem picked up by the 64-bit link on the next run and fail there instead.
 set "X86OBJ=%WORK%\obj32"
 if not exist "%X86OBJ%" mkdir "%X86OBJ%"
-cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /DVK_NO_PROTOTYPES /D_WIN32 /D_IMGUI_DEFINE_MATH_OPERATORS /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\third_party\imgui\imgui.cpp" "%REPO%\third_party\imgui\imgui_draw.cpp" "%REPO%\third_party\imgui\imgui_tables.cpp" "%REPO%\third_party\imgui\imgui_widgets.cpp" "%REPO%\third_party\imgui\imgui_impl_vulkan.cpp" "%REPO%\src\layer\nr_menu_ui.cpp""
+cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /DVK_NO_PROTOTYPES /D_WIN32 /D_IMGUI_DEFINE_MATH_OPERATORS /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\third_party\imgui\imgui.cpp" "%REPO%\third_party\imgui\imgui_draw.cpp" "%REPO%\third_party\imgui\imgui_tables.cpp" "%REPO%\third_party\imgui\imgui_widgets.cpp" "%REPO%\third_party\imgui\imgui_impl_vulkan.cpp" "%REPO%\src\layer\nr_menu_ui.cpp" "%REPO%\src\layer\nr_menu_ui_vk.cpp""
 if errorlevel 1 ( echo ERROR: imgui x86 objects failed & exit /b 1 )
-cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /utf-8 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c""
+cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /utf-8 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c""
 if errorlevel 1 ( echo ERROR: layer x86 C objects failed & exit /b 1 )
-cmd /c ""%VCX86%" >nul && link /nologo /DLL /MACHINE:X86 /OUT:"%WORK%\nr_layer32.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%X86OBJ%\nr_layer.obj" "%X86OBJ%\nr_menu_layer.obj" "%X86OBJ%\nr_menu.obj" "%X86OBJ%\nr_menu_font.obj" "%X86OBJ%\nr_menu_strings.obj" "%X86OBJ%\nr_menu_strings_lookup.obj" "%X86OBJ%\nr_menu_bridge.obj" "%X86OBJ%\nr_file.obj" "%X86OBJ%\nr_focus.obj" "%X86OBJ%\nr_raw_mouse.obj" "%X86OBJ%\imgui.obj" "%X86OBJ%\imgui_draw.obj" "%X86OBJ%\imgui_tables.obj" "%X86OBJ%\imgui_widgets.obj" "%X86OBJ%\imgui_impl_vulkan.obj" "%X86OBJ%\nr_menu_ui.obj" user32.lib gdi32.lib"
+cmd /c ""%VCX86%" >nul && link /nologo /DLL /MACHINE:X86 /OUT:"%WORK%\nr_layer32.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%X86OBJ%\nr_layer.obj" "%X86OBJ%\nr_menu_layer.obj" "%X86OBJ%\nr_menu.obj" "%X86OBJ%\nr_menu_font.obj" "%X86OBJ%\nr_menu_strings.obj" "%X86OBJ%\nr_menu_strings_lookup.obj" "%X86OBJ%\nr_menu_bridge.obj" "%X86OBJ%\nr_file.obj" "%X86OBJ%\nr_focus.obj" "%X86OBJ%\nr_raw_mouse.obj" "%X86OBJ%\nr_panel.obj" "%X86OBJ%\nr_input_guard.obj" "%X86OBJ%\imgui.obj" "%X86OBJ%\imgui_draw.obj" "%X86OBJ%\imgui_tables.obj" "%X86OBJ%\imgui_widgets.obj" "%X86OBJ%\imgui_impl_vulkan.obj" "%X86OBJ%\nr_menu_ui.obj" "%X86OBJ%\nr_menu_ui_vk.obj" user32.lib gdi32.lib"
 if errorlevel 1 ( echo ERROR: nr_layer32.dll failed & exit /b 1 )
 echo   nr_layer32.dll
 echo   nr_layer32.dll  (with the INS settings menu)

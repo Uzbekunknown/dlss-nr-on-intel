@@ -57,7 +57,7 @@ FIXTURES = ("test_menu_panel", "test_menu_side", "test_menu_keys", "test_menu_la
 # The input-path fixtures. They link user32 and drive real registrations and windows, so they are
 # Windows-only by construction - off Windows the runner says so rather than skipping, because
 # nothing else watches what they cover.
-INPUT_FIXTURES = ("test_focus_gate", "test_raw_mouse")
+INPUT_FIXTURES = ("test_focus_gate", "test_raw_mouse", "test_input_guard")
 # The ones that must run from the repository root, because they read the sources there rather
 # than driving a linked copy of them. `test_menu_choices` joined them when it gained a check that
 # `nr_layer.c` still copies the first cadence option instead of numbering it - a source assertion,

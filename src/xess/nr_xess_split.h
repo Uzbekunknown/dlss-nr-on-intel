@@ -33,6 +33,16 @@ void nr_split_restore(ID3D12GraphicsCommandList *list, const nr_split_snapshot *
 int nr_split_cut(ID3D12GraphicsCommandList *list, nr_split_run run, nr_split_discard discard, void *user,
                  const nr_split_snapshot *snapshot, char *why, size_t why_size);
 
+/* For the panel (nr_xess_panel.cpp), whose work goes on the queue a swap chain presents on, which
+ * DXGI does not name. `nr_split_watch` hooks the device's direct queue class's ExecuteCommandLists
+ * now, cut or no cut; from then on every queue that executes command lists is noted.
+ * `nr_split_known_queue` says whether `queue` is a direct queue seen executing them, which is how a
+ * pointer read out of a swap chain is trusted before it is used; `nr_split_last_queue` is the
+ * direct queue this thread last executed on, or NULL. */
+int nr_split_watch(ID3D12Device *device, char *why, size_t why_size);
+int nr_split_known_queue(const void *queue);
+ID3D12CommandQueue *nr_split_last_queue(void);
+
 #ifdef __cplusplus
 }
 #endif

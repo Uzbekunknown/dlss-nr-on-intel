@@ -178,14 +178,17 @@ if(WIN32)
       src/layer/nr_menu_strings.c
       src/layer/nr_menu_strings_lookup.c
       src/layer/nr_menu_bridge.c
-      src/layer/nr_raw_mouse.c)
+      src/layer/nr_raw_mouse.c
+      src/layer/nr_panel.c
+      src/layer/nr_input_guard.c)
   set(NR_IMGUI_SOURCES
       third_party/imgui/imgui.cpp
       third_party/imgui/imgui_draw.cpp
       third_party/imgui/imgui_tables.cpp
       third_party/imgui/imgui_widgets.cpp
       third_party/imgui/imgui_impl_vulkan.cpp
-      src/layer/nr_menu_ui.cpp)
+      src/layer/nr_menu_ui.cpp
+      src/layer/nr_menu_ui_vk.cpp)
 endif()
 
 if(NR_BUILD_LAYER)
@@ -435,6 +438,13 @@ if(NR_BUILD_TESTS)
       nr_test(layer_raw_mouse "${NR_WORK_DIR}/test_raw_mouse.exe")
       set_tests_properties(layer_raw_mouse PROPERTIES
         REQUIRED_FILES "${NR_WORK_DIR}/test_raw_mouse.exe")
+    endif()
+    # The panel's keys and clicks kept from the game's window while it is open, and given back
+    # when it shuts. Its own window and messages sent to itself, so it needs no focus and no input.
+    if(WIN32 AND EXISTS "${PROJECT_SOURCE_DIR}/src/layer/test_input_guard.c")
+      nr_test(layer_input_guard "${NR_WORK_DIR}/test_input_guard.exe")
+      set_tests_properties(layer_input_guard PROPERTIES
+        REQUIRED_FILES "${NR_WORK_DIR}/test_input_guard.exe")
     endif()
     # The hotkey structure is `test_menu_keys.exe`, already run by `layer_menu_ui_fixtures` above.
     # A separate registration here pointed at a `src/layer/test_menu_keys.py` that is not in the

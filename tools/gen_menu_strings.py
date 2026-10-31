@@ -47,8 +47,7 @@ EXTRA = {
     "saved":          ("Done.save",    "saved"),
     "reset":          ("ResetSettings", "reset to defaults"),
     "hint":           (None,           "Up/Down choose  Left/Right change  L language  "
-                                       "Home NR on/off  S save  R reset  INS close  "
-                                       "the game also sees these keys"),
+                                       "Home NR on/off  S save  R reset  INS close"),
     "toggle_nr":      (None,           "neural rendering"),
     "compare":        (None,           "compare"),
     "compare_split":  (None,           "split"),
@@ -64,7 +63,7 @@ EXTRA = {
     "async":          (None,           "Asynchronous: the network runs ahead"),
     "async_hint":     (None,           "More frames per second, one behind the result. "
                                        "Takes effect at the next game start."),
-    "gpu_image":      (None,           "Experimental: keep the frame on the GPU"),
+    "gpu_image":      (None,           "Keep the frame on the GPU"),
     "gpu_image_hint": (None,           "Requires asynchronous mode off and every frame processed, "
                                        "or the effect is skipped in this mode. "
                                        "Takes effect at the next game start."),
@@ -113,8 +112,7 @@ COMPARE_MODES = ("off", "wipe", "side by side")
 OWN = {
     "en": {
         "hint":          "Up/Down choose  Left/Right change  L language  "
-                         "Home NR on/off  S save  R reset  INS close  "
-                         "the game also sees these keys",
+                         "Home NR on/off  S save  R reset  INS close",
         "toggle_nr":     "neural rendering",
         "compare":       "compare",
         "compare_split": "split",
@@ -126,7 +124,7 @@ OWN = {
         "async":         "Asynchronous: the network runs ahead",
         "async_hint":    "More frames per second, one behind the result. "
                          "Takes effect at the next game start.",
-        "gpu_image":     "Experimental: keep the frame on the GPU",
+        "gpu_image":     "Keep the frame on the GPU",
         "gpu_image_hint": "Requires asynchronous mode off and every frame processed, "
                           "or the effect is skipped in this mode. "
                           "Takes effect at the next game start.",
@@ -151,8 +149,7 @@ OWN = {
     },
     "zh": {
         "hint":          "\u4e0a/\u4e0b \u9009\u62e9  \u5de6/\u53f3 \u8c03\u6574  L \u8bed\u8a00  "
-                         "Home \u5f00\u5173  S \u4fdd\u5b58  R \u91cd\u7f6e  INS \u5173\u95ed  "
-                         "\u6e38\u620f\u4e5f\u4f1a\u6536\u5230\u8fd9\u4e9b\u6309\u952e",
+                         "Home \u5f00\u5173  S \u4fdd\u5b58  R \u91cd\u7f6e  INS \u5173\u95ed",
         "toggle_nr":     "\u795e\u7ecf\u6e32\u67d3",
         "compare":       "\u753b\u9762\u5bf9\u6bd4",
         "compare_split": "\u5206\u5272\u4f4d\u7f6e",
@@ -164,7 +161,7 @@ OWN = {
         "async":         "\u5f02\u6b65\uff1a\u7f51\u7edc\u5728\u6e38\u620f\u7ed8\u5236\u4e0b\u4e00\u5e27\u65f6\u5de5\u4f5c",
         "async_hint":    "\u6bcf\u79d2\u5e27\u6570\u66f4\u591a\uff0c\u800c\u5c4f\u5e55\u4e0a\u663e\u793a\u7684\u6bd4\u5904\u7406\u7ed3\u679c\u843d\u540e\u4e00\u5e27\u3002"
                          "\u4e0b\u6b21\u6e38\u620f\u542f\u52a8\u751f\u6548\u3002",
-        "gpu_image":     "\u5b9e\u9a8c\u6027\uff1a\u5e27\u4fdd\u7559\u5728 GPU \u4e0a",
+        "gpu_image":     "\u5e27\u4fdd\u7559\u5728 GPU \u4e0a",
         "gpu_image_hint": "\u5e27\u4fdd\u7559\u5728 GPU \u4e0a\u3002\u8981\u6c42\u5f02\u6b65\u5173\u95ed\u4e14\u6bcf\u5e27\u5904\u7406\uff0c"
                           "\u5426\u5219\u8be5\u6a21\u5f0f\u4e0b\u4f1a\u8df3\u8fc7\u6548\u679c\u3002\u4e0b\u6b21\u6e38\u620f\u542f\u52a8\u751f\u6548\u3002",
         "every":         "\u7f51\u7edc\u8fd0\u884c\u4e8e",
@@ -189,8 +186,7 @@ OWN = {
         "hint":          "\u0412\u0432\u0435\u0440\u0445/\u0412\u043d\u0438\u0437 \u0432\u044b\u0431\u043e\u0440  "
                          "\u0412\u043b\u0435\u0432\u043e/\u0412\u043f\u0440\u0430\u0432\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c  "
                          "L \u044f\u0437\u044b\u043a  Home \u0432\u043a\u043b/\u0432\u044b\u043a\u043b  "
-                         "S \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c  R \u0441\u0431\u0440\u043e\u0441  INS \u0437\u0430\u043a\u0440\u044b\u0442\u044c  "
-                         "\u0438\u0433\u0440\u0430 \u0442\u043e\u0436\u0435 \u0432\u0438\u0434\u0438\u0442 \u044d\u0442\u0438 \u043a\u043b\u0430\u0432\u0438\u0448\u0438",
+                         "S \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c  R \u0441\u0431\u0440\u043e\u0441  INS \u0437\u0430\u043a\u0440\u044b\u0442\u044c",
         "toggle_nr":     "\u043d\u0435\u0439\u0440\u043e\u043d\u043d\u044b\u0439 \u0440\u0435\u043d\u0434\u0435\u0440\u0438\u043d\u0433",
         "compare":       "\u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435",
         "compare_split": "\u0433\u0440\u0430\u043d\u0438\u0446\u0430",
@@ -205,7 +201,7 @@ OWN = {
                          "\u043d\u043e \u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 "
                          "\u043d\u0430 \u043e\u0434\u0438\u043d \u043a\u0430\u0434\u0440 \u043f\u043e\u0437\u0436\u0435. "
                          "\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u0441\u044f \u043f\u0440\u0438 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u0437\u0430\u043f\u0443\u0441\u043a\u0435 \u0438\u0433\u0440\u044b.",
-        "gpu_image":     "\u042d\u043a\u0441\u043f\u0435\u0440\u0438\u043c\u0435\u043d\u0442: \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0442\u044c \u043a\u0430\u0434\u0440 \u043d\u0430 GPU",
+        "gpu_image":     "\u041e\u0441\u0442\u0430\u0432\u043b\u044f\u0442\u044c \u043a\u0430\u0434\u0440 \u043d\u0430 GPU",
         "gpu_image_hint": "\u041a\u0430\u0434\u0440 \u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f \u043d\u0430 GPU. "
                           "\u0422\u0440\u0435\u0431\u0443\u0435\u0442 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d\u043d\u043e\u0433\u043e "
                           "\u0430\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e\u0433\u043e \u0440\u0435\u0436\u0438\u043c\u0430 "
@@ -246,8 +242,7 @@ OWN = {
     },
     "es": {
         "hint":          "Arriba/Abajo elegir  Izq/Der cambiar  L idioma  Home activar  "
-                         "S guardar  R restablecer  INS cerrar  "
-                         "el juego tambi\u00e9n recibe estas teclas",
+                         "S guardar  R restablecer  INS cerrar",
         "toggle_nr":     "renderizado neuronal",
         "compare":       "comparaci\u00f3n",
         "compare_split": "divisi\u00f3n",
@@ -259,7 +254,7 @@ OWN = {
         "async":         "As\u00edncrono: la red trabaja mientras el juego dibuja el siguiente fotograma",
         "async_hint":    "M\u00e1s fotogramas por segundo, pero lo que se ve va un fotograma "
                          "procesado por detr\u00e1s. Se aplica en el pr\u00f3ximo inicio del juego.",
-        "gpu_image":     "Experimental: mantener el fotograma en la GPU",
+        "gpu_image":     "Mantener el fotograma en la GPU",
         "gpu_image_hint": "El fotograma se queda en la GPU. Requiere el modo as\u00edncrono "
                           "desactivado y el procesamiento de cada fotograma, o el efecto se "
                           "omite en este modo. Se aplica en el pr\u00f3ximo inicio del juego.",

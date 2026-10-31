@@ -78,6 +78,12 @@ bool cut(ID3D12GraphicsCommandList*, Job, const std::shared_ptr<Snapshot>&, std:
     *why = "the command-list cut is x86-64 only";
     return false;
 }
+bool watch(ID3D12Device*, std::string* why) {
+    *why = "the command-list cut is x86-64 only";
+    return false;
+}
+bool seen_queue(const void*) { return false; }
+ID3D12CommandQueue* last_queue() { return nullptr; }
 #else
 
 namespace {
@@ -544,6 +550,44 @@ struct QueueFence {
     uint64_t value{};
 };
 std::vector<QueueFence> g_queue_fences;
+
+// The direct queues seen executing command lists, for the panel (nr_xess_panel.cpp): its work has to
+// go on the queue a swap chain presents on, and DXGI will not say which that is. Appended to under
+// their own lock, read without one: a fixed table published by its count, entries never removed. A
+// queue of another type is remembered too, so its type is asked once. And the direct queue this
+// thread last executed on, which is the swap chain's on a thread that renders and presents.
+constexpr int kSeenQueues = 32;
+std::atomic<void*> g_direct_queues[kSeenQueues];
+std::atomic<int> g_direct_count{0};
+std::atomic<void*> g_other_queues[kSeenQueues];
+std::atomic<int> g_other_count{0};
+std::mutex g_seen_mutex;
+thread_local ID3D12CommandQueue* t_last_direct = nullptr;
+
+bool in_table(const std::atomic<void*>* table, const std::atomic<int>& count, const void* q) {
+    const int n = count.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (table[i].load(std::memory_order_relaxed) == q) return true;
+    return false;
+}
+
+void note_queue(ID3D12CommandQueue* q) {
+    if (t_last_direct == q) return;
+    if (in_table(g_direct_queues, g_direct_count, q)) { t_last_direct = q; return; }
+    if (in_table(g_other_queues, g_other_count, q)) return;
+    const bool direct = q->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT;
+    std::lock_guard<std::mutex> guard(g_seen_mutex);
+    std::atomic<void*>* table = direct ? g_direct_queues : g_other_queues;
+    std::atomic<int>& count = direct ? g_direct_count : g_other_count;
+    if (!in_table(table, count, q)) {
+        const int n = count.load(std::memory_order_relaxed);
+        if (n < kSeenQueues) {
+            table[n].store(q, std::memory_order_relaxed);
+            count.store(n + 1, std::memory_order_release);
+        }
+    }
+    if (direct) t_last_direct = q;
+}
 
 void set_pair(void* from, void* to) {
     for (auto& p : g_rt.pairs)
@@ -1065,6 +1109,7 @@ void STDMETHODCALLTYPE hk_Execute(ID3D12CommandQueue* q, UINT n, ID3D12CommandLi
     // Patching is under g_mutex; the class table only grows, so a lookup outside it is safe once the
     // hook it led here through exists.
     const PFN_Execute execute = execute_of(q);
+    note_queue(q);
     if (g_pending.load(std::memory_order_acquire) == 0 && g_held_count.load(std::memory_order_acquire) == 0)
         return execute(q, n, lists);
     // The cuts of these lists are taken out under the lock; the lists are executed outside it, so no
@@ -1361,6 +1406,15 @@ bool patch_queue_classes(ID3D12Device* device, D3D12_COMMAND_LIST_TYPE type, std
 
 }  // namespace
 
+// Hook the device's direct queue class, cut or no cut: the panel needs the queues before NR runs, and
+// while it is turned off. Idempotent, like the patching it shares with `prepare`.
+bool watch(ID3D12Device* device, std::string* why) {
+    std::lock_guard<std::recursive_mutex> guard(g_mutex);
+    return patch_queue_classes(device, D3D12_COMMAND_LIST_TYPE_DIRECT, why);
+}
+bool seen_queue(const void* q) { return q && in_table(g_direct_queues, g_direct_count, q); }
+ID3D12CommandQueue* last_queue() { return t_last_direct; }
+
 struct Snapshot {
     ListState state;
 };
@@ -1557,6 +1611,19 @@ extern "C" void nr_split_snapshot_free(nr_split_snapshot* snapshot) {
 
 extern "C" void nr_split_restore(ID3D12GraphicsCommandList* list, const nr_split_snapshot* snapshot) {
     if (snapshot) nr_xess_split::restore(list, snapshot->state);
+}
+
+extern "C" int nr_split_watch(ID3D12Device* device, char* why, size_t why_size) {
+    std::string reason;
+    return nr_split_why(nr_xess_split::watch(device, &reason), reason, why, why_size);
+}
+
+extern "C" int nr_split_known_queue(const void* queue) {
+    return nr_xess_split::seen_queue(queue) ? 1 : 0;
+}
+
+extern "C" ID3D12CommandQueue* nr_split_last_queue(void) {
+    return nr_xess_split::last_queue();
 }
 
 extern "C" int nr_split_cut(ID3D12GraphicsCommandList* list, nr_split_run run, nr_split_discard discard,

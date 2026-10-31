@@ -855,6 +855,15 @@ fail:
     return NULL;
 }
 
+nr_menu *nr_menu_create_headless(void)
+{
+    nr_menu *m = (nr_menu *)calloc(1, sizeof *m);
+    if (!m) return NULL;
+    m->compare_split = 0.5f;
+    m->language = NR_MENU_LANG_EN;
+    return m;
+}
+
 void nr_menu_destroy(nr_menu *m)
 {
     if (!m) return;

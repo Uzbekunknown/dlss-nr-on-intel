@@ -137,12 +137,13 @@ int main(void)
      * `test_menu_keys.cpp` does: the check is that the sync exists, and that it compares against
      * the live state rather than assuming. */
     {
-        /* Both files: the menu's glue moved to `nr_menu_layer.c`. See test_menu_keys.cpp. */
+        /* The files: the menu's glue moved to `nr_menu_layer.c`, and its logic on to `nr_panel.c`.
+         * See test_menu_keys.cpp. */
         static char lsource[900000];
         size_t ln = 0;
         {
             static const char *const files[] = {
-                "src/layer/nr_layer.c", "src/layer/nr_menu_layer.c",
+                "src/layer/nr_layer.c", "src/layer/nr_menu_layer.c", "src/layer/nr_panel.c",
             };
             for (int fi = 0; fi < (int)(sizeof files / sizeof files[0]); ++fi) {
                 FILE *layer = fopen(files[fi], "rb");
@@ -162,9 +163,11 @@ int main(void)
         check(syncs, "the layer syncs nr_enabled_saved against the live trigger",
               syncs ? "compared every frame"
                     : "MISSING - the window's Enable NR writes the opposite of the screen");
-        /* And it is gated on there being a trigger path, so an install without one is not polled
-         * every frame for a file that does not exist. */
-        int gated = strstr(lsource, "if (trigger_path && *trigger_path && data->menu_bridge)") != NULL;
+        /* And it is gated on there being a trigger, so an install without one is not polled every
+         * frame for a file that does not exist. The host answers -1 for "no trigger here"
+         * (`nr_panel_host.trigger_get`): the layer for an empty NR_LAYER_TRIGGER, the DirectX 12
+         * proxy for an `nr-env.txt` that names none. */
+        int gated = strstr(lsource, "if (live >= 0 && data->menu_bridge)") != NULL;
         check(gated, "and only when this install has a trigger path",
               gated ? "guarded" : "MISSING - polled every frame regardless");
     }
