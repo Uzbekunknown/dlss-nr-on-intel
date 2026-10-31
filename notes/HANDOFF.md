@@ -120,7 +120,8 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux**
-- `alchemist`'s GPU report fixes (`8f96b58`, `eab7eb3`, `c231bdc`, below, 10-31 evening): `make test`.
+- `alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
+  evening): `make test`.
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -261,8 +262,9 @@ A-series work has a branch of its own, `alchemist`, from `newnr` at `0a6000f` (t
 
 **What.** `coopmat_probe` also measures now: for each float16 8xNx16 into float32 shape a device
 offers, at each subgroup size it allows of 8, 16 and 32, one product over K = 64 checked exactly,
-the matrix rate, and the vector float32 FMA rate, which a path without XMX would run on. It never
-runs a shape the device does not offer. The shaders are `src/probe/coopmat_bench.comp`, built as
+the matrix rate, and the vector float32 FMA rate, which a path without XMX would run on. ~~It never
+runs a shape the device does not offer.~~ It tries 8x16x16 where it is not offered too, since NR's
+kernels run it there (11-01, below). The shaders are `src/probe/coopmat_bench.comp`, built as
 `coopmat_bench8.spv` and `coopmat_bench16.spv` and read beside the program or from `work/` beside
 it. The report also goes to `nr-gpu-report.txt` in the folder it runs from, and on Windows a double
 click keeps the console open. make (`all`), CMake and `build_win.bat` build it; the Windows
@@ -304,6 +306,15 @@ closed it with 0.
   (read back from its screen buffer) and not in the file, Enter closes it. With the loader pointed
   at no driver: the failure on the console until Enter, exit 1.
 
+**A shape a device does not offer can still run, wrong** (11-01, Intel's 101.9150): a scratch
+probe that asked this 140V for 8x8x16 got a pipeline, no error, and 61 of 64 values wrong at
+subgroups 16 and 32. So an A-series card, which does not offer NR's 8x16x16, may be computing it
+wrong as well as slowly: nobody has said how NR's picture looks there. The probe now tries 8x16x16
+where it is not offered, after saving the report in case the driver does not survive it, and says
+"exact here, though the GPU does not offer the shape" or WRONG (`9ceff90`). Checked here by a
+build that takes 8x16x16 for not offered: it walks that way and finds it exact. And an 8x8 path
+cannot be checked on this 140V at all.
+
 **Not tested:** any A-series card: 8x8x16 has never run anywhere here.
 
 **Prior art, found 11-01:** `OUCO86/dlss-nr-on-a770` (Apache-2.0) is this code running NR on an
@@ -319,7 +330,7 @@ testers would be its only check.
 **Next on Windows:** ~~`build_win.bat`, `work\coopmat_probe.exe` on the Arc 140V, a release built
 with it, and a double click on `nr_gpu_probe.exe` in the unpacked ZIP~~: done on 11-01 (above).
 Then into the next release, at the owner's word.
-**Next on Linux:** `make test` for `8f96b58`, `eab7eb3` and `c231bdc`: Linux compiles `say_where`'s
+**Next on Linux:** `make test` for `8f96b58`, `eab7eb3`, `c231bdc` and `9ceff90`: Linux compiles `say_where`'s
 `realpath` arm and `open_beside`'s, the latter rearranged around the Windows one but doing what it
 did.
 
