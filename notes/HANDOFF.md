@@ -37,7 +37,9 @@ When the dated entries grow long, move the older ones the same way, into a new a
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
-  - `improve-int8`, kept for INT8 experiments.
+  - `improve-int8`, kept for INT8 experiments;
+  - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
+    10-31 evening).
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
