@@ -62,7 +62,8 @@ When the dated entries grow long, move the older ones the same way, into a new a
   NR come back. Since 10-30 a preset changes in the running daemon instead, as the in-game panel
   changes it, and in Hogwarts NR stayed on through A to B and back (below, 10-30). Since that
   evening the setup window installs it, **DirectX 12 (games with XeSS)**, and the proxy starts the
-  daemon itself (`6c503ae`, below).
+  daemon itself (`6c503ae`, below). Since 10-31 the in-game panel draws there too, and in both
+  hosts the game no longer gets the panel's keys and clicks; in no release yet (below, 10-31 later).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -192,12 +193,10 @@ under that date. When an item is done, strike it through here and name the commi
   (below, 10-16).
 - A Vulkan or DirectX 8–11 game that runs elevated, or any with UAC off, never gets the layer; the
   HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
-- The panel inside a DirectX 12 game: the next release after 0.0.2, the owner's call (10-31). It
-  needs DXGI's Present (a vtable hook from the proxy, as the cut hooks D3D12's classes), ImGui drawn
-  with D3D12, and care with XeSS frame generation, which puts its own swapchain in front. Until
-  then the setup window's NR controls set a DirectX 12 game, the network live (`9ea08ad`). With
-  it, keeping the panel's keys and clicks from the game, which still gets them in a Vulkan game
-  as well: the panel reads them and holds nothing back (below, 10-31).
+- ~~The panel inside a DirectX 12 game, and its keys and clicks kept from the game~~: on `newnr`,
+  in Hogwarts with the owner, frame generation on and off (below, 10-31 later). For the next
+  release after 0.0.2, the owner's call. A game reading keys by `GetAsyncKeyState`, DirectInput or
+  a gamepad still gets them while the panel is open.
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
   out as 2.0's. Below, 10-30 evening.
@@ -237,6 +236,101 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The panel inside DirectX 12, and the panel's keys and clicks kept from the game (2026-10-31, later, branch `newnr`)
+
+**One panel, two renderers.** The panel's logic left the Vulkan layer's file for one both hosts
+share: `nr_panel.c` reads the keys behind the focus gate, holds the pointer, builds the rows and the
+ImGui frame and applies what was asked; `nr_menu_layer.c` keeps the Vulkan hooks and the composite.
+Drawing is each host's: `nr_menu_ui_vk.cpp` for Vulkan, and for DirectX 12 a renderer of ImGui's
+draw data written here (`nr_menu_ui_d3d12.cpp`, its `.hlsl` compiled by fxc at build time), since the
+owner chose not to vendor ImGui's D3D12 backend (10-31). It draws the panel into an 8-bit image of its
+own and lays that over the back buffer in its encoding: SDR, scRGB, or HDR10 with white at 203 nits.
+
+**Where DirectX 12 draws it** (`src/xess/nr_xess_panel.cpp`): in `IDXGISwapChain::Present` and
+`Present1`, by writing into the swap chain class's vtable in `dxgi.dll` as the cut writes into
+D3D12's classes, and `SetColorSpace1` for the encoding. `nr_present_probe.exe` finds the vtable in a
+process of its own, as DLSSNR-AMD does, because a swap chain made inside the game is seen by whatever
+else hooks there. Its answer is kept in the game's `dlss-nr\nr-present.txt` while `dxgi.dll` keeps
+its timestamp and size, and goes with Remove NR; here the vtable is at `dxgi.dll` +0xcd688 and the
+queue at swap chain +0x140. DXGI does not name the queue (`GetDevice` refuses
+`ID3D12CommandQueue`), so the panel reads that field and trusts it only as a direct queue seen
+executing command lists (`nr_split_watch` hooks the queue class from the first Present); failing
+that, the direct queue the presenting thread last used; failing both, no panel on that Present.
+XeSS frame generation presents through a swap chain of dxgi's class too, and in Hogwarts the panel
+was there and usable with it on (below). The release carries the probe at its root
+(`build_release.py`), and `NR_MENU=0` turns the panel off.
+
+**The panel's input kept from the game** (`nr_input_guard.c`, both hosts). While the panel is open
+the game's window is subclassed, and its procedure sees no key going down, character, pointer
+movement, button, wheel or `WM_INPUT`. A release reaches it only when it saw the press, so nothing
+stays held behind the panel; Alt+F4 still closes the game. The subclass stays for the process,
+passing everything while the panel is shut, and the module is pinned. `nr_raw_mouse.c` also takes
+the keyboard's raw-input registration while the panel has the pointer. Not covered, as the owner
+chose no user32 detours (10-31): a game polling `GetAsyncKeyState`, DirectInput, a gamepad. The
+panel's hint no longer says the game sees its keys, in four languages, and the generator and
+`nr_menu_strings.py` lose the "Experimental:" GPU label `1b8b926` had dropped from the C table only.
+
+**Mortal Kombat 11 from a test release** of this tree (DXVK, so the Vulkan renderer; B, frames on
+the GPU, 1280x720 at 0.4), driven from here at the owner's word while the owner was away:
+- The panel opened with INS as before. Render scale 0.40 to 0.45 in it took the daemon's network
+  from 512x320 to 576x384 live, and back.
+- In the main menu, Right and Down twice given to the open panel left the game's selection where it
+  was, and Right after INS moved it. In a practice fight, D held 1.2 s with the panel open left
+  Scorpion in place, and the same D with the panel shut walked him to Sub-Zero (MK11 walks on WASD).
+- The panel's cursor followed the mouse at its raw gain of 0.5, and a click held 150 ms on the NR box
+  turned NR off (no frame for 3 s) and on. A press and release sent at once was not seen: the panel
+  samples the button once a frame (`GetAsyncKeyState`), so a click shorter than a frame is lost, as
+  a quick real one at a low frame rate could be. The guard now sees the button messages while the
+  panel is open, and the panel could take them from there; not done.
+- Home off and on with the panel shut. 6025 frames, none rejected, ~25 ms each; the daemon ended
+  with the game, and after Remove NR the game's 10 024 files matched the listing taken first.
+- While the panel held the pointer, `GetClipCursor` from outside gave the whole screen, not the
+  one-pixel box the panel asks for every frame; the pointer stayed put because the panel also sets it
+  every frame. The split did not change that code. In Hogwarts a recorder does see the box (below),
+  so this one is MK11's or the reading's; not looked into.
+
+**Hogwarts Legacy with the owner** (Epic, XeSS 2.0.2.53, a 1280x720 window centred on the 1920x1200
+screen, B at 0.4, `mode=after`), two runs from test releases of this tree installed through the setup
+window's backend (`D:\NRonWindows\nr-game\hogwarts-panel-test.ps1 -Phase install|status|remove`):
+- The first run took the Present hook from the probe's answer at once and made the panel on the
+  game's device. The owner, through a list of checks with frame generation off and then on:
+  everything works, the panel and its keys, clicks and mouse look kept from the game, NR off and on
+  by a click, except the cursor, which left the window as the camera turned once the panel had been
+  open. About 26 frames a second, each answered on its own frame, none declined.
+- The cause: Unreal confines the cursor to its client area (`ClipCursor`, here 320,240-1600,960)
+  once, when it takes the mouse, and again only when its window is activated; the panel let go with
+  `ClipCursor(NULL)`. Now `nr_panel.c` notes the game's box when it pins the cursor
+  (`game_clip_note`: the whole desktop is how Windows says "none", and the panel's own pin left from
+  an earlier frame is not taken for the game's), keeps it from the client area's origin, and puts it
+  back when the panel closes with the game in front. Another window in front, the pointer pushed out
+  past an edge, and the panel going with its host still leave the cursor free. `test_menu_keys`
+  checks the shape; a running test would have to take the user's own cursor.
+- The second run, with the fix and frame generation on throughout (the game's
+  `GameUserSettings.ini`: `Intel_XeFG`, x2): a recorder reading `GetClipCursor` four times a second
+  saw the game's box before the panel, the one-pixel pin while it was open, and the game's box again
+  after each of four closes; pushed out at the bottom and at the left, the cursor left the window
+  and came back under the pin; with another window in front, no box. The owner: the cursor stays in
+  the window. NR off and on from the panel, every frame answered.
+- The game closed with the panel open and left the cursor free. After each Remove NR the game's 568
+  files matched the listing taken before the first install but for Epic's launch token
+  `.egstore\...ovt` (its time only, rewritten at every start), as on 10-30, and the XeSS folder
+  hashed as before.
+
+**Checks.** MSVC `build_win.bat` with the three known C4068; fixtures `test_menu_*` 7 of 7,
+`test_raw_mouse` and the new `test_input_guard` (26 checks). `build_xess.bat`: `test_nr_xess` all
+passed, the new `test_xess_panel` 8 of 8 (the hook through the probe, the queue from the swap
+chain's field, the panel over a green frame). MinGW (UCRT64, gcc 16.2) CMake and CTest 66 of 66,
+`test_focus_gate` left out (it moves the focus). Not run: the Makefile on Windows (no make in this
+MSYS2), `check_imgui_pristine` (needs imgui-1.93.0.zip; the vendored files are untouched). After
+the cursor fix: both MSVC builds again with no new warning, the fixtures again with `test_menu_keys`'s
+new check, and the MinGW CMake build (CTest carries no menu fixture).
+
+**Next on Windows:** the release, at the owner's word. The panel could take its clicks from the
+guard's button messages, so a click shorter than a frame is not lost; not done. DirectX 12 in
+other XeSS games.
+**Next on Linux:** `make test` in both memory modes and CTest: `nr_focus.h` and `nr_layer_state.h`
+changed, which Linux compiles (`nr_panel.c` is Windows-only).
 
 ## 0.0.2 released, and what Mortal Kombat 11 found in the panel (2026-10-31, branch `newnr`)
 
