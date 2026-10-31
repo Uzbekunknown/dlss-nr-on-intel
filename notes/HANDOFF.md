@@ -173,8 +173,8 @@ under that date. When an item is done, strike it through here and name the commi
 
 **Windows**
 - The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, below, 10-31
-  evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP; then
-  the next release.
+  evening): ~~the MSVC build, a run on Intel's driver, and a double click from a release's ZIP~~,
+  done on 11-01; then the next release.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (below, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
@@ -276,12 +276,28 @@ matrix units, best of eight runs since the first ones climb with the clock; vect
 8x8x16 is exact and how fast: whether NR's kernels can keep 32 lanes with two 8x8 tiles where they
 have one 8x16, or need 8 or 16. It also gives the vector units' rate, for a path without XMX.
 
-**Not tested:** Windows (the MSVC build, Intel's driver, the double click), and any A-series card:
-8x8x16 has never run anywhere here.
+**On Windows** (11-01, Intel's 101.9150, on mains, quiet before and after): `build_win.bat` builds
+both shaders and `coopmat_probe.exe`, which is clean at `/W4` too. The probe finds phase71's four
+configurations and no 8x8x16; 8x16x16 is exact at subgroups 16 and 32, at 28.1-30.8 TFLOP/s over
+three runs, a little below Mesa's 31.6-31.8 and wider; vector float32 FMA is 3.9 TFLOP/s at 16 and
+3.4-3.7 at 32; "run here". A run takes under a second. `test_release.py`: 21, the 5 that need bash
+skipped. `deploy.bat --release` puts `nr_gpu_probe.exe` at the release's root, the same bytes as
+`work\coopmat_probe.exe`, and both shaders in `work\`. From the unpacked ZIP, started as Explorer
+starts it (a console of its own, its folder as the working directory), the report was whole beside
+it after 1.3 s, the console still open 3 s later, and Enter, written into that console's input,
+closed it with 0.
 
-**Next on Windows:** `build_win.bat`, then `work\coopmat_probe.exe` on the Arc 140V (8x16x16 exact
-at 16 and 32, and "run here"), a release built with it, and a double click on `nr_gpu_probe.exe`
-in the unpacked ZIP. Then into the next release, at the owner's word.
+**Found there:** without its shaders beside it, copied out alone, the probe ends with "NR's kernels
+...: do NOT run here; please send this report" on this 140V, and only the "was not found" line above
+says why. Run from inside the ZIP, where Explorer copies the program out alone, it would say the
+same (not tried). Left for the owner to decide: "not checked" in that case, and the report's full
+path in the last line.
+
+**Not tested:** any A-series card: 8x8x16 has never run anywhere here.
+
+**Next on Windows:** ~~`build_win.bat`, `work\coopmat_probe.exe` on the Arc 140V, a release built
+with it, and a double click on `nr_gpu_probe.exe` in the unpacked ZIP~~: done on 11-01 (above).
+Then into the next release, at the owner's word.
 **Next on Linux:** nothing.
 
 ## The panel inside DirectX 12, and the panel's keys and clicks kept from the game (2026-10-31, later, branch `newnr`)
