@@ -577,14 +577,16 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 	bench_close(&b);
 }
 
-/* Where the report went, in full. Windows names it through the wide API, so a folder in Cyrillic or
- * Chinese reaches the console whatever its code page; the file and a redirected stdout take UTF-8. */
+/* Where the report went, in full, on the terminal only: the file is for posting, and a full path
+ * carries the user's name. Windows names it through the wide API, so a folder in Cyrillic or
+ * Chinese reaches the console whatever its code page; a redirected stdout takes UTF-8. */
 static void say_where(void)
 {
 	if (!report) {
 		say("\nnr-gpu-report.txt could not be written in this folder: copy the text above instead.\n");
 		return;
 	}
+	fputs("\n", report);
 #ifdef _WIN32
 	wchar_t wide[1024];
 	char utf8[3 * 1024];
@@ -592,7 +594,6 @@ static void say_where(void)
 	if (n && n < 1024 && WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, (int)sizeof utf8, NULL, NULL)) {
 		HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
 		DWORD mode, wrote;
-		fprintf(report, "\nThis report is also in %s\n", utf8);
 		if (GetConsoleMode(out, &mode)) {
 			printf("\nThis report is also in ");
 			fflush(stdout);
@@ -603,10 +604,10 @@ static void say_where(void)
 		}
 		return;
 	}
-	say("\nThis report is also in nr-gpu-report.txt\n");
+	printf("\nThis report is also in nr-gpu-report.txt\n");
 #else
 	char *full = realpath("nr-gpu-report.txt", NULL);
-	say("\nThis report is also in %s\n", full ? full : "nr-gpu-report.txt");
+	printf("\nThis report is also in %s\n", full ? full : "nr-gpu-report.txt");
 	free(full);
 #endif
 }
