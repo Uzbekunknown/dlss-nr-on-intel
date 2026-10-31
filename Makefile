@@ -45,12 +45,14 @@ else ifeq ($(LAYER32),1)
 LAYER32_TARGET := work/libnr_layer32.so
 endif
 
-all: work/libxmx.so work/libnr_layer.so $(LAYER32_TARGET) work/libnr_image.so work/gemm_runner work/half_probe.spv $(SHADERS)
+all: work/libxmx.so work/libnr_layer.so $(LAYER32_TARGET) work/libnr_image.so work/gemm_runner work/half_probe.spv $(SHADERS) \
+     work/coopmat_probe work/coopmat_bench8.spv work/coopmat_bench16.spv
 
 work:
 	mkdir -p $@
 
-$(SHADERS) work/libxmx.so work/libnr_layer.so work/half_probe.spv work/attention_ab.spv: | work
+$(SHADERS) work/libxmx.so work/libnr_layer.so work/half_probe.spv work/attention_ab.spv \
+  work/coopmat_probe work/coopmat_bench8.spv work/coopmat_bench16.spv: | work
 work/libnr_image.so work/test_exchange work/test_settled work/libnr_layer32.so work/test_layer_loader work/test_present work/test_layer_loader32 work/test_surface_policy work/test_transfer_resources: | work
 
 work/libxmx.so: src/gpu/libxmx.c
@@ -299,6 +301,19 @@ work/gemm_f16acc.spv: src/gpu/gemm_coopmat_f16acc.comp
 work/half_probe.spv: src/bench/half_probe.comp
 	$(GLSL) -o $@ $<
 
+# The GPU report a Windows release ships as nr_gpu_probe.exe (src/probe/coopmat_probe.c): the
+# matrix shapes a GPU offers, checked and timed, for Arc A-series owners to send in. It reads
+# its two shaders beside itself.
+work/coopmat_probe: src/probe/coopmat_probe.c
+	$(CC) -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter -Iwork/vulkan-headers/include \
+	      -o $@ $< -lvulkan
+
+work/coopmat_bench8.spv: src/probe/coopmat_bench.comp
+	$(GLSL) -DBN=8 -o $@ $<
+
+work/coopmat_bench16.spv: src/probe/coopmat_bench.comp
+	$(GLSL) -DBN=16 -o $@ $<
+
 bench: all work/half_probe.spv
 	python3 src/bench/half_probe.py
 	python3 src/bench/split_cost.py
@@ -311,6 +326,7 @@ test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_p
 	python3 src/gpu/test_input_fp16.py
 	python3 src/gpu/test_compact_head.py
 	python3 src/gpu/test_joint_qkv.py
+	cd work && ./coopmat_probe | grep -q "NR's kernels (float16 8x16x16 at subgroup 32): run here"
 ifeq ($(OS),Windows_NT)
 	work/test_soft_cursor
 	work/test_focus_gate

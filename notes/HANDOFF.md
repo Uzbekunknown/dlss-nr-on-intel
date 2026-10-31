@@ -108,6 +108,8 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The clock hint in a game (`XMX_LOW_LATENCY`, on by default on Linux since 10-18): whether it
   stays on by default~~: the owner looked on 10-18 and keeps it on. What it costs in power and
   heat, on battery above all, is unmeasured. Below, 10-18.
+- Arc A-series reports (below, 10-31 evening): once a release carries `nr_gpu_probe.exe`, asking
+  issue #18's reporter and the A-series owners on Reddit to send one.
 - Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
   `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Below, 10-17 later.
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
@@ -168,6 +170,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
+- The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, below, 10-31
+  evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP; then
+  the next release.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (below, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
@@ -240,6 +245,42 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## A GPU report for Arc A-series owners to send in (2026-10-31, evening, branch `alchemist`)
+
+**Why.** An A750 runs NR at 1-2 fps (issue #18, and comments on Reddit). Alchemist's matrix units
+offer float16 8x8x16 into float32 (DPAS at SIMD8: Mesa reports `NSize = exec_size`, 8 before Xe2
+and 16 on it), and every XMX kernel here is written for 8x16x16 at subgroup 32. libxmx says the
+device lacks the shape and runs the kernels anyway, and Intel's driver evidently emulates them. A
+path for those cards has to be designed from what they report, and has no card here to be tested
+on, so the owner chose the cheapest step first: a report A-series owners can send. The
+A-series work has a branch of its own, `alchemist`, from `newnr` at `0a6000f` (the owner, 10-31).
+
+**What.** `coopmat_probe` also measures now: for each float16 8xNx16 into float32 shape a device
+offers, at each subgroup size it allows of 8, 16 and 32, one product over K = 64 checked exactly,
+the matrix rate, and the vector float32 FMA rate, which a path without XMX would run on. It never
+runs a shape the device does not offer. The shaders are `src/probe/coopmat_bench.comp`, built as
+`coopmat_bench8.spv` and `coopmat_bench16.spv` and read beside the program or from `work/` beside
+it. The report also goes to `nr-gpu-report.txt` in the folder it runs from, and on Windows a double
+click keeps the console open. make (`all`), CMake and `build_win.bat` build it; the Windows
+release carries it as `nr_gpu_probe.exe`, with the shaders in `work\`. The issue template
+`arc-a-series.yml` asks for the report, the driver, NR in a game, and whether they can test builds;
+the README and the release quick start send A-series owners there. `make test` runs the probe and
+requires "run here".
+
+**Here** (Arc 140V, Mesa 26.2.5): 8x16x16 exact at subgroups 16 and 32, 31.6-31.8 TFLOP/s on the
+matrix units, best of eight runs since the first ones climb with the clock; vector float32 FMA
+3.5-4.0 TFLOP/s; 8x8x16 not offered. On an A-series card the report says at which subgroup sizes
+8x8x16 is exact and how fast: whether NR's kernels can keep 32 lanes with two 8x8 tiles where they
+have one 8x16, or need 8 or 16. It also gives the vector units' rate, for a path without XMX.
+
+**Not tested:** Windows (the MSVC build, Intel's driver, the double click), and any A-series card:
+8x8x16 has never run anywhere here.
+
+**Next on Windows:** `build_win.bat`, then `work\coopmat_probe.exe` on the Arc 140V (8x16x16 exact
+at 16 and 32, and "run here"), a release built with it, and a double click on `nr_gpu_probe.exe`
+in the unpacked ZIP. Then into the next release, at the owner's word.
+**Next on Linux:** nothing.
 
 ## The panel inside DirectX 12, and the panel's keys and clicks kept from the game (2026-10-31, later, branch `newnr`)
 

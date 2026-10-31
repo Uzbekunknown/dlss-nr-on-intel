@@ -109,6 +109,11 @@ call :shader_def attention_ab       attention   "-DSOFTMAX_AB"
 rem The daemon's start-up probe, whose source is a bench tool rather than a graph shader.
 "%GLSL%" --target-env vulkan1.3 -I"%GPU%" -o "%WORK%\half_probe.spv" "%REPO%\src\bench\half_probe.comp" >nul 2>&1
 if exist "%WORK%\half_probe.spv" (echo   half_probe.spv) else (echo   half_probe.spv FAILED)
+rem The GPU report's two matrix shapes, which nr_gpu_probe.exe reads from work\ beside it.
+"%GLSL%" --target-env vulkan1.3 -DBN=8 -o "%WORK%\coopmat_bench8.spv" "%REPO%\src\probe\coopmat_bench.comp" >nul 2>&1
+if exist "%WORK%\coopmat_bench8.spv" (echo   coopmat_bench8.spv) else (echo   coopmat_bench8.spv FAILED)
+"%GLSL%" --target-env vulkan1.3 -DBN=16 -o "%WORK%\coopmat_bench16.spv" "%REPO%\src\probe\coopmat_bench.comp" >nul 2>&1
+if exist "%WORK%\coopmat_bench16.spv" (echo   coopmat_bench16.spv) else (echo   coopmat_bench16.spv FAILED)
 
 rem ---- libxmx.dll ----
 echo [2/6] building libxmx.dll ...
@@ -120,6 +125,10 @@ rem rejects it with syntax errors pointing at the asserts, not at the missing fl
 cl /nologo /O2 /std:c11 /TC /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%GPU%" /Fo:"%WORK%\libxmx.obj" /Fe:"%WORK%\libxmx.dll" /LD "%GPU%\libxmx.c" /link /DEF:"%WORK%\libxmx.def" "%VULKAN_SDK%\Lib\vulkan-1.lib"
 if errorlevel 1 ( echo ERROR: libxmx.dll failed & exit /b 1 )
 echo   libxmx.dll
+rem The GPU report a release ships as nr_gpu_probe.exe: the Vulkan loader is all it needs.
+cl /nologo /O2 /std:c11 /TC /utf-8 /I"%VULKAN_SDK%\Include" /Fo:"%WORK%\\" /Fe:"%WORK%\coopmat_probe.exe" "%REPO%\src\probe\coopmat_probe.c" /link "%VULKAN_SDK%\Lib\vulkan-1.lib"
+if errorlevel 1 ( echo ERROR: coopmat_probe.exe failed & exit /b 1 )
+echo   coopmat_probe.exe
 
 :layer
 if "%ONLY%"=="shaders" goto :done

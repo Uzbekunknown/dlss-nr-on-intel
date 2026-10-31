@@ -1,6 +1,8 @@
 # NVIDIA's property — never committed, never redistributed. See notes/CLAUDE.md "Rules".
 /ref/
 /work/
+# The GPU report (src/probe/coopmat_probe.c) writes into the folder it is run from.
+nr-gpu-report.txt
 /dist/
 # Variant builds beside the shipped ones, for measuring one shader against another without
 # editing the tree (`analysis_e/_team/ACC16重测.md`). The .spv are covered by the *.spv rule

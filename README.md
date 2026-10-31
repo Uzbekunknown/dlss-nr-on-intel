@@ -173,13 +173,18 @@ already have. See [Build](#build).
   configuration of **M=8, N=16, K=16**, which every XMX kernel here is written for.
   Developed and measured on **Arc 140V (Lunar Lake), Mesa ANV**; an Arc B580 (discrete
   Battlemage) reports the same six configurations. **Arc A-series (Alchemist, Xe-HPG) does
-  not qualify**: its matrix units report 8x8x16, so these kernels do not run there. A Vulkan
-  device alone is not enough, and the probe needs neither weights nor the rest of the build:
+  not qualify yet**: its matrix units report 8x8x16, so these kernels run there on a shape the
+  hardware lacks, at 1-2 fps. A path for those cards is to be built from their reports. A
+  Vulkan device alone is not enough, and the GPU report, which says whether these kernels run
+  and measures what the matrix units do, needs neither weights nor the rest of the build:
 
   ```sh
-  gcc -Iwork/vulkan-headers/include src/probe/coopmat_probe.c -o /tmp/probe -lvulkan
-  /tmp/probe      # drop the -I if your distribution installs the Vulkan headers
+  make work/coopmat_probe work/coopmat_bench8.spv work/coopmat_bench16.spv
+  work/coopmat_probe      # also writes nr-gpu-report.txt
   ```
+
+  The Windows release carries it as `nr_gpu_probe.exe`. On an A-series card, please post the
+  report with the **Arc A-series report** issue template.
 - A **discrete** Xe2 card (Battlemage, B570/B580) works too, and does not need resizable BAR: where the card's memory
   cannot be mapped, the graph keeps its operands there anyway and the host reaches them by
   copies. Turn resizable BAR on if you can — it is the faster of the two paths and Arc wants

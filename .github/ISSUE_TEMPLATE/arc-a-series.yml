@@ -1,0 +1,47 @@
+name: Arc A-series report
+description: The GPU report from an Arc A-series card (A310 to A770), which a path for those cards is built from
+title: "[Arc A] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Arc A-series is not supported yet. Its matrix units multiply 8x8x16 tiles, where NR's kernels are written for Xe2's 8x16x16, so on an A-series card they run on a shape the hardware lacks, at 1-2 fps. A path for these cards can only be designed and tested from reports like this one.
+
+        **How:** double-click `nr_gpu_probe.exe` in the release folder. It takes a few seconds, needs no weights, and leaves `nr-gpu-report.txt` beside itself. Paste that whole file below.
+        On Linux: `make work/coopmat_probe work/coopmat_bench8.spv work/coopmat_bench16.spv && work/coopmat_probe`.
+
+        **Do not attach `nvngx_dlssnr.dll` or any weights.**
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: "Arc A750 8 GB"
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Driver and system
+      description: The driver version (Intel Graphics Software or Device Manager on Windows, the Mesa version on Linux) and Windows or Linux.
+      placeholder: "32.0.101.xxxx, Windows 11"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: nr-gpu-report.txt
+      description: The whole file, as it is.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: game
+    attributes:
+      label: NR in a game, if you tried it
+      description: The game, its window size, the render scale, the frame rate, and whether the picture looked right. The setup window's Speed test result helps too.
+  - type: checkboxes
+    id: tester
+    attributes:
+      label: Testing
+      options:
+        - label: I can run test builds of the A-series path and report what they do

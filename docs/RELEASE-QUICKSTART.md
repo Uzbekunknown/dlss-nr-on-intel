@@ -7,7 +7,10 @@ the layer for **64-bit and 32-bit games**, and DXVK for DirectX 8–11 games.
 You need a supported Intel Xe2 GPU, a working Vulkan graphics driver, **64-bit
 Python 3** with `numpy` and `safetensors`, and your own compatible
 `nvngx_dlssnr.dll`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
-and supported Lunar Lake Xe2 iGPUs are the current targets.
+and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
+A770) is not supported yet: if you have one, double-click `nr_gpu_probe.exe` in this
+folder and post the `nr-gpu-report.txt` it writes with the **Arc A-series report**
+issue template. A path for those cards is built from such reports.
 
 For an MSVC Windows build, install the
 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)

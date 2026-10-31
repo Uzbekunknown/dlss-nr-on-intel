@@ -29,6 +29,10 @@ XESS_PROXY = ("work/xess/libxess.dll", "nr_xess.dll")
 # The panel in a DirectX 12 game finds DXGI's Present with this, in a process of its own; the proxy
 # runs it from the release's root (NR_ROOT), beside nr_xess.dll (src/xess/nr_present_probe.c).
 XESS_PROBE = ("work/xess/nr_present_probe.exe", "nr_present_probe.exe")
+# The GPU report (src/probe/coopmat_probe.c): what a GPU's matrix units do, checked and timed,
+# for an Arc A-series owner to send in. It reads coopmat_bench8.spv and coopmat_bench16.spv
+# from work\ beside it, which required_shaders() adds since no runtime source names them.
+GPU_PROBE = ("work/coopmat_probe.exe", "nr_gpu_probe.exe")
 # DXVK for DirectX 8-11 games, from scripts/fetch_dxvk.py: the setup window puts it beside them.
 DXVK = tuple(f"work/dxvk/{directory}/{name}" for directory in ("x64", "x32")
              for name in ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"))
@@ -68,7 +72,7 @@ def required_shaders(root: Path) -> set[str]:
     `src/layer` is scanned whole rather than by filename, so a shader named in the layer's own
     sources cannot be forgotten again.
     """
-    names = {"half_probe.spv"}
+    names = {"half_probe.spv", "coopmat_bench8.spv", "coopmat_bench16.spv"}
     sources = ["src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"]
     sources += [str(p.relative_to(root)).replace("\\", "/")
                 for p in sorted((root / "src" / "layer").glob("*.c"))]
@@ -169,6 +173,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         files += [root / "work" / name for name in PROXIES]
         files.append(root / XESS_PROXY[0])
         files.append(root / XESS_PROBE[0])
+        files.append(root / GPU_PROBE[0])
         files += [root / name for name in (*DXVK, *DXVK_INFO)]
         files += [root / "dist-tools" / name for name in WINDOWS_UI]
         files += [root / "src/tools" / name for name in WINDOWS_TOOLS]
@@ -218,6 +223,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
                 shutil.copy2(root / "work" / name, stage / name)
             shutil.copy2(root / XESS_PROXY[0], stage / XESS_PROXY[1])
             shutil.copy2(root / XESS_PROBE[0], stage / XESS_PROBE[1])
+            shutil.copy2(root / GPU_PROBE[0], stage / GPU_PROBE[1])
             for name in (*DXVK, *DXVK_INFO):
                 destination = stage / "dxvk" / Path(name).relative_to("work/dxvk")
                 destination.parent.mkdir(parents=True, exist_ok=True)

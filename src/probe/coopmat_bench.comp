@@ -1,0 +1,75 @@
+#version 450
+/*
+ * coopmat_bench — what this GPU's matrix units do, for the GPU report (coopmat_probe.c).
+ *
+ * Built twice, -DBN=8 and -DBN=16: float16 8xBNx16 into float32. Arc A-series (Xe-HPG, DPAS at
+ * SIMD8) offers N = 8 and Xe2 (SIMD16) N = 16; NR's kernels are written for the second, which is
+ * why an A-series card runs them on a shape it does not have. The probe runs each shape the
+ * device offers at every subgroup size it allows, one subgroup a workgroup:
+ *
+ *   MODE 0  one product over K = 64, checked exactly: the inputs are small multiples of 1/4, so
+ *           every sum is exact in float32 and any difference is a wrong answer, not rounding;
+ *   MODE 1  the matrix rate: pc.iters products into four independent accumulators;
+ *   MODE 2  the vector rate: pc.iters float32 FMAs on eight chains a lane, the arithmetic a path
+ *           without the matrix units would run on.
+ */
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+#ifndef BN
+#define BN 16
+#endif
+const uint BM = 8, BK = 16, KT = 64;
+
+layout(local_size_x_id = 0) in;            /* the subgroup size: one subgroup a workgroup */
+layout(constant_id = 1) const uint MODE = 0;
+
+layout(std430, binding = 0) readonly buffer A { float16_t a[]; };   /* BM x KT, row-major */
+layout(std430, binding = 1) readonly buffer B { float16_t b[]; };   /* KT x BN, row-major */
+layout(std430, binding = 2) writeonly buffer D { float d[]; };
+layout(push_constant) uniform P { uint iters; } pc;
+
+#define ACC coopmat<float, gl_ScopeSubgroup, BM, BN, gl_MatrixUseAccumulator>
+
+void main()
+{
+	if (MODE == 2u) {
+		const uint lane = gl_LocalInvocationID.x;
+		const float s = float(a[lane % (BM * KT)]), t = float(b[lane % (KT * BN)]) + 1.0;
+		float x[8];
+		for (uint i = 0u; i < 8u; i++)
+			x[i] = float(gl_GlobalInvocationID.x + i);
+		for (uint n = 0u; n < pc.iters; n++)
+			for (uint i = 0u; i < 8u; i++)
+				x[i] = fma(x[i], s, t);
+		d[gl_GlobalInvocationID.x] = x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6] + x[7];
+		return;
+	}
+
+	coopmat<float16_t, gl_ScopeSubgroup, BM, BK, gl_MatrixUseA> ma;
+	coopmat<float16_t, gl_ScopeSubgroup, BK, BN, gl_MatrixUseB> mb;
+	ACC c0 = ACC(0.0);
+	if (MODE == 0u) {
+		for (uint k = 0u; k < KT; k += BK) {
+			coopMatLoad(ma, a, k, KT, gl_CooperativeMatrixLayoutRowMajor);
+			coopMatLoad(mb, b, k * BN, BN, gl_CooperativeMatrixLayoutRowMajor);
+			c0 = coopMatMulAdd(ma, mb, c0);
+		}
+		coopMatStore(c0, d, 0, BN, gl_CooperativeMatrixLayoutRowMajor);
+		return;
+	}
+
+	coopMatLoad(ma, a, 0, KT, gl_CooperativeMatrixLayoutRowMajor);
+	coopMatLoad(mb, b, 0, BN, gl_CooperativeMatrixLayoutRowMajor);
+	ACC c1 = ACC(0.0), c2 = ACC(0.0), c3 = ACC(0.0);
+	for (uint n = 0u; n < pc.iters; n++) {
+		c0 = coopMatMulAdd(ma, mb, c0);
+		c1 = coopMatMulAdd(ma, mb, c1);
+		c2 = coopMatMulAdd(ma, mb, c2);
+		c3 = coopMatMulAdd(ma, mb, c3);
+	}
+	c0 = c0 + c1 + c2 + c3;
+	coopMatStore(c0, d, gl_WorkGroupID.x * BM * BN, BN, gl_CooperativeMatrixLayoutRowMajor);
+}
