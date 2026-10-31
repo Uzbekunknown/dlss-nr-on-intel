@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-10-30**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-11-01**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -17,29 +17,31 @@ When the dated entries grow long, move the older ones the same way, into a new a
 
 ---
 
-## Where things stand (2026-10-31)
+## Where things stand (2026-11-01)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
   GPU and writes the answer back into the swapchain. DirectX 8-11 games go through DXVK. DirectX 12
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
-  (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18) and **v0.0.2** (`81b0a59`, 10-31, the latest),
-  a ZIP with the setup window, DXVK 3.1.1, both layers, a `vulkan-1.dll` proxy and NR's
-  `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through XeSS, the in-game panel (PR #20),
-  network B and frames on the GPU by default, and an About tab that checks GitHub for a newer
-  release (below, 10-31). It went out on the owner's word before Linux's `make test` at its head,
-  as 0.0.1.3 did; Linux ran green after, at `eb9b281` (Open items). Linux users build from source
-  (README).
+  (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31) and **v0.0.3**
+  (`86a5799`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
+  `vulkan-1.dll` proxy and NR's `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through
+  XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
+  that checks GitHub for a newer release (below, 10-31). 0.0.3 brings the panel inside DirectX 12
+  games, its keys and clicks kept from the game, and `nr_gpu_probe.exe`, the GPU report for Arc
+  A-series owners (below, 11-01). Both went out on the owner's word before Linux's `make test` at
+  their heads, as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's probe changes
+  wait for it (Open items). Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
-    with it to 0.0.2 (`81b0a59`, 10-31);
+    with it to 0.0.2 (`81b0a59`, 10-31) and 0.0.3 (`86a5799`, 11-01);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
-    10-31 evening).
+    10-31 evening), level with `newnr` at 0.0.3.
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
@@ -110,8 +112,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The clock hint in a game (`XMX_LOW_LATENCY`, on by default on Linux since 10-18): whether it
   stays on by default~~: the owner looked on 10-18 and keeps it on. What it costs in power and
   heat, on battery above all, is unmeasured. Below, 10-18.
-- Arc A-series reports (below, 10-31 evening): once a release carries `nr_gpu_probe.exe`, asking
-  issue #18's reporter and the A-series owners on Reddit to send one.
+- Arc A-series reports (below, 10-31 evening): 0.0.3 carries `nr_gpu_probe.exe` (11-01). Asking
+  issue #18's reporter and the A-series owners on Reddit to send one waits for the owner's word;
+  the drafts are in `work\pr-replies\arc-a-call.md` on Windows.
 - Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
   `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Below, 10-17 later.
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
@@ -174,9 +177,11 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, below, 10-31
-  evening): ~~the MSVC build, a run on Intel's driver, and a double click from a release's ZIP~~,
-  done on 11-01; then the next release.
+- ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, below, 10-31
+  evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
+  then the next release~~: in 0.0.3 (`86a5799`, 11-01).
+- An Arc A-series path with 8x8 matrix tiles, from OUCO86's A770 port: begun on 11-01 and paused
+  at the owner's word, on the local branch `arc-a-n8` (`6be5235`, not on GitHub). Below, 11-01.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (below, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
@@ -249,6 +254,42 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## 0.0.3 released: the panel in DirectX 12, and the GPU report for Arc A-series (2026-11-01, branches `newnr`, `master`, `alchemist`)
+
+**The release.** `v0.0.3` at `86a5799` (`VERSION` 0.0.3), on `master`, `newnr` and `alchemist`, on
+the owner's word: `dlss-nr-windows-0.0.3-x64.zip`, 21 551 071 bytes, SHA-256
+`acf22fa84111f8c73436b6a2069622b7c59c2c4e95a9604b371cdcf55eb0f2c1` (GitHub's digest the same), its
+notes in `work\pr-replies\release-notes-0.0.3.md` on Windows. It carries the panel inside DirectX 12
+games and its keys and clicks kept from the game (below, 10-31, later), and `nr_gpu_probe.exe` with
+the fixes of 11-01 (below, 10-31, evening), and asks Arc A-series owners to send the report and to
+try NR as it is there. It went out before Linux's `make test` on the probe's changes (Open items).
+
+**Checked from the candidate ZIP:** the eight Windows tool suites (217 tests, 8 skipped); the
+window's self-test (90 controls, 201 keys in four languages); the probe double-clicked from the
+unpacked ZIP; and setup end to end on a stand-in, the SDK's vkcube in a scratch folder, so that no
+game of the owner's was touched: Check, Install with both networks taken out of the 310.9.16 DLL,
+Enable NR, 600 frames all answered on network B, Save report with 19 checks and no warning, Remove
+NR, the folder as before and no daemon left. No game ran on this ZIP; the panel's code is the one
+Mortal Kombat 11 and Hogwarts ran on 10-31.
+
+**The Arc A-series path, begun and paused.** At the owner's word the 8x8 tiles of OUCO86's A770 port
+went in, and then, at the owner's word again, were held back from 0.0.3. They are on the local
+branch `arc-a-n8` (`6be5235`, Windows checkout only):
+- the six matrix shaders on the network's path take `XMX_TN`, 16 by default and 8 for the nine
+  `*_n8.spv` builds, a workgroup covering the same block either way, so nothing that dispatches
+  them changes;
+- Xe2's builds compile byte-identical to before; the 8x8 builds are byte-identical to OUCO86's A770
+  shaders compiled with our includes (`window_attention`: theirs with our 10-15 store fix, by a
+  three-way merge), and pass `spirv-val`;
+- libxmx takes a device offering float16 8x8x16 as able and builds `name_n8.spv` where one exists
+  (`XMX_N8=0` keeps the 8x16 kernels, `1` forces the 8x8 ones); it compiles, and has not run;
+- left: the Makefile and CMake, the release builder's shader list, a test, OUCO86's credit in
+  NOTICE (Apache-2.0), and an A-series card: nothing here can run 8x8x16 right.
+
+**Next on Windows:** the owner's word on asking A-series owners (issue #18, Reddit; drafts in
+`work\pr-replies\arc-a-call.md`), and on taking up `arc-a-n8` again.
+**Next on Linux:** `make test` on the probe's changes (Open items).
 
 ## A GPU report for Arc A-series owners to send in (2026-10-31, evening, branch `alchemist`)
 
