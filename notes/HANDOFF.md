@@ -306,6 +306,16 @@ closed it with 0.
 
 **Not tested:** any A-series card: 8x8x16 has never run anywhere here.
 
+**Prior art, found 11-01:** `OUCO86/dlss-nr-on-a770` (Apache-2.0) is this code running NR on an
+A770 beside an AMD card that renders the game. Its kernels are ported to the A770's 8x8x16 tiles
+(`TN = 8` in the GEMM shaders, `XMX_TN` in libxmx; they no longer run on Xe2), plain GEMMs go to
+the tiled kernel because the staged one ran at 0.4-0.6 of it there
+(`notes/staged-vs-tiled-a770.md`), and it has an int8 path. Its float16 graph at 768x448 takes 43.5
+ms on the A770, 36.4 with int8 (`docs/A770-HANDOFF.md`, driver 101.9030), about this 140V's time,
+against the 1-2 fps of #18. Their 8x8 variants, chosen only on a device that offers 8x8x16 without
+8x16x16, are the shortest way to an A-series path; nothing here can run them, so the A-series
+testers would be its only check.
+
 **Next on Windows:** ~~`build_win.bat`, `work\coopmat_probe.exe` on the Arc 140V, a release built
 with it, and a double click on `nr_gpu_probe.exe` in the unpacked ZIP~~: done on 11-01 (above).
 Then into the next release, at the owner's word.
