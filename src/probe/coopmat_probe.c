@@ -10,8 +10,10 @@
  * allows: whether a product comes out exact, and how fast the matrix and the vector units run
  * (coopmat_bench.comp, built as coopmat_bench8.spv and coopmat_bench16.spv and looked for beside
  * the program, then in work/ beside it). Arc A-series offers 8x8x16 where NR's kernels are
- * written for Xe2's 8x16x16, and this is what an A-series path is to be designed from. Needs no
- * weights and nothing else of the build; the output also goes to nr-gpu-report.txt.
+ * written for Xe2's 8x16x16, and this is what an A-series path is to be designed from. 8x16x16
+ * is tried where it is not offered too, since NR's kernels run it there: whether the driver
+ * gets it right is whether NR's picture is. Needs no weights and nothing else of the build; the
+ * output also goes to nr-gpu-report.txt.
  *
  * Build: cc -O2 -Iwork/vulkan-headers/include -o work/coopmat_probe \
  *              src/probe/coopmat_probe.c -lvulkan
@@ -482,14 +484,24 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 			sizes[nsizes++] = s;
 
 	int ours = 0;                       /* NR's kernels: 8x16x16 at subgroup 32, exact */
-	int unchecked = 0;                  /* 8x16x16 offered, but its shader is missing */
+	int unchecked = 0;                  /* 8x16x16 wanted, but its shader is missing */
 	VkShaderModule kept = VK_NULL_HANDLE;
 	for (int shape = 0; shape < 2; shape++) {
 		const int n = shape ? 16 : 8;
 		const char *spv = shape ? "coopmat_bench16.spv" : "coopmat_bench8.spv";
-		if (!(shape ? has16 : has8)) {
-			say("    matrix 8x%dx16: not offered\n", n);
+		if (!shape && !has8) {
+			say("    matrix 8x8x16: not offered\n");
 			continue;
+		}
+		/* NR's kernels run 8x16x16 whether the device offers it or not, so it is tried either
+		 * way: a driver may run a shape it does not offer, right or wrong (Intel's computes
+		 * 8x8x16 wrong on Xe2), and what it gives is what NR gets on an A-series card. The
+		 * report is saved first, in case the driver does not survive it. */
+		if (shape && !has16) {
+			say("    matrix 8x16x16: not offered; tried anyway, as NR's kernels run it\n");
+			fflush(stdout);
+			if (report)
+				fflush(report);
 		}
 		VkShaderModule mod = load_module(&b, spv);
 		if (!mod) {
@@ -572,8 +584,9 @@ static void bench_device(VkPhysicalDevice pd, int has8, int has16)
 	if (b.lost)
 		say("    a dispatch failed or ran past 10 s, so nothing more was measured\n");
 	say("    NR's kernels (float16 8x16x16 at subgroup 32): %s\n",
-	    ours ? "run here" : unchecked ? "not checked, without coopmat_bench16.spv"
-					  : "do NOT run here; please send this report");
+	    ours ? (has16 ? "run here" : "exact here, though the GPU does not offer the shape")
+		 : unchecked ? "not checked, without coopmat_bench16.spv"
+			     : "do NOT run here; please send this report");
 	bench_close(&b);
 }
 
