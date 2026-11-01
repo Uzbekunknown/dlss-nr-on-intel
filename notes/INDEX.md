@@ -27,6 +27,8 @@ disproved.
 | `gpu-only-20261014.md` | strict same-Arc pixel residency; complete 1080p/1440p present measurements, GPU metadata reductions and failure checks |
 | `gpu-frame-stages-20261013.md` | Windows CPU/GPU image-stage comparison, scopes, allocation probe and negative high-resolution E4M3 results |
 | `archive/HANDOFF-until-2026-10-07.md` | HANDOFF's dated entries from the first render to PR #9, moved out word for word on 2026-10-14: history, and the evidence HANDOFF's open items point to |
+| `archive/HANDOFF-2026-10-08-to-2026-10-15.md` | HANDOFF's dated entries from the Windows release's preparation to 0.0.1.2, moved out word for word on 2026-10-30 |
+| `archive/HANDOFF-2026-10-16-to-2026-10-28.md` | HANDOFF's dated entries from DirectX 12 through the game's XeSS and preset B to a daemon restarted under the game, with PR #20's review rounds, moved out word for word on 2026-11-01 |
 | `reproduce.md` | how to run the resident path from a clean checkout |
 
 ## The binary, the weights, the graph

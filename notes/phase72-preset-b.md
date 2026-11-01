@@ -1,6 +1,6 @@
 # Phase 72 — preset B, NVIDIA's faster model: read out of `.text`, unpacked, running (2026-10-17)
 
-`nvngx_dlssnr.dll` 310.9.16.0 (sha256 `2bc19bc0…28789f`, HANDOFF 10-17) carries two networks.
+`nvngx_dlssnr.dll` 310.9.16.0 (sha256 `2bc19bc0…28789f`, HANDOFF archive, 10-17) carries two networks.
 **Preset B is preset A's graph with every encoder and decoder stage cut to depth 2**: the same
 block families, the same eight-block bottleneck, 31 blocks against 71. One function in `.text`
 builds both from five stage depths. Unpacked through MLX-DLSS's own decoders and run through
