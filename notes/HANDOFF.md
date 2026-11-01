@@ -24,24 +24,26 @@ When the dated entries grow long, move the older ones the same way, into a new a
   GPU and writes the answer back into the swapchain. DirectX 8-11 games go through DXVK. DirectX 12
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
-  (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31) and **v0.0.3**
-  (`86a5799`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
+  (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
+  (`86a5799`, 11-01) and **v0.0.3.1** (`c0b7f9d`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
   `vulkan-1.dll` proxy and NR's `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through
   XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
   that checks GitHub for a newer release (below, 10-31). 0.0.3 brings the panel inside DirectX 12
   games, its keys and clicks kept from the game, and `nr_gpu_probe.exe`, the GPU report for Arc
-  A-series owners (below, 11-01). Both went out on the owner's word before Linux's `make test` at
-  their heads, as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's probe changes
-  wait for it (Open items). Linux users build from source (README).
+  A-series owners (below, 11-01). 0.0.3.1 is what the first A-series reports asked for: the speed
+  test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
+  11-01 later). All three went out on the owner's word before Linux's `make test` at their heads,
+  as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's changes wait
+  for it (Open items). Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
-    with it to 0.0.2 (`81b0a59`, 10-31) and 0.0.3 (`86a5799`, 11-01);
+    with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01) and 0.0.3.1 (`c0b7f9d`, 11-01);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30);
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
-    10-31 evening), level with `newnr` at 0.0.3.
+    10-31 evening), level with `newnr` at 0.0.3.1.
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
@@ -256,7 +258,7 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
-## The first Arc A-series reports, and the fixes they asked for (2026-11-01, later, branch `newnr`)
+## 0.0.3.1 released: the first Arc A-series reports, and the fixes they asked for (2026-11-01, later, branches `newnr`, `master`, `alchemist`)
 
 **The reports** (issues #22-#26 and #28, all A770 16GB, 10-31 19:30 to 11-01 06:00 UTC; five can
 run test builds). Every card offers float16 8x8x16 and int8 8x8x32 only, subgroups 8-32, 48 KB of
@@ -291,8 +293,18 @@ window's self-test (89 controls, 197 keys), with two networks shown apart; `test
 skipped); the probe on this 140V (1.5 s, "run here"); `speed_test.py --preset B` on the real
 daemon records B and 31 blocks.
 
-**Next on Windows:** the release, at the owner's word; answers to the reporters (#23: which network,
-and whether NR was on; #25: Save report for the Vulkan games; #27: where the DLL is).
+**The release.** `v0.0.3.1` at `c0b7f9d` (`VERSION` 0.0.3.1, the owner's name for it), on
+`master`, `newnr` and `alchemist`, on the owner's word: `dlss-nr-windows-0.0.3.1-x64.zip`,
+21 551 982 bytes, SHA-256 `2f07c0f2c87d60556a1046fab649968408b9d8667d93fab9cf615c4a6aab4012`
+(GitHub's digest the same), its notes in `work\pr-replies\release-notes-0.0.3.1.md` on Windows.
+From the unpacked ZIP: the window's self-test, the probe ("run here"), and on a stand-in (the
+SDK's vkcube in a scratch folder) Check, Install with both networks out of the 310.9.16 DLL, the
+speed test as the button runs it (A then B, 37 s; the daemons said A, 71 blocks, and B, 31), Save
+report with 19 checks and both networks, Remove NR, the folder as before. No game ran on it: no
+game-side code changed.
+
+**Next on Windows:** answers to the reporters (#23: which network, and whether NR was on; #25: Save
+report for the Vulkan games; #27: where the DLL is), at the owner's word.
 **Next on Linux:** `make test` for `speed_test.py` and the probe (Open items).
 
 ## 0.0.3 released: the panel in DirectX 12, and the GPU report for Arc A-series (2026-11-01, branches `newnr`, `master`, `alchemist`)
