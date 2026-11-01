@@ -125,8 +125,9 @@ under that date. When an item is done, strike it through here and name the commi
   stays on by default~~: the owner looked on 10-18 and keeps it on. What it costs in power and
   heat, on battery above all, is unmeasured. Archive, 10-18.
 - ~~Arc A-series reports: asking issue #18's reporter and the A-series owners on Reddit~~: asked on
-  11-01 (#18, the owner's Reddit post), and six A770 reports came in (below, 11-01 later). The
-  answers to them wait for the owner's word.
+  11-01 (#18, the owner's Reddit post), and seven A770 reports came in (below, 11-01 later).
+  #23, #25, #27 and #29 answered on 11-01 at the owner's word (below, 11-01, latest); #22, #24,
+  #26 and #28 are unanswered, and #18 waits for its reporter.
 - Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
   `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Archive, 10-17 later.
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
@@ -343,6 +344,29 @@ names and English, and the DLL's source as a game the player owns, such as NBA 2
 `publish_check`. **Next on Linux:** `make test` (Open items). **Next on Windows:** nothing; the
 next release carries the new release guide.
 
+## The reporters answered (2026-11-01, latest; nothing in the code)
+
+Posted at the owner's word, from the Linux session under the owner's account, each comment marked
+as Claude-written:
+- **#23**: asked for 0.0.3.1's speed test (0.0.3's recorded no network, and B is the default since
+  0.0.2, so A and B cannot be told apart) and for Save report, whose daemon log carries `buffers in
+  ...` (mapped BAR or copies) and each frame's `gpu a+b+c` split. Its eight cases fit **~22 ms a
+  frame + 93 ms per megapixel** of network field (1280x720 at 1.0 predicts 119, measured 117): the
+  fixed part is what loses to the 140V at 640x360, and only the log places it. Also asked whether
+  NR was on in Hogwarts; 55-60 presented with frame generation x2 is 27-30 rendered, which fits NR
+  answering each frame at that scale.
+- **#25**: Save report after a Vulkan launch (the launch record says whether the proxy ran; a game
+  started elevated, or loading the loader by its full path, never gets the layer), and which setup
+  mode each game had.
+- **#27**: fixed in 0.0.3.1, confirmation asked; no manual path in the window.
+- **#19 closed**: resolved by the reporter (not as administrator, frames on the GPU); their request
+  for an fps display is noted, with the daemon's log and Save report as the files that carry it.
+- **#29**: the seventh A770 report (driver 101.9150, can run test builds, a game later),
+  answered as the others.
+
+Unanswered: #22, #24, #26 and #28 (#28 reads 25 % below the other six at the same driver, likely
+the card's clock or power, not the code); #18 waits for its reporter.
+
 ## 0.0.3.1 released: the first Arc A-series reports, and the fixes they asked for (2026-11-01, later, branches `newnr`, `master`, `alchemist`)
 
 **The reports** (issues #22-#26 and #28, all A770 16GB, 10-31 19:30 to 11-01 06:00 UTC; five can
@@ -388,8 +412,9 @@ speed test as the button runs it (A then B, 37 s; the daemons said A, 71 blocks,
 report with 19 checks and both networks, Remove NR, the folder as before. No game ran on it: no
 game-side code changed.
 
-**Next on Windows:** answers to the reporters (#23: which network, and whether NR was on; #25: Save
-report for the Vulkan games; #27: where the DLL is), at the owner's word.
+**Next on Windows:** ~~answers to the reporters (#23: which network, and whether NR was on; #25: Save
+report for the Vulkan games; #27: where the DLL is), at the owner's word~~: posted on 11-01 from the
+Linux session (below, 11-01, latest).
 **Next on Linux:** `make test` for `speed_test.py` and the probe (Open items).
 
 ## 0.0.3 released: the panel in DirectX 12, and the GPU report for Arc A-series (2026-11-01, branches `newnr`, `master`, `alchemist`)
