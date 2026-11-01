@@ -112,9 +112,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The clock hint in a game (`XMX_LOW_LATENCY`, on by default on Linux since 10-18): whether it
   stays on by default~~: the owner looked on 10-18 and keeps it on. What it costs in power and
   heat, on battery above all, is unmeasured. Below, 10-18.
-- Arc A-series reports (below, 10-31 evening): 0.0.3 carries `nr_gpu_probe.exe` (11-01). Asking
-  issue #18's reporter and the A-series owners on Reddit to send one waits for the owner's word;
-  the drafts are in `work\pr-replies\arc-a-call.md` on Windows.
+- ~~Arc A-series reports: asking issue #18's reporter and the A-series owners on Reddit~~: asked on
+  11-01 (#18, the owner's Reddit post), and six A770 reports came in (below, 11-01 later). The
+  answers to them wait for the owner's word.
 - Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
   `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Below, 10-17 later.
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
@@ -125,6 +125,7 @@ under that date. When an item is done, strike it through here and name the commi
 **Linux**
 - `alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
   evening): `make test`.
+- `speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`.
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -254,6 +255,45 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The first Arc A-series reports, and the fixes they asked for (2026-11-01, later, branch `newnr`)
+
+**The reports** (issues #22-#26 and #28, all A770 16GB, 10-31 19:30 to 11-01 06:00 UTC; five can
+run test builds). Every card offers float16 8x8x16 and int8 8x8x32 only, subgroups 8-32, 48 KB of
+shared memory, and **runs NR's 8x16x16 at subgroup 32 exactly** (101.9150 on five, 101.9034 on
+one): NR computes right there, slowly. Matrix rates on a typical card, TFLOP/s at subgroups 8, 16
+and 32: 8x8x16 57-59, 58-60, 36-39; the 8x16x16 it does not offer 64-69, 58-63, 38-41; vector
+float32 FMA 19-21 (this 140V: 28-31 and 3.4-3.9). So 8x8 tiles alone (`arc-a-n8`) would not speed
+the units up, and the width would: 32 costs these cards ~40 %. The one speed test (#23) against
+phase72's Windows table: 32 ms at 640x360 and 0.4 against this 140V's 24-27 under A, 229 at
+1920x1080 and 1.0 against 381-404. The A770 does a megapixel in half the time and loses at the
+small fields games run at: a fixed ~21 ms a frame, which only a per-pass profile on such a card can
+place. Which network it measured is unknown (below). Games: #23, Hogwarts at 1440p, XeSS Quality,
+frame generation x2 and render scale 0.4 at 55-60 fps, too fast for NR on every frame by that
+test; #25, Nuclear Option through DXVK at 720p and 0.4, 40 fps with NR's picture, and two Vulkan
+games where NR did nothing. #27: NBA 2K27 keeps its `libxess.dll` in a folder setup did not look in.
+
+**Fixed:**
+- The speed test named no network since 346d300, in 0.0.2 and 0.0.3: the daemon's line became
+  `network preset B (dlssnr-b-logical.safetensors), 31 blocks`, and `speed_test.py` read only
+  `network preset B, 31 blocks`. `network_of` reads both, and a test holds it to both.
+- The setup window's speed test measures every network the release carries, A first, and each
+  case keeps its network; the chooser beside the button is gone (the owner, 11-01). The result's
+  `networks` lists what each daemon said it ran. A request naming one network measures that one.
+- `xess_libraries` also looks in the folders under the game's executable, four deep, NR's own
+  `dlss-nr` apart, where neither place it knew has a `libxess.dll`.
+- The probe runs half a second of its first rate's work before timing it: #22's first two rates
+  came out at half and 0.8 of the rest.
+
+**Checked:** MSVC `build_win.bat` (the three known C4068); `test_windows_wizard.py` 95 (1
+skipped), with new cases for both networks, the daemon's two lines and a subfolder's XeSS; the
+window's self-test (89 controls, 197 keys), with two networks shown apart; `test_release.py` 21 (5
+skipped); the probe on this 140V (1.5 s, "run here"); `speed_test.py --preset B` on the real
+daemon records B and 31 blocks.
+
+**Next on Windows:** the release, at the owner's word; answers to the reporters (#23: which network,
+and whether NR was on; #25: Save report for the Vulkan games; #27: where the DLL is).
+**Next on Linux:** `make test` for `speed_test.py` and the probe (Open items).
 
 ## 0.0.3 released: the panel in DirectX 12, and the GPU report for Arc A-series (2026-11-01, branches `newnr`, `master`, `alchemist`)
 

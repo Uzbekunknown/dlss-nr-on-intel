@@ -21,7 +21,6 @@ $script:PendingSettings = @{}
 $script:LoadingSettings = $false
 $script:SettingsReload = $false
 $script:SpeedTestDue = $false
-$script:PresetReady = @{A=$true; B=$false}
 $script:PacingDue = $false
 $script:ApplyingProfile = $false
 $script:SettingsDue = [DateTime]::MaxValue
@@ -303,7 +302,7 @@ $script:SettingsStateKey = 'SettingsLoading'
       <Border Style="{StaticResource CardBox}">
        <StackPanel>
         <TextBlock x:Name="CompareHeading" Style="{StaticResource Heading}"/>
-        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SpeedTest"/><ComboBox x:Name="SpeedNetwork" Margin="8,0,6,6" MinWidth="150" VerticalAlignment="Top" Height="{Binding ActualHeight, ElementName=SpeedTest}" ToolTip=""/></WrapPanel>
+        <WrapPanel><Button x:Name="Launch"/><Button x:Name="Toggle"/><Button x:Name="SpeedTest"/></WrapPanel>
         <TextBlock x:Name="EffectState" Text="" FontWeight="SemiBold" Margin="0,4,0,2"/>
         <TextBlock x:Name="RuntimeState" Text="" Style="{StaticResource Note}" FontSize="13"/>
         <TextBlock x:Name="FpsHint" Style="{StaticResource Note}" Margin="0,6,0,0"/>
@@ -401,7 +400,7 @@ $script:SettingsStateKey = 'SettingsLoading'
 '@
 $script:Window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
 $script:Ui = @{}
-foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ApiD3d12','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
+foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','BrowsePython','FindPython','GetPython','Api','GameArgs','Fossilize','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','EffectState','RuntimeState','Report','Progress','Spinner','Details','CheckDetails','MainScroll','Subtitle','FilesHeading','DllLabel','GameLabel','PythonLabel','ConnectHeading','ApiLabel','ApiVulkan','ApiDxvk','ApiD3d12','LaunchOptions','ArgsLabel','FirstTestHint','CompareHeading','FpsHint','SpeedState','Language','Theme')) {
     $script:Ui[$name] = $script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -539,7 +538,7 @@ $script:Strings=@{
   'Warn.vulkan_executable_other'='{0} does not load the Vulkan loader itself, and NR reaches only the .exe chosen here. {1} beside it does: if the game draws with Vulkan there, choose it.'
   'Warn.window_elevated'='This window runs as administrator, and so does a game started with Launch game: NR cannot reach a game that runs as administrator. Start the game, and Steam or the launcher that starts it, without administrator rights.'
   'Warn.uac_off'='UAC is off, so Windows runs every program as administrator, and NR cannot reach a game that runs so. NR needs UAC on, as Windows has it by default.'
-  SpeedTest='Speed test'; SpeedTestTip='Measures NR alone on this GPU, without a game, at four window sizes: the best it can do here. Save report carries the result.'
+  SpeedTest='Speed test'; SpeedTestTip='Measures NR alone on this GPU, without a game, at four window sizes, network A and, where this release has it, B: the best it can do here. Save report carries the result.'
   'Loading.speedtest'='Measuring NR on this GPU, without a game…'; 'Done.speedtest'='Speed test saved; Save report carries it.'
   SpeedHead='The network itself on this PC ({0}), per frame:'; SpeedScale='render scale {0}: {1}'
   SpeedCase='{0}×{1} {2} ms (up to {3} fps)'
@@ -560,9 +559,6 @@ $script:Strings=@{
   'Loading.preset'='Saving the network…'; 'Done.preset'='Network saved; it takes effect when the game starts next.'
   'Done.preset-later'='Network saved; Install NR gives it to the game.'
   SpeedPreset='{0}, network {1}'
-  SpeedNetworkA='A: the original model'; SpeedNetworkB='B: the faster model'
-  SpeedNetworkMissing='weights not in this release'
-  SpeedNetworkTip='Which network the speed test measures. A is the model NR has always run; B is the smaller one nvngx_dlssnr.dll 310.9.16 carries, which takes about half of A''s time on this GPU. A game runs whichever network NR controls chose; this only decides what the test measures.'
   'Warn.preset_b_extraction'='NR is installed with network A: network B could not be taken out of nvngx_dlssnr.dll {0}. What the extractor said is in Check details and in Save report.'
   'Loading.settings'='Loading NR settings…'; 'Loading.settings-save'='Saving NR controls…'; 'Loading.settings-reset'='Restoring NR defaults…'
   'Done.settings'='NR settings loaded.'; 'Done.settings-save'='NR settings saved.'; 'Done.settings-reset'='NR defaults restored.'
@@ -657,7 +653,7 @@ $script:Strings=@{
   'Warn.vulkan_executable_other'='{0} сам не загружает загрузчик Vulkan, а NR работает только в выбранном здесь .exe. Рядом лежит {1}, который его загружает: если игра рисует через Vulkan там, выберите его.'
   'Warn.window_elevated'='Это окно запущено с правами администратора, и игра, запущенная кнопкой «Запустить игру», тоже: до игры с такими правами NR не доходит. Запускайте игру, а также Steam или лаунчер, который её запускает, без прав администратора.'
   'Warn.uac_off'='UAC выключен, поэтому Windows запускает все программы с правами администратора, и до игры с такими правами NR не доходит. NR нужен включённый UAC, как в Windows по умолчанию.'
-  SpeedTest='Тест скорости'; SpeedTestTip='Измеряет NR на этой видеокарте без игры, при четырёх размерах окна: лучшее, на что он здесь способен. Результат попадает в отчёт.'
+  SpeedTest='Тест скорости'; SpeedTestTip='Измеряет NR на этой видеокарте без игры, при четырёх размерах окна, сеть A и, если она есть в этой сборке, B: лучшее, на что он здесь способен. Результат попадает в отчёт.'
   'Loading.speedtest'='Измеряем NR на этой видеокарте, без игры…'; 'Done.speedtest'='Тест скорости сохранён и попадёт в отчёт.'
   SpeedHead='Сама нейросеть на этом ПК ({0}) тратит на кадр:'; SpeedScale='масштаб рендера {0}: {1}'
   SpeedCase='{0}×{1} — {2} мс (до {3} fps)'
@@ -678,9 +674,6 @@ $script:Strings=@{
   'Loading.preset'='Сохраняем выбор нейросети…'; 'Done.preset'='Нейросеть сохранена и применится при следующем запуске игры.'
   'Done.preset-later'='Нейросеть сохранена; «Установить NR» передаст её игре.'
   SpeedPreset='{0}, сеть {1}'
-  SpeedNetworkA='A: исходная модель'; SpeedNetworkB='B: более быстрая модель'
-  SpeedNetworkMissing='весов нет в этой сборке'
-  SpeedNetworkTip='Какую сеть измеряет тест скорости. A — модель, с которой NR работал всегда; B — меньшая из nvngx_dlssnr.dll 310.9.16, на этой видеокарте она тратит примерно половину времени A. Игра запускает ту сеть, что выбрана в «Управлении NR»; здесь выбирается только то, что измеряет тест.'
   'Warn.preset_b_extraction'='NR установлен с сетью A: сеть B не удалось извлечь из nvngx_dlssnr.dll {0}. Что сообщил извлекатель, есть в «Подробностях проверки» и в «Сохранить отчёт».'
   'Loading.settings'='Загружаем настройки NR…'; 'Loading.settings-save'='Сохраняем настройки NR…'; 'Loading.settings-reset'='Возвращаем настройки NR…'
   'Done.settings'='Настройки NR загружены.'; 'Done.settings-save'='Настройки NR сохранены.'; 'Done.settings-reset'='Настройки NR сброшены.'
@@ -775,7 +768,7 @@ $script:Strings=@{
   'Warn.vulkan_executable_other'='{0} no carga por sí mismo el cargador de Vulkan, y NR solo llega al .exe elegido aquí. {1}, a su lado, sí lo carga: si el juego dibuja con Vulkan allí, elíjalo.'
   'Warn.window_elevated'='Esta ventana se ejecuta como administrador, y también un juego iniciado con Iniciar el juego: NR no llega a un juego que se ejecuta como administrador. Inicie el juego, y Steam o el lanzador que lo inicia, sin derechos de administrador.'
   'Warn.uac_off'='El UAC está desactivado, así que Windows ejecuta todos los programas como administrador, y NR no llega a un juego que se ejecuta así. NR necesita el UAC activado, como viene en Windows.'
-  SpeedTest='Prueba de velocidad'; SpeedTestTip='Mide NR solo en esta GPU, sin juego, con cuatro tamaños de ventana: lo mejor que puede hacer aquí. El informe incluye el resultado.'
+  SpeedTest='Prueba de velocidad'; SpeedTestTip='Mide NR solo en esta GPU, sin juego, con cuatro tamaños de ventana, la red A y, si esta versión la trae, la B: lo mejor que puede hacer aquí. El informe incluye el resultado.'
   'Loading.speedtest'='Midiendo NR en esta GPU, sin juego…'; 'Done.speedtest'='Prueba de velocidad guardada; el informe la incluye.'
   SpeedHead='La red neuronal por sí sola en este PC ({0}), por fotograma:'; SpeedScale='escala de renderizado {0}: {1}'
   SpeedCase='{0}×{1} {2} ms (hasta {3} fps)'
@@ -796,9 +789,6 @@ $script:Strings=@{
   'Loading.preset'='Guardando la red neuronal…'; 'Done.preset'='Red neuronal guardada; se aplica la próxima vez que se inicie el juego.'
   'Done.preset-later'='Red neuronal guardada; Instalar NR se la pasa al juego.'
   SpeedPreset='{0}, red {1}'
-  SpeedNetworkA='A: el modelo original'; SpeedNetworkB='B: el modelo rápido'
-  SpeedNetworkMissing='sus pesos no están en esta versión'
-  SpeedNetworkTip='Qué red mide la prueba de velocidad. A es el modelo con el que NR funciona desde siempre; B es el más pequeño que trae nvngx_dlssnr.dll 310.9.16, que en esta GPU tarda más o menos la mitad que A. El juego ejecuta la red elegida en «Controles de NR»; esto solo decide qué mide la prueba.'
   'Warn.preset_b_extraction'='NR está instalado con la red A: no se pudo extraer la red B de nvngx_dlssnr.dll {0}. Lo que dijo el extractor está en Detalles de la comprobación y en Guardar informe.'
   'Loading.settings'='Cargando la configuración de NR…'; 'Loading.settings-save'='Guardando los controles de NR…'; 'Loading.settings-reset'='Restaurando los valores predeterminados de NR…'
   'Done.settings'='Configuración de NR cargada.'; 'Done.settings-save'='Configuración de NR guardada.'; 'Done.settings-reset'='Se restauraron los valores predeterminados de NR.'
@@ -893,7 +883,7 @@ $script:Strings=@{
    'Warn.vulkan_executable_other'='{0} 本身不加载 Vulkan 加载器，NR 只能接入此处选择的 .exe。它旁边的 {1} 会：如果游戏是以 Vulkan 在那里绘制的，请改选它。'
    'Warn.window_elevated'='本窗口以管理员身份运行，用“启动游戏”启动的游戏也会如此：NR 无法接入以管理员身份运行的游戏。请以非管理员身份启动游戏，以及启动它的 Steam 或启动器。'
    'Warn.uac_off'='UAC 已关闭，Windows 会以管理员身份运行每个程序，NR 无法接入这样运行的游戏。NR 需要 UAC 开启，即 Windows 的默认状态。'
-   SpeedTest='速度测试'; SpeedTestTip='在有游戏之前，单独在这块 GPU 上测量 NR，覆盖四种窗口尺寸：这里能达到的最好水平。保存报告会带上该结果。'
+   SpeedTest='速度测试'; SpeedTestTip='在有游戏之前，单独在这块 GPU 上测量 NR，覆盖四种窗口尺寸，网络 A 以及此版本带有的网络 B：这里能达到的最好水平。保存报告会带上该结果。'
    'Loading.speedtest'='正在这块 GPU 上无游戏地测量 NR…'; 'Done.speedtest'='速度测试已保存；保存报告会带上它。'
    SpeedHead='本机（{0}）上网络本身的每帧耗时：'; SpeedScale='渲染比例 {0}：{1}'
    SpeedCase='{0}×{1} {2} 毫秒（最高 {3} fps）'
@@ -910,9 +900,6 @@ $script:Strings=@{
    'Loading.preset'='正在保存网络…'; 'Done.preset'='网络已保存；在游戏下次启动时生效。'
    'Done.preset-later'='网络已保存；安装 NR 会把它交给游戏。'
    SpeedPreset='{0}, 网络 {1}'
-   SpeedNetworkA='A：原始模型'; SpeedNetworkB='B：更快的模型'
-   SpeedNetworkMissing='此版本不含其权重'
-   SpeedNetworkTip='速度测试测量哪个网络。A 是 NR 一直运行的模型；B 是 nvngx_dlssnr.dll 310.9.16 携带的更小网络，在这块 GPU 上耗时约为 A 的一半。游戏运行的是「NR 控制」里选中的网络；这里只决定测试测量什么。'
    'Warn.preset_b_extraction'='NR 已按网络 A 安装：无法从 nvngx_dlssnr.dll {0} 提取网络 B。提取器的输出在「检查详情」和「保存报告」里。'
    EveryLabel='网络运行于'; EveryTip='其间各帧重复上一次结果：游戏跑得更快，画面只在网络出帧时变化。'
    Every1='每帧'; Every2='每 2 帧'; Every3='每 3 帧'; Every4='每 4 帧'
@@ -1103,12 +1090,6 @@ function Apply-NrSettings($Result) {
         $name=[string]$model.name
         if(-not $script:PendingSettings.ContainsKey($name)) { Set-KnobDisplay $name $Result.settings.$name }
     }
-    # Which networks this release can measure, from the same settings answer: the check that
-    # says whether B's weights are here is the backend's, not a file listing done in the window.
-    if($Result.presets) {
-        $script:PresetReady=@{A=$true; B=[bool]$Result.presets.B}
-        Update-SpeedNetwork
-    }
     Set-SettingsState $(if($script:PendingSettings.Count){'SettingsUnsaved'}else{'SettingsReady'})
 }
 function Save-NrSettings {
@@ -1155,7 +1136,6 @@ function Set-Language([string]$Language) {
         foreach($name in $script:HeaderBindings.Keys) { $script:Ui[$name].Header=T $script:HeaderBindings[$name] }
         foreach($name in $script:TipBindings.Keys) { $script:Ui[$name].ToolTip=T $script:TipBindings[$name] }
         Update-KnobLanguage
-        Update-SpeedNetwork
         Set-SettingsState $script:SettingsStateKey
         Set-Progress $script:ProgressKey
         $runtimeKey=$script:RuntimeKey
@@ -1225,38 +1205,6 @@ function Show-Presets($Presets) {
         try { $script:Ui.PresetChoice.SelectedItem=$script:Ui.PresetA } finally { $script:ApplyingProfile=$false }
     }
 }
-# The speed test's own choice of network, beside its button. It asks which network to MEASURE,
-# which is not the question the `weights` knob asks (which network a GAME runs): a tester
-# comparing the two on one PC would otherwise have to change the game's network to measure the
-# other. A is always offered; B only where this release carries its weights, because a test of
-# weights that are not here has nothing to measure - the backend refuses it as well.
-function Update-SpeedNetwork {
-    $combo=$script:Ui.SpeedNetwork
-    if(-not $combo) { return }
-    # The list is rebuilt rather than relabelled in place: B is dropped when its weights are
-    # absent, so the combo is never left on a choice the backend would refuse.
-    $chosen=Get-SpeedNetwork
-    $combo.Items.Clear()
-    foreach($preset in @('A','B')) {
-        $ready=[bool]$script:PresetReady[$preset]
-        if(-not $ready) { continue }
-        $item=[Windows.Controls.ComboBoxItem]::new()
-        $item.Tag=$preset
-        $item.Content=T ('SpeedNetwork'+$preset)
-        $null=$combo.Items.Add($item)
-    }
-    # A release without B offers A alone, which is what it can measure.
-    $index=-1
-    for($i=0; $i -lt $combo.Items.Count; $i++) { if([string]$combo.Items[$i].Tag -eq $chosen) { $index=$i } }
-    $combo.SelectedIndex=$(if($index -ge 0){$index}else{0})
-    $combo.ToolTip=T 'SpeedNetworkTip'
-}
-# What the button asks to measure, read from the combo when it is pressed: the choice belongs to
-# the control, and a second copy of it is how the two would come to disagree.
-function Get-SpeedNetwork {
-    if($script:Ui.SpeedNetwork -and $script:Ui.SpeedNetwork.SelectedItem) { return [string]$script:Ui.SpeedNetwork.SelectedItem.Tag }
-    return 'A'
-}
 # The GPU image path takes every frame, in step with the game, or stands aside (issue #17):
 # with it on, asynchronous mode and every Nth frame are greyed and kept for when it is off.
 function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
@@ -1318,7 +1266,7 @@ function Request-Pacing([string]$Action='pacing') {
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','SpeedNetwork','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
     Update-PacingState $Busy
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
@@ -1375,19 +1323,24 @@ function Format-Warnings($Value) {
     }
 }
 function Show-Speed($Value) {
-    # The last speed test: the network's own time for a frame at each size and render scale, the
-    # frame rate that time allows, and why a game's stays below it.
+    # The last speed test, for each network it measured: the network's own time for a frame at each
+    # size and render scale, the frame rate that time allows, and why a game's stays below it.
     $script:LastSpeed=$Value
     $cases=@($Value.cases | Where-Object { $_ -and ($_.network_ms -or $_.round_trip_ms) })
     if(-not $cases.Count) { $script:Ui.SpeedState.Text=''; return }
-    # The network measured, where the test says: a game runs the one chosen now.
-    $device=$(if($Value.preset){[string]::Format((T 'SpeedPreset'),[string]$Value.device,[string]$Value.preset)}else{[string]$Value.device})
-    $lines=@([string]::Format((T 'SpeedHead'),$device))
-    foreach($scale in @($cases | ForEach-Object { [double]$_.render_scale } | Select-Object -Unique)) {
-        $items=@($cases | Where-Object { [double]$_.render_scale -eq $scale } | ForEach-Object {
-            $ms=$(if($_.network_ms){[double]$_.network_ms}else{[double]$_.round_trip_ms})
-            [string]::Format((T 'SpeedCase'),$_.width,$_.height,[Math]::Round($ms),[Math]::Floor(1000/$ms)) })
-        $lines+=[string]::Format((T 'SpeedScale'),$scale.ToString('0.0#',[Globalization.CultureInfo]::InvariantCulture),($items -join '; '))
+    # Each case names its network, as both are measured; a result from before names one for all.
+    foreach($case in $cases) { if(-not $case.preset) { $case | Add-Member -Force NoteProperty preset ([string]$Value.preset) } }
+    $lines=@()
+    foreach($network in @($cases | ForEach-Object { [string]$_.preset } | Select-Object -Unique)) {
+        $mine=@($cases | Where-Object { [string]$_.preset -eq $network })
+        $device=$(if($network){[string]::Format((T 'SpeedPreset'),[string]$Value.device,$network)}else{[string]$Value.device})
+        $lines+=[string]::Format((T 'SpeedHead'),$device)
+        foreach($scale in @($mine | ForEach-Object { [double]$_.render_scale } | Select-Object -Unique)) {
+            $items=@($mine | Where-Object { [double]$_.render_scale -eq $scale } | ForEach-Object {
+                $ms=$(if($_.network_ms){[double]$_.network_ms}else{[double]$_.round_trip_ms})
+                [string]::Format((T 'SpeedCase'),$_.width,$_.height,[Math]::Round($ms),[Math]::Floor(1000/$ms)) })
+            $lines+=[string]::Format((T 'SpeedScale'),$scale.ToString('0.0#',[Globalization.CultureInfo]::InvariantCulture),($items -join '; '))
+        }
     }
     $lines+=(T 'SpeedNote')
     $script:Ui.SpeedState.Text=($lines -join "`n")
@@ -1700,45 +1653,20 @@ if($SelfTest) {
             [pscustomobject]@{name='vulkan_executable_other';detail='';values=@('DOOMx64.exe','DOOMx64vk.exe')},
             [pscustomobject]@{name='not_worded_here';detail='As the backend words it';values=@()})}))
         if($notes.Count -ne 2 -or $notes[0] -notmatch 'DOOMx64\.exe' -or $notes[0] -notmatch 'DOOMx64vk\.exe' -or $notes[1] -ne 'As the backend words it') { throw 'Warnings were not worded' }
-        Show-Speed ([pscustomobject]@{device='Fixture GPU';preset='B';cases=@(
-            [pscustomobject]@{width=640;height=360;render_scale=0.4;network_ms=23;round_trip_ms=26.9},
-            [pscustomobject]@{width=1920;height=1080;render_scale=1.0;network_ms=384;round_trip_ms=408.6})})
+        Show-Speed ([pscustomobject]@{device='Fixture GPU';preset='A, B';cases=@(
+            [pscustomobject]@{preset='A';width=640;height=360;render_scale=0.4;network_ms=23;round_trip_ms=26.9},
+            [pscustomobject]@{preset='A';width=1920;height=1080;render_scale=1.0;network_ms=384;round_trip_ms=408.6},
+            [pscustomobject]@{preset='B';width=640;height=360;render_scale=0.4;network_ms=12;round_trip_ms=15.2})})
         $speed=$script:Ui.SpeedState.Text
-        $missing=@('640×360','\b23\b','\b43\b','\b384\b','0\.4','1\.0','Fixture GPU, \w+ B\b' | Where-Object { $speed -notmatch $_ })
+        $missing=@('640×360','\b23\b','\b43\b','\b384\b','0\.4','1\.0','Fixture GPU, \w+ A\b','Fixture GPU, \w+ B\b','\b12\b','\b83\b' | Where-Object { $speed -notmatch $_ })
         if($missing.Count -or -not $speed.EndsWith((T 'SpeedNote'))) { throw "The speed test was not worded ($($missing -join ', ')): $speed" }
+        if([regex]::Matches($speed,'Fixture GPU').Count -ne 2) { throw "Both networks were not shown apart: $speed" }
+        # A result from before both were measured names its one network for all its cases.
+        Show-Speed ([pscustomobject]@{device='Fixture GPU';preset='B';cases=@(
+            [pscustomobject]@{width=640;height=360;render_scale=0.4;network_ms=23;round_trip_ms=26.9})})
+        if($script:Ui.SpeedState.Text -notmatch 'Fixture GPU, \w+ B\b') { throw "A result from before lost its network: $($script:Ui.SpeedState.Text)" }
         Show-Speed $null
         if($script:Ui.SpeedState.Text) { throw 'No speed test left words behind' }
-        # The network chooser beside the speed test: A alone in a release without B, both where
-        # B's weights are here, the labels in this language, and the choice kept.
-        $shown=$script:PresetReady
-        $script:PresetReady=@{A=$true;B=$false}
-        $script:Ui.SpeedNetwork.SelectedIndex=-1
-        Update-SpeedNetwork
-        if($script:Ui.SpeedNetwork.Items.Count -ne 1 -or [string]$script:Ui.SpeedNetwork.Items[0].Tag -ne 'A') { throw "A release without B did not offer A alone" }
-        if([string]$script:Ui.SpeedNetwork.SelectedItem.Tag -ne 'A') { throw 'A release without B did not select the network it can measure' }
-        $script:PresetReady=@{A=$true;B=$true}
-        Update-SpeedNetwork
-        if($script:Ui.SpeedNetwork.Items.Count -ne 2) { throw 'A release with B did not offer both networks' }
-        if([string]$script:Ui.SpeedNetwork.SelectedItem.Tag -ne 'A') { throw 'Filling in B moved the choice away from A' }
-        foreach($item in $script:Ui.SpeedNetwork.Items) { if(-not $item.Content -or $item.Content -eq ('SpeedNetwork'+[string]$item.Tag)) { throw "Untranslated network choice $($item.Tag)" } }
-        if(-not $script:Ui.SpeedNetwork.ToolTip) { throw 'The network chooser has no tooltip' }
-        # Line up with the buttons it sits beside: same top and same height. The combo's own
-        # style asks for a 28px minimum and its content is centred, which left it 3.7px lower
-        # and 1.3px shorter than the buttons - visible as a list floating out of line.
-        $script:Window.Show(); $script:Window.UpdateLayout()
-        try {
-            $top=$script:Ui.SpeedTest.TranslatePoint([Windows.Point]::new(0,0),$script:Ui.CompareHeading).Y
-            $listTop=$script:Ui.SpeedNetwork.TranslatePoint([Windows.Point]::new(0,0),$script:Ui.CompareHeading).Y
-            if([Math]::Abs($top-$listTop) -gt 0.5) { throw "The network chooser sits $([Math]::Round($listTop-$top,1)) px below the buttons" }
-            $buttonHeight=$script:Ui.SpeedTest.ActualHeight
-            if([Math]::Abs($buttonHeight-$script:Ui.SpeedNetwork.ActualHeight) -gt 0.5) { throw "The network chooser is $([Math]::Round($script:Ui.SpeedNetwork.ActualHeight,1)) px tall beside $([Math]::Round($buttonHeight,1)) px buttons" }
-        } finally { $script:Window.Hide() }
-        # What the button asks to measure is read from the combo, so selecting B must reach it.
-        $script:Ui.SpeedNetwork.SelectedIndex=1
-        if((Get-SpeedNetwork) -ne 'B') { throw 'Choosing B in the combo did not reach the request' }
-        $script:PresetReady=@{A=$true;B=$true}; $script:Ui.SpeedNetwork.SelectedIndex=0
-        if((Get-SpeedNetwork) -ne 'A') { throw 'Choosing A in the combo did not reach the request' }
-        $script:PresetReady=$shown
         # Frame pacing reaches the backend, a profile without it is every frame in step, and
         # neither a profile applied to the window nor a change during an action starts a save.
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true})
@@ -1854,7 +1782,9 @@ $script:Ui.Uninstall.Add_Click({
     if([Windows.MessageBox]::Show($script:Window,(T 'UninstallConfirm'),(T 'Uninstall'),'OKCancel','Question') -eq 'OK') { Start-Bridge 'uninstall' }
 })
 $script:Ui.Launch.Add_Click({ Start-Bridge 'launch' })
-$script:Ui.SpeedTest.Add_Click({ Start-Bridge 'speedtest' '' $false @{preset=(Get-SpeedNetwork)} })
+# No network named: the backend measures every one this release carries, A first, so a tester's
+# report holds both where B is here.
+$script:Ui.SpeedTest.Add_Click({ Start-Bridge 'speedtest' })
 $script:Ui.Toggle.Add_Click({ $action=$(if($script:Ui.Toggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsToggle.Add_Click({ $action=$(if($script:Ui.ControlsToggle.Content -eq (T 'Disable')){'off'}else{'on'}); Start-Bridge $action })
 $script:Ui.ControlsLaunch.Add_Click({ Start-Bridge 'launch' })

@@ -72,6 +72,8 @@ GAME_BACKUP = "game-backup"
 # Vulkan game; the trigger in it turns NR on and off. It writes XESS_LOG beside itself.
 XESS_PROXY = "nr_xess.dll"
 XESS_NAME = "libxess.dll"
+# How deep under the game's executable `xess_libraries` looks for it where no known place has it.
+XESS_DEPTH = 4
 XESS_ORIGINAL = "libxess_nr_orig.dll"
 XESS_SETTINGS = "nr-xess.txt"
 XESS_LOG = "nr-xess.log"
@@ -700,7 +702,10 @@ def xess_libraries(game_exe):
 
     Unreal's games keep XeSS in a plug-in, under the project's Plugins or the engine's, from an
     executable in <game>\\<project>\\Binaries\\Win64: Hogwarts Legacy's is in
-    Engine\\Plugins\\Runtime\\Intel\\XeSS\\Binaries\\ThirdParty\\Win64."""
+    Engine\\Plugins\\Runtime\\Intel\\XeSS\\Binaries\\ThirdParty\\Win64. Others keep it in a folder
+    of their own under the executable's (NBA 2K27, issue #27), so where neither place has one, the
+    folders under the executable's are looked in, XESS_DEPTH deep, NR's own installation apart: it
+    holds the game's DLL set aside."""
     folder = Path(game_exe).parent
     found = [folder / XESS_NAME] if (folder / XESS_NAME).is_file() else []
     if folder.name.lower() == "win64" and folder.parent.name.lower() == "binaries":
@@ -708,6 +713,13 @@ def xess_libraries(game_exe):
         for root in (project / "Plugins", project.parent / "Engine" / "Plugins"):
             for path, _, names in os.walk(root):
                 found += [Path(path) / name for name in names if name.lower() == XESS_NAME]
+    if not found:
+        for path, folders, names in os.walk(folder):
+            here = Path(path)
+            depth = len(here.relative_to(folder).parts)
+            folders[:] = [] if depth >= XESS_DEPTH else [
+                name for name in folders if not (depth == 0 and name.lower() == "dlss-nr")]
+            found += [here / name for name in names if name.lower() == XESS_NAME]
     return found
 
 
@@ -2181,7 +2193,7 @@ def _speed_summary(profile):
         measured = _read_json(profile.root / SPEED_TEST, limit=256 * 1024)
         return {"device": measured.get("device"), "created_utc": measured.get("created_utc"),
                 "preset": measured.get("preset"),
-                "cases": [{name: case.get(name) for name in ("width", "height", "render_scale", "network_ms",
+                "cases": [{name: case.get(name) for name in ("preset", "width", "height", "render_scale", "network_ms",
                                                              "network_fps", "round_trip_ms", "round_trip_fps")}
                           for case in measured.get("cases", [])]}
     except (OSError, ValueError, AttributeError, TypeError):
@@ -2204,22 +2216,27 @@ def speed_test(profile, emit=None, preset=None):
     at: src/bench/speed_test.py with the release's Python. Kept in SPEED_TEST, with the PC, for
     Save report, so testers' reports say what each GPU does at its best.
 
-    `preset` is the network to measure, A or B; the profile's own when left out. The two are
-    asked for separately because the speed test is the one place a user may want to compare them
-    on this machine - the window offers the choice beside the button, with B greyed unless its
-    weights are here - while the network a GAME runs stays the one the settings chose. A run
-    records which network it measured, so a report cannot be read as the other one."""
-    wanted = preset or profile.preset
-    if not isinstance(wanted, str) or wanted not in PRESETS:
+    `preset` is the network to measure, A or B. Left out, as the window's button leaves it, every
+    network this release carries is measured, A first: a tester's report then says what the GPU
+    does with both, and the network a GAME runs stays the one the settings chose. Each case keeps
+    the network it was measured on, so a report cannot be read as the other one (issue #23's
+    named neither: the daemon's line had changed under the test's reading of it)."""
+    if preset is None:
+        wanted = [name for name in PRESETS if _weights_state(profile, name)["ready"]]
+        if not wanted:
+            return {"ok": False, "error": "Install NR first: the speed test runs the model it extracts"}
+    elif not isinstance(preset, str) or preset not in PRESETS:
         return {"ok": False, "error": "Measure which network? " + " or ".join(PRESETS)}
-    if not _weights_state(profile, wanted)["ready"]:
-        if wanted == "A":
+    elif not _weights_state(profile, preset)["ready"]:
+        if preset == "A":
             # The original network is the one Install NR always extracts: without it nothing
             # here can run, and the sentence says what to do rather than naming a choice.
             return {"ok": False, "error": "Install NR first: the speed test runs the model it extracts"}
-        return {"ok": False, "error": f"Network {wanted}'s weights are not in this release: "
+        return {"ok": False, "error": f"Network {preset}'s weights are not in this release: "
                                       "install them first, or measure A",
                 "presets": _presets_ready(profile)}
+    else:
+        wanted = [preset]
     script = profile.root / "src/bench/speed_test.py"
     if not script.is_file():
         return {"ok": False, "error": f"This release has no speed test: {script} is missing"}
@@ -2231,26 +2248,36 @@ def speed_test(profile, emit=None, preset=None):
         return {"ok": False, "error": "Close the game first: the speed test needs the GPU to itself"}
     if _daemon_answering(profile):
         return {"ok": False, "error": "NR's daemon still runs for a game that is closing; try again in a moment"}
-    if emit:
-        emit("Measuring NR on this GPU, without a game\n")
     run = profile.root / "work/windows-wizard/speed-test-run.json"
-    run.unlink(missing_ok=True)
-    # The network the user asked to measure; it may differ from the one a game would run.
-    got = _run([profile.python, "-I", script, "--root", profile.root, "--json", run,
-                "--preset", wanted], timeout=900, emit=emit, cwd=profile.root)
-    try:
-        measured = _read_json(run, limit=256 * 1024)
-    except (OSError, ValueError):
-        measured = {}
-    if got["timed_out"] or not measured.get("ok"):
-        why = measured.get("error") or ("no answer in 900 s" if got["timed_out"]
-                                        else got["output"].strip()[-300:] or f"exit code {got['returncode']}")
-        return {"ok": False, "error": "The speed test did not finish: " + why, "speed_test": measured or None}
+    runs, cases = [], []
+    for name in wanted:
+        if emit:
+            emit(f"Measuring NR's network {name} on this GPU, without a game\n")
+        run.unlink(missing_ok=True)
+        got = _run([profile.python, "-I", script, "--root", profile.root, "--json", run,
+                    "--preset", name], timeout=900, emit=emit, cwd=profile.root)
+        try:
+            measured = _read_json(run, limit=256 * 1024)
+        except (OSError, ValueError):
+            measured = {}
+        if got["timed_out"] or not measured.get("ok"):
+            why = measured.get("error") or ("no answer in 900 s" if got["timed_out"]
+                                            else got["output"].strip()[-300:] or f"exit code {got['returncode']}")
+            return {"ok": False, "error": f"The speed test of network {name} did not finish: " + why,
+                    "speed_test": measured or None}
+        runs.append(measured)
+        cases += [dict(case, preset=name) for case in measured.get("cases", [])]
     try:
         release = _read_json(profile.root / "release-metadata.json", limit=64 * 1024)
     except (OSError, ValueError):
         release = None
-    result = dict(measured, schema_version=SCHEMA_VERSION, created_utc=datetime.now(timezone.utc).isoformat(),
+    # What each daemon said it ran beside what it was asked for: the two differ only if NR_PRESET
+    # stopped reaching it, which is how a report would come to name the wrong network.
+    networks = [{"preset": name, "reported": measured.get("preset"), "blocks": measured.get("blocks"),
+                 "model_ready_s": measured.get("model_ready_s"), "memory": measured.get("memory")}
+                for name, measured in zip(wanted, runs)]
+    result = dict(runs[0], preset=", ".join(wanted), cases=cases, networks=networks,
+                  schema_version=SCHEMA_VERSION, created_utc=datetime.now(timezone.utc).isoformat(),
                   release=release, system=_system_metadata())
     _atomic_json(profile.root / SPEED_TEST, result)
     return {"ok": True, "error": None, "speed_test": result}

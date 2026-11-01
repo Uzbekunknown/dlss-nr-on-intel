@@ -428,6 +428,30 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual((xess / core.XESS_NAME).read_bytes(), intel)
         self.assertFalse(installed.exists())
 
+    def test_d3d12_finds_an_xess_kept_in_a_folder_under_the_executable(self):
+        # NBA 2K27 keeps its libxess.dll in a folder of its own under the executable's (issue #27).
+        top = self.base / "Subfolder game (test)"
+        exe = write_pe(top / "Game.exe")
+        xess = top / "bin" / "xess"
+        write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"Intel's XeSS")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        intel = (xess / core.XESS_NAME).read_bytes()
+        profile = replace(self.profile, api="d3d12", game_exe=exe)
+        checks = self.checks(profile)
+        self.assertTrue(checks["xess_library"]["ok"], checks["xess_library"])
+        self.assertIn(str(xess), checks["xess_library"]["detail"])
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((xess / core.XESS_NAME).read_bytes(), (self.root / core.XESS_PROXY).read_bytes())
+        # NR's installation, beside the executable, holds the game's copy set aside: no second XeSS.
+        self.assertTrue((core.installed_path(profile) / core.GAME_BACKUP / core.XESS_NAME).is_file())
+        self.assertEqual(core.xess_libraries(exe), [xess / core.XESS_NAME])
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual((xess / core.XESS_NAME).read_bytes(), intel)
+        # Deeper than XESS_DEPTH is not looked in.
+        deep = self.base / "Deep game (test)"
+        write_pe_exporting(deep.joinpath(*"abcde") / core.XESS_NAME, XESS_EXPORTS)
+        self.assertEqual(core.xess_libraries(write_pe(deep / "Game.exe")), [])
+
     def test_d3d12_network_changes_in_the_running_game(self):
         profile, _ = self.unreal_game()
         write_weights(self.root / core.PRESETS["B"][0], count=core.PRESETS["B"][1])
@@ -1684,19 +1708,20 @@ class WizardFixture(unittest.TestCase):
     def test_the_speed_test_runs_the_releases_script_and_keeps_its_result(self):
         # NR alone on this PC, saved with the PC for Save report: testers' reports gather it.
         script = self.speed_script()
-        measured = {"ok": True, "error": None, "device": "Fixture GPU", "model_ready_s": 1.0, "preset": "B",
-                    "cases": [{"width": 640, "height": 360, "render_scale": 0.4, "network": [320, 320],
-                               "network_ms": 23, "network_fps": 43.5, "round_trip_ms": 26.9,
-                               "round_trip_min_ms": 25.0, "round_trip_max_ms": 29.0, "round_trip_fps": 37.2}]}
+        case = {"width": 640, "height": 360, "render_scale": 0.4, "network": [320, 320],
+                "network_ms": 23, "network_fps": 43.5, "round_trip_ms": 26.9,
+                "round_trip_min_ms": 25.0, "round_trip_max_ms": 29.0, "round_trip_fps": 37.2}
+        asked = []
 
         def run(command, timeout=10, env=None, emit=None, cwd=None):
             command = [str(part) for part in command]
             self.assertEqual(command[:3], [str(self.python), "-I", str(script)])
             self.assertEqual(command[command.index("--root") + 1], str(self.root))
-            # The network a game started now would run.
-            self.assertEqual(command[command.index("--preset") + 1], "B")
+            asked.append(command[command.index("--preset") + 1])
             target = Path(command[command.index("--json") + 1])
-            target.write_text(json.dumps(measured), encoding="utf-8")
+            target.write_text(json.dumps({"ok": True, "error": None, "device": "Fixture GPU", "model_ready_s": 1.0,
+                                          "preset": asked[-1], "blocks": 71 if asked[-1] == "A" else 31,
+                                          "cases": [case]}), encoding="utf-8")
             return {"command": command, "returncode": 0, "stdout": "", "stderr": "", "output": "",
                     "timed_out": False}
 
@@ -1707,21 +1732,41 @@ class WizardFixture(unittest.TestCase):
                 patch.object(core, "_system_metadata", return_value={"gpu": [{"Name": "fixture"}]}):
             result = core.speed_test(replace(self.profile, preset="B"))
         self.assertTrue(result["ok"], result)
+        # Both networks the release carries, A first, whichever a game would run.
+        self.assertEqual(asked, ["A", "B"])
         saved = core._read_json(self.root / core.SPEED_TEST)
-        self.assertEqual((saved["device"], saved["cases"]), ("Fixture GPU", measured["cases"]))
+        self.assertEqual((saved["device"], saved["preset"]), ("Fixture GPU", "A, B"))
+        self.assertEqual(saved["cases"], [dict(case, preset="A"), dict(case, preset="B")])
+        self.assertEqual([(n["preset"], n["reported"], n["blocks"]) for n in saved["networks"]],
+                         [("A", "A", 71), ("B", "B", 31)])
         self.assertEqual(saved["system"], {"gpu": [{"Name": "fixture"}]})
         self.assertIn("created_utc", saved)
         # The window's status line takes a summary; Save report takes the whole.
+        summary = {"width": 640, "height": 360, "render_scale": 0.4, "network_ms": 23, "network_fps": 43.5,
+                   "round_trip_ms": 26.9, "round_trip_fps": 37.2}
         self.assertEqual(core.status(self.profile)["speed_test"]["cases"],
-                         [{"width": 640, "height": 360, "render_scale": 0.4, "network_ms": 23, "network_fps": 43.5,
-                           "round_trip_ms": 26.9, "round_trip_fps": 37.2}])
-        self.assertEqual(core.status(self.profile)["speed_test"]["preset"], "B")
+                         [dict(summary, preset="A"), dict(summary, preset="B")])
+        self.assertEqual(core.status(self.profile)["speed_test"]["preset"], "A, B")
         report = self.base / "speed report.json"
         with patch.object(core, "_system_metadata", return_value={}):
             self.assertTrue(core.export_report(self.profile, report)["ok"])
         self.assertEqual(core._read_json(report)["speed_test"]["device"], "Fixture GPU")
         # Run once after a first installation: the next one is not due.
         self.assertFalse(core.install(self.profile)["speed_test_due"])
+
+    def test_the_speed_test_reads_the_network_off_the_daemons_line(self):
+        # The daemon's start-up line as nr_daemon.py prints it, and as it did before 346d300: the
+        # test read only the old one, and every report from 0.0.2 to 0.0.3 named no network.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "speed_test", Path(__file__).resolve().parents[2] / "src/bench/speed_test.py")
+        speed = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(speed)
+        self.assertEqual(speed.network_of("model ready in 2.1s on GPU\nnetwork preset B (dlssnr-b-logical."
+                                          "safetensors), 31 blocks, history ceiling 0.76708984375\n"), ("B", 31))
+        self.assertEqual(speed.network_of("network preset A, 71 blocks\n"), ("A", 71))
+        # The panel's line names a network and no blocks: not the one the daemon runs.
+        self.assertIsNone(speed.network_of("settings: network preset B (from the panel)\nready\n"))
 
     def test_the_speed_test_needs_the_weights_and_the_gpu_to_itself_and_says_what_failed(self):
         self.speed_script()

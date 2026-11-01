@@ -45,6 +45,15 @@ SIZES = ((640, 360), (800, 450), (1280, 720), (1920, 1080))
 # More than live_rates.py's nine and three: through the setup window, with the window itself on
 # screen, nine put 1280x720 at 38 ms in one run and 50 in the next.
 FRAMES, WARMUP = 15, 5
+
+
+def network_of(log):
+    """The preset and the block count the daemon's start-up line names, or None: `network preset B
+    (dlssnr-b-logical.safetensors), 31 blocks, ...` since 346d300, `network preset A, 71 blocks`
+    before it. A reading of the old form alone missed the new one, and every report from 0.0.2 to
+    0.0.3 named no network."""
+    found = re.search(r"network preset (\w+)\b[^\n]*?(\d+) blocks", log)
+    return (found.group(1), int(found.group(2))) if found else None
 # The daemon's line for each frame (nr_daemon.process_connection).
 LINE = re.compile(r"^(\d+)x(\d+) \S+ in [0-9.]+s .*?gpu (\d+)\+(\d+)\+(\d+)ms.*?"
                   r"network (\d+)x(\d+) scale ([0-9.]+)", re.M)
@@ -201,9 +210,9 @@ def main():
         ready = re.search(r"model ready in ([0-9.]+)s on (.+)", text)
         if ready:
             result["model_ready_s"], result["device"] = float(ready.group(1)), ready.group(2).strip()
-        preset = re.search(r"network preset (\S+), (\d+) blocks", text)
-        if preset:
-            result["preset"], result["blocks"] = preset.group(1), int(preset.group(2))
+        network = network_of(text)
+        if network:
+            result["preset"], result["blocks"] = network
         memory = re.search(r"buffers in (.+)", text)
         if memory:
             result["memory"] = memory.group(1).strip()

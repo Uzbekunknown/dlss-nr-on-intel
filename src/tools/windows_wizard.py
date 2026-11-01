@@ -148,8 +148,8 @@ def main() -> int:
                 core.save_profile(profile)
                 result = {'ok': True, 'profile': profile.to_dict()}
             elif args.action == 'speedtest':
-                # Left out, the network the profile names is measured, which is what the
-                # window did before it offered the choice.
+                # Left out, as the window's button leaves it, every network this release
+                # carries is measured, A first.
                 result = core.speed_test(profile, emit=emit, preset=measure)
             elif args.action in ('pacing', 'preset'):
                 # The network is set as frame pacing is; the window words each on its own.

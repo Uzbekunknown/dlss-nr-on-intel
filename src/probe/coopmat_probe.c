@@ -440,9 +440,13 @@ static double bench_run(struct bench *b, VkPipeline p, uint32_t groups, uint32_t
 }
 
 /* GFLOP/s of a rate pipeline, run for about 20 ms, best of eight: the GPU's clock climbs through
- * the first runs, and the best is the one at full clock. -1 when it did not run. */
+ * the first runs, and the best is the one at full clock. A desktop card wakes slower than that:
+ * an A770's first two rates came out at half and at 0.8 of the next ones (issue #22), so the
+ * first rate a run measures is preceded by half a second of the same work. -1 when it did not
+ * run. */
 static double bench_rate(struct bench *b, VkPipeline p, uint32_t groups, double flops_per_iter)
 {
+	static int warmed;
 	uint32_t iters = 16;
 	double ms = bench_run(b, p, groups, iters);
 	if (ms <= 0)
@@ -451,6 +455,13 @@ static double bench_rate(struct bench *b, VkPipeline p, uint32_t groups, double 
 		double want = iters * 20.0 / ms;
 		iters = want > (double)(1u << 20) ? 1u << 20 : (uint32_t)want;
 	}
+	for (double spent = 0; !warmed && spent < 500.0;) {
+		double t = bench_run(b, p, groups, iters);
+		if (t <= 0)
+			break;
+		spent += t;
+	}
+	warmed = 1;
 	double best = -1;
 	for (int i = 0; i < 8; i++) {
 		double t = bench_run(b, p, groups, iters);
