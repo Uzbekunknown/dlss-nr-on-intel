@@ -8,9 +8,9 @@ You need a supported Intel Xe2 GPU, a working Vulkan graphics driver, **64-bit
 Python 3** with `numpy` and `safetensors`, and your own compatible
 `nvngx_dlssnr.dll`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
 and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
-A770) is not supported yet: if you have one, double-click `nr_gpu_probe.exe` in this
-folder and post the `nr-gpu-report.txt` it writes with the **Arc A-series report**
-issue template. A path for those cards is built from such reports.
+A770) is experimental: NR has computed correctly on six A770s, at speeds that vary. If you
+have one, double-click `nr_gpu_probe.exe` in this folder and post the `nr-gpu-report.txt`
+it writes with the **Arc A-series report** issue template.
 
 For an MSVC Windows build, install the
 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
@@ -84,6 +84,10 @@ Set the game itself to an 800×450 window for the first comparison. NR starts of
 when NR was installed, restart it. The status distinguishes a model that is loaded from
 fresh processed game frames; processed-frame throughput is not a game FPS measurement.
 
+**In the game**, **Insert** opens NR's panel, where the settings below and the network change as
+you play, and **Home** turns NR on and off. While the panel is open the game does not get your
+keys and clicks, unless it reads the keyboard directly or you use a gamepad.
+
 Open **NR controls** for the same ten live settings as Linux `nr-panel`: render
 scale, minimum network side, profile, intensity, detail strength, colour strength,
 temporal history, hold, release and scene-cut threshold. Numeric settings have
@@ -112,8 +116,8 @@ path, and Save report says why.
 **Network.** `nvngx_dlssnr.dll` 310.9.16 carries two networks: **A**, the one NR has always
 run, and **B**, a smaller one NVIDIA added. With that DLL, **Install NR** takes B out of it
 beside A and runs B, the faster one; **NR controls** offers both under **Network**, and the
-choice is saved and read when the game starts next, as frame pacing is, and the speed test
-measures the one chosen. With an older DLL NR runs A. On the
+choice is saved and read when the game starts next, as frame pacing is; the panel in the game
+switches at once. The speed test measures each network the release has. With an older DLL NR runs A. On the
 Arc 140V B's network takes about half of A's time: at 1280×720 and render scale 0.4, 16 ms
 against 32–34, frames sent back to back. With time between frames, as a game leaves, the GPU
 clocks down, and the further for B: with 25 ms between frames B took 37–39 ms a round trip
@@ -135,7 +139,7 @@ with one, such as `-VULKAN`, needs it there as well.
 **Save report** exports settings, version/driver information, what **Check** says, the speed
 test, the game's DXVK logs and diagnostic log data without NVIDIA DLLs or weights. The release's private profile and extracted
 weights stay on this PC and must not be added to a distributable.
-The window supports English, Russian and Spanish, chooses its initial language from
+The window supports English, Chinese, Russian and Spanish, chooses its initial language from
 Windows, and has a language selector at the top. The manual setup below remains available.
 
 ## Manual setup

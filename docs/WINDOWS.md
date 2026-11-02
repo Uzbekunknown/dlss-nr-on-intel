@@ -76,7 +76,7 @@ output bit for bit (phase71).
 4. **ImageMagick**, with `magick` on the `PATH`, for the still-frame tools.
 5. The same checkouts as on Linux — `work/vulkan-headers` is optional with the SDK,
    `work/mlx-dlss` at `06a3e11` is not — and the weights, extracted from your own DLL by the same
-   two Python commands as in the README.
+   two Python commands as in docs/DEVS.md.
 6. **A checkout on a path of ASCII characters only**, such as `C:\dlss-nr`. Python hands the
    runtime its shader paths as UTF-8 and the runtime opens them with `fopen`, which reads a path
    in the ANSI code page: a folder named in Cyrillic, as a user profile may be, fails to open.

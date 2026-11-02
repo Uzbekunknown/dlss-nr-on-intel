@@ -1650,7 +1650,7 @@ def run_owned(args):
     name = weights_path.name
     if weights_path is None or not weights_path.exists():
         # The first thing a new clone hits, and a traceback is a poor way to say it.
-        how = ("as the README's Build section describes" if nr_frame.PRESET == "A" else
+        how = ("as docs/DEVS.md's Build section describes" if nr_frame.PRESET == "A" else
                "with src/tools/unpack_preset.py, from a 310.9.16 or later DLL")
         raise SystemExit(
             f"no weights at {nr_frame.WEIGHTS}.\n"

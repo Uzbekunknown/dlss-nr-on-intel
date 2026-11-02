@@ -94,7 +94,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
   the repository or a release. A Linux agent and a Windows agent work on this one laptop; the owner
-  relays between them, and this file is how they hand work over.
+  relays between them, and this file is how they hand work over. A release updates the README's
+  GPU and tested-games tables in the same commit (the owner, 11-02).
 
 ## Open items (collected 2026-10-14, from this file and its archive)
 
@@ -131,6 +132,8 @@ under that date. When an item is done, strike it through here and name the commi
 - `alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
   evening): `make test`.
 - `speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`.
+- The README split into `docs/DEVS.md` and `docs/SETTINGS.md` (below, 11-02): `make test`, for
+  `test_toggle.py`'s page check and `nr_daemon.py`'s message.
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -260,6 +263,30 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The README rewritten for players; the developers' half in `docs/DEVS.md` (2026-11-02, branch `alchemist`)
+
+The owner found the README out of date in places and too long for players. It is now short and
+for them: whether a GPU and a game's API are supported, the Windows install in five steps, what
+to expect, a tested-games table with the date of each check, and what to do when nothing changes.
+The rest moved nearly word for word to `docs/DEVS.md` (how this was built, the build, the layer
+and the daemon, the tools, troubleshooting, layout, tests), and the settings and frame times to
+`docs/SETTINGS.md`, whose two generated tables `knob_doc.py` now writes. The owner chose the
+names and English, and the DLL's source as a game the player owns, such as NBA 2K27.
+
+- Out of date and fixed on the way: DirectX 12 through XeSS missing from the opening, network B
+  nowhere, no word of the panel on Insert or of Home, the window's Chinese, Arc A-series called
+  unsupported at 1-2 fps against the six A770 reports, a layer-started daemon said to outlive
+  its game on Linux (it ends with it since 10-14), the driver 101.9033, and credits without
+  DLSSNR-AMD, Dear ImGui and Paimonshen's panel.
+- `docs/RELEASE-QUICKSTART.md`, the release's own README, had the same stale lines (A-series,
+  three languages, no panel, the speed test measuring one network) and is fixed too.
+- `test_toggle.py` checks the links of `docs/DEVS.md` and `docs/SETTINGS.md` as well, each
+  relative to the page that holds it, as GitHub reads them.
+
+**Checked here:** `knob_doc.py --check`, `test_toggle.py`'s page check, `claims_check`,
+`publish_check`. **Next on Linux:** `make test` (Open items). **Next on Windows:** nothing; the
+next release carries the new release guide.
 
 ## 0.0.3.1 released: the first Arc A-series reports, and the fixes they asked for (2026-11-01, later, branches `newnr`, `master`, `alchemist`)
 

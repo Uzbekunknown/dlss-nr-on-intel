@@ -128,7 +128,7 @@ if [[ -d "$WORK/mlx-dlss" ]]; then
   cp -r "$WORK/mlx-dlss" "$DEPLOY/work/mlx-dlss"
   echo "  runtime:    work/mlx-dlss"
 else
-  echo "  WARNING: $WORK/mlx-dlss is missing; the daemon needs it (see README)"
+  echo "  WARNING: $WORK/mlx-dlss is missing; the daemon needs it (see docs/DEVS.md)"
 fi
 for f in "$WORK"/libxmx.so* "$WORK"/libnr_image.so* "$WORK"/*.spv; do
   [[ -e "$f" ]] && cp "$f" "$DEPLOY/work/" || true

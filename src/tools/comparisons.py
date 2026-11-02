@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The README's before/after images and the table under them, rebuilt from `--dump` captures.
+"""The before/after images and their table (README, docs/DEVS.md), rebuilt from `--dump` captures.
 
 Each published image is a frame the owner chose from a capture, cut and laid out as written
 below; this is the record of which frame and which pixels, so a new graph can be shown on the
@@ -41,7 +41,7 @@ IMAGES = {
     "mk1-fight": dict(game="mk1", frame=37, crops=[None], stack="column", quality=90),
 }
 
-# The README's table: image, region, where, and whether its brightness is shown.
+# The table in docs/DEVS.md: image, region, where, and whether its brightness is shown.
 TABLE = [
     ("Tekken 7", "face", "tekken", 3, (180, 510, 780, 1080), True),
     ("", "jacket weave", "tekken", 3, (600, 900, 1050, 1250), True),

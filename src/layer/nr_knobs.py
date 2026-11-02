@@ -133,7 +133,7 @@ DEFAULTS = {knob.name: knob.default for knob in KNOBS}
 
 # The whole round trip, median of nine frames each, measured by `src/bench/live_rates.py`
 # on 2026-09-26 — the daemon's own cost, with no game competing for the GPU. `nr-ctl rates`,
-# the panel and the README all read this one table; the README's copy is generated from it
+# the panel and docs/SETTINGS.md all read this one table; the page's copy is generated from it
 # by `src/tools/knob_doc.py`, because the hand-written one went two days out of date the
 # moment the host passes moved to C and then stayed wrong for a week.
 RATES = (

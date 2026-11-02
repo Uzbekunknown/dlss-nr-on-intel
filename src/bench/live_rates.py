@@ -21,7 +21,7 @@ Making each test frame takes a while already (5 ms at 640x360, 23 at 1280x720, 5
 clocks down through such gaps unless libxmx asks for the low-latency strategy
 (XMX_LOW_LATENCY), and the round trip follows the clock.
 
-Prints the table and the literal for `nr_knobs.RATES`, so the number in the README has a
+Prints the table and the literal for `nr_knobs.RATES`, so the number in docs/SETTINGS.md has a
 program behind it rather than a memory of one.
 """
 import argparse

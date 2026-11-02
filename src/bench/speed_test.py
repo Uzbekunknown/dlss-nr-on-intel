@@ -15,7 +15,7 @@ frame and writes the answer back, and the game draws on the same GPU, so its fra
 
 Writes JSON: the GPU the daemon took, how long it took to load and the network preset it runs,
 and for each case the network's field and both times. A named pipe on Windows, a Unix socket
-elsewhere. live_rates.py is the README table's measure, with its own plan; this one is short
+elsewhere. live_rates.py measures docs/SETTINGS.md's table, with its own plan; this one is short
 enough for a first install.
 """
 import argparse

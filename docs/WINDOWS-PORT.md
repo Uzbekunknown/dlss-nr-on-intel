@@ -158,7 +158,7 @@ is *bits*, not values.
   submit after init, B580, current driver). It reproduced during one debugging session
   and not during others on the same day; master's own `test_gemm_contract.py` passes
   19/19 now. Untested on Linux from here — that is where master develops this file, and
-  the README calls the Windows runtime "separate changes".
+  docs/DEVS.md calls the Windows runtime "separate changes".
 - The reduced `packHalf2x16` reproducer for an Intel bug report is not trimmed yet; the
   probe is the starting point.
 - Linux is code-reviewed only from this machine: the socket path is byte-for-byte

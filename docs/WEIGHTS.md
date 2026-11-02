@@ -181,7 +181,7 @@ joined files. In order:
    from the wizard's hint table, which is what keeps the installer and the overlay saying the same
    words).
 4. `py tools/gen_menu_strings.py` - regenerate `nr_menu_strings.{c,h,py}`.
-5. `py src/tools/knob_doc.py` - regenerate the README's knob table.
+5. `py src/tools/knob_doc.py --write` - regenerate the knob table in `docs/SETTINGS.md`.
 6. `py -m unittest` over `test_menu_rows`, `test_menu_hints`, `test_settings_live`,
    `test_windows_wizard`, and `knob_doc --check`.
 
