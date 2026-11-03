@@ -9,7 +9,7 @@ and in the setup window's **NR controls**, on Linux with `nr-panel`, `nr-ctl` or
 
 <!-- rates:begin -->
 
-Measured through the socket on 2026-10-18 by `python3 src/bench/live_rates.py`, on network A — the whole round trip a game waits for, median of nine frames, not graph time alone:
+Measured on this project's Arc 140V under Linux, through the socket on 2026-10-18 by `python3 src/bench/live_rates.py`, on network A — the whole round trip a game waits for, median of nine frames, not graph time alone:
 
 | swapchain | render scale | ms | fps |
 | --- | ---: | ---: | ---: |
@@ -37,13 +37,30 @@ frame is never smaller than 320 a side, so a scale whose frame would be smaller 
 free, to fill the cheapest frame it lands on — 640x360 runs as 0.5 for anything up to 0.5, and
 800x450 as 0.4. The daemon's log line says `runs as` when it happens.
 
+### By GPU
+
+<!-- players:begin -->
+
+The network's own time a frame, in ms, from the setup window's speed test: the latest report for each GPU and network, from players and from this project's Arc 140V (`notes/players-20261103.md`). Since 0.0.2 the Windows release keeps a game's frames on the GPU, and each frame waits for this time plus a few ms of NR's passes around the network before the game draws its next. The test's round trip, which the setup window also shows, still goes through the CPU and reads higher. The fixed part is what a frame costs whatever its size, fitted over fields up to 0.45 megapixels, the sizes games run at.
+
+| GPU | network | 640x360, 0.4 | 1280x720, 0.4 | 1920x1080, 0.4 | 1920x1080, 1.0 | fixed + per megapixel, ms | report |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| Arc B580 | A | 8 | 9 | 18 | 88 | 4 + 39 | [#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17), 0.0.1.3, 2026-10-18 |
+| Arc A770 | A, inferred | 32 | 35 | 55 | 229 | 22 + 91 | [#23](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/23), 0.0.2 or 0.0.3, 2026-10-31 |
+| Arc A770 | B | 16 | 19 | 29 | 120 | 11 + 51 | [#25](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/25), 0.0.3.1, 2026-11-01 |
+| Arc 140V | A | 24-27 | 32-34 | 60-64 | 381-404 | 11 + 144 | this project's laptop, Windows, 2026-10-18 |
+| Arc 140V | B | 12 | 16 | 31 | 187-202 | 4 + 76 | this project's laptop, Windows, 2026-10-18 |
+
+<!-- players:end -->
+
 ## The network: A or B
 
 `nvngx_dlssnr.dll` 310.9.16 and later carries two networks. **A** is the one NR has run from the
 start; **B** is NVIDIA's smaller one, about twice as fast here and a little lighter in what it
 changes. On Windows setup takes B out of such a DLL and runs it, and the panel in the game
 switches between the two as you play; on Linux `NR_PRESET=B` picks B
-([DEVS.md](DEVS.md#build)). The frame times above are network A's.
+([DEVS.md](DEVS.md#build)). The frame times at the top of this page are network A's, and the
+table by GPU names each row's network.
 
 ## The settings
 

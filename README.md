@@ -31,8 +31,9 @@ respective owners. Shown for comparison.</sup></sub>
 | GPU | |
 | --- | --- |
 | Intel Arc 140V (Core Ultra 200V, Lunar Lake) | **Yes**: developed and tested on it |
-| Intel Arc B570, B580 (Battlemage) | **Yes**, from players' reports |
-| Intel Arc A-series (A310 to A770, Alchemist) | **Experimental**: it computes correctly on the six A770s reported so far, at speeds that vary |
+| Intel Arc B570, B580 (Battlemage) | **Yes**, from players' reports; a B580 is the fastest GPU measured so far |
+| Intel Arc Pro B-series (Battlemage) | **Should**: a Pro B70's GPU report says NR runs there; not yet tried in a game |
+| Intel Arc A-series (A310 to A770, Alchemist) | **Experimental**: it computes correctly on all eleven cards reported so far (A380, A750, A770); an A770 reaches about 40 fps at 1280x720, with render scale 0.4 and network B |
 | Intel graphics without XMX engines | **No**: NR runs on XMX |
 
 Not sure? `nr_gpu_probe.exe`, in the release, says whether NR runs on your GPU and writes
@@ -81,12 +82,16 @@ NR runs a large neural network on every frame, on the same GPU as the game.
 - **On an Arc 140V, play at 1280x720 or lower, with render scale 0.4 and network B**: about 20
   to 40 fps in the games below. At 1080p and full render scale it manages a few frames a second,
   which is for screenshots.
-- **On a desktop Arc B570 or B580** you can play at 1920x1080 with render scale 0.5.
+- **On a desktop Arc B570 or B580** you can play at 1920x1080 with render scale 0.5: about 50 fps
+  with network B on a B580.
+- **On an Arc A770**, about 40 fps at 1280x720 with render scale 0.4 and network B, much as on an
+  Arc 140V; it pulls ahead only at higher resolutions and render scales. An A750's XMX engines
+  measure about two thirds of an A770's.
 - **Network B**, NVIDIA's smaller model, is up to twice as fast as A and changes the picture a
   little less. Setup chooses it when your DLL has it.
 - The picture is held steady from frame to frame; a little shimmer can remain where things move.
 
-Every setting, and measured frame times: [docs/SETTINGS.md](docs/SETTINGS.md).
+Every setting, and NR's frame times on each GPU: [docs/SETTINGS.md](docs/SETTINGS.md).
 
 ## Tested games
 
@@ -95,10 +100,17 @@ date; a later release can do better or worse.
 
 | Game | Tested on | How it ran | Result | Checked |
 | --- | --- | --- | --- | --- |
+| Assetto Corsa | Arc B580, a player's report ([#34](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/34)) | Windows, DirectX 11 through DXVK | smooth at 1920x1080 with network B and render scale 0.5; 9-15 fps with network A | 2026-11-03 |
+| Euro Truck Simulator 2 | Arc A750, a player's report ([#32](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/32)) | Windows | NR takes 154 ms a frame at 1920x1080 and render scale 0.6, so about 6 fps at most | 2026-11-02 |
+| Nuclear Option | Arc A770, a player's report ([#25](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/25)) | Windows, DirectX 11 through DXVK, or Vulkan | 40 fps at 1280x720 and render scale 0.4 through DirectX 11; 23 through Vulkan, on network A | 2026-11-01 |
 | Hogwarts Legacy | Arc 140V | Windows, DirectX 12 through XeSS, network B | about 26 fps at 1280x720 and render scale 0.4, with XeSS frame generation as well | 2026-10-31 |
 | Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | about 38 fps at 1280x720 and render scale 0.4 | 2026-10-18 |
 | Dead or Alive 5 Last Round | Arc 140V | Windows, DirectX 9 (32-bit) through DXVK, network B | about 22 fps | 2026-10-18 |
-| Nuclear Option | Arc A770, a player's report ([#25](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/25)) | Windows, through DXVK | 40 fps at 1280x720 and render scale 0.4 | 2026-11-01 |
+| DOOM (2016) | Arc B580, a player's report ([#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17)) | Windows, Vulkan | 73 fps at 1920x1080 and render scale 0.4 with network B, 48 with network A | 2026-10-18 |
+| Driving Rogue | Arc B580, a player's report ([#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17)) | Windows, DirectX 11 through DXVK | 53 fps at 1920x1080 and render scale 0.5 with network B, 34 with network A; at full scale 18 and 10 | 2026-10-18 |
+| Batman: Arkham Knight | Arc B570, a player's report ([#19](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/19)) | Windows, DirectX 11 through DXVK | playable at 2560x1440 and render scale 0.4 | 2026-10-17 |
+| Mafia III | Arc B570, a player's report ([#15](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/15)) | Windows, DirectX 11 through DXVK | about 30 fps at 2560x1440, judged by eye | 2026-10-13 |
+| Assassin's Creed Unity | Arc B570, a player's report ([#15](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/15)) | Windows, DirectX 11 through DXVK | works | 2026-10-13 |
 | Tekken 7 | Arc 140V | Linux, DirectX 11 through Proton, network A | 30 fps at 800x450 and render scale 0.35 | 2026-09-27 |
 | Mortal Kombat 1 | Arc 140V | Linux, DirectX 12 through Proton, network A | works; at full render scale it ran out of memory beside the game | 2026-09-16 |
 

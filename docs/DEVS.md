@@ -516,8 +516,9 @@ src/layer/    the Vulkan layer, the daemon, and the three control tools
 src/xess/     the DirectX 12 path on Windows: NR's libxess.dll in front of the game's XeSS
 src/bench/    measurement programs; every number in the notes came from one
 src/probe/    what your GPU can do, answered before anything else is built
-src/tools/    the DLL and weight-container readers, and the checks that keep this
-              page honest: what may be published, and what may still be claimed
+src/tools/    the DLL and weight-container readers, the players' reports read into data
+              (player_reports.py), and the checks that keep this page honest: what may
+              be published, and what may still be claimed
 docs/         the recovered architecture, written as a specification, and the setup guides
 dist-tools/   what a release sets up with: the Windows setup window, setup.bat, setup.sh
 scripts/      the release builder, DXVK's fetcher and the weight extractor
@@ -539,7 +540,8 @@ About 570 checks, including the layer's wire protocol, the native host passes
 against the NumPy they replace byte for byte, the interface mask down to the
 byte, the temporal path against MLX-DLSS's own composition, and the panel driven through
 a pseudo-terminal. The pages are checked too: the knob and frame-time tables in
-[SETTINGS.md](SETTINGS.md) are generated from the same table the tools read, every `src/…` path
+[SETTINGS.md](SETTINGS.md) are generated from the same table the tools read, and its table by
+GPU from the players' data in `notes/measurements/players.json`; every `src/…` path
 in the README, these docs and NOTICE has to exist, and
 `src/tools/claims_check.py` fails the suite if a withdrawn claim — a number this project
 published and then corrected — turns up anywhere but the notes that withdrew it. They skip the weight-dependent parts if you have not supplied weights,

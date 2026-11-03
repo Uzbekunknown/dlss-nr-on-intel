@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Render the generated parts of `docs/SETTINGS.md`, so the manual cannot drift from the program.
 
-Two blocks: the knobs, and the measured frame times. Both come from `nr_knobs`, which the
-control tools read as well, so the page and the programs cannot disagree.
+Three blocks: the knobs and the measured frame times, which come from `nr_knobs`, the table the
+control tools read as well; and the network's time on each GPU, from the players' reports in
+`notes/measurements/players.json` (`player_reports.py`). The page cannot disagree with either.
 
     python3 src/tools/knob_doc.py            print them
     python3 src/tools/knob_doc.py --check    exit 1 if docs/SETTINGS.md is out of date
@@ -20,8 +21,12 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "layer"))
 import nr_knobs  # noqa: E402
+import player_reports  # noqa: E402
 
 PAGE = ROOT / "docs" / "SETTINGS.md"
+ISSUES = "https://github.com/Uzbekunknown/dlss-nr-on-intel/issues"
+# The speed test's cases the players' table shows: (window, render scale).
+SHOWN = (((640, 360), 0.4), ((1280, 720), 0.4), ((1920, 1080), 0.4), ((1920, 1080), 1.0))
 
 
 def knobs():
@@ -38,9 +43,9 @@ def knobs():
 
 
 def rates():
-    lines = [f"Measured through the socket on {nr_knobs.RATES_MEASURED} by "
-             "`python3 src/bench/live_rates.py`, on network A — the whole round trip a game "
-             "waits for, median of nine frames, not graph time alone:", "",
+    lines = [f"Measured on this project's Arc 140V under Linux, through the socket on "
+             f"{nr_knobs.RATES_MEASURED} by `python3 src/bench/live_rates.py`, on network A — the "
+             "whole round trip a game waits for, median of nine frames, not graph time alone:", "",
              "| swapchain | render scale | ms | fps |", "| --- | ---: | ---: | ---: |"]
     for width, height, scale, ms in nr_knobs.RATES:
         lines.append(f"| {width}x{height} | {scale:.2f} | {ms:.0f} | {1000 / ms:.1f} |")
@@ -54,7 +59,47 @@ def rates():
     return lines
 
 
-BLOCKS = {"knobs": knobs, "rates": rates}
+def players():
+    """The latest speed test for each GPU and network, in the order the data file names them."""
+    latest = {}
+    for test in player_reports.load()["speed_tests"]:
+        key = (test["gpu"], test["network"])
+        if key not in latest or test["date"] >= latest[key]["date"]:
+            latest[key] = test
+    order = list(dict.fromkeys(gpu for gpu, _ in latest))
+    fitted = {id(row["test"]): row for row in player_reports.fits({"speed_tests": list(latest.values())})}
+
+    def ms(value):
+        return f"{value[0]:g}-{value[1]:g}" if isinstance(value, list) else f"{value:g}"
+    lines = ["The network's own time a frame, in ms, from the setup window's speed test: the "
+             "latest report for each GPU and network, from players and from this project's Arc "
+             "140V (`notes/players-20261103.md`). Since 0.0.2 the Windows release keeps a game's "
+             "frames on the GPU, and each frame waits for this time plus a few ms of NR's passes "
+             "around the network before the game draws its next. The test's round trip, which the "
+             "setup window also "
+             "shows, still goes through the CPU and reads higher. The fixed part is what a frame "
+             "costs whatever its size, fitted over fields up to "
+             f"{player_reports.GAME_FIELDS_MP:g} megapixels, the sizes games run at.", "",
+             "| GPU | network | " + " | ".join(f"{w}x{h}, {s:.1f}" for (w, h), s in SHOWN)
+             + " | fixed + per megapixel, ms | report |",
+             "| --- | --- | " + " | ".join("---:" for _ in SHOWN) + " | --- | --- |"]
+    for gpu in order:
+        for network in ("A", "B"):
+            test = latest.get((gpu, network))
+            if test is None:
+                continue
+            row = fitted[id(test)]
+            cases = {(tuple(c["size"]), c["render_scale"]): c["network_ms"] for c in test["cases"]}
+            where = (f"[#{test['issue']}]({ISSUES}/{test['issue']}), {test['release']}"
+                     if test["issue"] else "this project's laptop, Windows")
+            told = ", inferred" if test.get("network_how", "").startswith("inferred") else ""
+            lines.append(f"| {gpu} | {network}{told} | "
+                         + " | ".join(ms(cases[case]) for case in SHOWN)
+                         + f" | {row['fixed']:.0f} + {row['slope']:.0f} | {where}, {test['date']} |")
+    return lines + [""]
+
+
+BLOCKS = {"knobs": knobs, "rates": rates, "players": players}
 
 
 def markdown(name):

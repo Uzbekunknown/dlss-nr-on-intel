@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-11-01**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-11-03**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -20,7 +20,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
 
 ---
 
-## Where things stand (2026-11-01)
+## Where things stand (2026-11-03)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
@@ -90,6 +90,10 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   hint, and the default warm-up of 25 now reads the same. On Linux libxmx asks the driver for its
   low-latency clock strategy since 10-18 (`XMX_LOW_LATENCY`): without it the GPU's governor
   clocked a frame with gaps around it down to 700-1200 MHz of 1950 (archive, 10-18).
+- **On the players' GPUs** (below, 11-03; `notes/players-20261103.md`): a B580 runs network A at
+  1280x720 and 0.4 in 9 ms, 3.9x an A770. An A770 plays level with this laptop at that size,
+  because its network pays ~55 us a pass whatever the field. Eleven A-series cards compute NR's
+  shape exactly, and a Pro B70 offers it natively.
 - **Working rules.** Nothing goes to GitHub without the owner's word, and nothing untested at all:
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
@@ -103,6 +107,8 @@ Each line says where its evidence is: "below" is a dated entry in this file, "ar
 under that date. When an item is done, strike it through here and name the commit.
 
 **Waiting for the owner**
+- Answers to the reports of 11-01 to 11-03 (#29-#34), and two questions the data raised: #25,
+  which network each API ran; #23, whether NR was on in Hogwarts. Below, 11-03.
 - Judgements in a game, pending since September:
   - Whether render scale 0.9 still looks better than 1.0 for screenshots, now that 1280x720 runs
     on the vendor's field. Archive, 09-27.
@@ -134,6 +140,11 @@ under that date. When an item is done, strike it through here and name the commi
 - `speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`.
 - The README split into `docs/DEVS.md` and `docs/SETTINGS.md` (below, 11-02): `make test`, for
   `test_toggle.py`'s page check and `nr_daemon.py`'s message.
+- `player_reports.py`, its test and `knob_doc.py`'s third block (below, 11-03): `make test` and
+  CTest, which now run `test_player_reports.py`.
+- `test_toggle.py`'s "status has no hardware-independent FPS guess" fails about one run in 200:
+  it looks for `7x` in `nr-ctl report`'s output, which prints the log's path, and the path is a
+  temporary folder with a random name. Not from 11-03's change, and not fixed (11-03).
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -191,6 +202,12 @@ under that date. When an item is done, strike it through here and name the commi
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
 - An Arc A-series path with 8x8 matrix tiles, from OUCO86's A770 port: begun on 11-01 and paused
   at the owner's word, on the local branch `arc-a-n8` (`6be5235`, not on GitHub). Below, 11-01.
+- Where an A770's ~55 us a pass goes: a per-pass profile from an A-series tester
+  (`frame_profile.py --warm`, timestamps per pass) would say whether passes or the gaps between
+  them. It is half of a frame at 1280x720 there. Below, 11-03.
+- The speed test measures the CPU path (no `NR_` setting reaches its daemon), while the Windows
+  release keeps a game's frames on the GPU since 0.0.2. At 1920x1080 its round trip reads 10-20 ms
+  worse than a game waits for. Below, 11-03.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (archive, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
@@ -263,6 +280,44 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Players' reports as data, and where a frame's time goes on each GPU (2026-11-03, branch `alchemist`)
+
+The owner asked for every player's report to be gathered, the frame's time placed, and the
+performance tables updated from them. `notes/players-20261103.md` reads it all, and the numbers
+are in `notes/measurements/players.json`.
+
+- **Gathered:** issues #10-#34, the eight reports attached to them, eleven GPU reports (twelve
+  GPUs) and two screenshots of the setup window in a game. The session's GitHub proxy refuses
+  `user-attachments`, so the files came through the signed links GitHub redirects to. New
+  since 11-01: #29 and #31 (A770), #30 (an A380 with a Pro B70 in the same PC), #32 and #33
+  (A750), and #34 (B580, Assetto Corsa).
+- **On the A770 the network's fixed part is a cost per pass:** 22 ms on network A and 11 on B,
+  in proportion to their pass counts (415, 179), although B keeps A's bottleneck. That is
+  ~55 us a pass, against 9-10 on the B580 and 23-26 here. At 1280x720 and 0.4 it is 60 % of the
+  A770's network time, so the card plays level with this laptop there (35 against 32-34 ms on
+  A, 19 against 16 on B), although it does a megapixel in 0.6-0.7 of the time.
+- **#23 measured network A.** **#25's "Vulkan 23 fps, DirectX 11 40" is network A against B**:
+  the DirectX 11 frames took 24 ms (its screenshot), and the Vulkan ones 42, of which the
+  network 37 (its log).
+- **Where a game's frame goes:** on the A770 at 1280x720, network A, frames on the GPU, 42 ms.
+  About 22 is the passes' fixed cost and 15 the network's work on its pixels. Prep and compose
+  take 1.8, and history, statistics and hand-back 3.2. The game's own frame adds a millisecond
+  or two. On the CPU path a B580 spent 35 of 60 ms at 1080p outside the GPU, and the GPU path
+  took its player's frame rates up 2.1-2.9x.
+- `src/tools/player_reports.py` (`digest`, `probe`, `fit`) turns a Save report or a GPU report
+  into the data file's entries, keeping no folder, user name or process id.
+  `test_player_reports.py` runs in `make test` and CTest. `knob_doc.py` renders a third block
+  into `docs/SETTINGS.md`: the network's time on each GPU, from the data file.
+- The README's GPU table gains the Pro B-series, the eleven A-series cards and the B580 as the
+  fastest. What to expect gives the B580's and the A770's figures, and the tested-games table
+  seven players' rows.
+
+**Checked here:** `test_player_reports.py` (7; the privacy case fails when a digest keeps the
+report's folder), `knob_doc.py --check`, `test_toggle.py`'s page check, `build_check`,
+`claims_check`, `publish_check`. **Next on Linux:** `make test` (Open items). **Next:** the
+owner's word on answers to #23, #25, #30 and #32-#34, and on asking an A-series tester for a
+per-pass profile.
 
 ## The README rewritten for players; the developers' half in `docs/DEVS.md` (2026-11-02, branch `alchemist`)
 

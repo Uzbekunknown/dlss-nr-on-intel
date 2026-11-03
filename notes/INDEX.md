@@ -17,6 +17,7 @@ disproved.
 | note | what it settles |
 | --- | --- |
 | `phase45-frame-profile.md` | where every millisecond of a frame goes, per pass, from GPU timestamps |
+| `players-20261103.md` | every player's report to 11-03 as data (`measurements/players.json`): eleven A-series cards compute NR's shape exactly and a Pro B70 offers it natively; the network on each GPU as a fixed part and a part per megapixel, the A770's fixed part ~55 us a pass and half of a frame at 1280x720, so it plays level with this laptop there; a B580 3.9x faster than an A770 at that size; where a game's frame goes on the GPU path and on the CPU path; and the speed test's round trip still measuring the CPU path |
 | `phase47-live-mode.md` | the live mode, 10.6 fps at 512x288, and the bottleneck leaving the graph |
 | `phase38-there-was-no-bug.md` | the "driver bug" that shaped three phases does not exist |
 | `phase9-numerics.md` | why bit-identical agreement with a CPU reference is impossible here |

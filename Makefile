@@ -357,6 +357,7 @@ endif
 	python3 src/tools/build_check.py
 	python3 src/tools/test_release.py
 	python3 src/tools/test_setup_proxy.py
+	python3 src/tools/test_player_reports.py
 	python3 src/bench/frame_profile.py --tables
 	python3 src/gpu/test_gemm_int8.py
 	python3 src/gpu/test_gemm_int8_staged.py
