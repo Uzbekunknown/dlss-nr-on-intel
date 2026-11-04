@@ -1698,7 +1698,7 @@ def run_owned(args):
     print("runtime options " + " ".join(
         f"{name}={int(getattr(rt, attr))}" for name, attr in (
             ("NR_BATCH_FFN", "batch_ffn"), ("NR_FUSE_QK", "fuse_qk"),
-            ("NR_JOINT_QKV", "joint_qkv"), ("NR_INPUT_FP16", "input_fp16"),
+            ("NR_INPUT_FP16", "input_fp16"),
             ("NR_COMPACT_HEAD", "compact_head"), ("NR_FUSE_RESIDUAL", "fuse_residual"),
             ("NR_FUSE_WINDOW_RESIDUAL", "fuse_window_residual"),
             ("NR_FUSE_WINDOW_ATTENTION", "fuse_window_attention"),

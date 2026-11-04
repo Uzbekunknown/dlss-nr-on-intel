@@ -85,7 +85,6 @@ CHECKS = [
     py("src/gpu/test_denorm.py", kind="gpu"),
     py("src/gpu/test_input_fp16.py", kind="heavy"),
     py("src/gpu/test_compact_head.py", kind="heavy"),
-    py("src/gpu/test_joint_qkv.py", kind="heavy"),
     Check("work/coopmat_probe: NR's kernels run here", [binary("work/coopmat_probe")], "gpu",
           cwd=WORK, expect="NR's kernels (float16 8x16x16 at subgroup 32): run here"),
     exe("work/test_soft_cursor", "alone", system="windows"),

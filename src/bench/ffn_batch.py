@@ -24,11 +24,11 @@ def main():
                         default=(576, 1024), help='input extent, before model padding')
     parser.add_argument('--pairs', type=int, default=8)
     parser.add_argument('--optimization',
-                        choices=('ffn', 'input', 'head', 'qkv', 'merge', 'qkv-epilogue',
+                        choices=('ffn', 'input', 'head', 'merge', 'qkv-epilogue',
                                  'glue', 'ffn-fused', 'branched-ffn', 'partition'),
                         default='ffn',
-                        help='compare FFN batching, FP16 input, compact head, joint QKV '
-                             'preparation, the head merge in the fused attention, the '
+                        help='compare FFN batching, FP16 input, compact head, '
+                             'the head merge in the fused attention, the '
                              'QKV projection finished in its own epilogue, the fused '
                              'full-resolution glue or the fused narrow feed-forward')
     args = parser.parse_args()
@@ -40,15 +40,12 @@ def main():
     backend = nr_frame.ResidentBackend()
     try:
         rt = backend.runtime
-        if args.optimization == 'qkv' and not rt.fuse_qk:
-            raise SystemExit('QKV comparison requires NR_FUSE_QK=1; the split reference bypasses this option')
         if args.optimization == 'merge' and not rt.fuse_window_attention:
             raise SystemExit('merge comparison requires NR_FUSE_WINDOW_ATTENTION=1; '
                              'the three-pass attention bypasses this option')
         setting, variable = {'ffn': ('batch_ffn', 'NR_BATCH_FFN'),
                              'input': ('input_fp16', 'NR_INPUT_FP16'),
                              'head': ('compact_head', 'NR_COMPACT_HEAD'),
-                             'qkv': ('joint_qkv', 'NR_JOINT_QKV'),
                              'merge': ('fuse_attention_merge', 'NR_FUSE_ATTENTION_MERGE'),
                              'qkv-epilogue': ('qkv_epilogue', 'NR_QKV_EPILOGUE'),
                              'glue': ('fuse_glue', 'NR_FUSE_GLUE'),
@@ -79,7 +76,7 @@ def main():
               f'{args.pairs} alternating pairs', flush=True)
         fixed = ', '.join(f'{name}={int(getattr(rt, name))}'
                           for name in ('batch_ffn', 'fuse_qk', 'input_fp16', 'compact_head',
-                                       'joint_qkv', 'fuse_residual', 'fuse_window_residual',
+                                       'fuse_residual', 'fuse_window_residual',
                                        'fuse_window_attention', 'fuse_attention_merge',
                                        'qkv_epilogue', 'fuse_glue', 'fuse_ffn',
                                        'fuse_branched_ffn', 'fuse_partition')

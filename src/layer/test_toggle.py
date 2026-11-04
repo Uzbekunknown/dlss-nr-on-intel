@@ -123,7 +123,7 @@ def report_checks(control, paths, scratch):
         "100x100 old frame\n"
         "model ready in 0.4s on Intel(R) Graphics (LNL)\n"
         "buffers in shared memory (one pool): type 2, heap 11.5 GiB\n"
-        "runtime options NR_JOINT_QKV=1 NR_BATCH_FFN=1\n"
+        "runtime options NR_FUSE_GLUE=0 NR_BATCH_FFN=1\n"
         "1280x720 B8G8R8A8_UNORM in 0.21s  change 0.03  "
         "gate 0.69 held 90% cut 0.001  gpu 1+176+1ms  network 704x448 scale 0.55\n"
         "frame rejected/failed; game keeps original: xmx_buf_create: "
@@ -133,7 +133,7 @@ def report_checks(control, paths, scratch):
         control.report()
     said = spoken.getvalue()
     check("report preserves real geometry and runtime options",
-          'network 704x448 scale 0.55' in said and 'NR_JOINT_QKV=1' in said,
+          'network 704x448 scale 0.55' in said and 'NR_FUSE_GLUE=0' in said,
           'long frame lines are not truncated')
     check("report uses only the latest daemon session", 'OLD_DEVICE' not in said and '100x100' not in said)
     # The report prints its paths, all in the scratch folder, whose random name holds "7x"

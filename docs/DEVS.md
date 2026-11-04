@@ -168,12 +168,6 @@ compact head should matter more, since the read crosses PCIe; B570/B580 results 
 still needed. For exact checks and paired benchmarks, see
 [the I/O experiment notes](../notes/improve-compact-io.md).
 
-`NR_JOINT_QKV=1` is another optional experiment: it combines preparation of Q, K
-and V into one dispatch, removing 140 passes per frame. It is **off by default**:
-on 140V at network extent 448x320 it increased warm frame time from 79.1 to 83.2 ms.
-See [the QKV experiment and diagnostic notes](../notes/improve-joint-qkv.md) for exact
-checks, the paired benchmark and profiling commands for B570/B580.
-
 ## Run it in a game
 
 Two processes: a **daemon** that holds the model, and a **Vulkan layer** inside the game
