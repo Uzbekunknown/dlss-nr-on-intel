@@ -44,7 +44,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
-    the README for players (`d5bef2e`, 11-02) and `alchemist` at `72fb922` (11-04, below);
+    the README for players (`d5bef2e`, 11-02) and `alchemist`'s head, at `72fb922` and again that
+    night (11-04, below);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
@@ -52,9 +53,9 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
     10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
     players' data, and the entries of 11-04 below), level with `master` and `newnr` again on
-    11-04, when all three went to its head at the owner's word (below, 11-04 later), and ahead
-    of them since that evening: `20a0253`, `6ef670e` and `c744581` on GitHub, and the Linux check
-    (below, 11-04 night, later). `master` and `newnr` stay at `72fb922` until the owner's word;
+    11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
+    them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), and level again
+    since that night, when the owner had both fast-forwarded to it (below, 11-04 night, later);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -353,8 +354,13 @@ start within 12 workgroups of one another, and its A is still read once. In the 
   (B 253.6, A 271.4), within the 1-2 % a process moves, so the change costs Mesa nothing seen. An
   order chosen per shape would be worth about a millisecond of B's 254, not worth taking.
 
-**Next on Linux:** nothing waits. **Next on Windows:** the entry below's: a game with the new
-build, at the owner's word. Fast-forwarding `master` and `newnr` to `alchemist` is the owner's word.
+**Then, at the owner's word.** `alchemist` was pushed with this entry and with this file's
+entries of 10-30 and 10-31 moved word for word to `notes/archive/HANDOFF-2026-10-30-to-2026-10-31.md`
+(`0954b48`), and `master` and `newnr` were fast-forwarded to `alchemist`, on GitHub and here.
+
+**Next on Linux:** nothing waits. **Next on Windows:** `git fetch`, then fast-forward `master`,
+`newnr` and `alchemist` to GitHub's; then the entry below's: a game with the new build, at the
+owner's word.
 
 ## The staged GEMM reads its blocks from Intel's Y-major walk (2026-11-04, night, branch `alchemist`)
 
