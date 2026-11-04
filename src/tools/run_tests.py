@@ -110,6 +110,7 @@ CHECKS = [
     py("src/layer/test_panel.py", kind="alone"),     # reads the process list for daemons
     py("src/layer/test_spawn_exit.py", kind="cpu"),
     py("src/layer/test_settings_live.py", kind="cpu"),
+    py("src/layer/test_ui_resize.py", kind="cpu"),     # was tools/check_ui_resize.py, run by nothing
     py("src/tools/publish_check.py", kind="cpu"),
     py("src/tools/claims_check.py", kind="cpu"),
     py("src/tools/build_check.py", kind="cpu"),

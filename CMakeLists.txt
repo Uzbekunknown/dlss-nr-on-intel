@@ -491,6 +491,9 @@ if(NR_BUILD_TESTS)
   endforeach()
   # The daemon ends with its game on both systems: a process handle there, a pidfd here.
   nr_test(layer_spawn_exit "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_spawn_exit.py")
+  # The panel's image follows the swapchain's extent. It reads the sources only, so it runs here
+  # too, although the panel is Windows-only.
+  nr_test(layer_ui_resize "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_ui_resize.py")
   if(WIN32)
     foreach(name alloc pipe spawn_reasons vulkan_proxy)
       nr_test(layer_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_${name}.py")
