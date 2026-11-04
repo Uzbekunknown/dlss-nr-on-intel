@@ -50,7 +50,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
-  - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
+  - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (archive,
     10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
     players' data, and the entries of 11-04 below), level with `master` and `newnr` again on
     11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
@@ -102,7 +102,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   1080p and 1440p fields, 1.6-2.1x Mesa's time and all of Windows' loss, every other pass level
   or faster (below, 11-04 evening). Most of it was the driver's walk order: since `6ef670e` the
   network takes 9-19 % less there, and B at 2560x1472 is within 2 % of Linux (below, 11-04
-  night); the speed test's Windows figures predate it. The README's table
+  night), and 7-9 % less in Mortal Kombat 11 at 1280x720 and render scale 1.0 (below, 11-04
+  night, latest); the speed test's Windows figures predate it. The README's table
   (`nr_knobs.RATES`) was measured with `live_rates.py --warmup 3`, again on 10-18 with the clock
   hint, and the default warm-up of 25 now reads the same. On Linux libxmx asks the driver for its
   low-latency clock strategy since 10-18 (`XMX_LOW_LATENCY`): without it the GPU's governor
@@ -281,6 +282,10 @@ under that date. When an item is done, strike it through here and name the commi
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Archive, 10-16.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
   gives three C4068 warnings that an `NR_IVDEP` macro would silence. Archive, 10-02 and 10-07.
+- `tools\build_win.bat` run from a folder other than the checkout stops at the layer's link
+  (`LNK1181`): the layer's C objects are compiled with no `/Fo` and land in that folder.
+  `/Fo:"%REPO%\\"` on that line, as the x86 step already gives many sources, would fix it. Below,
+  11-04 night, latest.
 - Housekeeping: each release root in `D:\NRonWindows\rel` holds ~440 MB of extracted weights, and
   `D:` ran out of space mid-test. Archive, 10-12.
 
@@ -313,6 +318,47 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## `6ef670e` in a game: Mortal Kombat 11 (2026-11-04, night, latest, branch `alchemist`)
+
+At the owner's word, the new order in a game, and, as the owner asked, at 1280x720 with render
+scale 1.0 as well as the release's 0.4. A release built at `0456e99` (`tools\deploy.bat
+--release`, the weights copied in) went into Mortal Kombat 11 through the setup window's backend,
+as a player's goes: DirectX 11 through DXVK, frames on the GPU, 1280x720.
+`nr-game\pacing-game-test.ps1` counts the frames the daemon answers in 40 s after a 15 s warm-up
+and reads the network's time from its log, each run in a game and a daemon of its own. The old
+order was set with `XMX_STAGED_WALK_Y=0` in the installed `nr-env.txt`, the new one by nothing, as
+players get it; two rounds, the second in reverse order. Intel's 101.9150, on mains, "best
+performance", `quiet-check.ps1` quiet before and after. The runs are in
+`D:\NRonWindows\nr-game\release-tests\walk1104-*` (0.4) and `walk1104s-*` (1.0), and the two
+series scripts beside `pacing-game-test.ps1`.
+
+Frames the daemon answered a second, and the network's ms (the daemon's split, in whole ms):
+
+| | old order | new order |
+| --- | --- | --- |
+| B at 1.0 (network 1344x768) | 9.75-9.82, 87-89 | 10.44-10.57, 81-82 |
+| A at 1.0 | 5.40-5.47, 170 | 5.85-5.92, 154-157 |
+| B at 0.4 (network 512x320) | 36.1-36.8, 16-17 | 38.3-38.7, 16 |
+| A at 0.4 | 23.3-23.8, 32-33 | 22.8-23.8, 32-33 |
+
+- **At render scale 1.0 the network takes 7-9 % less, A and B alike, and the game gets a frame
+  6-10 % more often.** At 0.4 B's frame comes 5-6 % more often in both rounds, and A's runs do
+  not tell the two orders apart: at 512x320 the GEMMs' operands mostly stay in the cache, where
+  the walk matters little (the entry below).
+- All 16 runs: every frame on the GPU path, none refused or fallen back; no daemon outlived its
+  game; the game's folder as before after each, its ten files a run could write byte-identical to
+  the October backup, and no launch options in Steam.
+- The picture was not looked at: the bytes are the same by `test_staged_packed.py` and the heads
+  (the entry below).
+
+**A trap on the way.** `tools\build_win.bat`, run from a folder other than the checkout, stops at
+the layer's link (`LNK1181`, `nr_layer.obj`): the layer's C objects are compiled with no `/Fo`, so
+they land in the current folder, and unlike the C++ objects nothing moves them. Here they landed in
+`D:\NRonWindows` and were removed. Run it from the checkout until it is fixed (Open items).
+
+**Next on Linux:** nothing waits. **Next on Windows:** the residual at K = 64 and the QKV gather,
+if the owner wants them; the next release, which takes `6ef670e` to players, at the owner's word.
 
 ## Checked on Linux: `6ef670e`, and the walk on Mesa (2026-11-04, night, later, branch `alchemist`)
 
@@ -361,6 +407,8 @@ entries of 10-30 and 10-31 moved word for word to `notes/archive/HANDOFF-2026-10
 **Next on Linux:** nothing waits. **Next on Windows:** `git fetch`, then fast-forward `master`,
 `newnr` and `alchemist` to GitHub's; then the entry below's: a game with the new build, at the
 owner's word.
+
+Done: both on Windows, the game in Mortal Kombat 11 (above, 11-04 night, latest).
 
 ## The staged GEMM reads its blocks from Intel's Y-major walk (2026-11-04, night, branch `alchemist`)
 
