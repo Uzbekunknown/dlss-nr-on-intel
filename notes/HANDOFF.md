@@ -92,7 +92,9 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   has no hint for it yet (archive, 10-18, Windows).
 - **Speed on this laptop**, `src/bench/speed_test.py`, network and round trip: 640x360 at 0.4 is
   23 ms and 26-27 ms on both systems; 1920x1080 at 1.0 is 273 and 299 ms on Linux, 384 and 409 on
-  Windows, where Intel's compiler loses time in the staged GEMM's loop. The README's table
+  Windows, where Intel's compiler loses time in the staged GEMM's loop: per pass at the vendor's
+  1080p and 1440p fields, 1.6-2.1x Mesa's time and all of Windows' loss, every other pass level
+  or faster (below, 11-04 latest). The README's table
   (`nr_knobs.RATES`) was measured with `live_rates.py --warmup 3`, again on 10-18 with the clock
   hint, and the default warm-up of 25 now reads the same. On Linux libxmx asks the driver for its
   low-latency clock strategy since 10-18 (`XMX_LOW_LATENCY`): without it the GPU's governor
@@ -114,6 +116,9 @@ Each line says where its evidence is: "below" is a dated entry in this file, "ar
 under that date. When an item is done, strike it through here and name the commit.
 
 **Waiting for the owner**
+- The first target for the network's speed: B's four full-resolution passes (the Linux agent's
+  proposal; a third of B on Linux, under a quarter on Windows), or the staged GEMM's short-K calls
+  on Intel's compiler (Windows' reading; all of Windows' loss). Below, 11-04 latest.
 - Answers to the A-series reports, as GitHub stood on 11-04: we have commented on #18, #19, #23,
   #25, #27, #29 and #34 (#34: two comments from the owner's account, 11-03 and 11-04), and not
   yet on #22, #24, #26, #28, #30-#33 and #36. Two questions the data raised: #25, which network
@@ -236,8 +241,10 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The unmerged window attention hangs Intel's Windows driver from 32 windows up~~: found and
   avoided on 10-15, and `gpu_window_attention` is in CTest on Windows again. Archive, 10-15;
   phase71.
-- The staged GEMM's loop on Intel's compiler takes 1.2-1.5x Mesa's time where the graph is large.
-  The packed copies took 6-9 % of it; the rest is open. Archive, 10-02 and 10-03.
+- The staged GEMM's loop on Intel's compiler takes 1.2-1.5x Mesa's time where the graph is large,
+  and 1.6-2.1x at the vendor's 1080p and 1440p fields, where it is all of Windows' loss and calls
+  with K = 64-128 carry most of it (below, 11-04 latest). The packed copies took 6-9 % of it; the
+  rest is open. Archive, 10-02 and 10-03.
 - ~~Four daemon processes with Mortal Kombat 11~~: two processes are one daemon (the venv's
   `python.exe` and the interpreter it starts); four were two. The owner lock now stops a second
   one. Archive, 10-15.
@@ -294,6 +301,92 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The network's passes at the vendor's 1080p and 1440p fields, Intel's driver beside Mesa (2026-11-04, latest, branch `alchemist`)
+
+The owner asked for a per-pass profile of the network on Intel's driver at the fields render scale
+1.0 gives 1920x1080 and 2560x1440, 1920x1152 and 2560x1472, set against the Linux agent's of the
+same morning: `frame_profile.py --size H W --warm 25 --runs 5 --calls 30`, network B with
+`--weights work/mlxw/dlssnr-b-logical.safetensors`.
+- Linux: Mesa 26.2.5, one process a case. The outputs are in `D:\NRonWindows\linux-profiles-20261104`.
+- Windows: Intel's 101.9150 before and after, on mains, "best performance" as in phase72's Windows
+  table, `quiet-check.ps1` quiet before and after each batch of runs, the first run 16 minutes
+  after a boot, no daemon. The MSVC build of `c0b7f9d` in `work/` (nothing the network runs has
+  changed since), under a CPython 3.12. Each case in three processes, the second round in reverse
+  order. The outputs, and the two scratch scripts that made them, are in
+  `D:\NRonWindows\windows-profiles-20261104`, as UTF-8 like Linux's.
+
+Device ms a frame, Linux / Windows' three rounds (Windows against Linux):
+
+| pass kind | A 1920x1152 | A 2560x1472 | B 1920x1152 | B 2560x1472 |
+| --- | --- | --- | --- | --- |
+| staged GEMM | 148.1 / 242.7-251.2 (1.64-1.70x) | 240.0 / 441.6-499.6 (1.84-2.08x) | 63.2 / 99.0-104.1 (1.57-1.65x) | 101.3 / 177.9-197.2 (1.76-1.95x) |
+| window block | 57.8 / 46.5-50.4 (0.80-0.87x) | 98.2 / 78.6-80.5 (0.80-0.82x) | 43.6 / 34.7-35.6 (0.80-0.82x) | 74.4 / 59.7-60.2 (0.80-0.81x) |
+| fused feed-forward | 33.3 / 34.5-36.2 (1.03-1.09x) | 56.5 / 58.6-59.4 (1.04-1.05x) | 25.5 / 26.9-27.5 (1.05-1.08x) | 43.5 / 46.4 (1.07x) |
+| window attention | 20.1 / 18.4-18.6 (0.91-0.92x) | 31.2 / 30.2-31.1 (0.97-1.00x) | 7.1 / 6.5-6.7 (0.91-0.94x) | 11.4 / 11.3-11.7 (1.00-1.03x) |
+| global attention | 4.8 / 3.4-3.6 (0.71-0.75x) | 10.7 / 7.5-7.9 (0.70-0.73x) | 4.8 / 3.4-3.6 (0.71-0.74x) | 10.8 / 7.5-8.0 (0.70-0.74x) |
+| the four unary kinds | 7.3 / 8.2-9.2 (1.13-1.27x) | 12.4 / 13.5-13.9 (1.10-1.12x) | 7.2 / 7.7-8.2 (1.07-1.14x) | 12.3 / 13.6-13.9 (1.10-1.13x) |
+| all but the GEMM | 123.3 / 111.2-117.6 (0.90-0.95x) | 208.9 / 188.5-192.5 (0.90-0.92x) | 88.3 / 79.2-81.6 (0.90-0.92x) | 152.3 / 138.6-140.2 (0.91-0.92x) |
+| device total | 271.4 / 355.1-362.4 (1.31-1.34x) | 448.9 / 630.0-691.0 (1.40-1.54x) | 151.5 / 178.1-185.7 (1.18-1.23x) | 253.6 / 316.5-336.3 (1.25-1.33x) |
+
+The host's part, mostly the input's upload from numpy, is 7.9-15.5 ms on Windows and 8.8-12.6 on
+Linux.
+
+- **Intel's compiler loses the time in the staged GEMM alone, and more than all of it.** Every
+  other pass together takes 0.90-0.95x Linux's time: the window block 0.80-0.87x and global
+  attention 0.70-0.75x, while the fused feed-forward and the unary kinds take 3-27 % more, a few
+  ms. So the GEMM is 67-72 % of A's frame and 56-59 % of B's here, against 53-55 and 40-42 on
+  Linux. At 1344x768 it was 1.54x (archive, 10-02); here it is 1.57-1.70x at 1920x1152 and
+  1.76-2.08x at 2560x1472.
+- **Per call site, a short K loop under an epilogue loses most.** The gate GEMMs (`0x1300`) of
+  three levels do the same 7.7 GFLOP a call at 2560x1472. Windows runs them at 3.7-3.8 TFLOP/s
+  against Linux's 6.8 with K = 256 (`14720x128x256 x8`), 2.2 against 5.7 with K = 128
+  (`58880x128x128 x4`) and 1.5-1.6 against 3.8 with K = 64 (`235520x128x64 x2`); at 1920x1152 the
+  same three run 5.6-5.7, 2.4-2.6 and 1.7-1.8 against 6.7, 5.6 and 3.8. The residual (`0x41100`)
+  takes 2.9-3.1x at K = 128 and 2.1-2.2x at K = 64, the QKV epilogue with the window gather
+  2.1-2.3x at K = 64-128 and 1.4-1.6x at K = 256. The narrow N = 32 contracts (`0x1100`) stay at
+  1.0-1.3x, as on 10-02. Of the loss in the call sites both sides list among their 30 dearest,
+  57-74 % is in calls with K = 64-128.
+- **The loss grows with the field.** The K = 256 gate GEMM is 1.18-1.20x at 1920x1152 and
+  1.78-1.83x at 2560x1472, the residual at K = 256 1.53-1.56x and 2.74-2.79x. Linux's frame takes
+  the K = 256 gate GEMM in proportion to its rows (1.69x for 1.70x), Windows' at 2.5-2.6x. Alone on
+  Intel's driver (`gemm_epilogues.py --no-sweep`, in the Windows folder) 8640x128x256 to
+  14720x128x256 takes 2.4x the time, and 34560x128x128 to 58880x128x128 1.7x, as its rows.
+- **At 2560x1472 the GEMM's time moves 11-13 % between processes, while every other pass together
+  holds within 2 %**: the trap of 10-02 (section 4). Much of the move is the bottleneck's long-K
+  GEMMs at 960 tokens. `gemm+residual 960x1024x4096` took 1.7, 4.3 and 6.1 ms a call in A's three
+  rounds and 2.0-2.9 in B's, against Linux's 1.09 in its frame and 1.56 alone here (1.52x the
+  640-token time, as its rows). A fourth process timing each call (`bottleneck-calls.txt`) had A
+  at 1.5-2.0 and B at 3.2-4.9, steady over its frames, and its frames read A 750-758 ms and B
+  361-365. Global attention, run between those GEMMs, keeps 0.70-0.74x in every process, so the
+  GPU's clock is not what moves. At 1920x1152 the QKV epilogue `2560x1536x512` moves too, 1.05-1.72
+  ms a call against Linux's 0.71. So a 2560x1472 frame on Windows is A 630-758 ms and B 317-365:
+  quote a band.
+- **B's four full-resolution passes are under a quarter of its frame on Windows, not a third**:
+  43.3-44.2 ms of 178-186 at 1920x1152 (24 %) and 74.4-75.0 of 317-336 at 2560x1472 (22-24 %),
+  against Linux's 47.2 of 151.5 (31 %) and 80.6 of 253.6 (32 %). They take 0.92-0.94x Linux's
+  time: the two window blocks 0.78-0.85x, the merged feed-forward 1.15-1.18x, the stem's
+  1.03-1.07x.
+
+**For the first target.** On Windows, where the releases are, the staged GEMM is all of the loss:
+B +36-41 ms at 1920x1152 and +77-96 at 2560x1472, A +95-103 and +202-260. At Mesa's GEMM speed
+B's frame would be ~142-145 and ~240 ms there, A's ~259-266 and ~429-433, under Linux's own,
+because every other pass is faster here. B's four full-resolution passes take about the same
+43-81 ms on both systems, so a gain there pays on both, but they are under a quarter of B on
+Windows. The staged loop on Intel's compiler was taken apart on 10-02 and 10-03 (archive): the
+loss is the K loop's own code, not the stage, four bit-identical variants were no faster, and the
+packed copies that took 6-9 % are in. The Linux agent proposes B's four full-resolution passes;
+Windows reads the short-K GEMMs (K = 64-128 under the gate, the residual and the QKV gather) as
+the larger target for players. The choice is the owner's.
+
+**Not established:** why Intel's compiler loses at short K; why the K = 256 shapes grow faster
+than their rows on Intel's driver, alone too; what moves a GEMM's time between processes.
+
+**Next on Linux:** nothing waits. If the owner picks the staged GEMM, the same isolated run beside
+`windows-profiles-20261104\gemm-epilogues-bottleneck-shapes.txt`, to say whether Mesa's kernel
+alone also takes 14720x128x256 at more than its rows:
+`python3 src/bench/gemm_epilogues.py --shapes 640x1024x4096 960x1024x4096 8640x128x256 14720x128x256 34560x128x128 58880x128x128 --rounds 5 --no-sweep`.
+**Next on Windows:** the owner's choice of the first target.
 
 ## Checked on Linux: `alchemist` at `d28e841`, and `test_toggle.py`'s flake fixed (2026-11-04, later, branch `alchemist`)
 
