@@ -36,8 +36,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   A-series owners (below, 11-01). 0.0.3.1 is what the first A-series reports asked for: the speed
   test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
   11-01 later). All three went out on the owner's word before Linux's `make test` at their heads,
-  as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's changes wait
-  for it (Open items). Linux users build from source (README).
+  as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841`
+  (below, 11-04 later). Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01) and
@@ -48,11 +48,12 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
     10-31 evening). Level with `newnr` until 11-02; ahead of it since 11-03 (`911e9ba`, the
-    players' data, and the entries of 11-04 below);
-  - `claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
-    by accident on 11-01. The owner has it removed later. Its text is carried here (below, 11-01,
-    latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows (below,
-    11-04).
+    players' data, and the entries of 11-04 below). Here two commits more, not pushed: `ce9c513`
+    and the entry "Checked on Linux" (below, 11-04 later);
+  - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
+    by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
+    11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
+    (below, 11-04).
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
@@ -147,16 +148,17 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
-  evening): `make test`.
-- `speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`.
-- The README split into `docs/DEVS.md` and `docs/SETTINGS.md` (below, 11-02): `make test`, for
-  `test_toggle.py`'s page check and `nr_daemon.py`'s message.
-- `player_reports.py`, its test and `knob_doc.py`'s third block (below, 11-03): `make test` and
-  CTest, which now run `test_player_reports.py`.
-- `test_toggle.py`'s "status has no hardware-independent FPS guess" fails about one run in 200:
+- ~~`alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
+  evening): `make test`~~: green at `d28e841` (below, 11-04 later).
+- ~~`speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`~~:
+  green at `d28e841`.
+- ~~The README split into `docs/DEVS.md` and `docs/SETTINGS.md` (below, 11-02): `make test`, for
+  `test_toggle.py`'s page check and `nr_daemon.py`'s message~~: green at `d28e841`.
+- ~~`player_reports.py`, its test and `knob_doc.py`'s third block (below, 11-03): `make test` and
+  CTest, which now run `test_player_reports.py`~~: green at `d28e841`, CTest 68 of 68.
+- ~~`test_toggle.py`'s "status has no hardware-independent FPS guess" fails about one run in 200:
   it looks for `7x` in `nr-ctl report`'s output, which prints the log's path, and the path is a
-  temporary folder with a random name. Not from 11-03's change, and not fixed (11-03).
+  temporary folder with a random name~~: fixed in `ce9c513` (below, 11-04 later).
 - ~~`81b0a59` (0.0.2): `make test` in both memory modes and CTest~~: green at `eb9b281` (10-31),
   which holds it and the panel in DirectX 12. Since `cc2b8b7` the setup window's core changed (its
   PE readers, the folder of each placed file, frames on the GPU and B by default), the release
@@ -293,6 +295,35 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
+## Checked on Linux: `alchemist` at `d28e841`, and `test_toggle.py`'s flake fixed (2026-11-04, later, branch `alchemist`)
+
+The steps of the entry below, at the owner's word of 11-04: `alchemist` fast-forwarded to GitHub's
+`d28e841`, which holds `newnr` (`d5bef2e`) and the players' data; no daemon, swap empty, a quiet
+CPU; Mesa 26.2.5.
+
+- `make test`: 62 of 62, in 5 min 11 s. `XMX_STAGING=1 make test`: 62 of 62, in 5 min 3 s, the
+  seven GPU suites that print the mode saying `staging=True` (`False` in the first run). The probe
+  says "run here", `test_player_reports.py` passes its 7, and `test_toggle.py`'s page checks pass
+  (`knob_doc.py --check`, and the links of the README, `docs/DEVS.md` and `docs/SETTINGS.md`).
+  Skipped as before: the Windows-only cases, and the GPU image path's parity tests on Mesa
+  (`xmxres.image_path_exact`). No compiler warning.
+- CMake builds with no warning, and CTest passes 68 of 68, `player_reports` the new one.
+- **The flake, fixed in `ce9c513`.** Every path `nr-ctl report` prints is in the test's scratch
+  folder, so the check now reads the report with that folder's path taken out. With `TMPDIR` at a
+  folder named `tmp7x` the old check fails every time and the new one passes; a report saying "the
+  strength knobs cost 7x" still fails it; 40 ordinary runs pass. At the head, `ce9c513` and this
+  entry: `make test` 62 of 62, the same commands and passes as at `d28e841`.
+
+**GitHub at 08:07 UTC, against the entry below.** The stray branch is gone: `git ls-remote` lists
+`alchemist`, `improve-int8`, `master`, `media` and `newnr`. Nothing else has moved. Two B580 GPU
+reports came after `911e9ba`'s data and are not in `players.json`: #34's comment of 11-03 and #36
+(11-04, on the A-series template). `player_reports.py probe` reads both: NR's shape at 32 lanes
+58.6 and 58.3 TFLOP/s, vector FMA 7.2, driver 101.9150, "run here". On #34 another B580 owner
+offers to test and asks for a Telegram group; the owner answered that a channel is coming.
+
+**Next on Linux:** nothing waits. **Next:** the owner's word on pushing `alchemist`, two commits
+ahead of GitHub here, and on adding the two B580 reports to `players.json`.
+
 ## GitHub as of 11-04, and what Linux pulls and tests (2026-11-04, branch `alchemist`)
 
 On 11-04 the owner had the local branches follow GitHub, the stray branch saved, this file's
@@ -325,8 +356,11 @@ text is the entry "The reporters answered" below (`0f378a3`). The branch is save
 4. Write the result as an entry "Checked on Linux" with the commit tested, strike the Linux items
    in Open items and name the commit, and commit. Pushing is the owner's word.
 
+Done: green at `d28e841`, the flake fixed in `ce9c513` (above, 11-04 later).
+
 **Next on Windows:** nothing waits on Linux. The owner's word on pushing `alchemist`, on
-`arc-a-n8`, on replies to the issues still without one, and on removing the stray branch.
+`arc-a-n8`, on replies to the issues still without one, and ~~on removing the stray branch~~ (gone
+by 11-04, 08:07 UTC, above).
 
 ## Players' reports as data, and where a frame's time goes on each GPU (2026-11-03, branch `alchemist`)
 
