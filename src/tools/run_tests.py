@@ -117,6 +117,14 @@ CHECKS = [
     py("src/tools/test_release.py", kind="cpu"),
     py("src/tools/test_setup_proxy.py", kind="cpu"),
     py("src/tools/test_player_reports.py", kind="cpu"),
+    # The Windows setup's own suites. They skip what needs Windows, and until 2026-11-04 no
+    # runner had them: they ran by hand on Windows, or not at all.
+    py("src/tools/test_windows_wizard.py", kind="cpu"),
+    py("src/tools/test_windows_launch.py", kind="cpu"),
+    py("src/tools/test_windows_controls.py", kind="cpu"),
+    py("src/tools/test_windows_wizard_bridge.py", kind="cpu"),
+    py("src/tools/test_nr_weights.py", kind="cpu"),
+    py("src/tools/test_windows_setup.py", kind="alone"),   # runs the real installer on Windows
     py("src/bench/frame_profile.py", "--tables", kind="cpu"),
     py("src/gpu/test_gemm_int8.py", kind="gpu"),
     py("src/gpu/test_gemm_int8_staged.py", kind="gpu"),

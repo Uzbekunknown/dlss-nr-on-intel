@@ -18,7 +18,7 @@ That is stated here rather than left to be noticed, because it changes how you s
 everything else. What it means in practice:
 
 - **Nothing is asserted that was not measured.** Every number in the notes has a program
-  behind it in `src/bench/`, and `make test` runs 64 programs of checks, including the
+  behind it in `src/bench/`, and `make test` runs 70 programs of checks, including the
   native passes against the NumPy they replace byte for byte.
 - **The wrong turns are in the notes too**, deliberately. A hypothesis about shared-memory
   bank conflicts that measured 1.11x instead of the textbook 32x. A "driver bug" that
@@ -531,7 +531,7 @@ make test                      # every check, once
 XMX_STAGING=1 make test-gpu    # the ones that open the device, with its buffers unmapped
 ```
 
-64 programs on Linux, including the layer's wire protocol, the native host passes
+70 programs on Linux, including the layer's wire protocol, the native host passes
 against the NumPy they replace byte for byte, the interface mask down to the
 byte, the temporal path against MLX-DLSS's own composition, and the panel driven through
 a pseudo-terminal. The pages are checked too: the knob and frame-time tables in

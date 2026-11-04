@@ -469,6 +469,12 @@ if(NR_BUILD_TESTS)
   nr_test(release "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_release.py")
   nr_test(setup_proxy "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_setup_proxy.py")
   nr_test(player_reports "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_player_reports.py")
+  # The Windows setup's own suites, which skip what needs Windows. No runner had them before
+  # 2026-11-04.
+  foreach(name windows_wizard windows_launch windows_controls windows_setup windows_wizard_bridge
+      nr_weights)
+    nr_test(tools_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_${name}.py")
+  endforeach()
   nr_test(profile_tables "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/bench/frame_profile.py" --tables)
   foreach(name device_pick gemm_contract denorm input_fp16 compact_head gemm_int8 gemm_int8_staged
       window_block global_attention int8_quant gemm_residual window_residual window_attention
