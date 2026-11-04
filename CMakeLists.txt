@@ -482,13 +482,9 @@ if(NR_BUILD_TESTS)
   endforeach()
   nr_test(gpu_image_pipeline "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_image_pipeline.py" --full-model)
   set_tests_properties(gpu_image_pipeline PROPERTIES LABELS "gpu;image")
-  nr_test(host_image_preprocess "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_image_preprocess.py" --cpu-only)
-  foreach(name image_compose image_stats image_history image_pipeline)
-    nr_test(host_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py" --host-only)
-  endforeach()
-  set_tests_properties(host_image_preprocess host_image_compose host_image_stats host_image_history
-    host_image_pipeline
-    PROPERTIES LABELS "host;image")
+  # No host-only entries for these: each script's host checks are the first half of its gpu_image_
+  # entry above, so a second entry with --host-only (or --cpu-only) ran them twice. Without a
+  # device, the scripts take the flag themselves; `make test-image-host` runs all five that way.
   nr_test(gpu_ffn_batch "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_ffn_batch.py" --gpu)
   foreach(name frame_cache native_image topology nr_model temporal_controls dump_raw dump_geometry)
     nr_test(ref_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/ref/test_${name}.py")

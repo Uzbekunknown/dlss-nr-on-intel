@@ -53,9 +53,18 @@ def cmake_shaders(text):
 
 
 def make_tests(text):
+    """The scripts `make test` runs: those its recipe names, and when that is the runner, the
+    runner's own list."""
     block = text[text.index("\ntest:"):]
     block = block[:block.index("\n\n")]
-    return set(re.findall(r"python3 (src/\S+\.py)", block))
+    scripts = set(re.findall(r"python3 (src/\S+\.py)", block))
+    if "src/tools/run_tests.py" in scripts:
+        scripts.discard("src/tools/run_tests.py")
+        sys.path.insert(0, str(ROOT / "src" / "tools"))
+        import run_tests
+        scripts |= {check.name.split()[0] for check in run_tests.CHECKS
+                    if check.name.split()[0].endswith(".py")}
+    return scripts
 
 
 def cmake_tests(text):

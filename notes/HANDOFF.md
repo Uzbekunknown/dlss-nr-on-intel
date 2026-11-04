@@ -983,7 +983,6 @@ Regression, all should exit 0:
 python3 src/ref/test_nr_model.py                  # primitives, codec, temporal, graph
 work/venv/bin/python src/ref/test_against_torch.py # bit-identical to the original
 python3 src/gpu/test_resident.py                  # the device path, ~2 min
-python3 src/gpu/test_gemm.py                      # worst rel 2.4e-06
 python3 src/ref/nr_frame.py IN.png OUT.png --gpu  # the visual check
 python3 src/ref/nr_frame.py IN.png OUT.png --profile neutral   # the control: ~37x smaller
 ```
