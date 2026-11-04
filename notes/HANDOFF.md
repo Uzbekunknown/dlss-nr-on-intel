@@ -94,7 +94,9 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   23 ms and 26-27 ms on both systems; 1920x1080 at 1.0 is 273 and 299 ms on Linux, 384 and 409 on
   Windows, where Intel's compiler loses time in the staged GEMM's loop: per pass at the vendor's
   1080p and 1440p fields, 1.6-2.1x Mesa's time and all of Windows' loss, every other pass level
-  or faster (below, 11-04 latest). The README's table
+  or faster (below, 11-04 evening). Most of it was the driver's walk order: since `6ef670e` the
+  network takes 9-19 % less there, and B at 2560x1472 is within 2 % of Linux (below, 11-04
+  night); the speed test's Windows figures predate it. The README's table
   (`nr_knobs.RATES`) was measured with `live_rates.py --warmup 3`, again on 10-18 with the clock
   hint, and the default warm-up of 25 now reads the same. On Linux libxmx asks the driver for its
   low-latency clock strategy since 10-18 (`XMX_LOW_LATENCY`): without it the GPU's governor
@@ -116,9 +118,9 @@ Each line says where its evidence is: "below" is a dated entry in this file, "ar
 under that date. When an item is done, strike it through here and name the commit.
 
 **Waiting for the owner**
-- The first target for the network's speed: B's four full-resolution passes (the Linux agent's
-  proposal; a third of B on Linux, under a quarter on Windows), or the staged GEMM's short-K calls
-  on Intel's compiler (Windows' reading; all of Windows' loss). Below, 11-04 latest.
+- ~~The first target for the network's speed~~: the owner chose the staged GEMM's short-K calls,
+  and `6ef670e` takes 9-19 % off the network on Windows (below, 11-04 night). B's four
+  full-resolution passes, the Linux agent's proposal, are not started (below, 11-04 evening).
 - Answers to the A-series reports, as GitHub stood on 11-04: we have commented on #18, #19, #23,
   #25, #27, #29 and #34 (#34: two comments from the owner's account, 11-03 and 11-04), and not
   yet on #22, #24, #26, #28, #30-#33 and #36. Two questions the data raised: #25, which network
@@ -153,6 +155,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
+  11-04 night): `make test` in both memory modes and CTest. Mesa keeps its order by default, and
+  `test_staged_packed.py` runs it both ways.
 - ~~`alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
   evening): `make test`~~: green at `d28e841` (below, 11-04 later).
 - ~~`speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`~~:
@@ -242,9 +247,10 @@ under that date. When an item is done, strike it through here and name the commi
   avoided on 10-15, and `gpu_window_attention` is in CTest on Windows again. Archive, 10-15;
   phase71.
 - The staged GEMM's loop on Intel's compiler takes 1.2-1.5x Mesa's time where the graph is large,
-  and 1.6-2.1x at the vendor's 1080p and 1440p fields, where it is all of Windows' loss and calls
-  with K = 64-128 carry most of it (below, 11-04 latest). The packed copies took 6-9 % of it; the
-  rest is open. Archive, 10-02 and 10-03.
+  and took 1.6-2.1x at the vendor's 1080p and 1440p fields (below, 11-04 evening). Most of that
+  was the driver's walk order, read since `6ef670e`: the GEMM is 1.2-1.3x Mesa's time there now,
+  and the residual at K = 64, the QKV gather and the bottleneck's contract are what is left (below,
+  11-04 night). The packed copies took 6-9 %. Archive, 10-02 and 10-03.
 - ~~Four daemon processes with Mortal Kombat 11~~: two processes are one daemon (the venv's
   `python.exe` and the interpreter it starts); four were two. The owner lock now stops a second
   one. Archive, 10-15.
@@ -302,7 +308,74 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
-## The network's passes at the vendor's 1080p and 1440p fields, Intel's driver beside Mesa (2026-11-04, latest, branch `alchemist`)
+## The staged GEMM reads its blocks from Intel's Y-major walk (2026-11-04, night, branch `alchemist`)
+
+The owner chose the staged GEMM's short-K calls as the first target, as long as the picture stays
+the same (the entry below, "For the first target"). The change is `6ef670e`.
+
+- **Why it lost.** These GEMMs wait on memory. On Linux the gate GEMMs at K = 64-128 move 80-88
+  GB/s, the machine's ceiling, and on Windows 34-44 GB/s: what Linux's traffic would take if every
+  row block's A were read once per column block, four times at N = 128. A probe that hands each
+  workgroup a ticket as it starts (`work/tools-win/walk_order.py`, untracked) shows why: **Intel's
+  Windows driver walks a dispatch with Y fastest.** At `58880x128x128 x4` a row block's four column
+  workgroups start 2760 tickets apart, 3 x 920 row blocks, where Mesa's walk, X fastest, starts
+  them 3 apart. That fits all three readings below: the N = 32 contracts at Mesa's speed (one
+  column block), the loss at N >= 64 and short K, and the loss growing with the field (A at 8640
+  rows, 4.4 MB, stays in the cache; at 14720, 7.5 MB, it does not).
+- **The change.** `gemm_staged.comp`'s constant 3, `STAGED_WALK_Y`, reads a workgroup's place in
+  the Y-major walk column first, so the column blocks of one row block start together. libxmx sets
+  it on Intel's Windows driver; `XMX_STAGED_WALK_Y=0|1` sets it either way on any driver, and
+  `xmx_staged_walk_y()` says which (`docs/WINDOWS.md`). Only which workgroup computes a block
+  changes, not how.
+- **The same bytes.** `test_staged_packed.py` runs four processes, the packed loader and the walk
+  each way, and its 960 outputs (both specializations, partial blocks, batches, the 32-row builds)
+  are byte-identical in all four. The heads are unchanged with the walk off and on: A at 320x320
+  (`e62005b8`) and 1280x720 (`c217fd2f`), as in October, at 1920x1080 and at 2560x1472, and B at
+  1920x1152 and 2560x1472.
+- **Alone** (`gemm_epilogues.py`, us a call, walk off and on): 235520x128x64 gate 2073-2145 and
+  1132-1143, residual 4349-4390 and 1627-1630; 58880x128x128 gate 818 and 381; 14720x128x256 gate
+  219-232 and 162-165; 138240x64x64 gate 698-701 and 527-528. The N = 32 contract and 8640x128x256,
+  whose A stays in the cache, run as before.
+
+In the frame, device ms: the entry below's `frame_profile.py`, three rounds with the walk off and
+on in alternate order, quiet before and after, 101.9150 (`D:\NRonWindows\windows-profiles-20261104\walk`).
+
+| | Linux | Windows, walk off | Windows, walk on |
+| --- | --- | --- | --- |
+| A 1920x1152 | 271.4 | 343.8-353.5 | 288.6-297.3 |
+| A 2560x1472 | 448.9 | 599.1-618.6 | 485.1-498.5 |
+| B 1920x1152 | 151.5 | 176.9-182.5 | 156.2-165.3 |
+| B 2560x1472 | 253.6 | 303.4-312.3 | 258.7-260.0 |
+| A 1920x1152, staged GEMM | 148.1 | 234.8-241.2 | 179.6-184.6 |
+| A 2560x1472, staged GEMM | 240.0 | 415.4-429.0 | 298.0-306.4 |
+| B 1920x1152, staged GEMM | 63.2 | 98.2-101.5 | 76.9-81.8 |
+| B 2560x1472, staged GEMM | 101.3 | 168.4-172.9 | 123.2-124.0 |
+
+- **The network takes 9-19 % less, and about two thirds of the GEMM's loss to Mesa is gone**: the
+  GEMM is 1.2-1.3x Linux's time, from 1.55-1.8x in these rounds. B at 2560x1472 is within 2 % of
+  Linux.
+- The gate GEMMs at K = 64-128 take 1.03-1.16x Linux's time, from 2.1-2.4x (`58880x128x128 x4` at
+  2560x1472: 37.6-39.0 to 17.8-18.5 ms, Linux 16.3).
+- **Left:** the residual at K = 64 (`235520x64x64`, two column blocks: 14.0-14.5 to 9.5-9.6 ms,
+  Linux 6.7), the QKV epilogue with the window gather (1.3-1.7x Linux's time where Linux lists it),
+  and the bottleneck's contract (`960x1024x4096`: 12.6-14.8 to 10.2-10.5, Linux 8.7). Window
+  attention takes 0.5-2.5 ms more with the walk on (A at 2560x1472: 27.8-28.5 to 30.3-30.8); every
+  other pass is as before.
+- B's four full-resolution passes are now 27-28 % of B's frame on Windows (31-32 on Linux), at the
+  same 43-75 ms.
+
+**Checked on Windows:** the MSVC build (the three known C4068), and CMake's 50 GPU, image, ref and
+tool tests one by one with the native Python: 48 pass, and the two int8 experiments skip, as they do
+without `gemm_runner`, which `build_win.bat` does not build. **Not checked:** a game; the desktop
+Arc GPUs, which have the same driver ID and so take the new order, whether their walk is Y-major
+too; Linux.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `6ef670e` or later: the shader and
+libxmx changed. Mesa keeps its X order by default, and `test_staged_packed.py` now runs Mesa with
+the walk both ways too. **Next on Windows:** a game with the new build, at the owner's word; then
+the residual at K = 64 and the QKV gather, if the owner wants them.
+
+## The network's passes at the vendor's 1080p and 1440p fields, Intel's driver beside Mesa (2026-11-04, evening, branch `alchemist`)
 
 The owner asked for a per-pass profile of the network on Intel's driver at the fields render scale
 1.0 gives 1920x1080 and 2560x1440, 1920x1152 and 2560x1472, set against the Linux agent's of the
