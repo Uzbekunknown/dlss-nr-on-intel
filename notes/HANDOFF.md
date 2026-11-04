@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-11-04**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-11-05**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -23,7 +23,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
 
 ---
 
-## Where things stand (2026-11-04)
+## Where things stand (2026-11-05)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
@@ -162,6 +162,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `e72be76`, the Windows release's own Python (below, 11-05): `make test` in both memory modes and
+  CTest. `nr_daemon.py` puts its own folder on sys.path, and `test_release.py` and
+  `test_windows_wizard.py` gained cases; nothing Linux runs otherwise changed.
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -228,6 +231,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
+- The next release, at the owner's word: the release's own Python (`e72be76`, below, 11-05) and
+  the staged GEMM's walk (`6ef670e`, below, 11-04 night) are in none yet. With it the README's
+  "You need" loses its Python line, and `VERSION` and the README's tables change.
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -317,6 +323,51 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Windows releases carry their own Python (2026-11-05, branch `alchemist`)
+
+The owner asked for an easier install, with no Python for a player to set up. Python's own share
+of a frame is half a millisecond (below, 11-04 night, latest), so a daemon in C would buy nothing
+worth its weeks; the release carries the interpreter instead. The change is `e72be76`.
+
+- **What a release carries:** python.org's embeddable CPython 3.14.10 for x64 in `python\`, with
+  NumPy 2.5.4 and safetensors 0.8.0 unpacked from their PyPI wheels into
+  `python\Lib\site-packages`. `dist-tools/python.json` pins the three files by URL and the SHA-256
+  python.org's release page and PyPI publish. `scripts/fetch_python.py` takes them into
+  `work\python` once, refusing any other file, a wheel member pip would place elsewhere and one
+  that would land outside, and adds the `._pth` line for the wheels' folder; `tools\deploy.bat
+  --release` runs it beside `fetch_dxvk.py`, and `release-metadata.json` names the versions.
+  NOTICE names the three and where their licences are in a release.
+- **The embeddable package is isolated by its `._pth`, as `-I` would make it:** no PYTHONPATH, no
+  user site-packages, and not the script's own folder on sys.path (`sys.flags.safe_path`,
+  checked here). `windows_wizard.py` and `nr_daemon.py` now put their own folder there; every
+  other script a release runs already set its paths, or is loaded by its path (MLX-DLSS's tools
+  import only the standard library, NumPy and safetensors). The package has no `venv`,
+  `ensurepip` or `tkinter`.
+- **What chooses it:** the window's `Find-BootPython`, the backend's `discover_python` and
+  `setup.bat`, each after `NR_PYTHON`, a developer's choice. `discover_python` probes it with the
+  time a first NumPy import takes under Windows' scanner (`_python_info`, 30 s), not the 2 s each
+  other candidate gets. Prepare Python leaves a Python with both packages as it is.
+- **Size:** the ZIP is 46.7 MB, against 0.0.3.1's 21.6; `python\` is 64 MB of the 116 unpacked.
+
+**Checked on Windows:** `test_release.py` 22 (a new fetch case), `test_windows_wizard.py` 98 (three
+new), the bridge 7, `test_windows_launch.py` 43, and the window's self-test (89 controls, 197
+keys). The shipped interpreter itself, run without its `._pth`: the 50 CMake GPU, image, ref and
+tool tests, and the Windows layer tests; four Linux-only layer tests fail there as on 3.12.
+- **From the unpacked ZIP of `e72be76`**, on a stand-in (the SDK's vkcube in a scratch folder,
+  `D:\NRonWindows\nr-game\standin-release-check.ps1`), every call on `python\python.exe`: discover
+  chose it; Check (3.14.10, NumPy 2.5.4, safetensors 0.8.0); Install with both networks out of the
+  310.9.16 DLL, in 6 s; 649 frames, all answered, by a daemon on `python\python.exe`; the speed
+  test of A and B in 34 s (B at 1280x720: 16 and 80 ms at 0.4 and 1.0, A 29 and 152); Save report
+  with 19 checks and none failing; Remove NR, the folder as before.
+- **In Mortal Kombat 11** from the same folder, B at 0.4: 1520 frames in 40 s, 38.0 a second, network
+  16 ms, every one through the GPU path; one daemon process (a venv's was two, its launcher and
+  the interpreter); the game's folder and its ten writable files as before, no launch options in
+  Steam. `quiet-check.ps1` read the machine busy just before (14 % CPU, the scanner reading the
+  unpacked files, likely), so the rate is a check, not a measurement.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `e72be76` (Open items). **Next on
+Windows:** the next release, at the owner's word (Open items).
 
 ## `6ef670e` in a game: Mortal Kombat 11 (2026-11-04, night, latest, branch `alchemist`)
 
