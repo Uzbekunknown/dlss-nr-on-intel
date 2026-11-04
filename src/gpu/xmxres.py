@@ -734,8 +734,6 @@ class Runtime:
         self.fuse_glue = os.environ.get("NR_FUSE_GLUE", "1") != "0"
         # A 32-channel block's feed-forward in one pass, the hidden layer on chip.
         self.fuse_ffn = os.environ.get("NR_FUSE_FFN", "1") != "0"
-        # The branched blocks' per-group expand and projection, the same way.
-        self.fuse_branched_ffn = os.environ.get("NR_FUSE_BRANCHED_FFN", "0") != "0"
         # The window partition folded into the QKV projection's own loads.
         self.fuse_partition = os.environ.get("NR_FUSE_PARTITION", "1") != "0"
         # A decoder transition's upsample, scaled skip and add in one pass.
@@ -770,7 +768,7 @@ class Runtime:
                 | (int(self.qkv_epilogue) << 12)
                 | (int(self.fuse_glue) << 13)
                 | (int(self.fuse_ffn) << 14)
-                | (int(self.fuse_branched_ffn) << 15)
+                # bit 15 was NR_FUSE_BRANCHED_FFN's, measured and not kept: left free
                 | (int(self.fuse_partition) << 16)
                 | (int(self.fuse_transition) << 17)
                 | (int(self.fuse_merge_ffn) << 18)
