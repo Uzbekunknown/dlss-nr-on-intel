@@ -41,15 +41,17 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
-    the README for players (`d5bef2e`, 11-02) and `alchemist`'s head (11-04, below);
+    the README for players (`d5bef2e`, 11-02) and `alchemist` at `72fb922` (11-04, below);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
     10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
-    players' data, and the entries of 11-04 below), and level with `master` and `newnr` again
-    since 11-04, when all three went to its head at the owner's word (below, 11-04 later);
+    players' data, and the entries of 11-04 below), level with `master` and `newnr` again on
+    11-04, when all three went to its head at the owner's word (below, 11-04 later), and ahead
+    of them since that evening: `20a0253`, `6ef670e` and `c744581` on GitHub, and the Linux check
+    (below, 11-04 night, later). `master` and `newnr` stay at `72fb922` until the owner's word;
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -155,9 +157,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
-  11-04 night): `make test` in both memory modes and CTest. Mesa keeps its order by default, and
-  `test_staged_packed.py` runs it both ways.
+- ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
+  11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
+  order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
 - ~~`alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
   evening): `make test`~~: green at `d28e841` (below, 11-04 later).
 - ~~`speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`~~:
@@ -307,6 +309,49 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Checked on Linux: `6ef670e`, and the walk on Mesa (2026-11-04, night, later, branch `alchemist`)
+
+As the Windows agent asked through the owner: `alchemist` fast-forwarded to GitHub's `c744581`,
+which holds `6ef670e` and after it changes only this file. No daemon, swap empty, a quiet CPU;
+Mesa 26.2.5.
+
+- `make test`: 62 of 62, in 2 min 42 s. `XMX_STAGING=1 make test`: 62 of 62, in 2 min 10 s, the
+  GPU suites that print the mode saying `staging=True`. In both, `test_staged_packed.py` finds its
+  960 outputs byte-identical with the packed loader and the walk, each way and both. Skipped as
+  before: the Windows-only cases, and the GPU image path's parity tests on Mesa. No compiler
+  warning.
+- CMake builds with no warning, and CTest passes 68 of 68.
+
+**The walk on Mesa.** Mesa keeps its own order by default. Asked for the Y-major reading anyway
+(`XMX_STAGED_WALK_Y=1`), it does not lose what Windows lost, as I had predicted it would: the
+remap is not its own inverse. On a walker that runs X fastest it makes interleaved streams of row
+blocks. At N = 64-128, two to four column blocks, nearly every row block's column blocks still
+start within 12 workgroups of one another, and its A is still read once. In the bottleneck, where N is
+1024-4096 and the row blocks are few, it scatters both operands.
+- Alone (`gemm_epilogues.py`, the nine shapes of both Windows files, `--rounds 5 --no-sweep`, four
+  processes, off on on off; us a call, the gate column, off and on): `235520x128x64` 1124-1144 and
+  981-983, `34560x128x128` 249-250 and 226-230, `138240x64x64` 384-385 and 359-363,
+  `58880x128x128` 375-382 and 366-367, `14720x128x256` 161-162 and 159, the bottleneck's
+  `640x1024x4096` 742-746 and 812-843 and `960x1024x4096` 1070-1075 and 1285-1287. Mesa's own
+  order runs `235520x128x64` in the time Windows' new one does (1132-1143), as the entry below's
+  explanation expects.
+- In the frame (`frame_profile.py --warm 25 --runs 5 --calls 30`, two rounds, the order swapped
+  in the second; device ms, with the staged GEMM's share):
+
+| | walk off | walk on |
+| --- | --- | --- |
+| B 2560x1472 | 254.4-257.7 (GEMM 101.8-104.5) | 259.3-261.7 (GEMM 108.0-109.3) |
+| A 1920x1152 | 272.7-273.1 (GEMM 149.3) | 279.9-282.4 (GEMM 156.5-157.8) |
+
+- The bottleneck's expand (`960x4096x1024`, `640x4096x1024`) takes 1.37-1.40x with the walk on,
+  and its contract 1.07-1.22x; the gate at K = 64 gains 7 % in B's frame. So Mesa's default is
+  the right one, by 2 % of B's frame and 3 % of A's. With it the frame reads as this morning's
+  (B 253.6, A 271.4), within the 1-2 % a process moves, so the change costs Mesa nothing seen. An
+  order chosen per shape would be worth about a millisecond of B's 254, not worth taking.
+
+**Next on Linux:** nothing waits. **Next on Windows:** the entry below's: a game with the new
+build, at the owner's word. Fast-forwarding `master` and `newnr` to `alchemist` is the owner's word.
 
 ## The staged GEMM reads its blocks from Intel's Y-major walk (2026-11-04, night, branch `alchemist`)
 
