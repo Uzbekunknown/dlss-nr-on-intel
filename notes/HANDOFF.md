@@ -962,14 +962,13 @@ followed from the wrong gate form), the leading-region projection, and "1.01x pa
 ```
 ref/        the DLL (0444) + sha256      NEVER modify, NEVER commit
 work/       weights, PTX modules, mlx-dlss clone, mlxw/*.safetensors, shim, builds
-notes/      24 findings documents
-src/tools/  PE/resource readers, the weight reader (now superseded), model_spec,
+notes/      the findings; INDEX.md maps them, archive/ holds what moved out
+src/tools/  PE/resource readers, the container's record reader (hnet_weights),
             and the PTX analysis tools: ptx_trace (dataflow), ptx_addrform
             (address → linear form), ptx_chains (accumulator chains)
 src/ref/    nr_model, nr_frame, nr_temporal, nr_display, nr_accel, image_io
 src/gpu/    xmxres, nr_resident, nr_frame_resident   <- the device path
 src/layer/  nr_layer.c, nr_daemon.py, nr-photo       <- into a game
-            hnet_*, forward, run_frame            <- superseded, kept for their findings
 src/gpu/    gemm_coopmat*.comp, libxmx.c, xmx.py, tests
 ```
 
@@ -1007,8 +1006,8 @@ half cannot hold as a sum of two halves — more accurate than the reference's o
 float32 GEMM — for 16.8 s -> 21.2 s. It moves the head gap from 0.0174 to 0.0124 and
 no further; see `notes/phase9-numerics.md` for why zero is not reachable.
 
-The old harness (`src/tools/model_spec.py`, `src/ref/hnet_*.py`, `run_frame.py`) still
-runs but is built on the wrong weight decode; its scores measure scaffolding.
+The old harness on the wrong weight decode (`src/ref/hnet_*.py`, `forward.py`, `run_frame.py`,
+`src/tools/model_spec.py`) was removed on 2026-11-04; the notes that cite it read it at `6d7ad8c`.
 
 ---
 
