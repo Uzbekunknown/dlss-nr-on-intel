@@ -30,6 +30,7 @@ disproved.
 | `archive/HANDOFF-until-2026-10-07.md` | HANDOFF's dated entries from the first render to PR #9, moved out word for word on 2026-10-14: history, and the evidence HANDOFF's open items point to |
 | `archive/HANDOFF-2026-10-08-to-2026-10-15.md` | HANDOFF's dated entries from the Windows release's preparation to 0.0.1.2, moved out word for word on 2026-10-30 |
 | `archive/HANDOFF-2026-10-16-to-2026-10-28.md` | HANDOFF's dated entries from DirectX 12 through the game's XeSS and preset B to a daemon restarted under the game, with PR #20's review rounds, moved out word for word on 2026-11-01 |
+| `archive/HANDOFF-2026-10-30-to-2026-10-31.md` | HANDOFF's dated entries from PR #20's network swap in DirectX 12 to the GPU report for Arc A-series owners, with DirectX 12 through the release, 0.0.2 and the panel inside DirectX 12, moved out word for word on 2026-11-04 |
 | `reproduce.md` | how to run the resident path from a clean checkout |
 
 ## The binary, the weights, the graph

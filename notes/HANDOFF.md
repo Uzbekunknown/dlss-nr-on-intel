@@ -8,15 +8,18 @@ original brief; **this file overrides it wherever they disagree**, and after
 entries after them are the latest, newest first. Everything older is in `notes/archive/`, word
 for word: the graph's recovery, the kernel work, the measurements and the experiments that did not
 pay in `HANDOFF-until-2026-10-07.md`, the first Windows releases and the testers' reports in
-`HANDOFF-2026-10-08-to-2026-10-15.md`, and DirectX 12 through XeSS, preset B and PR #20's review
-in `HANDOFF-2026-10-16-to-2026-10-28.md`. It is history: do not read it to start a task. Open it
-only when a line here points there, or before an optimisation, to see whether it was tried and
-not kept. `notes/INDEX.md` says which note settles what.
+`HANDOFF-2026-10-08-to-2026-10-15.md`, DirectX 12 through XeSS, preset B and PR #20's review in
+`HANDOFF-2026-10-16-to-2026-10-28.md`, and DirectX 12 in the release, 0.0.2, the panel inside
+DirectX 12 and the GPU report for Arc A-series in `HANDOFF-2026-10-30-to-2026-10-31.md`. It is
+history: do not read it to start a task. Open it only when a line here points there, or before an
+optimisation, to see whether it was tried and not kept. `notes/INDEX.md` says which note settles
+what.
 
 Keep this file short. Every session loads it whole and sends it again with every request it
 makes, so its size is paid for on every turn, and `publish_check` refuses a file over 200 KB. When
 the dated entries grow long, move the older ones the same way, into a new archive file: on 11-01
-the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
+the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 those before
+11-01, from 100 KB to 77 KB.
 
 ---
 
@@ -31,7 +34,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   (`86a5799`, 11-01) and **v0.0.3.1** (`c0b7f9d`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
   `vulkan-1.dll` proxy and NR's `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through
   XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
-  that checks GitHub for a newer release (below, 10-31). 0.0.3 brings the panel inside DirectX 12
+  that checks GitHub for a newer release (archive, 10-31). 0.0.3 brings the panel inside DirectX 12
   games, its keys and clicks kept from the game, and `nr_gpu_probe.exe`, the GPU report for Arc
   A-series owners (below, 11-01). 0.0.3.1 is what the first A-series reports asked for: the speed
   test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
@@ -79,10 +82,10 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   for another preset, is taken back by the proxy 5 s later, on a new fence (archive, 10-28 evening);
   in Hogwarts A to B left 5.5 s without NR, most of it the new daemon's start, and the owner saw
   NR come back. Since 10-30 a preset changes in the running daemon instead, as the in-game panel
-  changes it, and in Hogwarts NR stayed on through A to B and back (below, 10-30). Since that
+  changes it, and in Hogwarts NR stayed on through A to B and back (archive, 10-30). Since that
   evening the setup window installs it, **DirectX 12 (games with XeSS)**, and the proxy starts the
-  daemon itself (`6c503ae`, below). Since 10-31 the in-game panel draws there too, and in both
-  hosts the game no longer gets the panel's keys and clicks; in no release yet (below, 10-31 later).
+  daemon itself (`6c503ae`, archive, 10-30 evening). Since 10-31 the in-game panel draws there too, and in both
+  hosts the game no longer gets the panel's keys and clicks; in no release yet (archive, 10-31 later).
 - **NVIDIA's faster model is out** (`nvngx_dlssnr.dll` 310.9.16.0, 10-16): preset A is our model
   byte for byte. **Preset B (`hnet-crazy-cuckoo-small-fp8`) is A's graph with every stage at depth
   2**, 31 blocks against 71, with its own weights. On 10-17 it was read out of `.text` with REA,
@@ -160,7 +163,7 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
-- ~~`alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
+- ~~`alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, archive, 10-31
   evening): `make test`~~: green at `d28e841` (below, 11-04 later).
 - ~~`speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`~~:
   green at `d28e841`.
@@ -177,7 +180,7 @@ under that date. When an item is done, strike it through here and name the commi
   builder (`VERSION`, the icon) with its tests, and `nr_focus.h` and `nr_layer_state.h`, which
   Linux compiles. Both layers and CMake build with no warning; `make test` 60 of 60 in both memory
   modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`; the Python suites of
-  `src/tools` 217 tests, the 24 skipped all Windows-only. Below, 10-30 evening and 10-31.
+  `src/tools` 217 tests, the 24 skipped all Windows-only. Archive, 10-30 evening and 10-31.
 - ~~`dx12`'s protocol 3 (`455a6fe`), step 3 (`04c4817`) and `330ef95`: `make test` in both memory
   modes and CTest~~: green at `cc2b8b7` (10-30), which is `newnr` with them and PR #20: `make test`
   60 of 60 in both memory modes, CTest 67 of 67, `make test-proton`, all 12 `D3D12ProtocolTests`.
@@ -223,7 +226,7 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, below, 10-31
+- ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
 - An Arc A-series path with 8x8 matrix tiles, from OUCO86's A770 port: begun on 11-01 and paused
@@ -262,17 +265,17 @@ under that date. When an item is done, strike it through here and name the commi
   once no release with those buttons is in testers' hands. The GitHub releases have none. Archive,
   10-09.
 - ~~DirectX 12 is not offered by the release~~: the setup window's **DirectX 12 (games with
-  XeSS)**, `6c503ae` (below, 10-30 evening). VKD3D-Proton does not run Hogwarts Legacy on Windows
+  XeSS)**, `6c503ae` (archive, 10-30 evening). VKD3D-Proton does not run Hogwarts Legacy on Windows
   (archive, 10-16).
 - A Vulkan or DirectX 8–11 game that runs elevated, or any with UAC off, never gets the layer; the
   HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
 - ~~The panel inside a DirectX 12 game, and its keys and clicks kept from the game~~: on `newnr`,
-  in Hogwarts with the owner, frame generation on and off (below, 10-31 later). For the next
+  in Hogwarts with the owner, frame generation on and off (archive, 10-31 later). For the next
   release after 0.0.2, the owner's call. A game reading keys by `GetAsyncKeyState`, DirectInput or
   a gamepad still gets them while the panel is open.
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
-  out as 2.0's. Below, 10-30 evening.
+  out as 2.0's. Archive, 10-30 evening.
 - ~~`dx12`: record a real Hogwarts sequence with the owner~~: recorded and replayed on 10-16,
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Archive, 10-16.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
@@ -720,8 +723,8 @@ Linux session (below, 11-01, latest).
 the owner's word: `dlss-nr-windows-0.0.3-x64.zip`, 21 551 071 bytes, SHA-256
 `acf22fa84111f8c73436b6a2069622b7c59c2c4e95a9604b371cdcf55eb0f2c1` (GitHub's digest the same), its
 notes in `work\pr-replies\release-notes-0.0.3.md` on Windows. It carries the panel inside DirectX 12
-games and its keys and clicks kept from the game (below, 10-31, later), and `nr_gpu_probe.exe` with
-the fixes of 11-01 (below, 10-31, evening), and asks Arc A-series owners to send the report and to
+games and its keys and clicks kept from the game (archive, 10-31, later), and `nr_gpu_probe.exe` with
+the fixes of 11-01 (archive, 10-31, evening), and asks Arc A-series owners to send the report and to
 try NR as it is there. It went out before Linux's `make test` on the probe's changes (Open items).
 
 **Checked from the candidate ZIP:** the eight Windows tool suites (217 tests, 8 skipped); the
@@ -749,307 +752,6 @@ branch `arc-a-n8` (`6be5235`, Windows checkout only):
 **Next on Windows:** the owner's word on asking A-series owners (issue #18, Reddit; drafts in
 `work\pr-replies\arc-a-call.md`), and on taking up `arc-a-n8` again.
 **Next on Linux:** `make test` on the probe's changes (Open items).
-
-## A GPU report for Arc A-series owners to send in (2026-10-31, evening, branch `alchemist`)
-
-**Why.** An A750 runs NR at 1-2 fps (issue #18, and comments on Reddit). Alchemist's matrix units
-offer float16 8x8x16 into float32 (DPAS at SIMD8: Mesa reports `NSize = exec_size`, 8 before Xe2
-and 16 on it), and every XMX kernel here is written for 8x16x16 at subgroup 32. libxmx says the
-device lacks the shape and runs the kernels anyway, and Intel's driver evidently emulates them. A
-path for those cards has to be designed from what they report, and has no card here to be tested
-on, so the owner chose the cheapest step first: a report A-series owners can send. The
-A-series work has a branch of its own, `alchemist`, from `newnr` at `0a6000f` (the owner, 10-31).
-
-**What.** `coopmat_probe` also measures now: for each float16 8xNx16 into float32 shape a device
-offers, at each subgroup size it allows of 8, 16 and 32, one product over K = 64 checked exactly,
-the matrix rate, and the vector float32 FMA rate, which a path without XMX would run on. ~~It never
-runs a shape the device does not offer.~~ It tries 8x16x16 where it is not offered too, since NR's
-kernels run it there (11-01, below). The shaders are `src/probe/coopmat_bench.comp`, built as
-`coopmat_bench8.spv` and `coopmat_bench16.spv` and read beside the program or from `work/` beside
-it. The report also goes to `nr-gpu-report.txt` in the folder it runs from, and on Windows a double
-click keeps the console open. make (`all`), CMake and `build_win.bat` build it; the Windows
-release carries it as `nr_gpu_probe.exe`, with the shaders in `work\`. The issue template
-`arc-a-series.yml` asks for the report, the driver, NR in a game, and whether they can test builds;
-the README and the release quick start send A-series owners there. `make test` runs the probe and
-requires "run here".
-
-**Here** (Arc 140V, Mesa 26.2.5): 8x16x16 exact at subgroups 16 and 32, 31.6-31.8 TFLOP/s on the
-matrix units, best of eight runs since the first ones climb with the clock; vector float32 FMA
-3.5-4.0 TFLOP/s; 8x8x16 not offered. On an A-series card the report says at which subgroup sizes
-8x8x16 is exact and how fast: whether NR's kernels can keep 32 lanes with two 8x8 tiles where they
-have one 8x16, or need 8 or 16. It also gives the vector units' rate, for a path without XMX.
-
-**On Windows** (11-01, Intel's 101.9150, on mains, quiet before and after): `build_win.bat` builds
-both shaders and `coopmat_probe.exe`, which is clean at `/W4` too. The probe finds phase71's four
-configurations and no 8x8x16; 8x16x16 is exact at subgroups 16 and 32, at 28.1-30.8 TFLOP/s over
-three runs, a little below Mesa's 31.6-31.8 and wider; vector float32 FMA is 3.9 TFLOP/s at 16 and
-3.4-3.7 at 32; "run here". A run takes under a second. `test_release.py`: 21, the 5 that need bash
-skipped. `deploy.bat --release` puts `nr_gpu_probe.exe` at the release's root, the same bytes as
-`work\coopmat_probe.exe`, and both shaders in `work\`. From the unpacked ZIP, started as Explorer
-starts it (a console of its own, its folder as the working directory), the report was whole beside
-it after 1.3 s, the console still open 3 s later, and Enter, written into that console's input,
-closed it with 0.
-
-**Fixed there** (11-01, the owner's call):
-- Without its shaders beside it (copied out alone; run from inside the ZIP, untried, it likely is)
-  the probe ended "NR's kernels ...: do NOT run here" on this 140V. It now says "not checked" and
-  that a release has to be unpacked first (`8f96b58`).
-- A release unpacked under a folder outside the ANSI code page (Cyrillic on this en-US Windows,
-  code page 1252) found no shader at all: the probe built their path from the ANSI form of its
-  own, all question marks. It asks for it in UTF-16 now (`eab7eb3`). Before `8f96b58` that, too,
-  read "do NOT run here".
-- The last lines give the report's full path, through the wide API on a console, and on the
-  terminal only (`c231bdc`): the file is what gets posted, and a path names the user. A failed
-  `vkCreateInstance` goes into the report, and a double-clicked console stays open after it too.
-- Checked: MSVC (also `/W4`) and MinGW gcc at the Makefile's `-Wall -Wextra`, no warning. A release
-  of `c231bdc` unpacked under `проба\` and double-clicked: "run here", the path right on the console
-  (read back from its screen buffer) and not in the file, Enter closes it. With the loader pointed
-  at no driver: the failure on the console until Enter, exit 1.
-
-**A shape a device does not offer can still run, wrong** (11-01, Intel's 101.9150): a scratch
-probe that asked this 140V for 8x8x16 got a pipeline, no error, and 61 of 64 values wrong at
-subgroups 16 and 32. So an A-series card, which does not offer NR's 8x16x16, may be computing it
-wrong as well as slowly: nobody has said how NR's picture looks there. The probe now tries 8x16x16
-where it is not offered, after saving the report in case the driver does not survive it, and says
-"exact here, though the GPU does not offer the shape" or WRONG (`9ceff90`). Checked here by a
-build that takes 8x16x16 for not offered: it walks that way and finds it exact. And an 8x8 path
-cannot be checked on this 140V at all.
-
-**Not tested:** any A-series card: 8x8x16 has never run anywhere here.
-
-**Prior art, found 11-01:** `OUCO86/dlss-nr-on-a770` (Apache-2.0) is this code running NR on an
-A770 beside an AMD card that renders the game. Its kernels are ported to the A770's 8x8x16 tiles
-(`TN = 8` in the GEMM shaders, `XMX_TN` in libxmx; they no longer run on Xe2), plain GEMMs go to
-the tiled kernel because the staged one ran at 0.4-0.6 of it there
-(`notes/staged-vs-tiled-a770.md`), and it has an int8 path. Its float16 graph at 768x448 takes 43.5
-ms on the A770, 36.4 with int8 (`docs/A770-HANDOFF.md`, driver 101.9030), about this 140V's time,
-against the 1-2 fps of #18. Their 8x8 variants, chosen only on a device that offers 8x8x16 without
-8x16x16, are the shortest way to an A-series path; nothing here can run them, so the A-series
-testers would be its only check.
-
-**Next on Windows:** ~~`build_win.bat`, `work\coopmat_probe.exe` on the Arc 140V, a release built
-with it, and a double click on `nr_gpu_probe.exe` in the unpacked ZIP~~: done on 11-01 (above).
-Then into the next release, at the owner's word.
-**Next on Linux:** `make test` for `8f96b58`, `eab7eb3`, `c231bdc` and `9ceff90`: Linux compiles `say_where`'s
-`realpath` arm and `open_beside`'s, the latter rearranged around the Windows one but doing what it
-did.
-
-## The panel inside DirectX 12, and the panel's keys and clicks kept from the game (2026-10-31, later, branch `newnr`)
-
-**One panel, two renderers.** The panel's logic left the Vulkan layer's file for one both hosts
-share: `nr_panel.c` reads the keys behind the focus gate, holds the pointer, builds the rows and the
-ImGui frame and applies what was asked; `nr_menu_layer.c` keeps the Vulkan hooks and the composite.
-Drawing is each host's: `nr_menu_ui_vk.cpp` for Vulkan, and for DirectX 12 a renderer of ImGui's
-draw data written here (`nr_menu_ui_d3d12.cpp`, its `.hlsl` compiled by fxc at build time), since the
-owner chose not to vendor ImGui's D3D12 backend (10-31). It draws the panel into an 8-bit image of its
-own and lays that over the back buffer in its encoding: SDR, scRGB, or HDR10 with white at 203 nits.
-
-**Where DirectX 12 draws it** (`src/xess/nr_xess_panel.cpp`): in `IDXGISwapChain::Present` and
-`Present1`, by writing into the swap chain class's vtable in `dxgi.dll` as the cut writes into
-D3D12's classes, and `SetColorSpace1` for the encoding. `nr_present_probe.exe` finds the vtable in a
-process of its own, as DLSSNR-AMD does, because a swap chain made inside the game is seen by whatever
-else hooks there. Its answer is kept in the game's `dlss-nr\nr-present.txt` while `dxgi.dll` keeps
-its timestamp and size, and goes with Remove NR; here the vtable is at `dxgi.dll` +0xcd688 and the
-queue at swap chain +0x140. DXGI does not name the queue (`GetDevice` refuses
-`ID3D12CommandQueue`), so the panel reads that field and trusts it only as a direct queue seen
-executing command lists (`nr_split_watch` hooks the queue class from the first Present); failing
-that, the direct queue the presenting thread last used; failing both, no panel on that Present.
-XeSS frame generation presents through a swap chain of dxgi's class too, and in Hogwarts the panel
-was there and usable with it on (below). The release carries the probe at its root
-(`build_release.py`), and `NR_MENU=0` turns the panel off.
-
-**The panel's input kept from the game** (`nr_input_guard.c`, both hosts). While the panel is open
-the game's window is subclassed, and its procedure sees no key going down, character, pointer
-movement, button, wheel or `WM_INPUT`. A release reaches it only when it saw the press, so nothing
-stays held behind the panel; Alt+F4 still closes the game. The subclass stays for the process,
-passing everything while the panel is shut, and the module is pinned. `nr_raw_mouse.c` also takes
-the keyboard's raw-input registration while the panel has the pointer. Not covered, as the owner
-chose no user32 detours (10-31): a game polling `GetAsyncKeyState`, DirectInput, a gamepad. The
-panel's hint no longer says the game sees its keys, in four languages, and the generator and
-`nr_menu_strings.py` lose the "Experimental:" GPU label `1b8b926` had dropped from the C table only.
-
-**Mortal Kombat 11 from a test release** of this tree (DXVK, so the Vulkan renderer; B, frames on
-the GPU, 1280x720 at 0.4), driven from here at the owner's word while the owner was away:
-- The panel opened with INS as before. Render scale 0.40 to 0.45 in it took the daemon's network
-  from 512x320 to 576x384 live, and back.
-- In the main menu, Right and Down twice given to the open panel left the game's selection where it
-  was, and Right after INS moved it. In a practice fight, D held 1.2 s with the panel open left
-  Scorpion in place, and the same D with the panel shut walked him to Sub-Zero (MK11 walks on WASD).
-- The panel's cursor followed the mouse at its raw gain of 0.5, and a click held 150 ms on the NR box
-  turned NR off (no frame for 3 s) and on. A press and release sent at once was not seen: the panel
-  samples the button once a frame (`GetAsyncKeyState`), so a click shorter than a frame is lost, as
-  a quick real one at a low frame rate could be. The guard now sees the button messages while the
-  panel is open, and the panel could take them from there; not done.
-- Home off and on with the panel shut. 6025 frames, none rejected, ~25 ms each; the daemon ended
-  with the game, and after Remove NR the game's 10 024 files matched the listing taken first.
-- While the panel held the pointer, `GetClipCursor` from outside gave the whole screen, not the
-  one-pixel box the panel asks for every frame; the pointer stayed put because the panel also sets it
-  every frame. The split did not change that code. In Hogwarts a recorder does see the box (below),
-  so this one is MK11's or the reading's; not looked into.
-
-**Hogwarts Legacy with the owner** (Epic, XeSS 2.0.2.53, a 1280x720 window centred on the 1920x1200
-screen, B at 0.4, `mode=after`), two runs from test releases of this tree installed through the setup
-window's backend (`D:\NRonWindows\nr-game\hogwarts-panel-test.ps1 -Phase install|status|remove`):
-- The first run took the Present hook from the probe's answer at once and made the panel on the
-  game's device. The owner, through a list of checks with frame generation off and then on:
-  everything works, the panel and its keys, clicks and mouse look kept from the game, NR off and on
-  by a click, except the cursor, which left the window as the camera turned once the panel had been
-  open. About 26 frames a second, each answered on its own frame, none declined.
-- The cause: Unreal confines the cursor to its client area (`ClipCursor`, here 320,240-1600,960)
-  once, when it takes the mouse, and again only when its window is activated; the panel let go with
-  `ClipCursor(NULL)`. Now `nr_panel.c` notes the game's box when it pins the cursor
-  (`game_clip_note`: the whole desktop is how Windows says "none", and the panel's own pin left from
-  an earlier frame is not taken for the game's), keeps it from the client area's origin, and puts it
-  back when the panel closes with the game in front. Another window in front, the pointer pushed out
-  past an edge, and the panel going with its host still leave the cursor free. `test_menu_keys`
-  checks the shape; a running test would have to take the user's own cursor.
-- The second run, with the fix and frame generation on throughout (the game's
-  `GameUserSettings.ini`: `Intel_XeFG`, x2): a recorder reading `GetClipCursor` four times a second
-  saw the game's box before the panel, the one-pixel pin while it was open, and the game's box again
-  after each of four closes; pushed out at the bottom and at the left, the cursor left the window
-  and came back under the pin; with another window in front, no box. The owner: the cursor stays in
-  the window. NR off and on from the panel, every frame answered.
-- The game closed with the panel open and left the cursor free. After each Remove NR the game's 568
-  files matched the listing taken before the first install but for Epic's launch token
-  `.egstore\...ovt` (its time only, rewritten at every start), as on 10-30, and the XeSS folder
-  hashed as before.
-
-**Checks.** MSVC `build_win.bat` with the three known C4068; fixtures `test_menu_*` 7 of 7,
-`test_raw_mouse` and the new `test_input_guard` (26 checks). `build_xess.bat`: `test_nr_xess` all
-passed, the new `test_xess_panel` 8 of 8 (the hook through the probe, the queue from the swap
-chain's field, the panel over a green frame). MinGW (UCRT64, gcc 16.2) CMake and CTest 66 of 66,
-`test_focus_gate` left out (it moves the focus). Not run: the Makefile on Windows (no make in this
-MSYS2), `check_imgui_pristine` (needs imgui-1.93.0.zip; the vendored files are untouched). After
-the cursor fix: both MSVC builds again with no new warning, the fixtures again with `test_menu_keys`'s
-new check, and the MinGW CMake build (CTest carries no menu fixture).
-
-**Next on Windows:** the release, at the owner's word. The panel could take its clicks from the
-guard's button messages, so a click shorter than a frame is not lost; not done. DirectX 12 in
-other XeSS games.
-**Next on Linux:** ~~`make test` in both memory modes and CTest: `nr_focus.h` and `nr_layer_state.h`
-changed, which Linux compiles (`nr_panel.c` is Windows-only)~~: green at `eb9b281` (Open items).
-
-## 0.0.2 released, and what Mortal Kombat 11 found in the panel (2026-10-31, branch `newnr`)
-
-**The release.** `v0.0.2` at `81b0a59`, on `master` and `newnr`, on the owner's word and with the
-owner's own text for the notes: `dlss-nr-windows-0.0.2-x64.zip`, 21 001 345 bytes, SHA-256
-`f1b71663b6d814bc95d91f626157ce120adba843470aa9a534bce614ed31d242`. Beside DirectX 12 (below, 10-30
-evening) the window gained an About tab, with the version and build from `release-metadata.json`
-(which carries `VERSION` now), links and credits, that asks GitHub's `releases/latest` at most once
-a day and says when a newer release is out (`9ea08ad`); and an icon, a pentagon in Intel's blue,
-which `tools/make_icon.ps1` draws at build time since the repository takes no binary (`3e7cce1`).
-Network B is chosen by the installation that brings it, and frames on the GPU are on unless
-turned off (`1b8b926`, `01fa63c`).
-
-**Mortal Kombat 11 from the candidate ZIPs**, the owner playing, then driven from here at the
-owner's word:
-- The panel held the cursor in a one-pixel `ClipCursor` box that only the layer let go of, at
-  present: in a game that stops presenting without the focus the Start menu and a screenshot's
-  selection could not be used, and the cursor never left the game. `nr_clip_guard`, a thread in
-  `nr_focus.c`, now lets go of the clip whenever the game is not in front, and a pointer pushed
-  48 px past the edge goes out there (`1b8b926`; `test_focus_gate` checks the guard).
-- Arrows pressed in the game after the panel closed moved its rows at the next opening: the layer
-  hands ImGui every key change on every frame, and ImGui queues events until `NewFrame`, which runs
-  only while the panel is drawn. `nrex_listen` keeps keys out of the queue while the panel is shut
-  and empties it on opening (`81b0a59`); `test_menu_side`'s new case fails on the old code. In the
-  game (`steam://rungameid/976310`, keys sent only while MK11 was in front) the live preview did
-  not move after four Lefts given to the game.
-- The first B choice ran only where `unpack_preset.py` ran, and a release's `get_weights.py` takes
-  B with A, so it never did (`01fa63c`).
-- Still so: keys and clicks given to the panel reach the game as well (Open items).
-- B on the GPU path ran at about 25 ms a frame (1280x720, render scale 0.4), and each Remove NR
-  left the game's 10 024 files as they were.
-
-**Next on Windows:** the panel inside DirectX 12 games, and the panel's input kept from the game.
-**Next on Linux:** ~~`make test` in both memory modes and CTest at `81b0a59`~~: green at `eb9b281`
-(Open items).
-
-## DirectX 12 through the release: the setup window's third API, and the proxy starts the daemon (2026-10-30, evening, branch `newnr`)
-
-**What a user does** (`6c503ae`). The setup window offers **DirectX 12 (games with XeSS)** beside
-Vulkan and DirectX 8–11. **Check** finds the game's `libxess.dll` beside the executable or, for an
-executable in `<game>\<project>\Binaries\Win64`, under the project's or the engine's `Plugins`
-(Hogwarts: `Engine\Plugins\Runtime\Intel\XeSS\Binaries\ThirdParty\Win64`). It refuses one with an
-export NR's proxy lacks (both export tables read, `pe_exports`), NR's own with no record of it (set
-aside, it would load itself), and a 32-bit game. **Install NR** copies the game's DLL to
-`libxess_nr_orig.dll` beside it, sets it aside in `dlss-nr\game-backup`, puts the release's
-`nr_xess.dll` in its place and writes `nr-xess.txt` (`mode=after`, the release's pipe, `env=` the
-game's `dlss-nr\nr-env.txt`); no `vulkan-1.dll`. **Remove NR** puts it back; a `libxess.dll` a game
-update put over NR's stays, and the rest goes (`updated_by_game`). `game-files.json` now records
-each placed file's folder.
-
-**The proxy starts the daemon.** With `env=` set, `nr_xess.c` reads `nr-env.txt`, and when no daemon
-answers its HELLO starts one as the layer does: `NR_PYTHON NR_DAEMON --socket --settings --root`,
-its output into `NR_LAYER_LOG`, `NR_LAYER_SPAWNED` for `end_with_game`, `NR_GPU_IMAGE=1` and
-`NR_GPU_TRANSPORT=1` over the file's, and none of the Vulkan layer's names, so the daemon loads no
-layer (`CreateProcessW` with a UTF-16 environment, only its stdin and log inherited). Not while one
-it started lives, and three times a game at most. `NR_LAYER_TRIGGER` is looked at once a second in
-`xessD3D12Execute`, so Enable and Disable NR work in the running game. Without `env=` nothing
-changes (the test scripts); `replay_nr_xess --env` takes the same path.
-
-- Offline, the orbit recording with no daemon running (`work/tools-win/run_replay_spawn.py`): the
-  proxy started one, whose session began 5.4 s later; 60 frames answered, the trigger removed (1
-  in flight), put back, 121 more; the daemon ended with the replay.
-- **Hogwarts from a release build** (`build_release.py` of this tree, installed through the bridge
-  as the window does; preset B, render scale 0.4, 1280x720, the owner playing): the daemon started
-  at the first XeSS frame and took the session 6 s later. 26-27 frames a second were answered, each
-  on its own frame, 34-69 ms from copy to answer, the daemon's frame 33-40 ms at 512x320. Disable NR
-  stopped it within a second and Enable NR brought it back. The daemon ended with the game, and
-  after Remove NR the game's 568 files matched the listing taken before, Epic's own `.egstore`
-  record apart. The owner: it looks good.
-- Tests: `test_windows_wizard.py` 91 (3 new: the Unreal layout, the refusals, an update over NR's),
-  the bridge, controls, setup, launch and release suites; the window's self-test (75 controls, 179
-  keys in four languages); `test_nr_xess.exe`; MSVC `build_win.bat` with the three known C4068.
-
-**Next on Windows:** the release, at the owner's word.
-**Next on Linux:** ~~`make test` in both memory modes and CTest at `6c503ae`~~: green at `eb9b281`
-(Open items).
-
-## DirectX 12 takes PR #20's live network swap, and `newnr` goes into `dx12` (2026-10-30, branch `dx12`)
-
-**`newnr` into `dx12`, not yet the other way.** PR #20 is merged into `newnr` (`097d6d4`, 10-30):
-the in-game panel, and a daemon that changes its network between two frames without dropping the
-game's GPU imports. `dx12` takes it (`a4fc09a`, then `568cba3`, the Windows make naming
-`nr_file.c` and `nr_focus.c` once) before it goes back into `newnr`.
-- `notes/HANDOFF.md`: both lines added dated entries in one place; `dx12`'s, the newer, go above
-  PR #20's.
-- A conflict git could not see: PR #20 took `max_pixels` out of `unpack_packet` and
-  `GPUSharedTransport`, and `dx12`'s protocol 3 tests still passed it. They call the new
-  signatures now; no case relied on the ceiling.
-- Checked on the identical tree, built as a trial merge in a scratch clone. MinGW CTest with the
-  layer off and the GPU smoke tests all pass, `gpu_win32_d3d12` and `_network` among them; with
-  the layer on only the four POSIX-only tests fail, as on `newnr`. MSVC: `build_win.bat` with the
-  three known C4068, the nine menu fixtures, `build_xess.bat` and `test_nr_xess`, and CTest's
-  Python entries.
-
-**A preset changes in the running daemon.** The daemon applies a `preset` from its settings
-preview while the process named in it runs. The panel writes that preview in a Vulkan game; for
-the DirectX 12 path the test script now writes it, owned by the game's process
-(`hogwarts-xess-test.ps1 -Phase preset -Preset B`, outside the repository). The model is swapped
-between two frames, the session and its D3D12 imports stay, and the proxy opens no new session.
-`-Phase daemon`, a new daemon and the proxy's new session 5 s on, stays for a daemon that died.
-- The orbit recording (`work/tools-win/run_replay_swap.py`: A, then B after 30 frames, a frame
-  every 200 ms): no frame went unanswered. 0.20 s passed from the last A answer to the first B
-  one, the replay's own interval; A answered 31 frames and B 265, every written frame but the
-  first carries its answer, and the proxy logged no new session. The restart of 10-28 left 5.1 s.
-- **Hogwarts**, the owner playing (1280x720, `render_scale` 0.5, network 640x384, 101.9150, on
-  mains). Every frame answered on its own frame, none declined; the game waits for the swap
-  about a second, and the owner saw NR stay on (10-28: 5.5 s without it):
-
-| switch | the model's load | the five seconds around it | then |
-| --- | --- | --- | --- |
-| A to B | 0.6 s | 63 frames answered, against about 76 | B, 21 a second, the daemon's frame 44 ms |
-| B to A | 1.2 s | 82 frames in 6.0 s | A, 15 a second, 63 ms |
-
-- `work/` was rebuilt at the merged head first: PR #20 moved `image_compose.comp` and
-  `image_preprocess.comp` to a two-dimensional workgroup grid, which gives the same index below
-  4 194 240 pixels.
-
-**Next on Windows:** ~~`dx12` into `newnr`, a fast-forward now, and both to GitHub at the owner's
-word, after Linux~~: on GitHub at the owner's word before Linux ran (`cc2b8b7`). Then DirectX 12
-through the release: the setup window putting the proxy beside a game's XeSS.
-**Next on Linux:** ~~`make test` in both memory modes and CTest at `dx12`'s head~~: green at
-`cc2b8b7` (Open items).
 
 ---
 
