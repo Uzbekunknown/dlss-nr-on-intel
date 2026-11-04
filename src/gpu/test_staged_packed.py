@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Packed staged loads must preserve every output bit and alignment fallback.
+"""Packed staged loads, and the blocks read from a Y-major walk, must preserve every output
+bit and alignment fallback.
 
-Use separate processes because the loader specialization is fixed at device
-creation. Compare the old and packed loaders with the same installed shaders,
-changing inputs, all simple epilogues, batches, partial tiles and output guards.
+Use separate processes because both specializations are fixed at device creation. Compare
+the old and packed loaders, each with the X-major and the Y-major walk, with the same
+installed shaders, changing inputs, all simple epilogues, batches, partial tiles and output
+guards.
 """
 import argparse
 import os
@@ -23,6 +25,8 @@ def worker(destination):
     import xmxres as X
 
     rt = X.Runtime()
+    walk = rt.lib.xmx_staged_walk_y()
+    assert walk == int(os.environ['XMX_STAGED_WALK_Y']), f'XMX_STAGED_WALK_Y not taken: {walk}'
     X.profile(True)
     rng = np.random.default_rng(81723)
     results = {}
@@ -102,21 +106,26 @@ def main():
     if args.worker:
         worker(args.worker)
         return
+    modes = ((0, 0), (1, 0), (0, 1), (1, 1))       # (packed loader, Y-major walk)
     with tempfile.TemporaryDirectory(prefix='staged-packed-', dir=ROOT / 'work') as folder:
-        archives = [Path(folder) / f'{mode}.npz' for mode in (0, 1)]
-        for mode, archive in enumerate(archives):
+        archives = [Path(folder) / f'{packed}{walk}.npz' for packed, walk in modes]
+        for (packed, walk), archive in zip(modes, archives):
             env = dict(os.environ)
             for name in ('XMX_STAGED_SPV', 'XMX_STAGED32_SPV', 'XMX_STAGED32_DEEP_SPV'):
                 env.pop(name, None)
-            env.update(XMX_STAGED_PACKED=str(mode), XMX_STAGE_K='32', XMX_STAGED32='1',
-                       XMX_STAGED_PARTIAL='1', PYTHONUTF8='1')
+            env.update(XMX_STAGED_PACKED=str(packed), XMX_STAGED_WALK_Y=str(walk),
+                       XMX_STAGE_K='32', XMX_STAGED32='1', XMX_STAGED_PARTIAL='1', PYTHONUTF8='1')
             subprocess.run([sys.executable, str(Path(__file__).resolve()), '--worker', str(archive)],
                            env=env, cwd=ROOT, check=True, timeout=120)
-        with np.load(archives[0]) as old, np.load(archives[1]) as packed:
-            assert old.files == packed.files
-            for name in old.files:
-                np.testing.assert_array_equal(old[name], packed[name], err_msg=name)
-            print(f'{len(old.files)} packed-loader outputs byte-identical')
+        with np.load(archives[0]) as old:
+            for (packed, walk), archive in zip(modes[1:], archives[1:]):
+                with np.load(archive) as other:
+                    assert old.files == other.files
+                    for name in old.files:
+                        np.testing.assert_array_equal(old[name], other[name],
+                                                      err_msg=f'packed {packed} walk {walk} {name}')
+            print(f'{len(old.files)} outputs byte-identical with the packed loader and the '
+                  f'Y-major walk, each and both')
 
 
 if __name__ == '__main__':

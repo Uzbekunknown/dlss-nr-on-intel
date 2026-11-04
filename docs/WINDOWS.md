@@ -118,7 +118,13 @@ with driver 101.9033 this reduced warm graph time by about 6% at 320x320 and 9% 
 with the same output bytes (`notes/improve-shared-memory.md`). Set `XMX_STAGED_PACKED=0`
 before starting the daemon to compare the old loader; `=1` forces the new one. Since
 2026-10-07 Mesa takes it too: about 2 % at 720p and 1080p, nothing at 320x320, the same
-output bytes. Rebuild both `libxmx` and the three staged shaders
+output bytes. Intel's Windows driver also starts a dispatch's workgroups with Y fastest, where
+Mesa starts them with X, so on it the staged GEMM reads which block to compute column first
+from that walk, and a row block's operand comes from memory once instead of once per column
+block. On Arc 140V with driver 101.9150 that took 9-19 % off the network at 1920x1152 and
+2560x1472, network B at 2560x1472 from 303-312 to 259-260 ms, with the same output bytes.
+`XMX_STAGED_WALK_Y=0` keeps the old order, `=1` takes the new one on any driver. Rebuild both
+`libxmx` and the three staged shaders
 in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
 an already running daemon or a separate MSVC build.
 

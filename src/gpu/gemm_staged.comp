@@ -65,6 +65,15 @@ layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Packed8Buf 
  * large, on Mesa. libxmx sets this on every driver (XMX_STAGED_PACKED=0 to compare); the
  * loaders below stay for the operands they cannot take. */
 layout(constant_id = 2) const bool STAGED_PACKED = false;
+/* Which block a workgroup computes, read from the order the driver starts them. Mesa walks a
+ * dispatch with X fastest, so the N/32 column blocks of one row block start together and
+ * share its A rows in the cache. Intel's Windows driver walks Y fastest: every row block of
+ * column 0, then every one of column 1, so a row block's A came from memory once per column
+ * block, four times at N = 128, and the short-K GEMMs, which wait on memory, ran at half
+ * Mesa's speed. Set, a workgroup's place in that walk is taken column first instead. Only
+ * which workgroup computes a block changes, so the bytes are the same. libxmx sets it on
+ * Intel's Windows driver (XMX_STAGED_WALK_Y=0|1 to compare). */
+layout(constant_id = 3) const bool STAGED_WALK_Y = false;
 
 layout(push_constant, scalar) uniform Push {
     HalfBuf a, b; FloatBuf c, d;
@@ -106,7 +115,9 @@ void qkv_barrier() { barrier(); }
 #include "qkv_epilogue.glsl"
 
 void main() {
-    uint row = gl_WorkGroupID.y * BM, col = gl_WorkGroupID.x * BN;
+    uint walk = gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.x;
+    uint row = (STAGED_WALK_Y ? walk / gl_NumWorkGroups.x : gl_WorkGroupID.y) * BM;
+    uint col = (STAGED_WALK_Y ? walk % gl_NumWorkGroups.x : gl_WorkGroupID.x) * BN;
     /* The last block may be partial: its rows past M read the last real row, so nothing
      * is read out of bounds, and are never stored. A real row's arithmetic is the same. */
     bool partial = row + BM > pc.m;
