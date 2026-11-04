@@ -40,16 +40,16 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   (below, 11-04 later). Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
-    with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01) and
-    the README for players (`d5bef2e`, 11-02);
+    with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
+    the README for players (`d5bef2e`, 11-02) and `alchemist`'s head (11-04, below);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
-    10-31 evening). Level with `newnr` until 11-02; ahead of it since 11-03 (`911e9ba`, the
-    players' data, and the entries of 11-04 below). Here two commits more, not pushed: `ce9c513`
-    and the entry "Checked on Linux" (below, 11-04 later);
+    10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
+    players' data, and the entries of 11-04 below), and level with `master` and `newnr` again
+    since 11-04, when all three went to its head at the owner's word (below, 11-04 later);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -100,7 +100,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
 - **On the players' GPUs** (below, 11-03; `notes/players-20261103.md`): a B580 runs network A at
   1280x720 and 0.4 in 9 ms, 3.9x an A770. An A770 plays level with this laptop at that size,
   because its network pays ~55 us a pass whatever the field. Eleven A-series cards compute NR's
-  shape exactly, and a Pro B70 offers it natively.
+  shape exactly, and a Pro B70 and two B580s offer it natively.
 - **Working rules.** Nothing goes to GitHub without the owner's word, and nothing untested at all:
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
@@ -316,13 +316,19 @@ CPU; Mesa 26.2.5.
 
 **GitHub at 08:07 UTC, against the entry below.** The stray branch is gone: `git ls-remote` lists
 `alchemist`, `improve-int8`, `master`, `media` and `newnr`. Nothing else has moved. Two B580 GPU
-reports came after `911e9ba`'s data and are not in `players.json`: #34's comment of 11-03 and #36
-(11-04, on the A-series template). `player_reports.py probe` reads both: NR's shape at 32 lanes
-58.6 and 58.3 TFLOP/s, vector FMA 7.2, driver 101.9150, "run here". On #34 another B580 owner
-offers to test and asks for a Telegram group; the owner answered that a channel is coming.
+reports came after `911e9ba`'s data: #34's comment of 11-03 and #36 (11-04, on the A-series
+template). `player_reports.py probe` reads both: NR's shape at 32 lanes 58.6 and 58.3 TFLOP/s,
+vector FMA 7.2, driver 101.9150, "run here". On #34 another B580 owner offers to test and asks for
+a Telegram group; the owner answered that a channel is coming.
 
-**Next on Linux:** nothing waits. **Next:** the owner's word on pushing `alchemist`, two commits
-ahead of GitHub here, and on adding the two B580 reports to `players.json`.
+**Then, at the owner's word.** Both B580 reports went into `players.json` (14 probes, `updated`
+11-04), and into a row of `notes/players-20261103.md`'s GPU table: 1.9-2.1x this laptop in NR's
+shape, and 1.4-1.5x the six faster A770s, less than the B580's lead in the network. `alchemist`
+was pushed, and `master` and `newnr` fast-forwarded to it, on GitHub and here; `media` and
+`improve-int8` stay where they were.
+
+**Next on Linux:** nothing waits. **Next on Windows:** `git fetch`, then fast-forward `master`,
+`newnr` and `alchemist` to GitHub's.
 
 ## GitHub as of 11-04, and what Linux pulls and tests (2026-11-04, branch `alchemist`)
 
@@ -358,9 +364,9 @@ text is the entry "The reporters answered" below (`0f378a3`). The branch is save
 
 Done: green at `d28e841`, the flake fixed in `ce9c513` (above, 11-04 later).
 
-**Next on Windows:** nothing waits on Linux. The owner's word on pushing `alchemist`, on
-`arc-a-n8`, on replies to the issues still without one, and ~~on removing the stray branch~~ (gone
-by 11-04, 08:07 UTC, above).
+**Next on Windows:** nothing waits on Linux. The owner's word ~~on pushing `alchemist`~~ (pushed
+11-04, above), on `arc-a-n8`, on replies to the issues still without one, and ~~on removing the
+stray branch~~ (gone by 11-04, 08:07 UTC, above).
 
 ## Players' reports as data, and where a frame's time goes on each GPU (2026-11-03, branch `alchemist`)
 
