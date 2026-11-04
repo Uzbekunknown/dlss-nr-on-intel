@@ -1,6 +1,6 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-11-03**. notes/CLAUDE.md holds the
+State of the DLSS-NR on Intel Xe2 project as of **2026-11-04**. notes/CLAUDE.md holds the
 original brief; **this file overrides it wherever they disagree**, and after
 2026-09-09 they disagree about something foundational.
 
@@ -20,7 +20,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
 
 ---
 
-## Where things stand (2026-11-03)
+## Where things stand (2026-11-04)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
@@ -40,13 +40,19 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB.
   for it (Open items). Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
-    with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01) and 0.0.3.1 (`c0b7f9d`, 11-01);
+    with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01) and
+    the README for players (`d5bef2e`, 11-02);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
-    (`cc2b8b7`, 10-30);
+    (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
   - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
-    10-31 evening), level with `newnr` at 0.0.3.1.
+    10-31 evening). Level with `newnr` until 11-02; ahead of it since 11-03 (`911e9ba`, the
+    players' data, and the entries of 11-04 below);
+  - `claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
+    by accident on 11-01. The owner has it removed later. Its text is carried here (below, 11-01,
+    latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows (below,
+    11-04).
 
   The other seven were deleted at the owner's word: `dx12`, `windows`, `improve`, `improve-e4m3`,
   `improve-fusions`, `improve-release` and `experiment-bgra8-pipeline`. All were already in
@@ -107,8 +113,13 @@ Each line says where its evidence is: "below" is a dated entry in this file, "ar
 under that date. When an item is done, strike it through here and name the commit.
 
 **Waiting for the owner**
-- Answers to the reports of 11-01 to 11-03 (#29-#34), and two questions the data raised: #25,
-  which network each API ran; #23, whether NR was on in Hogwarts. Below, 11-03.
+- Answers to the A-series reports, as GitHub stood on 11-04: we have commented on #18, #19, #23,
+  #25, #27, #29 and #34 (#34: two comments from the owner's account, 11-03 and 11-04), and not
+  yet on #22, #24, #26, #28, #30-#33 and #36. Two questions the data raised: #25, which network
+  each API ran (its reporter wrote on 11-01 that A and B made no difference in either API, and
+  that Vulkan gave 23 fps against DirectX 11's 40 at one scale and model; the 11-03 reading below
+  puts that down to A against B, so the two are not reconciled); #23, whether NR was on in
+  Hogwarts (asked on 11-01, no reply). Below, 11-03 and 11-04.
 - Judgements in a game, pending since September:
   - Whether render scale 0.9 still looks better than 1.0 for screenshots, now that 1280x720 runs
     on the vendor's field. Archive, 09-27.
@@ -127,7 +138,7 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~Arc A-series reports: asking issue #18's reporter and the A-series owners on Reddit~~: asked on
   11-01 (#18, the owner's Reddit post), and seven A770 reports came in (below, 11-01 later).
   #23, #25, #27 and #29 answered on 11-01 at the owner's word (below, 11-01, latest); #22, #24,
-  #26 and #28 are unanswered, and #18 waits for its reporter.
+  #26 and #28 are unanswered, and #18 was closed on 11-03.
 - Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
   `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Archive, 10-17 later.
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
@@ -135,7 +146,7 @@ under that date. When an item is done, strike it through here and name the commi
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
-**Linux**
+**Linux** (what to pull and run, in order: below, 11-04)
 - `alchemist`'s GPU report changes (`8f96b58`, `eab7eb3`, `c231bdc`, `9ceff90`, below, 10-31
   evening): `make test`.
 - `speed_test.py`'s `network_of` and the probe's warm-up (below, 11-01 later): `make test`.
@@ -282,6 +293,41 @@ under that date. When an item is done, strike it through here and name the commi
 
 ---
 
+## GitHub as of 11-04, and what Linux pulls and tests (2026-11-04, branch `alchemist`)
+
+On 11-04 the owner had the local branches follow GitHub, the stray branch saved, this file's
+facts brought up to date, and the Linux agent told what to pull and test.
+
+**GitHub, read with `gh` on 11-04.** `master` and `newnr` at `d5bef2e`; `alchemist` one commit
+ahead (`911e9ba`, the players' data) and, once pushed, with this entry; `media` and `improve-int8`
+as before. The latest release is v0.0.3.1; no pull request is open. Issues: #18 closed 11-03, #19
+11-01, #27 11-02 (its reporter: it works now), #35 11-03 (Expedition 33 with native XeSS, closed
+with no comment); #36 is new. Who has been answered: Open items, "Waiting for the owner".
+
+**The stray branch.** `claude/weights-only-quantization-w0o2wh` is one HANDOFF commit (`f06277d`)
+from another session that reached GitHub by accident on 11-01. The owner has it removed later. Its
+text is the entry "The reporters answered" below (`0f378a3`). The branch is saved in
+`D:\NRonWindows\backups` as
+`github-stray-branch-claude-weights-only-quantization-2026-11-04.bundle` (4.5 MB, SHA-256
+`674daf321d7a761906e3f91e3f038823f29574ea56b3f8954bbb3abce0e6d697`);
+`git fetch <bundle> 'refs/heads/*:refs/heads/*'` restores it.
+
+**Next on Linux** (the owner, 11-04: pull everything and start testing):
+1. `git fetch origin`, then `git switch alchemist` and `git merge --ff-only origin/alchemist`. If
+   this entry is not on GitHub yet, fetch `alchemist` from the Windows checkout on the shared disk
+   (`D:\NRonWindows\dlss-nr`) instead. The head holds `newnr` (`d5bef2e`) and the players' data, so
+   one run covers every Linux item in Open items. Do not build on the stray branch.
+2. Stop the daemon, then `make test` in both memory modes (`XMX_STAGING=1` is the second) and
+   CTest. New in them: `test_player_reports.py`, and `test_toggle.py` checking the two new pages
+   and their generated tables. `make test` requires the probe to say "run here" on Mesa.
+3. If the only red test is `test_toggle.py`'s "status has no hardware-independent FPS guess", run
+   it again before reporting: it fails about one run in 200 (Open items). Fix it if that is cheap.
+4. Write the result as an entry "Checked on Linux" with the commit tested, strike the Linux items
+   in Open items and name the commit, and commit. Pushing is the owner's word.
+
+**Next on Windows:** nothing waits on Linux. The owner's word on pushing `alchemist`, on
+`arc-a-n8`, on replies to the issues still without one, and on removing the stray branch.
+
 ## Players' reports as data, and where a frame's time goes on each GPU (2026-11-03, branch `alchemist`)
 
 The owner asked for every player's report to be gathered, the frame's time placed, and the
@@ -317,8 +363,8 @@ are in `notes/measurements/players.json`.
 **Checked here:** `test_player_reports.py` (7; the privacy case fails when a digest keeps the
 report's folder), `knob_doc.py --check`, `test_toggle.py`'s page check, `build_check`,
 `claims_check`, `publish_check`. **Next on Linux:** `make test` (Open items). **Next:** the
-owner's word on answers to #23, #25, #30 and #32-#34, and on asking an A-series tester for a
-per-pass profile.
+owner's word on answers to ~~#23, #25~~ (answered 11-01), #30-#33 and ~~#34~~ (answered 11-03
+and 11-04), and on asking an A-series tester for a per-pass profile.
 
 ## The README rewritten for players; the developers' half in `docs/DEVS.md` (2026-11-02, branch `alchemist`)
 
