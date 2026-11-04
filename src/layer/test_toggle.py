@@ -136,8 +136,11 @@ def report_checks(control, paths, scratch):
           'network 704x448 scale 0.55' in said and 'NR_JOINT_QKV=1' in said,
           'long frame lines are not truncated')
     check("report uses only the latest daemon session", 'OLD_DEVICE' not in said and '100x100' not in said)
-    check("status has no hardware-independent FPS guess", 'fps of graph time' not in said
-          and '7x' not in said)
+    # The report prints its paths, all in the scratch folder, whose random name holds "7x"
+    # about one run in 200: look for the guesses in what the report says around them.
+    words = said.replace(str(scratch), "")
+    check("status has no hardware-independent FPS guess", 'fps of graph time' not in words
+          and '7x' not in words)
     check("report carries the GPU, a frame and the refusal",
           "Intel(R) Graphics" in said and "gpu 1+176+1ms" in said and "(-2)" in said
           and "1 refused" in said,
