@@ -475,7 +475,7 @@ $script:Strings=@{
   GameTip='The game''s .exe, 64-bit or 32-bit. For DirectX 8–11, setup puts DXVK beside it.'
   PythonTip='Choose native 64-bit Windows Python, not the MinGW/MSYS2 interpreter.'
   FindPython='Find Python'; GetPython='Python website'
-  PythonHint='Python is usually detected automatically. If it is missing, install Windows x64 Python from python.org.'
+  PythonHint='This release brings its own Python (the python folder), chosen automatically. Pick another 64-bit Windows Python only if you need one.'
   ConnectHeading='2. Connect NR to your game'; ApiLabel='Graphics API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (setup adds DXVK)'; ApiD3d12='DirectX 12 (games with XeSS)'
   LaunchOptions='Launch options'
   ArgsLabel='Game arguments (optional)'; ArgsTip='Ordinary game arguments; shell commands are not executed here.'
@@ -590,7 +590,7 @@ $script:Strings=@{
   GameTip='Файл .exe игры, 64- или 32-битный. Для DirectX 8–11 мастер положит рядом DXVK.'
   PythonTip='Выберите обычный 64-битный Windows Python, а не интерпретатор MinGW/MSYS2.'
   FindPython='Найти Python'; GetPython='Сайт Python'
-  PythonHint='Python обычно определяется автоматически. Если его нет, установите Windows x64 Python с python.org.'
+  PythonHint='Python входит в этот релиз (папка python) и выбирается сам. Другой 64-битный Windows Python выбирайте, только если он нужен.'
   ConnectHeading='2. Подключите NR к игре'; ApiLabel='Графический API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (мастер добавит DXVK)'; ApiD3d12='DirectX 12 (игры с XeSS)'
   LaunchOptions='Параметры запуска'
   ArgsLabel='Аргументы игры (необязательно)'; ArgsTip='Обычные аргументы игры; команды оболочки здесь не выполняются.'
@@ -705,7 +705,7 @@ $script:Strings=@{
   GameTip='El .exe del juego, de 64 o 32 bits. Para DirectX 8–11, el instalador pone DXVK a su lado.'
   PythonTip='Elija Python nativo de Windows de 64 bits, no el intérprete de MinGW/MSYS2.'
   FindPython='Buscar Python'; GetPython='Sitio web de Python'
-  PythonHint='Python suele detectarse automáticamente. Si falta, instale Python para Windows x64 desde python.org.'
+  PythonHint='Esta versión trae su propio Python (la carpeta python), que se elige solo. Elija otro Python de Windows de 64 bits solo si lo necesita.'
   ConnectHeading='2. Conecte NR a su juego'; ApiLabel='API gráfica'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11 (el instalador añade DXVK)'; ApiD3d12='DirectX 12 (juegos con XeSS)'
   LaunchOptions='Opciones de inicio'
   ArgsLabel='Argumentos del juego (opcional)'; ArgsTip='Argumentos normales del juego; aquí no se ejecutan comandos de la consola.'
@@ -820,7 +820,7 @@ $script:Strings=@{
    GameTip='游戏的 .exe，64 位或 32 位均可。对于 DirectX 8–11，安装程序会同时放入 DXVK。'
    PythonTip='请选择原生 64 位 Windows Python，而不是 MinGW/MSYS2 的解释器。'
    FindPython='查找 Python'; GetPython='Python 官网'
-   PythonHint='Python 通常会自动检测到。如果缺少，请从 python.org 安装 Windows x64 版 Python。'
+   PythonHint='此版本自带 Python（python 文件夹），会自动选用。只有在需要时才选择其他 64 位 Windows Python。'
    ConnectHeading='2. 将 NR 连接到游戏'; ApiLabel='图形 API'; ApiVulkan='Vulkan'; ApiDxvk='DirectX 8–11（安装程序会添加 DXVK）'; ApiD3d12='DirectX 12（带 XeSS 的游戏）'
    LaunchOptions='启动选项'
    ArgsLabel='游戏参数（可选）'; ArgsTip='普通的游戏参数；此处不执行 shell 命令。'
@@ -1464,6 +1464,8 @@ function Pick-File([string]$Title,[string]$Filter,$Control) {
 function Find-BootPython {
     $candidates=[Collections.Generic.List[string]]::new()
     if($env:NR_PYTHON) { $candidates.Add($env:NR_PYTHON) }
+    # The release's own Python, with numpy and safetensors beside it (scripts/fetch_python.py).
+    $candidates.Add((Join-Path $script:Root 'python\python.exe'))
     foreach($registryPath in @('HKCU:\Software\Python\PythonCore\*\InstallPath','HKLM:\Software\Python\PythonCore\*\InstallPath')) {
         foreach($key in @(Get-Item -Path $registryPath -ErrorAction SilentlyContinue)) {
             $path=$key.GetValue('ExecutablePath'); if(-not $path) { $path=Join-Path $key.GetValue('') 'python.exe' }; if($path) { $candidates.Add($path) }

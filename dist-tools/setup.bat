@@ -15,7 +15,8 @@ rem            already have it
 rem       Nothing is redistributed: the DLL is NVIDIA's and the sizes below are the
 rem       only thing checked about it.
 rem    2. Extract the logical weights from that DLL (needs Python 3 with NumPy and
-rem       safetensors; the script says so and stops if they are missing).
+rem       safetensors: the release's own in python\ has both; the script says so and
+rem       stops if they are missing).
 rem    3. Install the layer: copy it under a name you choose, write the manifest so
 rem       its library_path is that file, and write a launcher that points the daemon
 rem       at this folder.
@@ -182,6 +183,8 @@ exit /b 3
 rem ---- 2. Python and the two packages the extractor needs ----
 set "PY="
 if defined NR_PYTHON set "PY=%NR_PYTHON%"
+rem The release's own, with both packages (scripts\fetch_python.py), before any on PATH.
+if not defined PY if exist "%HERE%\python\python.exe" set "PY=%HERE%\python\python.exe"
 if not defined PY ( where /q py && set "PY=py" )
 if not defined PY ( where /q python3 && set "PY=python3" )
 if not defined PY ( where /q python && set "PY=python" )
@@ -494,6 +497,7 @@ exit /b %errorlevel%
 :runtime_python
 if defined PY goto :check_runtime_python
 if defined NR_PYTHON set "PY=%NR_PYTHON%"
+if not defined PY if exist "%HERE%\python\python.exe" set "PY=%HERE%\python\python.exe"
 if not defined PY ( where /q py && set "PY=py" )
 if not defined PY ( where /q python && set "PY=python" )
 if not defined PY ( where /q python3 && set "PY=python3" )

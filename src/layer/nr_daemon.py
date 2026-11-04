@@ -47,6 +47,11 @@ for _i, _arg in enumerate(sys.argv):
         break
 if os.environ.get("NR_ROOT"):
     ROOT = pathlib.Path(os.environ["NR_ROOT"])
+# This file's folder too, for nr_pipe, nr_alloc and the rest beside it. A Windows release's own
+# Python leaves it off sys.path: its ._pth makes it isolated, as -I would
+# (scripts/fetch_python.py). Behind src/ref and src/gpu, where a script's folder always was.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "src" / "ref"))
 sys.path.insert(0, str(ROOT / "src" / "gpu"))
 

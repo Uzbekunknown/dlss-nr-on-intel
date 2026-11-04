@@ -2,11 +2,13 @@
 
 This folder contains the Intel runtime, the Vulkan layer, shaders and Python
 modules. It does not contain NVIDIA's DLL or model weights. Windows releases carry
-the layer for **64-bit and 32-bit games**, and DXVK for DirectX 8–11 games.
+the layer for **64-bit and 32-bit games**, DXVK for DirectX 8–11 games, and **their own
+Python** in `python\` (CPython 3.14 with `numpy` and `safetensors`), so nothing else
+needs installing.
 
-You need a supported Intel Xe2 GPU, a working Vulkan graphics driver, **64-bit
-Python 3** with `numpy` and `safetensors`, and your own compatible
-`nvngx_dlssnr.dll`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
+You need a supported Intel Xe2 GPU, a working Vulkan graphics driver and your own
+compatible `nvngx_dlssnr.dll`; on Linux, also **Python 3** with `numpy` and
+`safetensors`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
 and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
 A770) is experimental: NR has computed correctly on six A770s, at speeds that vary. If you
 have one, double-click `nr_gpu_probe.exe` in this folder and post the `nr-gpu-report.txt`
@@ -22,12 +24,11 @@ Extract the Windows ZIP into a permanent folder and double-click **`NR-Setup.exe
 (`NR-Setup.cmd` is an alternative).
 The window uses Windows PowerShell/WPF, so it opens without Python or a compiler.
 Select your own `nvngx_dlssnr.dll` and the **game's executable**, 64-bit or 32-bit.
-Python is detected automatically; you can choose another native Windows x64 interpreter.
-Use **Check**, then **Install NR**. If only the Python packages are missing,
-installation prepares a private Python environment inside this release. The
-separate **Prepare Python** button also creates that local environment; it does
-not install packages globally. A missing Python installation still needs to be
-installed from [python.org](https://www.python.org/downloads/windows/).
+The window chooses the release's own Python in `python\`; you can choose another native
+Windows x64 interpreter. Use **Check**, then **Install NR**. If a Python you chose lacks
+the packages, installation prepares a private Python environment inside this release
+from it, and the separate **Prepare Python** button does the same; neither installs
+packages globally, and neither is needed with the release's own Python.
 
 Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
 **DirectX 12 (games with XeSS)** for a DirectX 12 game that offers Intel XeSS. For Vulkan and
@@ -144,7 +145,8 @@ Windows, and has a language selector at the top. The manual setup below remains 
 
 ## Manual setup
 
-Install the Python packages into the interpreter the daemon will use:
+On Windows, `setup.bat` takes the release's own `python\python.exe`, which has the
+packages. Anywhere else, install them into the interpreter the daemon will use:
 
 ```text
 python -m pip install numpy safetensors

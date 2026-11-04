@@ -775,8 +775,33 @@ def _xess_check(profile, record=None):
     return folder, f"XeSS {version} in {folder}" + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
 
 
-def discover_python():
-    """Prefer native CPython over the MinGW toolchain, within a ten-second budget."""
+def bundled_python(root):
+    """The interpreter a Windows release carries in `python\\` (scripts/fetch_python.py), if any."""
+    if root is None:
+        return None
+    path = Path(root) / "python" / "python.exe"
+    return path if path.is_file() else None
+
+
+def discover_python(root=None):
+    """The release's own Python first, then native CPython over the MinGW toolchain, within a
+    ten-second budget.
+
+    The release's own is asked before the budget starts and given the time a first numpy import
+    takes while Windows' scanner reads it (`_python_info`): it is the one a player has, and at the
+    two seconds each other candidate gets, a fresh one could be passed over. NR_PYTHON, when set
+    and usable, stays ahead of it, as a developer's choice."""
+    bundled = bundled_python(root)
+    own = str(bundled.resolve()) if bundled is not None and _native_python(_python_info(bundled)) else None
+    found = _discover_others(skip=own)
+    if own:
+        override = os.environ.get("NR_PYTHON")
+        first = found and override and _canonical(found[0]) == _canonical(override)
+        found.insert(1 if first else 0, own)
+    return found
+
+
+def _discover_others(skip=None):
     deadline = time.monotonic() + 9.5
     candidates = [os.environ.get("NR_PYTHON"), sys.executable]
     for name in ("python", "python3"):
@@ -815,6 +840,8 @@ def discover_python():
         value.lower()))
     found = []
     for value in ordered:
+        if skip and _canonical(value) == _canonical(skip):
+            continue
         remaining = deadline - time.monotonic()
         if remaining < 0.2:
             break
@@ -1135,6 +1162,14 @@ def ensure_dependencies(profile, emit=None):
     info = _python_info(profile.python)
     if not _native_python(info):
         return {"ok": False, "error": "Choose native x64 Windows Python before preparing dependencies", "output": info.get("output", "")}
+    packages = info.get("packages", {})
+    if not info.get("package_errors") and all(name in packages for name in ("numpy", "safetensors")):
+        # Nothing to prepare. The release's own Python comes with both (scripts/fetch_python.py),
+        # and so may one the player chose; and the embeddable package has no venv module to make
+        # an environment from.
+        return {"ok": True, "error": None, "python": str(profile.python), "profile": profile.to_dict(),
+                "output": (f"{profile.python} already has numpy {packages['numpy']} and "
+                           f"safetensors {packages['safetensors']}\n"), "commands": []}
     directory = profile.root / "work/windows-python"
     interpreter = directory / "Scripts/python.exe"
     commands = []

@@ -74,6 +74,19 @@ DXVK — https://github.com/doitsujin/dxvk
   puts them beside a DirectX 8-11 game and takes them away again. They are fetched at
   release time and are not in this repository.
 
+Python — https://www.python.org; NumPy — https://numpy.org;
+safetensors — https://github.com/huggingface/safetensors
+  CPython: Copyright (c) 2001 Python Software Foundation; All Rights Reserved; licensed under
+  the PSF License Agreement. NumPy: Copyright (c) 2005-2025, NumPy Developers; licensed under
+  the BSD 3-Clause licence, with the libraries its wheel bundles (OpenBLAS among them) under
+  theirs. safetensors: Hugging Face's, licensed under the Apache License 2.0.
+  Windows releases carry python.org's unmodified embeddable CPython for x64 in `python/`, its
+  licence as `python/LICENSE.txt`, and NumPy and safetensors unpacked from their unmodified
+  PyPI wheels into `python/Lib/site-packages/`, each one's licences in its
+  `*.dist-info/licenses/`. Versions and SHA-256 are pinned in `dist-tools/python.json`; one
+  line is added to the interpreter's `python314._pth`, the folder the wheels are in. They are
+  fetched at release time and are not in this repository.
+
 Vulkan-Headers — https://github.com/KhronosGroup/Vulkan-Headers
   Copyright the Khronos Group, licensed under the Apache License 2.0.
   Fetched into `work/` at build time and not redistributed here.

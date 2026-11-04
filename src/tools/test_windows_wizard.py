@@ -1407,6 +1407,9 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(core.runtime_env(core.Profile.from_dict(result["profile"]))["NR_PYTHON"], str(local))
 
     def test_prepare_python_venv_and_pip_are_local_argv_without_shell(self):
+        local = self.root / "work/windows-python/Scripts/python.exe"
+        # The chosen Python lacks both packages; the environment made from it has them.
+        self.native.side_effect = lambda python, **kwargs: python_info() if Path(python) == local else python_info(packages={}, package_errors={"numpy": "missing", "safetensors": "missing"})
         calls = []
         def run(command, **kwargs):
             calls.append([str(arg) for arg in command])
@@ -1418,13 +1421,13 @@ class WizardFixture(unittest.TestCase):
         with patch.object(core, "_run", side_effect=run):
             result = core.ensure_dependencies(self.profile)
         self.assertTrue(result["ok"], result)
-        local = self.root / "work/windows-python/Scripts/python.exe"
         self.assertEqual(calls[0][:4], [str(self.python), "-I", "-m", "venv"])
         self.assertEqual(calls[1][:4], [str(local), "-I", "-m", "pip"])
         self.assertIn("--only-binary=:all:", calls[1])
         self.assertEqual(result["profile"]["python"], str(local))
 
     def test_foreign_local_python_directory_is_preserved(self):
+        self.native.return_value = python_info(packages={}, package_errors={"numpy": "missing"})
         directory = self.root / "work/windows-python"
         directory.mkdir()
         sentinel = directory / "foreign.txt"
@@ -1433,6 +1436,36 @@ class WizardFixture(unittest.TestCase):
             self.assertFalse(core.ensure_dependencies(self.profile)["ok"])
         run.assert_not_called()
         self.assertEqual(sentinel.read_bytes(), b"preserve")
+
+    def test_prepare_python_leaves_a_python_with_both_packages_as_it_is(self):
+        # The release's own Python has both (scripts/fetch_python.py), and no venv module to make
+        # an environment from: Prepare Python must not try.
+        with patch.object(core, "_run") as run:
+            result = core.ensure_dependencies(self.profile)
+        self.assertTrue(result["ok"], result)
+        run.assert_not_called()
+        self.assertEqual(result["profile"]["python"], str(self.python))
+        self.assertFalse((self.root / "work/windows-python").exists())
+
+    def test_discovery_puts_the_release_python_first_with_time_for_numpy(self):
+        own = write_pe(self.root / "python" / "python.exe")
+        environment = {key: value for key, value in os.environ.items() if key != "NR_PYTHON"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(core.sys, "executable", str(self.python)), patch.object(core.shutil, "which", return_value=None):
+            found = core.discover_python(self.root)
+        self.assertEqual(found[0], str(own.resolve()))
+        self.assertIn(str(self.python), found)
+        self.assertEqual(found.count(str(own.resolve())), 1)
+        # Asked once, with _python_info's own timeout, not the two seconds the others get.
+        asked = [call for call in self.native.call_args_list if Path(call.args[0]) == own]
+        self.assertEqual(len(asked), 1)
+        self.assertNotIn("timeout", asked[0].kwargs)
+
+    def test_discovery_keeps_nr_python_ahead_of_the_release_python(self):
+        own = write_pe(self.root / "python" / "python.exe")
+        chosen = write_pe(self.base / "developer Python" / "python.exe")
+        with patch.dict(os.environ, {"NR_PYTHON": str(chosen)}), patch.object(core.sys, "executable", str(self.python)), patch.object(core.shutil, "which", return_value=None):
+            found = core.discover_python(self.root)
+        self.assertEqual(found[:2], [str(chosen.resolve()), str(own.resolve())])
 
     def test_install_nr_returns_steams_launch_options_first(self):
         # An earlier setup could leave Steam starting a game through NR's wrapper. That no
