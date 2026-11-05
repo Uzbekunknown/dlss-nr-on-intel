@@ -469,8 +469,14 @@ if(NR_BUILD_TESTS)
   nr_test(release "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_release.py")
   nr_test(setup_proxy "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_setup_proxy.py")
   nr_test(player_reports "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_player_reports.py")
+  # The Windows setup's own suites, which skip what needs Windows. No runner had them before
+  # 2026-11-04.
+  foreach(name windows_wizard windows_launch windows_controls windows_setup windows_wizard_bridge
+      nr_weights)
+    nr_test(tools_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/test_${name}.py")
+  endforeach()
   nr_test(profile_tables "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/bench/frame_profile.py" --tables)
-  foreach(name device_pick gemm_contract denorm input_fp16 compact_head joint_qkv gemm_int8 gemm_int8_staged
+  foreach(name device_pick gemm_contract denorm input_fp16 compact_head gemm_int8 gemm_int8_staged
       window_block global_attention int8_quant gemm_residual window_residual window_attention
       gemm_qkv glue ffn_fused staged_partial staged32 staged_packed epilogue specialization softmax_pack
       qkv_fusion scratch_arena graph frame_execution resident)
@@ -482,19 +488,18 @@ if(NR_BUILD_TESTS)
   endforeach()
   nr_test(gpu_image_pipeline "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_image_pipeline.py" --full-model)
   set_tests_properties(gpu_image_pipeline PROPERTIES LABELS "gpu;image")
-  nr_test(host_image_preprocess "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_image_preprocess.py" --cpu-only)
-  foreach(name image_compose image_stats image_history image_pipeline)
-    nr_test(host_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py" --host-only)
-  endforeach()
-  set_tests_properties(host_image_preprocess host_image_compose host_image_stats host_image_history
-    host_image_pipeline
-    PROPERTIES LABELS "host;image")
+  # No host-only entries for these: each script's host checks are the first half of its gpu_image_
+  # entry above, so a second entry with --host-only (or --cpu-only) ran them twice. Without a
+  # device, the scripts take the flag themselves; `make test-image-host` runs all five that way.
   nr_test(gpu_ffn_batch "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_ffn_batch.py" --gpu)
   foreach(name frame_cache native_image topology nr_model temporal_controls dump_raw dump_geometry)
     nr_test(ref_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/ref/test_${name}.py")
   endforeach()
   # The daemon ends with its game on both systems: a process handle there, a pidfd here.
   nr_test(layer_spawn_exit "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_spawn_exit.py")
+  # The panel's image follows the swapchain's extent. It reads the sources only, so it runs here
+  # too, although the panel is Windows-only.
+  nr_test(layer_ui_resize "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_ui_resize.py")
   if(WIN32)
     foreach(name alloc pipe spawn_reasons vulkan_proxy)
       nr_test(layer_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/layer/test_${name}.py")

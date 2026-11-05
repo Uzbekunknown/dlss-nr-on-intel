@@ -31,6 +31,7 @@ disproved.
 | `archive/HANDOFF-2026-10-08-to-2026-10-15.md` | HANDOFF's dated entries from the Windows release's preparation to 0.0.1.2, moved out word for word on 2026-10-30 |
 | `archive/HANDOFF-2026-10-16-to-2026-10-28.md` | HANDOFF's dated entries from DirectX 12 through the game's XeSS and preset B to a daemon restarted under the game, with PR #20's review rounds, moved out word for word on 2026-11-01 |
 | `archive/HANDOFF-2026-10-30-to-2026-10-31.md` | HANDOFF's dated entries from PR #20's network swap in DirectX 12 to the GPU report for Arc A-series owners, with DirectX 12 through the release, 0.0.2 and the panel inside DirectX 12, moved out word for word on 2026-11-04 |
+| `archive/CLAUDE-until-2026-11-04.md` | the brief as written on 2026-09-07 with every correction made to it in place since: the roadmap phase by phase, the weight format as it was got wrong three times, the first hardware probe, the open questions and where each was answered; moved out word for word on 2026-11-04, when `notes/CLAUDE.md` became a short brief. What older notes cite as "notes/CLAUDE.md" is here |
 | `reproduce.md` | how to run the resident path from a clean checkout |
 
 ## The binary, the weights, the graph

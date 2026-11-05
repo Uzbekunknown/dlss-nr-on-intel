@@ -30,8 +30,9 @@ layout(buffer_reference, scalar, buffer_reference_align = 8)  buffer Half4Buf { 
  * Mesa 26.2.1 / ANV, cooperative matrix revision 2. That was wrong, and it shaped three
  * phases of design before the reproducer written to file it upstream found out why —
  * the last variant still failing was our own invalid shader, a float16 matrix stored
- * into a `float[]`. `notes/phase38-there-was-no-bug.md`,
- * `src/probe/coopmat_store_bug.comp`.
+ * into a `float[]`. `notes/phase38-there-was-no-bug.md` tells it, and its reproducer is in
+ * git history (src/probe/coopmat_store_bug.comp, removed on 2026-11-04: its header still
+ * claimed the bug).
  *
  * The real rule is narrow, and it is about types rather than timing: **store a matrix
  * only into an array of its own component type**, converting the matrix first if they
@@ -244,7 +245,7 @@ void main() {
      * why it looked that way: the failing case was storing a float16 matrix into a
      * `float[]`, where the component type does not match the destination. Given a
      * destination of the matching type, every variant is exact
-     * (`src/probe/coopmat_store_bug.comp`). So the rule is simply: store into an array
+     * (`notes/phase38-there-was-no-bug.md`). So the rule is simply: store into an array
      * of the accumulator's own type, converting the matrix first if they differ. */
     for (uint i = 0; i < RM; i++)
         for (uint j = 0; j < RN; j++) {

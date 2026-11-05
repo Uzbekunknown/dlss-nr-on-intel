@@ -38,7 +38,6 @@ layout(push_constant, scalar) uniform Push {
     uint m, n, k, batch;
     uint sa, sb, sc, flags;
     float p0, p1, p2, p3;
-    FloatBuf qkv_scale; // offset 80: shares the GEMM-only lda/ldb slots in the C push ABI
 } pc;
 
 #include "specialize.glsl"
@@ -103,8 +102,9 @@ void scatter_to(uint base, uint count, uint64_t target) {
 
 void scatter(uint base, uint count) { scatter_to(base, count, uint64_t(pc.c)); }
 
-// VIT_SOFTMAX is 6: 3-5 are the fused attention kernels' profile kinds
-const uint COSINE_PUBLISH = 0u, SOFTMAX = 1u, QKV_PREPARE = 2u, VIT_SOFTMAX = 6u;
+// VIT_SOFTMAX is 6: 3-5 are the fused attention kernels' profile kinds, and 2 was the joint
+// Q/K/V preparation's, removed on 2026-11-04 with NR_JOINT_QKV.
+const uint COSINE_PUBLISH = 0u, SOFTMAX = 1u, VIT_SOFTMAX = 6u;
 
 /* The publish this pass ends with: bits 8-11 of `flags` pick the transform and bit 12
  * narrows the output to float16, so the row passes can feed a GEMM directly instead of
@@ -362,22 +362,7 @@ void softmax_long(uint row) {
 void main() {
     uint row = gl_GlobalInvocationID.x;
     uint kind = operation_flags() & 0xFFu, local = gl_LocalInvocationID.x;
-    if (kind == QKV_PREPARE) {
-        // Three independent workgroup planes: identical arithmetic to the old
-        // Q/K normalizations and V split, recorded as one dispatch and one barrier.
-        uint part = gl_WorkGroupID.y;
-        uint base = gl_WorkGroupID.x * 32u * 32u;
-        uint count = min(32u * 32u, pc.m * 32u - base);
-        gather_part(base, count, part);
-        if (part < 2u) {
-            if (row < pc.m) cosine_publish(row, local, part == 0u, pc.qkv_scale);
-        } else {
-            for (uint i = local; i < count; i += 32u) stage[i] = e4m3(stage[i]);
-        }
-        uint64_t target = part == 0u ? uint64_t(pc.b) :
-                          (part == 1u ? uint64_t(pc.c) : uint64_t(pc.d));
-        scatter_to(base, count, target);
-    } else if (kind == COSINE_PUBLISH) {
+    if (kind == COSINE_PUBLISH) {
         uint base = gl_WorkGroupID.x * 32u * 32u;
         gather(base, min(32u * 32u, pc.m * 32u - base));
         if (row < pc.m) cosine_publish(row, local, pc.k != 0u, pc.d);

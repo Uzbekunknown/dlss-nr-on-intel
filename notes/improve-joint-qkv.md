@@ -1,5 +1,11 @@
 # Joint Q/K/V preparation and measured diagnostics
 
+**Removed on 2026-11-04.** The switch stayed off from the day it came (it cost 79.1 -> 83.2 ms
+at 448x320), and since the QKV epilogue went on by default on 2026-09-23 the path it
+replaced is not recorded either. Its kernel kind, `xmx_rec_qkv`, the switch and
+`test_joint_qkv.py` went with the other leftovers; this note is the record of what it
+measured.
+
 `NR_JOINT_QKV=1` records normalization of Q, normalization of K and the V split
 in one dispatch. The workgroups occupy three independent Y planes and reuse the
 existing projection gathers, half-precision reduction tree and E4M3 publishing.

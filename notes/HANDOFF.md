@@ -1,8 +1,8 @@
 # HANDOFF — read this first
 
-State of the DLSS-NR on Intel Xe2 project as of **2026-11-04**. notes/CLAUDE.md holds the
-original brief; **this file overrides it wherever they disagree**, and after
-2026-09-09 they disagree about something foundational.
+State of the DLSS-NR on Intel Xe2 project as of **2026-11-05**. notes/CLAUDE.md holds the
+brief, shortened on 2026-11-04 (the original is `notes/archive/CLAUDE-until-2026-11-04.md`);
+**this file overrides it wherever they disagree**.
 
 **How to read this file.** "Where things stand" and "Open items" are the current state. The dated
 entries after them are the latest, newest first. Everything older is in `notes/archive/`, word
@@ -56,6 +56,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
     them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), and level again
     since that night, when the owner had both fast-forwarded to it (below, 11-04 night, later);
+  - `cleanup`: from `newnr` at `0456e99`, the shorter brief, `make test` in parallel and the
+    leftovers removed; PR #39 into `newnr`, a draft until it has run on a GPU (below, 11-05);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -161,6 +163,8 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `cleanup` (PR #39): `make test` in both memory modes and CTest, the first run on a GPU of its
+  runner, `attention.comp`, libxmx and `nr_resident`. Below, 11-05.
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -227,6 +231,8 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
+- `cleanup` (PR #39): `build_win.bat` and CTest, which now holds the setup's six suites. Below,
+  11-05.
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -313,6 +319,44 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## `cleanup`: a shorter brief, `make test` in parallel, and the leftovers removed (2026-11-05, branch `cleanup`, PR #39)
+
+At the owner's word, on a branch of its own from `newnr` at `0456e99`, pushed and opened as a draft
+into `newnr`. Nothing in it has run on a GPU.
+
+- **The brief.** `notes/CLAUDE.md` is 8.9 KB from 31.2 KB, about 6k tokens less at every session
+  start. The full text is `notes/archive/CLAUDE-until-2026-11-04.md`, word for word, and what older
+  notes cite as "notes/CLAUDE.md" with a phase number is there.
+- **`make test`** runs `src/tools/run_tests.py`: the old list in its order, each check with a kind.
+  The 27 that open no device run in a pool beside the GPU queue, which still holds one process on
+  the device; the heavy ones (the whole network, a daemon) have it alone; a timing gate and a
+  process-list check run last. A failure no longer stops the run; every check's output is kept in
+  `work/test-logs` and its time in `work/test-times.json`. `XMX_STAGING=1 make test-gpu` runs only
+  what the memory mode reaches, and `TEST_ARGS=--serial` the old order one at a time. CTest lost
+  its five `host_image_*` duplicates, and `make test` took CTest's two Linux-only checks.
+- **Gone:** four tests no runner ran; the `hnet_*` harness on the misread decode; `NR_JOINT_QKV`
+  with its kind in `attention.comp` and `xmx_rec_qkv` (off since 09-21, unreached since the QKV
+  epilogue); the `NR_FUSE_BRANCHED_FFN` switch (measured and not kept);
+  `src/probe/coopmat_store_bug.comp`, whose header claimed the bug phase38 withdrew; the
+  unbuilt `gemm_smallm.comp`.
+- **Back in a runner:** `tools/check_ui_resize.py`, broken since the panel moved on 10-31, as
+  `src/layer/test_ui_resize.py`; and the Windows setup's six suites, 187 tests that ran only by
+  hand. `make test` is 70 checks on Linux, CTest 69 entries.
+
+**Checked** in a cloud container with no Intel GPU and no weights: the list against the old recipe;
+the runner's scheduling on stand-in checks; the device-free checks, all but `test_dump_raw` (it
+needs ImageMagick 7); the shaders and libxmx compile; the six setup suites (21 of 187 skipped as
+Windows-only); CMake and `ctest -N`; `build_check`, `claims_check`, `publish_check --history`,
+`knob_doc --check`.
+
+**Next on Linux:** `git fetch`, `git switch cleanup`, stop the daemon, `make test` in both memory
+modes and CTest. `work/test-times.json` then holds each check's time, which no run has measured.
+**Next on Windows:** `build_win.bat` and CTest. **Waiting for the owner:** the merge, after both;
+whether the working rules take `make test-gpu` for the second memory mode, and CTest on Linux only
+when CMake changes. Proposed and not done: INT8 out of the main line (it is in libxmx, the shader
+lists and the release's file lists), Configure/Restore Steam (tied to the live launch path), one
+build system instead of three.
 
 ## Checked on Linux: `6ef670e`, and the walk on Mesa (2026-11-04, night, later, branch `alchemist`)
 
@@ -962,14 +1006,13 @@ followed from the wrong gate form), the leading-region projection, and "1.01x pa
 ```
 ref/        the DLL (0444) + sha256      NEVER modify, NEVER commit
 work/       weights, PTX modules, mlx-dlss clone, mlxw/*.safetensors, shim, builds
-notes/      24 findings documents
-src/tools/  PE/resource readers, the weight reader (now superseded), model_spec,
+notes/      the findings; INDEX.md maps them, archive/ holds what moved out
+src/tools/  PE/resource readers, the container's record reader (hnet_weights),
             and the PTX analysis tools: ptx_trace (dataflow), ptx_addrform
             (address → linear form), ptx_chains (accumulator chains)
 src/ref/    nr_model, nr_frame, nr_temporal, nr_display, nr_accel, image_io
 src/gpu/    xmxres, nr_resident, nr_frame_resident   <- the device path
 src/layer/  nr_layer.c, nr_daemon.py, nr-photo       <- into a game
-            hnet_*, forward, run_frame            <- superseded, kept for their findings
 src/gpu/    gemm_coopmat*.comp, libxmx.c, xmx.py, tests
 ```
 
@@ -983,7 +1026,6 @@ Regression, all should exit 0:
 python3 src/ref/test_nr_model.py                  # primitives, codec, temporal, graph
 work/venv/bin/python src/ref/test_against_torch.py # bit-identical to the original
 python3 src/gpu/test_resident.py                  # the device path, ~2 min
-python3 src/gpu/test_gemm.py                      # worst rel 2.4e-06
 python3 src/ref/nr_frame.py IN.png OUT.png --gpu  # the visual check
 python3 src/ref/nr_frame.py IN.png OUT.png --profile neutral   # the control: ~37x smaller
 ```
@@ -1008,8 +1050,8 @@ half cannot hold as a sum of two halves — more accurate than the reference's o
 float32 GEMM — for 16.8 s -> 21.2 s. It moves the head gap from 0.0174 to 0.0124 and
 no further; see `notes/phase9-numerics.md` for why zero is not reachable.
 
-The old harness (`src/tools/model_spec.py`, `src/ref/hnet_*.py`, `run_frame.py`) still
-runs but is built on the wrong weight decode; its scores measure scaffolding.
+The old harness on the wrong weight decode (`src/ref/hnet_*.py`, `forward.py`, `run_frame.py`,
+`src/tools/model_spec.py`) was removed on 2026-11-04; the notes that cite it read it at `6d7ad8c`.
 
 ---
 

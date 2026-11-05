@@ -174,10 +174,6 @@ class GlobalScratch:
 def record_qkv(runtime, w, s, windows, tokens, channels, heads, *, vit=False):
     """Split V; optionally normalize Q/K directly from the projection buffer. `vit`: the
     ViT's normalisation and query scale."""
-    if runtime.fuse_qk and runtime.joint_qkv:
-        runtime.prepare_qkv(s.proj, s.q16, s.k16, s.v16, w.scale, windows, tokens, heads,
-                            vit=vit)
-        return
     if runtime.fuse_qk:
         with runtime.independent():
             runtime.cosine_publish(s.proj, s.q16, windows * heads * tokens,
@@ -455,18 +451,15 @@ def record_feed_forward(runtime, w, s, source, source_half=False, source16=None,
     if not source_half and source16 is None:
         runtime.e4m3_half(source, s.value16, pixels * channels)
     if w.branched:
-        if (runtime.fuse_branched_ffn and pixels % 16 == 0 and channels % 16 == 0
-                and channels == w.groups * 32):
-            # every group's expand and projection in one pass, the hidden layer on chip
-            runtime.ffn_fused(value16, w.expand, w.branch, s.heads16, pixels, channels, 128,
-                              groups=w.groups, epilogue=xmxres.EPI_E4M3, narrow=True)
-        else:
-            _ffn_groups(runtime, value16, w.expand, s.hidden16, pixels, 128, channels,
-                        w.groups, leading=(0, 0, s.hidden_width),
-                        strides=(0, channels * 128, 128), epilogue=xmxres.EPI_GATE_E4M3)
-            _ffn_groups(runtime, s.hidden16, w.branch, s.heads16, pixels, 32, 128,
-                        w.groups, leading=(s.hidden_width, 0, channels),
-                        strides=(128, 128 * 32, 32), epilogue=xmxres.EPI_E4M3)
+        # Each group's expand, then each group's projection. All the groups in one fused
+        # pass (NR_FUSE_BRANCHED_FFN, removed on 2026-11-04) was measured and not kept:
+        # slower at every extent but 720p (archive, HANDOFF until 2026-10-07).
+        _ffn_groups(runtime, value16, w.expand, s.hidden16, pixels, 128, channels,
+                    w.groups, leading=(0, 0, s.hidden_width),
+                    strides=(0, channels * 128, 128), epilogue=xmxres.EPI_GATE_E4M3)
+        _ffn_groups(runtime, s.hidden16, w.branch, s.heads16, pixels, 32, 128,
+                    w.groups, leading=(s.hidden_width, 0, channels),
+                    strides=(128, 128 * 32, 32), epilogue=xmxres.EPI_E4M3)
         # the fused multi-head kernels publish the residual before attention reads it,
         # which the residual now does on its way out — as half, which holds it exactly
         record_project_residual(runtime, s.heads16, w.ffn_out, s.branch, source, w.ffn_cos,

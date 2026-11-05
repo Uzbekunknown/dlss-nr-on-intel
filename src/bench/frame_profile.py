@@ -132,7 +132,7 @@ def record_calls(lib):
     log = []
     for name in [n for n in dir(lib) if n.startswith("xmx_rec_")] + [
             n for n in ("xmx_rec_gemm", "xmx_rec_gemm_residual", "xmx_rec_gemm_window_residual",
-                        "xmx_rec_gemm_qkv", "xmx_rec_unary", "xmx_rec_row", "xmx_rec_qkv",
+                        "xmx_rec_gemm_qkv", "xmx_rec_unary", "xmx_rec_row",
                         "xmx_rec_window_attention", "xmx_rec_copy", "xmx_rec_history")
             if n not in dir(lib)]:
         real = getattr(lib, name)
