@@ -160,7 +160,46 @@ struct nrex_vk_ui : nrex_ui {
     VkRenderPass          pass;
     VkFramebuffer         fb;
     uint32_t              width, height;
+
+    /* The ImGui backend's ImageCount: its ring of vertex buffers, and how many frames a texture it
+     * is to destroy must have gone unused. */
+    uint32_t              image_count;
+    /* `nrex_vk_drain_hook`: waits until none of the caller's recordings is in flight. */
+    void                (*drain)(void *user);
+    void                 *drain_user;
 };
+
+extern "C" NREX_API void nrex_vk_drain_hook(nrex_ui *base, void (*drain)(void *user), void *user)
+{
+    nrex_vk_ui *u = static_cast<nrex_vk_ui *>(base);
+    if (!u) return;
+    u->drain = drain;
+    u->drain_user = user;
+}
+
+static void nrex_drain(nrex_vk_ui *u)
+{
+    if (u && u->drain) u->drain(u->drain_user);
+}
+
+/* Whether this frame's draw data asks the backend to create, update or destroy a texture - the
+ * font atlas, which grows a glyph at a time as text the panel has not drawn before appears.
+ * `ImGui_ImplVulkan_UpdateTexture` does that on the UI's own queue and changes the atlas's layout
+ * while it copies, so it must not run while an earlier recording on the game's queue still samples
+ * the atlas; a destroy happens only once the texture has gone `ImageCount` frames unused, and is
+ * counted here only then. */
+static bool nrex_textures_busy(const nrex_vk_ui *u)
+{
+    ImDrawData *draw = ImGui::GetDrawData();
+    if (!draw || !draw->Textures) return false;
+    for (ImTextureData *tex : *draw->Textures) {
+        if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates)
+            return true;
+        if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames >= (int)u->image_count)
+            return true;
+    }
+    return false;
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -237,10 +276,12 @@ static bool nrex_make_target(nrex_vk_ui *u, uint32_t w, uint32_t h, const char *
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    /* GENERAL as the initial layout too: that is where the previous frame's pass left it, and
-     * naming a different layout than the previous finalLayout is the same class of mismatch. The
-     * first frame's contents are undefined and the load op clears. */
-    att.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    /* UNDEFINED as the initial layout: the load op clears every pixel, so what the image held - and
+     * in what layout - does not matter. It said GENERAL, "where the previous frame's pass left it",
+     * which is true from the second frame on but not for a new image: one made at the start and one
+     * after every resize began UNDEFINED, and validation reported each (2026-11-06; these were the
+     * `VUID-vkCmdDraw-None-09600` lines, two a run). */
+    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     /* GENERAL, because the menu shader reads this image as a STORAGE image and that is the only
      * layout a storage image may be in. The alternative - SHADER_READ_ONLY plus a barrier before
      * every blend - buys nothing here: the image is written once a frame and read once a frame.
@@ -251,11 +292,34 @@ static bool nrex_make_target(nrex_vk_ui *u, uint32_t w, uint32_t h, const char *
     sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub.colorAttachmentCount = 1;
     sub.pColorAttachments = &ref;
+    /* **Both dependencies spelled out** (2026-11-06). Left implicit, the one into the pass begins at
+     * no stage at all, so its layout transition - a write of the whole image - was ordered after
+     * nothing: not after the previous frame's blend, which reads this image in a compute shader. That
+     * held only while the layer waited for each frame's blend before recording the next. Now the
+     * transition waits for earlier compute and colour work on the queue, and the dependency out of
+     * the pass makes this frame's drawing visible to the blend (and to the dump's copy). */
+    VkSubpassDependency deps[2] = {};
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = 0;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_TRANSFER_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].srcSubpass = 0;
+    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
     VkRenderPassCreateInfo pci = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, 0};
     pci.attachmentCount = 1;
     pci.pAttachments = &att;
     pci.subpassCount = 1;
     pci.pSubpasses = &sub;
+    pci.dependencyCount = 2;
+    pci.pDependencies = deps;
     if (u->vk.create_pass(u->device, &pci, nullptr, &u->pass) != VK_SUCCESS) {
         *why = "no render pass for the menu UI";
         return false;
@@ -421,6 +485,7 @@ extern "C" NREX_API nrex_ui *nrex_create(void *device_v, void *physical_v, void 
     init.DescriptorPoolSize = 16;             /* its own pool, so nothing of the game's is touched */
     init.MinImageCount = min_image_count;
     init.ImageCount = image_count;
+    u->image_count = image_count;
     init.PipelineInfoMain.RenderPass = u->pass;
     init.UseDynamicRendering = false;
     init.CheckVkResultFn = [](VkResult err) {
@@ -605,14 +670,20 @@ static void nrex_dump_ui(nrex_vk_ui *u)
 
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
+    /* What is copied is the image as the previous frame left it: this frame's drawing is recorded
+     * but not yet submitted. That frame's recording has to have finished, which the caller no longer
+     * waits for on its own. */
+    nrex_drain(u);
     if (!nrex_oneshot_begin(u, &pool, &cmd)) return;
     if (cmd) {
-        /* The image is in COLOR_ATTACHMENT_OPTIMAL when `nrex_render` returns; the task below
-         * migrates it to TRANSFER_SRC and back, leaving it exactly as the next frame expects. */
+        /* The image is in GENERAL between frames - the render pass's final layout, where the blend
+         * reads it. The task below migrates it to TRANSFER_SRC and back. It said
+         * COLOR_ATTACHMENT_OPTIMAL both ways, so a run with the dump left the next frame's pass an
+         * image in a layout it did not expect, and validation said so twice (2026-11-06). */
         VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, 0};
         b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
         b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -634,7 +705,7 @@ static void nrex_dump_ui(nrex_vk_ui *u)
         back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         back.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        back.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        back.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         u->vk.barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1,
                       &back);
@@ -697,6 +768,10 @@ extern "C" NREX_API void nrex_render(nrex_ui *base, uint64_t cmd_handle)
      * that rectangle and no more (`nrex_drawn_rect`). The clear below stays whole - it is one fast
      * clear, and it keeps the image transparent wherever a later, larger frame reads. */
     nrex_note_drawn(ui, ImGui::GetDrawData(), ui->width, ui->height);
+    /* A new glyph is uploaded inside `ImGui_ImplVulkan_RenderDrawData`, on the UI's queue, while
+     * earlier frames may still be sampling the atlas on the game's: those finish first. Rare - the
+     * first frames, a language never shown before - and nothing in between. */
+    if (nrex_textures_busy(ui)) nrex_drain(ui);
     VkCommandBuffer cmd = (VkCommandBuffer)(uintptr_t)cmd_handle;
 
     /* Clear to transparent, then draw. The blend-copy on the C side keeps alpha 0 pixels

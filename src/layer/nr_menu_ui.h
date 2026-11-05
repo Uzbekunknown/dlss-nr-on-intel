@@ -95,7 +95,9 @@ typedef struct nrex_ui nrex_ui;
  *   format            the swapchain's format, so the intermediate image matches
  *   api_version       the instance's declared API version, for the backend's pipeline layout
  *   min_image_count   the swapchain's minimum image count
- *   image_count       the swapchain's image count
+ *   image_count       how many of the caller's recordings can be in flight at once: the backend
+ *                     keeps a vertex and an index buffer for each and rewrites one a frame, in
+ *                     turn, so this must be at least the caller's ring (NR_MENU_SLOTS)
  *   load_fn           vkGetDeviceProcAddr, for everything device-level
  *   load_instance_fn  vkGetInstanceProcAddr, for the physical-device queries the device resolver
  *                     deliberately refuses (the loader's contract, learned the hard way)
@@ -117,6 +119,13 @@ void nrex_destroy(nrex_ui *ui);
  * to be given the loader's data, or a layer below this one cannot find its device by it. Before
  * `nrex_create`. */
 void nrex_vk_loader_data(void *set_loader_data);
+
+/* What the backend calls before it touches something an earlier recording may still be using: the
+ * font atlas, which it uploads on its own queue whenever a glyph is new, and the UI image the
+ * verification dump copies. `drain` waits until none of the caller's recordings is in flight
+ * (2026-11-06, when the caller stopped waiting for each one before presenting). NULL waits for
+ * nothing, which is right only for a caller that waits for every recording itself. */
+void nrex_vk_drain_hook(nrex_ui *ui, void (*drain)(void *user), void *user);
 
 /* The frame's window. Call between nrex_new_frame and nrex_render.
  *

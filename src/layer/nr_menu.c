@@ -189,6 +189,11 @@ gb10a2, which changes how a colour constant is packed -
      * inside a frame - an allocation on the present path is a stall. */
     VkDescriptorSet set;
     VkDescriptorSet compare_set;
+    /* The overlay's sets, one per place in the layer's ring of recordings (`NR_MENU_SLOTS`). One set
+     * rewritten every frame was safe while the layer waited for each frame's blend before the next;
+     * with frames still running it would rewrite a set a pending dispatch reads, which Vulkan does
+     * not allow. Each slot's set is rewritten only after that slot's fence. */
+    VkDescriptorSet overlay_sets[NR_MENU_SLOTS];
 
     /* The font, and the atlas as the shader sees it: a storage buffer indexed by address. An R8
      * image would need a sampled-image descriptor and a layout transition on every use; a buffer
@@ -686,14 +691,16 @@ static int build_pipeline(nr_menu *m, const char **why)
      * type the pool did not declare, and it refuses by returning an error rather than by saying
      * which type was missing.
      *
-     * Counts are per-set times the number of sets: 2 sets, each with 2 images and 2 buffers. */
+     * Counts are per-set times the number of sets: the menu's two and the overlay's one per slot,
+     * each with 2 images and 2 buffers. */
+    enum { SETS = 2 + NR_MENU_SLOTS };
     VkDescriptorPoolSize pool_sizes[2] = {
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  4 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,  2 * SETS },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * SETS },
     };
     VkDescriptorPoolCreateInfo dpci = {0};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 2;
+    dpci.maxSets = SETS;
     dpci.poolSizeCount = 2;
     dpci.pPoolSizes = pool_sizes;
     if (m->create_descriptor_pool(m->device, &dpci, NULL, &m->pool) != VK_SUCCESS) {
@@ -703,19 +710,22 @@ static int build_pipeline(nr_menu *m, const char **why)
     /* `pSetLayouts` names the LAYOUTS the sets are allocated from - not the sets themselves, which
      * do not exist yet. The two are both opaque 64-bit handles, so getting it wrong compiles with
      * only a warning and then fails inside the driver. Caught here by MSVC's C4133. */
-    VkDescriptorSetLayout set_layouts[2] = { m->set_layout, m->set_layout };
+    VkDescriptorSetLayout set_layouts[SETS];
+    for (int i = 0; i < SETS; ++i) set_layouts[i] = m->set_layout;
     VkDescriptorSetAllocateInfo dsai = {0};
     dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     dsai.descriptorPool = m->pool;
-    dsai.descriptorSetCount = 2;
+    dsai.descriptorSetCount = SETS;
     dsai.pSetLayouts = set_layouts;
-    VkDescriptorSet sets[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDescriptorSet sets[SETS];
+    memset(sets, 0, sizeof sets);
     if (m->allocate_descriptor_sets(m->device, &dsai, sets) != VK_SUCCESS) {
         *why = "no descriptor for the menu";
         return 0;
     }
     m->set = sets[0];
     m->compare_set = sets[1];
+    for (int i = 0; i < NR_MENU_SLOTS; ++i) m->overlay_sets[i] = sets[2 + i];
 
     VkComputePipelineCreateInfo cpci = {0};
     cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
@@ -1178,22 +1188,58 @@ void nr_menu_set_note(nr_menu *m, const char *note)
  * a frame would allocate and free every frame inside somebody's present path; a swapchain has a
  * small fixed set of images that recur, so the views are kept and looked up by handle.
  *
- * Linear and bounded: a swapchain is three to five images, and this runs once a frame. */
-static VkImageView image_view_for(nr_menu *m, VkImage image)
+ * Linear and bounded: a swapchain is three to five images, and this runs once a frame.
+ *
+ * **Every image of the swapchain gets an entry** (2026-11-06). A miss used to drop every view and
+ * keep the new one alone, on the reasoning that a new image meant a recreated swapchain - but every
+ * image of a swapchain is new to a one-entry cache, so with three images every frame destroyed the
+ * view the previous frame had used and made another. That was only safe because the layer waited
+ * for each frame's blend before the next; with frames still running it destroyed a view a pending
+ * dispatch was writing through. Views now go when the swapchain does (`nr_menu_forget_views`, once
+ * the layer has waited for its recordings), and a full cache is the caller's to empty the same way
+ * (`nr_menu_view_ready`). */
+static int view_slot(const nr_menu *m, VkImage image)
 {
     for (int i = 0; i < NR_VIEW_CACHE; ++i)
-        if (m->views[i].image == image && m->views[i].view != VK_NULL_HANDLE)
-            return m->views[i].view;
+        if (m->views[i].image == image && m->views[i].view != VK_NULL_HANDLE) return i;
+    return -1;
+}
 
-    /* A new image: the swapchain was recreated, so the old views are dead. Dropping them here
-     * rather than tracking recreation is correct and one line - the images they named are gone,
-     * and a stale view would be a use-after-free the driver reports as a device loss. */
+static int free_view_slot(const nr_menu *m)
+{
+    for (int i = 0; i < NR_VIEW_CACHE; ++i)
+        if (m->views[i].view == VK_NULL_HANDLE) return i;
+    return -1;
+}
+
+int nr_menu_view_ready(nr_menu *m, uint64_t image)
+{
+    if (!m) return 0;
+    return view_slot(m, (VkImage)image) >= 0 || free_view_slot(m) >= 0;
+}
+
+void nr_menu_forget_views(nr_menu *m)
+{
+    if (!m || !m->device || !m->destroy_image_view) return;
     for (int i = 0; i < NR_VIEW_CACHE; ++i) {
-        if (m->views[i].view != VK_NULL_HANDLE) {
+        if (m->views[i].view != VK_NULL_HANDLE)
             m->destroy_image_view(m->device, m->views[i].view, NULL);
-            m->views[i].view = VK_NULL_HANDLE;
-            m->views[i].image = VK_NULL_HANDLE;
-        }
+        m->views[i].view = VK_NULL_HANDLE;
+        m->views[i].image = VK_NULL_HANDLE;
+    }
+}
+
+static VkImageView image_view_for(nr_menu *m, VkImage image)
+{
+    int found = view_slot(m, image);
+    if (found >= 0) return m->views[found].view;
+
+    /* Full: the caller was to have emptied it after waiting (`nr_menu_view_ready`). Emptied here
+     * anyway rather than drawing nothing, which is what this did before the ring existed. */
+    int slot = free_view_slot(m);
+    if (slot < 0) {
+        nr_menu_forget_views(m);
+        slot = 0;
     }
 
     VkImageViewCreateInfo vci = {0};
@@ -1208,8 +1254,8 @@ static VkImageView image_view_for(nr_menu *m, VkImage image)
     if (m->create_image_view(m->device, &vci, NULL, &view) != VK_SUCCESS)
         return VK_NULL_HANDLE;
 
-    m->views[0].image = image;
-    m->views[0].view = view;
+    m->views[slot].image = image;
+    m->views[slot].view = view;
     return view;
 }
 
@@ -1333,20 +1379,23 @@ static int utf8_next(const char **p, int *codepoint)
  * storage-image machinery lives - with the UI's view where the reference image goes. The push
  * block's panel_size is the full image, because a whole-frame pass has no panel rectangle.
  */
-void nr_menu_draw_overlay(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
+void nr_menu_draw_overlay(nr_menu *m, uint32_t slot, uint64_t cmd_handle, uint64_t target_handle,
                           uint64_t ui_view_handle, uint32_t width, uint32_t height)
 {
-    nr_menu_draw_overlay_rect(m, cmd_handle, target_handle, ui_view_handle, 0, 0, width, height);
+    nr_menu_draw_overlay_rect(m, slot, cmd_handle, target_handle, ui_view_handle, 0, 0, width,
+                              height);
 }
 
 /* Mode 3 over one rectangle. The shader already reads `at = panel_origin + local` from both images
  * and stops at `panel_size`, so the rectangle is the push block's origin and size and the dispatch
  * covers it alone; nothing in `menu.comp` changes. */
-void nr_menu_draw_overlay_rect(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
-                               uint64_t ui_view_handle, uint32_t x, uint32_t y,
-                               uint32_t width, uint32_t height)
+void nr_menu_draw_overlay_rect(nr_menu *m, uint32_t slot, uint64_t cmd_handle,
+                               uint64_t target_handle, uint64_t ui_view_handle, uint32_t x,
+                               uint32_t y, uint32_t width, uint32_t height)
 {
     if (!m || !m->pipeline || !width || !height) return;
+    VkDescriptorSet set = m->overlay_sets[slot % NR_MENU_SLOTS];
+    if (set == VK_NULL_HANDLE) return;
 
     VkCommandBuffer cmd = (VkCommandBuffer)(uintptr_t)cmd_handle;
     VkImage target = (VkImage)target_handle;
@@ -1379,7 +1428,7 @@ void nr_menu_draw_overlay_rect(nr_menu *m, uint64_t cmd_handle, uint64_t target_
     VkWriteDescriptorSet writes[4] = {{0}, {0}, {0}, {0}};
     for (int i = 0; i < 4; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = m->compare_set;
+        writes[i].dstSet = set;
         writes[i].dstBinding = (uint32_t)i;
         writes[i].descriptorCount = 1;
         if (i < 2) {
@@ -1393,8 +1442,7 @@ void nr_menu_draw_overlay_rect(nr_menu *m, uint64_t cmd_handle, uint64_t target_
     m->update_descriptor_sets(m->device, 4, writes, 0, NULL);
 
     m->cmd_bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipeline);
-    m->cmd_bind_descriptor(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1,
-                           &m->compare_set, 0, NULL);
+    m->cmd_bind_descriptor(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &set, 0, NULL);
 
     nr_menu_push push;
     memset(&push, 0, sizeof push);

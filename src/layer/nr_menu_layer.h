@@ -12,17 +12,18 @@
  * empty elsewhere. Linux then compiles none of the menu and `nr_layer.c` comes back to the size it
  * has on `newnr`.
  *
- * **The hooks.** Three, matching the three moments the layer needs the menu:
+ * **The hooks.** Four, matching the four moments the layer needs the menu:
  *
- *   nr_menu_layer_note_storage  a swapchain was created - remember whether it took STORAGE
- *   nr_menu_layer_present       a frame is about to present - build, read keys, draw
- *   nr_menu_layer_destroy       the device is going - release the bridge, panel, pool and fence
+ *   nr_menu_layer_note_storage    a swapchain was created - remember whether it took STORAGE
+ *   nr_menu_layer_present         a frame is about to present - build, read keys, draw
+ *   nr_menu_layer_swapchain_gone  a swapchain is going - its semaphores and views (2026-11-06)
+ *   nr_menu_layer_destroy         the device is going - release the bridge, panel, pool and fences
  *
  * The names are these, and the comment used to say create_swapchain and destroy_device, which
  * is what the code does NOT call them. A header that names functions nobody can find is worse than
  * no comment: it reads as documentation of an API that does not exist.
  *
- * Off Windows all three are `static inline` no-ops in this header, so `nr_layer.c` calls them with
+ * Off Windows all four are `static inline` no-ops in this header, so `nr_layer.c` calls them with
  * no `#ifdef` of its own and there is exactly one place that decides whether a menu exists.
  */
 #ifndef NR_MENU_LAYER_H
@@ -49,6 +50,11 @@ int nr_menu_layer_present(struct device_data *data, VkQueue queue,
 
 /* Release what the menu owns. Safe to call on a device that never built one. */
 void nr_menu_layer_destroy(struct device_data *data);
+
+/* A swapchain is about to be destroyed: wait for the panel's recordings into its images, then
+ * destroy the semaphores its presents waited on and the views the blend wrote through. Called with
+ * the present lock held, before the swapchain's entry is cleared. */
+void nr_menu_layer_swapchain_gone(struct device_data *data, struct swapchain_data *chain);
 
 /* ------------------------------------------------ what `nr_layer.c` lends this file
  *
@@ -77,6 +83,9 @@ static inline int nr_menu_layer_present(struct device_data *data, VkQueue queue,
                                         const VkPresentInfoKHR *info)
 { (void)data; (void)queue; (void)info; return 0; }
 static inline void nr_menu_layer_destroy(struct device_data *data) { (void)data; }
+static inline void nr_menu_layer_swapchain_gone(struct device_data *data,
+                                                struct swapchain_data *chain)
+{ (void)data; (void)chain; }
 
 #endif /* _WIN32 */
 

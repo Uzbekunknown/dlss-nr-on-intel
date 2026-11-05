@@ -122,6 +122,38 @@ static void layer_counts(void *user, nr_frame_counts *out)
 	out->network_frames = data->nr_network_frames;
 }
 
+/* Every recording of the panel's that may still be on the GPU, finished: waited for on its fence.
+ *
+ * The ring (`menu_slot_*`) lets a frame's panel run on the GPU while the next one is recorded, so
+ * the present does not wait for the GPU. What it shares between frames is safe because each slot is
+ * reused only after its own fence - but a few things are not per slot, and before one of them is
+ * destroyed or rewritten, every frame that may use it has to be done: the UI image on a resize, the
+ * font atlas the backend uploads a new glyph into (`nrex_vk_drain_hook`), the views of a swapchain
+ * that is going, the pool when the queue family changes. All rare, and each a wait for at most a few
+ * frames of the panel's own work.
+ *
+ * Returns 0 when a fence did not signal in 2 s - a hung or lost device, where nothing the caller
+ * was about to destroy is safe to destroy. */
+static int menu_drain(struct device_data *data)
+{
+	PFN_vkWaitForFences wait = (PFN_vkWaitForFences)
+		data->get_device_proc(data->device, "vkWaitForFences");
+	if (!wait) return 0;
+	VkFence fences[NR_MENU_SLOTS];
+	uint32_t n = 0;
+	for (uint32_t i = 0; i < NR_MENU_SLOTS; ++i)
+		if (data->menu_slot_fences[i]) fences[n++] = data->menu_slot_fences[i];
+	if (!n) return 1;
+	if (wait(data->device, n, fences, VK_TRUE, 2000000000ull) == VK_SUCCESS) return 1;
+	fprintf(stderr, "[nr_layer] the panel's earlier frames did not finish in 2 s\n");
+	return 0;
+}
+
+static void menu_drain_hook(void *user)
+{
+	menu_drain((struct device_data *)user);
+}
+
 static void menu_build(struct device_data *data, struct swapchain_data *chain)
 {
 	if (data->menu_state) return;
@@ -189,17 +221,23 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 		data->get_device_queue(data->device, ui_family, 0, &ui_queue);
 		ui_family_out = ui_family;
 		VkInstance ui_instance = VK_NULL_HANDLE;
-	PFN_vkGetInstanceProcAddr ui_next = NULL;
-	nr_layer_menu_globals(&ui_instance, &ui_next);
-		/* The UI's own command buffers get the loader's data, as `menu_commands` below does. */
+		PFN_vkGetInstanceProcAddr ui_next = NULL;
+		nr_layer_menu_globals(&ui_instance, &ui_next);
+		/* The UI's own command buffers get the loader's data, as the ring's do below. */
 		nrex_vk_loader_data((void *)(uintptr_t)data->set_loader_data);
-	data->menu_ui = nrex_create(data->device, data->physical, (void *)ui_instance,
+		/* The backend's ring of vertex buffers is as long as the layer's ring of recordings, which
+		 * is what makes the one it rewrites each frame one no recording in flight still reads. The
+		 * swapchain's own count stays the minimum the backend is told. */
+		uint32_t min_images = chain_image_count(chain);
+		if (min_images > NR_MENU_SLOTS) min_images = NR_MENU_SLOTS;
+		data->menu_ui = nrex_create(data->device, data->physical, (void *)ui_instance,
 					    (void *)ui_queue, ui_family_out,
 					    (uint32_t)chain->format, 420u << 12,
-					    chain_image_count(chain), chain_image_count(chain),
+					    min_images, NR_MENU_SLOTS,
 					    (void *)(uintptr_t)data->get_device_proc,
 					    (void *)(uintptr_t)ui_next,
 					    font, font_size, codepoints, codepoint_count, &ui_why);
+		if (data->menu_ui) nrex_vk_drain_hook(data->menu_ui, menu_drain_hook, data);
 		/* NOT freed here. AddFontFromMemoryTTF adopts the buffer (FontData with
 		 * FontDataOwnedByAtlas left true) and frees it when the atlas is destroyed - freeing it
 		 * on this side too was a double free, which is the access violation this menu hit the
@@ -222,17 +260,39 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 	data->panel = nr_panel_create(data->menu, data->menu_ui, settings, data->menu_language, &host);
 }
 
-/* The menu's own command buffer, its fence, and one submit. See the note above on why it owns no
- * semaphores.
+/* The panel's frame: one recording from the ring, one submit, and the semaphore its present waits on.
+ *
+ * **The present no longer waits for the GPU** (2026-11-06). This used to end in a wait on the menu's
+ * fence: the submit took the game's present semaphores, so the present had nothing left to wait on
+ * and the CPU waited instead - for the panel's blend, and with it for the whole of the game's frame,
+ * since a fence covers everything submitted before it on the queue. With NR on that cost nothing new
+ * (NR waits for the frame anyway), but with NR off the frame counter in a corner made every present
+ * wait for its frame: 1.1 ms a present in `test_gpu_present`, and in a game that keeps the GPU busy,
+ * the CPU's head start on the next frame gone. It is how MangoHud's overlay presents, and Mesa's
+ * overlay layer before it: the submit signals a semaphore of the layer's own and the present waits on
+ * that one.
+ *
+ * What changed with it, because a frame's panel can now still be running when the next is recorded:
+ *
+ *   - the command buffer, its fence and the overlay's descriptor set are one of NR_MENU_SLOTS in a
+ *     ring, each reused only after its own fence (which also covers everything before it on the
+ *     queue), and the UI backend's ring of vertex buffers is as long (`menu_build`);
+ *   - the semaphore is one per swapchain image (`menu_done`): a semaphore a present waited on is
+ *     free again only once that image is acquired again, and the next composite into the image is
+ *     exactly then - validation reports any other reuse;
+ *   - what is shared and not per slot waits for the ring to empty first (`menu_drain`): the UI
+ *     image on a resize, the font atlas when a glyph is new, the views of a swapchain going;
+ *   - the UI's render pass orders its layout transition after the previous frame's blend
+ *     (`nr_menu_ui_vk.cpp`), which it did not, because nothing could be in flight.
  *
  * Returns 1 when the frame was drawn, 0 when there was nothing to record or the recording failed -
- * in which case the frame presents without a menu, which is a missing menu rather than a lost
- * game. */
+ * in which case the frame presents without a menu and with the game's own semaphores, which is a
+ * missing menu rather than a lost game. */
 static int menu_composite(struct device_data *data, struct swapchain_data *chain, VkQueue queue,
                           uint32_t index)
 {
 	if (!data->menu || data->device_error || data->transfer_error) return 0;
-	if (index >= chain->image_count) return 0;
+	if (index >= chain->image_count || index >= MAX_IMAGES) return 0;
 	if (!chain->storage_ok) return 0;
 
 /* "may be set and not read" - GCC and Clang take the attribute, MSVC has no such thing and treats
@@ -245,12 +305,11 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 
 /* Resolve one device entry point for this function's use.
  *
- * `NR_MAYBE_UNUSED` is not decoration: `FreeCommandBuffers` is in the list because the menu's own
- * pool is freed at teardown, which is not in this function - so the variable is set and never read
- * here. GCC's `-Wunused-but-set-variable` calls that a warning and the Linux build had 20 of them
- * where `newnr` had none. Marking the whole family is what keeps the list honest: adding an entry
- * for a call that turns out to live elsewhere does not cost a warning, and removing one does not
- * cost a build. */
+ * `NR_MAYBE_UNUSED` is not decoration: an entry can be in the list for a call that lives elsewhere,
+ * and GCC's `-Wunused-but-set-variable` calls that a warning - the Linux build had 20 of them where
+ * `newnr` had none. Marking the whole family is what keeps the list honest: adding an entry for a
+ * call that turns out to live elsewhere does not cost a warning, and removing one does not cost a
+ * build. */
 #define FN(type, name) type name NR_MAYBE_UNUSED = \
 	(type)data->get_device_proc(data->device, "vk" #name)
 	FN(PFN_vkAllocateCommandBuffers, AllocateCommandBuffers);
@@ -260,14 +319,15 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 	FN(PFN_vkCmdPipelineBarrier, CmdPipelineBarrier);
 	FN(PFN_vkQueueSubmit, QueueSubmit);
 	FN(PFN_vkCreateFence, CreateFence);
+	FN(PFN_vkDestroyFence, DestroyFence);
 	FN(PFN_vkResetFences, ResetFences);
 	FN(PFN_vkWaitForFences, WaitForFences);
-	FN(PFN_vkFreeCommandBuffers, FreeCommandBuffers);
+	FN(PFN_vkCreateSemaphore, CreateSemaphore);
+	FN(PFN_vkCreateCommandPool, CreateCommandPool);
+	FN(PFN_vkDestroyCommandPool, DestroyCommandPool);
 #undef FN
+	if (!CreateCommandPool || !CreateSemaphore || !DestroyFence) return 0;
 
-	/* Allocated once and reused, like `transfer_commands`: an allocation a frame is an allocation
-	 * on the present path. The fence is what makes reuse safe - the wait below completes the
-	 * previous frame's menu before this one resets its buffer. */
 	/* A pool of the menu's own, not `data->pool`.
 	 *
 	 * `data->pool` belongs to the capture path: `transfer()` creates it lazily, and `transfer()`
@@ -277,36 +337,26 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 	 * loader. That was this menu's crash: an access violation reading 0x70, which is a field of
 	 * the dispatch table behind a NULL handle.
 	 *
-	 * One pool for one command buffer, created on first use and destroyed with the rest. */
-#define FN2(type, name) type name = (type)data->get_device_proc(data->device, "vk" #name)
-	FN2(PFN_vkCreateCommandPool, CreateCommandPool);
-	FN2(PFN_vkDestroyCommandPool, DestroyCommandPool);
-#undef FN2
-	if (!CreateCommandPool) return 0;
-
-	/* One pool per queue family, rebuilt when the family changes.
-	 *
-	 * A command pool belongs to a family for its whole life and its command buffers may only be
-	 * submitted to a queue of that family. The layer reassigns `data->queue_family` at present time
-	 * when the presenting queue is a different one, and frees the CAPTURE pool there
-	 * (`release_transfer_resources`) for exactly this reason - the menu's pool was not included, so
-	 * it went stale. A submit from a stale pool is accepted by the loader and does nothing, which is
-	 * what the readback found: no pixel of the panel anywhere in the image, no error, no crash. */
+	 * One pool per queue family, rebuilt when the family changes. A command pool belongs to a family
+	 * for its whole life and its command buffers may only be submitted to a queue of that family.
+	 * The layer reassigns `data->queue_family` at present time when the presenting queue is a
+	 * different one, and frees the CAPTURE pool there (`release_transfer_resources`) for exactly
+	 * this reason - the menu's pool was not included, so it went stale. A submit from a stale pool
+	 * is accepted by the loader and does nothing, which is what the readback found: no pixel of the
+	 * panel anywhere in the image, no error, no crash. Its buffers may still be running, so the ring
+	 * empties first. */
 	if (data->menu_pool && data->menu_pool_family != data->queue_family) {
-		/* The command buffer came from this pool; the fence has already been waited, so both are
-		 * finished with. */
-		if (data->menu_commands && DestroyCommandPool) {
-			data->menu_commands = VK_NULL_HANDLE;
-		}
+		if (!menu_drain(data)) return 0;
+		for (uint32_t i = 0; i < NR_MENU_SLOTS; ++i) data->menu_slot_commands[i] = VK_NULL_HANDLE;
 		if (DestroyCommandPool) DestroyCommandPool(data->device, data->menu_pool, NULL);
 		data->menu_pool = VK_NULL_HANDLE;
 	}
 	if (!data->menu_pool) {
 		/* **`RESET_COMMAND_BUFFER` as well as `TRANSIENT`, and the first is not optional.**
-		 * Every frame the menu draws begins with `vkResetCommandBuffer` on this pool's one buffer,
-		 * and resetting a buffer from a pool without this flag is invalid usage - the maintainer's
-		 * validation run on vkcube reported it, and under validation vkcube then exited
-		 * 0xC0000409. `TRANSIENT` stays because the buffer is genuinely short-lived; the two flags
+		 * Every frame the menu draws begins with `vkResetCommandBuffer` on one of this pool's
+		 * buffers, and resetting a buffer from a pool without this flag is invalid usage - the
+		 * maintainer's validation run on vkcube reported it, and under validation vkcube then exited
+		 * 0xC0000409. `TRANSIENT` stays because the buffers are genuinely short-lived; the two flags
 		 * answer different questions. */
 		VkCommandPoolCreateInfo pci = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -317,42 +367,53 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 			return 0;
 		data->menu_pool_family = data->queue_family;
 	}
-	if (!data->menu_commands) {
+
+	/* This frame's place in the ring, its buffer and its fence. The fence is made signalled, so the
+	 * wait below is a wait for whatever the slot last ran and returns at once on its first use; it
+	 * is reset only just before the submit, so a frame that gives up earlier leaves it as it was. (It
+	 * was once made unsignalled and reset at the top, and the resize waited on it: a second's stall
+	 * at the first frame and after every resize, 2026-11-05.) */
+	uint32_t slot = data->menu_slot_next % NR_MENU_SLOTS;
+	if (!data->menu_slot_commands[slot]) {
 		VkCommandBufferAllocateInfo alloc = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 			.commandPool = data->menu_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 			.commandBufferCount = 1 };
-		if (AllocateCommandBuffers(data->device, &alloc, &data->menu_commands) != VK_SUCCESS)
+		VkCommandBuffer made = VK_NULL_HANDLE;
+		if (AllocateCommandBuffers(data->device, &alloc, &made) != VK_SUCCESS) return 0;
+		/* A command buffer is dispatchable: the loader's data, or a layer below cannot find its
+		 * device by it. */
+		if (data->set_loader_data && data->set_loader_data(data->device, made) != VK_SUCCESS)
 			return 0;
-		if (data->set_loader_data &&
-		    data->set_loader_data(data->device, data->menu_commands) != VK_SUCCESS) {
-			data->menu_commands = VK_NULL_HANDLE;
-			return 0;
-		}
+		data->menu_slot_commands[slot] = made;
 	}
-	/* **Made signalled, and reset only just before the submit** (2026-11-05). It was made unsignalled
-	 * and reset here, at the top - and the resize below waits on it, so the first frame the panel
-	 * drew on a swapchain, and the first after every change of its size, waited a whole second on a
-	 * fence nothing was going to signal: 1.02-1.08 s in `test_gpu_present` at both of its sizes,
-	 * with the 5 November build as with this one. Signalled while nothing is in flight, a wait on it
-	 * is a wait for the previous frame's work, which is what both waits here mean; the reset waits
-	 * for the submit, so a frame that gives up before it leaves the fence as it found it. The
-	 * corner's frame counter draws on every frame, so it met this on its first frame and would
-	 * have at every resize. */
-	if (!data->menu_fence) {
+	if (!data->menu_slot_fences[slot]) {
 		VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 			.flags = VK_FENCE_CREATE_SIGNALED_BIT };
-		if (CreateFence(data->device, &fi, NULL, &data->menu_fence) != VK_SUCCESS) return 0;
+		if (CreateFence(data->device, &fi, NULL, &data->menu_slot_fences[slot]) != VK_SUCCESS)
+			return 0;
 	}
-	/* The buffer is reused: the previous frame's must be done with it, which the end of that frame
-	 * waited for. Asked again rather than assumed, since that wait can give up. */
-	if (WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
-		return 0;
-	if (ResetCommandBuffer(data->menu_commands, 0) != VK_SUCCESS) return 0;
+	/* The semaphore this image's present will wait on. */
+	if (!chain->menu_done[index]) {
+		VkSemaphoreCreateInfo si = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		if (CreateSemaphore(data->device, &si, NULL, &chain->menu_done[index]) != VK_SUCCESS)
+			return 0;
+	}
+	VkCommandBuffer cmd = data->menu_slot_commands[slot];
+	VkFence fence = data->menu_slot_fences[slot];
+
+	/* What this slot ran NR_MENU_SLOTS frames ago has finished - and with it everything submitted
+	 * before it on the queue, so the backend's vertex buffer for this frame, which it last wrote as
+	 * many frames ago, is free as well. With fewer images than slots this returns at once. */
+	if (WaitForFences(data->device, 1, &fence, VK_TRUE, 1000000000ull) != VK_SUCCESS) return 0;
+	/* Taken from here on, whether or not this frame reaches its submit: the backend's ring advances
+	 * with every frame it draws, and the slot counter must not fall behind it. */
+	data->menu_slot_next++;
+	if (ResetCommandBuffer(cmd, 0) != VK_SUCCESS) return 0;
 
 	VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-	if (BeginCommandBuffer(data->menu_commands, &bi) != VK_SUCCESS) return 0;
+	if (BeginCommandBuffer(cmd, &bi) != VK_SUCCESS) return 0;
 
 	/* The image is the game's, and the presentation engine may still be reading the previous
 	 * frame from it. Up to GENERAL for the stores, and back to PRESENT_SRC_KHR at the end - the
@@ -367,7 +428,7 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = chain->images[index],
 		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
-	CmdPipelineBarrier(data->menu_commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+	CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 			   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
 
 	if (data->menu_ui) {
@@ -389,23 +450,14 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		 * the case a "recreate on swapchain creation" hook would miss. */
 		if (nrex_image_width(data->menu_ui) != chain->extent.width ||
 		    nrex_image_height(data->menu_ui) != chain->extent.height) {
-			/* The previous frame has to be finished before the image is destroyed.
-			 *
-			 * `nrex_resize` frees the UI image and makes a new one, and the frame before this one
-			 * was still reading it: ImGui draws into it and the blend pass samples it, and both are
-			 * queued behind `menu_fence` until the wait at the end of this function. Destroying an
-			 * image the GPU is still reading is undefined - it shows up as a corrupt panel, a
-			 * device loss, or nothing at all, depending on the driver.
-			 *
-			 * `WaitForFences` on the menu's own fence is the completion point for exactly that work,
-			 * and it is what the end of this function uses for the same reason. Waiting twice is
-			 * harmless: the second wait sees an already-signalled fence and returns at once.
-			 *
-			 * Skipped when there is no fence yet - the first frame, where there is nothing in flight
-			 * to wait for. */
-			if (data->menu_fence)
-				WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE,
-					      1000000000ull);
+			/* `nrex_resize` destroys the UI image and makes a new one, and earlier frames may
+			 * still be drawing into it and blending from it: the whole ring first. Destroying an
+			 * image the GPU is still using is undefined - a corrupt panel, a device loss, or
+			 * nothing at all, depending on the driver. */
+			if (!menu_drain(data)) {
+				EndCommandBuffer(cmd);
+				return 0;
+			}
 			if (!nrex_resize(data->menu_ui, chain->extent.width, chain->extent.height)) {
 				fprintf(stderr, "[nr_layer] the UI image would not resize to %ux%u; "
 						"keeping %ux%u\n", chain->extent.width, chain->extent.height,
@@ -416,12 +468,14 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		/* The panel's frame: its rows, the pointer, ImGui's frame and what the user did in it. */
 		nr_panel_frame(data->panel, chain->extent.width, chain->extent.height);
 
-		nrex_render(data->menu_ui, (uint64_t)(uintptr_t)data->menu_commands);
+		nrex_render(data->menu_ui, (uint64_t)(uintptr_t)cmd);
 
 		/* The render pass has just written the UI image and the blend is about to read it as a
 		 * storage image. Without this the dispatch is free to run while those writes are still in
 		 * flight, and what it reads is a mixture of this frame and the last - the banding the
-		 * first working build showed, with pieces of the game's own frame inside the panel.
+		 * first working build showed, with pieces of the game's own frame inside the panel. The
+		 * pass's own dependency out says the same since 2026-11-06; this stays as the statement
+		 * at the place it matters.
 		 *
 		 * Both layouts are GENERAL (a storage image has no other), so this orders access rather
 		 * than migrating layout. */
@@ -434,11 +488,11 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 			ui_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 			ui_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			ui_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-			ui_barrier.image = (VkImage)(uintptr_t)nrex_image(data->menu_ui);
+			ui_barrier.image = (VkImage)nrex_image(data->menu_ui);
 			ui_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			ui_barrier.subresourceRange.levelCount = 1;
 			ui_barrier.subresourceRange.layerCount = 1;
-			CmdPipelineBarrier(data->menu_commands,
+			CmdPipelineBarrier(cmd,
 					   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 					   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 					   0, 0, NULL, 0, NULL, 1, &ui_barrier);
@@ -450,7 +504,7 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 				LAYER_TRACE("[ov] menu=%p ui=%p view=%p img=%p cmd=%p target=%p %ux%u\n",
 					(void *)data->menu, (void *)data->menu_ui,
 					nrex_image_view(data->menu_ui), nrex_image(data->menu_ui),
-					(void *)data->menu_commands, (void *)chain->images[index],
+					(void *)cmd, (void *)chain->images[index],
 					chain->extent.width, chain->extent.height);
 			}
 		}
@@ -459,21 +513,30 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		 * a pass over the whole image is millions on every frame the counter is shown. */
 		uint32_t rx = 0, ry = 0, rw = 0, rh = 0;
 		if (nrex_drawn_rect(data->menu_ui, &rx, &ry, &rw, &rh) &&
-		    rx + rw <= chain->extent.width && ry + rh <= chain->extent.height)
-			nr_menu_draw_overlay_rect(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
-						  (uint64_t)(uintptr_t)chain->images[index],
-						  (uint64_t)(uintptr_t)nrex_image_view(data->menu_ui),
-						  rx, ry, rw, rh);
+		    rx + rw <= chain->extent.width && ry + rh <= chain->extent.height) {
+			/* A view of this image for the blend to write through, kept between frames. A full
+			 * cache - more images than it holds, which a swapchain going normally prevents - is
+			 * emptied only once nothing can be writing through those views. */
+			/* Straight to 64 bits, not through `uintptr_t`: an image and a view are 64-bit
+			 * handles on x86 too, where `uintptr_t` would cut them to 32 (nr_menu.c says the
+			 * same of its side). The command buffer is a pointer, so it may go through it. */
+			uint64_t target = (uint64_t)chain->images[index];
+			if (!nr_menu_view_ready(data->menu, target)) {
+				if (menu_drain(data)) nr_menu_forget_views(data->menu);
+			}
+			nr_menu_draw_overlay_rect(data->menu, slot, (uint64_t)(uintptr_t)cmd, target,
+						  nrex_image_view(data->menu_ui), rx, ry, rw, rh);
+		}
 	}
 
 	barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
 	barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-	CmdPipelineBarrier(data->menu_commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+	CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
 
-	if (EndCommandBuffer(data->menu_commands) != VK_SUCCESS) return 0;
+	if (EndCommandBuffer(cmd) != VK_SUCCESS) return 0;
 
 	/* The game's present waits, so this store is ordered after the frame that is being presented.
 	 *
@@ -483,23 +546,18 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 	 * the frame's own rendering finished. `transfer()` waits on `data->present_wait` for the same
 	 * reason and its pixels do reach the screen.
 	 *
-	 * **This said that waiting does not consume a semaphore, and for a binary semaphore it does**:
-	 * the wait leaves it unsignalled, which is why a semaphore can be waited once (below). The menu
-	 * signals nothing, which stays true.
-	 *
 	 * Zero waits is a real case, not a fallback: the waits are gone once a capture has taken them,
 	 * and the menu still has to draw - ordered then by the capture's own completion, which the layer
 	 * waited for on its private fence before this submit was made.
 	 *
-	 * **Waits a capture already took are not waited again, and the ones this submit takes are
-	 * the present's no longer** (2026-11-05). A binary semaphore is unsignalled by the wait that
-	 * consumes it, so each can be waited once. The GPU path's capture takes the game's waits and
-	 * left `present_wait_count` as it was, so the menu waited on them a second time; and with NR off
-	 * the menu took them and the present waited on them again. Both are waits on a semaphore with
-	 * no signal to come, which Intel's driver has let pass. Now the menu waits only on what nobody
-	 * took, and marks them taken: the present then goes without waits, as after `transfer()`,
-	 * because the fence below has seen this submit - and with it the game's frame - complete. That
-	 * the frame counter can draw on every frame with NR off is what made it matter. */
+	 * **Waits a capture already took are not waited again** (2026-11-05). A binary semaphore is
+	 * unsignalled by the wait that consumes it, so each can be waited once. The GPU path's capture
+	 * takes the game's waits and left `present_wait_count` as it was, so the menu waited on them a
+	 * second time; and with NR off the menu took them and the present waited on them again. Both
+	 * are waits on a semaphore with no signal to come, which Intel's driver has let pass. Now the
+	 * menu waits only on what nobody took, marks them taken, and signals this image's own
+	 * semaphore, which is the one the present waits on (`present_now`): it covers the game's waits
+	 * as well, since this submit waited for them before it ran. */
 	uint32_t waits = data->waits_consumed ? 0 : data->present_wait_count;
 	if (waits > data->transfer_stage_capacity) {
 		VkPipelineStageFlags *grown = realloc(data->transfer_stages,
@@ -510,38 +568,31 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		for (uint32_t i = 0; i < waits; ++i)
 			grown[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 	}
+	VkSemaphore done = chain->menu_done[index];
 	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = waits, .pWaitSemaphores = waits ? data->present_wait : NULL,
 		.pWaitDstStageMask = waits ? data->transfer_stages : NULL,
-		.commandBufferCount = 1, .pCommandBuffers = &data->menu_commands,
-		.signalSemaphoreCount = 0, .pSignalSemaphores = NULL };
-	if (ResetFences(data->device, 1, &data->menu_fence) != VK_SUCCESS) {
+		.commandBufferCount = 1, .pCommandBuffers = &cmd,
+		.signalSemaphoreCount = 1, .pSignalSemaphores = &done };
+	if (ResetFences(data->device, 1, &fence) != VK_SUCCESS) {
 		data->device_error = VK_ERROR_DEVICE_LOST;
 		return 0;
 	}
-	if (QueueSubmit(queue, 1, &si, data->menu_fence) != VK_SUCCESS) {
-		/* Reset and never submitted, the fence would hold every later frame for a second at the
-		 * wait above. Made again, signalled, on the next frame instead. */
-		PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)
-			data->get_device_proc(data->device, "vkDestroyFence");
-		if (destroy_fence) {
-			destroy_fence(data->device, data->menu_fence, NULL);
-			data->menu_fence = VK_NULL_HANDLE;
-		}
+	if (QueueSubmit(queue, 1, &si, fence) != VK_SUCCESS) {
+		/* Reset and never submitted, the fence would hold this slot for a second at every turn of
+		 * the ring. Made again, signalled, when the slot comes round - after the rest of the ring
+		 * has finished, so that a fresh fence on this slot does not stand for work it never saw. */
+		menu_drain(data);
+		DestroyFence(data->device, fence, NULL);
+		data->menu_slot_fences[slot] = VK_NULL_HANDLE;
 		return 0;
 	}
 	if (waits) {
 		data->waits_consumed = 1;
 		data->present_wait_count = 0;
 	}
-
-	/* Waited rather than deferred: the buffer is reused next frame, and the wait is the menu's own
-	 * cost - a compute dispatch over the panel - not the game's. Deferring would need a command
-	 * buffer and a fence per frame in flight, which is more state than the feature is worth. */
-	if (WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
-		return 0;
-
-return 1;
+	data->menu_present_signal = done;
+	return 1;
 }
 
 /* ------------------------------------------------------------------ the hooks
@@ -590,9 +641,35 @@ int nr_menu_layer_present(struct device_data *data, VkQueue queue,
 	return 0;
 }
 
+void nr_menu_layer_swapchain_gone(struct device_data *data, struct swapchain_data *chain)
+{
+	if (!data || !chain) return;
+	int drawn = 0;
+	for (uint32_t i = 0; i < MAX_IMAGES; ++i)
+		if (chain->menu_done[i]) drawn = 1;
+	/* Nothing to do for a swapchain the panel never drew into: it has no semaphores, and the
+	 * views it keeps are of images it drew into. */
+	if (!drawn) return;
+	/* The panel's recordings into these images finish first. The game has waited for its own work
+	 * before destroying the swapchain - `vkDestroySwapchainKHR` asks that every use of its images
+	 * has completed - but it cannot know about the layer's, which came after its own. */
+	menu_drain(data);
+	if (data->menu) nr_menu_forget_views(data->menu);
+	PFN_vkDestroySemaphore destroy_semaphore = (PFN_vkDestroySemaphore)
+		data->get_device_proc(data->device, "vkDestroySemaphore");
+	for (uint32_t i = 0; i < MAX_IMAGES; ++i) {
+		if (chain->menu_done[i] && destroy_semaphore)
+			destroy_semaphore(data->device, chain->menu_done[i], NULL);
+		chain->menu_done[i] = VK_NULL_HANDLE;
+	}
+}
+
 void nr_menu_layer_destroy(struct device_data *data)
 {
 	if (!data) return;
+	/* The ring's recordings finish before anything they used goes. A device being destroyed is
+	 * idle already - the game waited - so this returns at once. */
+	menu_drain(data);
 	/* The panel first: it gives the cursor back, ends its hold on the game's input, and ends the
 	 * bridge - which is what removes the live preview, the daemon's view of what the user is
 	 * trying RIGHT NOW. Leaving that behind made a Save look like it had not happened. */
@@ -608,11 +685,17 @@ void nr_menu_layer_destroy(struct device_data *data)
 		nr_menu_destroy(data->menu);
 		data->menu = NULL;
 	}
-	if (data->menu_fence) {
+	{
 		PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)
 			data->get_device_proc(data->device, "vkDestroyFence");
-		if (destroy_fence) destroy_fence(data->device, data->menu_fence, NULL);
-		data->menu_fence = VK_NULL_HANDLE;
+		for (uint32_t i = 0; i < NR_MENU_SLOTS; ++i) {
+			if (data->menu_slot_fences[i] && destroy_fence)
+				destroy_fence(data->device, data->menu_slot_fences[i], NULL);
+			data->menu_slot_fences[i] = VK_NULL_HANDLE;
+			/* Freed with the pool below. */
+			data->menu_slot_commands[i] = VK_NULL_HANDLE;
+		}
+		data->menu_present_signal = VK_NULL_HANDLE;
 	}
 	if (data->menu_pool) {
 		PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)

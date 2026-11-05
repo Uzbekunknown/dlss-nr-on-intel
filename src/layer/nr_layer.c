@@ -1526,6 +1526,13 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroySwapchainKHR(VkDevice device, VkSwapchainKH
         data->result_chain = VK_NULL_HANDLE;
         data->holding = data->have_earlier = 0;
     }
+	/* The panel's semaphores and views for these images, before the entry that holds them is
+	 * cleared - and outside `lock`, since it may wait for the panel's last frames. The present
+	 * lock is what keeps a present from drawing into the swapchain meanwhile. */
+	if (data) {
+		struct swapchain_data *gone = find_swapchain(swapchain);
+		if (gone && gone->device == device) nr_menu_layer_swapchain_gone(data, gone);
+	}
 	nr_mutex_lock(&lock);
 	for (int i = 0; i < MAX_SWAPCHAINS; i++)
 		if (swapchains[i].swapchain == swapchain)
@@ -2018,6 +2025,18 @@ static VkResult present_now(struct device_data *data, VkQueue queue,
      * the keys, then draw. `nr_menu_layer_present` returns 1 when it drew into the frame. */
     nr_menu_layer_present(data, queue, info);
 
+    /* The panel drew into this frame: its submit took whatever waits were left and signalled a
+     * semaphore of its own when the blend was done, and that is what the present waits on - not
+     * the CPU on a fence (2026-11-06, `menu_composite`). It covers the game's waits too, which that
+     * submit waited for before it ran. Taken here so no later present sees it. */
+    VkSemaphore drawn = data->menu_present_signal;
+    data->menu_present_signal = VK_NULL_HANDLE;
+    if (drawn != VK_NULL_HANDLE) {
+        VkPresentInfoKHR patched = *info;
+        patched.waitSemaphoreCount = 1;
+        patched.pWaitSemaphores = &drawn;
+        return data->present(queue, &patched);
+    }
     if (!data->waits_consumed) return data->present(queue, info);
     VkPresentInfoKHR patched = *info;
     patched.waitSemaphoreCount = 0;

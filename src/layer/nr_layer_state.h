@@ -167,12 +167,19 @@ struct device_data {
 	 * enabled (see `menu_device_reason` in nr_layer.c); NULL when it can. */
 	const char *menu_device_reason;
 	int menu_language;
-	/* The menu's own recording, reused like `transfer_commands`. The fence is what makes reuse
-	 * safe: the wait completes the previous frame's menu before the next resets the buffer. */
+	/* The menu's own recordings: a ring of command buffers, each with the fence its last submit
+	 * signalled, so a frame's panel can still be on the GPU while the next is recorded and the
+	 * present need not wait for it (2026-11-06; it was one buffer, waited for before every present).
+	 * A slot is reused only after its fence. `menu_slot_next` counts the frames drawn. */
 	VkCommandPool menu_pool;
 	uint32_t menu_pool_family;      /* the family menu_pool was created for */
-	VkCommandBuffer menu_commands;
-	VkFence menu_fence;
+	VkCommandBuffer menu_slot_commands[NR_MENU_SLOTS];
+	VkFence menu_slot_fences[NR_MENU_SLOTS];
+	uint32_t menu_slot_next;
+	/* What this present waits on in place of the game's semaphores, which the panel's composite
+	 * took: the composite signals it when its blend is done. VK_NULL_HANDLE when no composite ran
+	 * this present. One of the swapchain's `menu_done`. */
+	VkSemaphore menu_present_signal;
 	nrex_ui *menu_ui;               /* the ImGui UI, when it started; NULL means the quad path */
 	/* The panel's logic - the keys, the rows, the pointer, the bridge - shared with the DirectX 12
 	 * proxy (`nr_panel.c`); NULL until the menu is built. This file keeps the drawing. */
@@ -191,6 +198,12 @@ struct swapchain_data {
 	 * which is what keeps an unsupported surface usable without one. */
 	int storage_ok;
 	struct nr_surface_record surface;
+	/* The panel's composite into image i signals `menu_done[i]`, and the present of that image waits
+	 * on it instead of the CPU waiting for the GPU (`nr_menu_layer.c`). One per image because a
+	 * semaphore a present waited on is free again only once that image is acquired again - which
+	 * is exactly when the next composite into it comes. Made on first use, destroyed with the
+	 * swapchain; never made off Windows, where there is no panel. */
+	VkSemaphore menu_done[MAX_IMAGES];
 };
 
 /* Two small helpers the menu's glue needed from the file it came out of.
