@@ -44,7 +44,7 @@ Not sure? `nr_gpu_probe.exe`, in the release, says whether NR runs on your GPU a
 | --- | --- | --- |
 | Vulkan | yes | yes |
 | DirectX 8 to 11, 64- or 32-bit | yes, through DXVK, which setup installs | yes, through Proton |
-| DirectX 12 | games with **Intel XeSS**: choose XeSS as the upscaler | yes, through Proton |
+| DirectX 12 | games with **Intel XeSS**: choose XeSS as the upscaler; others with [OptiScaler](https://github.com/optiscaler/OptiScaler) set to XeSS ([how](docs/RELEASE-QUICKSTART.md)) | yes, through Proton |
 
 On Windows a Vulkan or DirectX 8–11 game run as administrator, or with UAC turned off, does not
 get NR. Anti-cheat may refuse NR's files or count them as tampering: use it in single-player

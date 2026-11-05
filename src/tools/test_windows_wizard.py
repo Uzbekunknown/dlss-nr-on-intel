@@ -452,6 +452,73 @@ class WizardFixture(unittest.TestCase):
         write_pe_exporting(deep.joinpath(*"abcde") / core.XESS_NAME, XESS_EXPORTS)
         self.assertEqual(core.xess_libraries(write_pe(deep / "Game.exe")), [])
 
+    def optiscaler_beside(self, exe, ini="", folder=None):
+        """OptiScaler as its package lays it out beside a game's executable (issue #38): its DLL as
+        dxgi.dll, its OptiScaler.ini, and the libxess.dll it comes with, in `folder` when given."""
+        here = Path(exe).parent
+        (here / "dxgi.dll").write_bytes(b"OptiScaler")
+        (here / core.OPTISCALER_INI).write_text("[Upscalers]\nDx12Upscaler=auto\n" + ini, encoding="utf-8")
+        xess = folder or here
+        write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"OptiScaler's XeSS")
+        return xess
+
+    def test_d3d12_follows_optiscalers_xess(self):
+        # Hogwarts Legacy as run on 2026-11-05: XeSS in the engine's plug-in, OptiScaler beside the
+        # executable with its own XeSS, which it upscales with whichever upscaler the game uses.
+        profile, plugin = self.unreal_game()
+        games = (plugin / core.XESS_NAME).read_bytes()
+        opti = self.optiscaler_beside(profile.game_exe)
+        theirs = (opti / core.XESS_NAME).read_bytes()
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn(f"in {opti},", detail["detail"])
+        self.assertIn("OptiScaler loads", detail["detail"])
+        self.assertIn("ShortcutKey", detail["detail"])   # its menu on Insert, as NR's panel is
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((opti / core.XESS_NAME).read_bytes(), (self.root / core.XESS_PROXY).read_bytes())
+        self.assertEqual((opti / core.XESS_ORIGINAL).read_bytes(), theirs)
+        self.assertEqual((plugin / core.XESS_NAME).read_bytes(), games)
+        # Installed beside the executable, the record names no folder; Check still knows NR's.
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        (opti / core.XESS_LOG).write_text("what NR's libxess.dll said in the game\n")
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual((opti / core.XESS_NAME).read_bytes(), theirs)
+        self.assertFalse((opti / core.XESS_ORIGINAL).exists())
+        self.assertFalse((opti / core.XESS_LOG).exists())
+
+    def test_d3d12_takes_the_xess_optiscaler_loads(self):
+        top = self.base / "OptiScaler game (test)"
+        exe = write_pe(top / "Game.exe")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        profile = replace(self.profile, api="d3d12", game_exe=exe)
+        ini = top / core.OPTISCALER_INI
+        # Its own folder beside the executable, and its menu moved off Insert.
+        own = self.optiscaler_beside(exe, "[Menu]\nShortcutKey=0x23\n", folder=top / core.OPTISCALER_FOLDER)
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn(f"in {own},", detail["detail"])
+        self.assertNotIn("ShortcutKey", detail["detail"])
+        # A folder of the player's, named by XeSSPath.
+        chosen = top / "xess-2.0"
+        write_pe_exporting(chosen / core.XESS_NAME, XESS_EXPORTS[:-1])
+        ini.write_text(f"[Libraries]\nXeSSPath={chosen}\n", encoding="utf-8")
+        self.assertIn(f"in {chosen},", self.checks(profile)["xess_library"]["detail"])
+        # Set to upscale with FSR, OptiScaler would never call XeSS: Check says what to change.
+        ini.write_text("[Upscalers]\nDx12Upscaler=fsr31\n", encoding="utf-8")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Dx12Upscaler=xess", detail["detail"])
+        # No libxess.dll where OptiScaler looks for it.
+        ini.write_text("[Upscalers]\nDx12Upscaler=xess\n", encoding="utf-8")
+        (own / core.XESS_NAME).unlink()
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("comes with OptiScaler", detail["detail"])
+        # Without OptiScaler, the game's folders are searched as before.
+        ini.unlink()
+        self.assertIn(f"in {chosen}", self.checks(profile)["xess_library"]["detail"])
+
     def test_d3d12_network_changes_in_the_running_game(self):
         profile, _ = self.unreal_game()
         write_weights(self.root / core.PRESETS["B"][0], count=core.PRESETS["B"][1])

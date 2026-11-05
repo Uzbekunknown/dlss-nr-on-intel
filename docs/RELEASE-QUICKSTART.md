@@ -31,7 +31,8 @@ from it, and the separate **Prepare Python** button does the same; neither insta
 packages globally, and neither is needed with the release's own Python.
 
 Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
-**DirectX 12 (games with XeSS)** for a DirectX 12 game that offers Intel XeSS. For Vulkan and
+**DirectX 12 (games with XeSS or OptiScaler)** for a DirectX 12 game that offers Intel XeSS,
+or one with OptiScaler set to XeSS (below). For Vulkan and
 DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for DirectX 8–11 DXVK
 3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
 file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
@@ -49,6 +50,16 @@ B about 26 frames a second at render scale 0.4 and 21 at 0.5 on the Arc 140V, an
 game's frame generation on. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
 puts the game's `libxess.dll` back; when a game update has replaced NR's, use **Remove NR**
 and then **Install NR** again.
+
+**DirectX 12 games without XeSS, through OptiScaler.** [OptiScaler](https://github.com/optiscaler/OptiScaler)
+takes over a game's DLSS, FSR or XeSS and upscales with XeSS, from the `libxess.dll` that comes
+with it, so NR runs after OptiScaler's XeSS. Put OptiScaler's files beside the game's
+executable as its guide says, and in `OptiScaler.ini` keep its upscaler on XeSS
+(`Dx12Upscaler=auto` or `xess`) and move its menu off Insert, which opens NR's panel
+(`ShortcutKey=0x23` puts it on End). Then choose the game's executable and **DirectX 12** in
+setup: **Check** names OptiScaler's `libxess.dll` and says if its settings keep NR from the
+frames. Use **Remove NR** before you remove OptiScaler. Checked so far in Hogwarts Legacy with
+OptiScaler 0.9.4 taking the game's XeSS.
 
 For a Vulkan game, choose the executable that draws with Vulkan: NR works only in the one
 chosen. Steam starts DOOM (2016)'s `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the
