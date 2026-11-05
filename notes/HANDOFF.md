@@ -162,9 +162,11 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `e72be76`, the Windows release's own Python (below, 11-05): `make test` in both memory modes and
-  CTest. `nr_daemon.py` puts its own folder on sys.path, and `test_release.py` and
-  `test_windows_wizard.py` gained cases; nothing Linux runs otherwise changed.
+- `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
+  `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, once they are
+  on GitHub. `nr_daemon.py` puts its own folder on sys.path, `test_release.py` and
+  `test_windows_wizard.py` gained cases, and `test_toggle.py`'s page check reads the new README;
+  nothing Linux runs otherwise changed.
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -231,9 +233,13 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- The next release, at the owner's word: the release's own Python (`e72be76`, below, 11-05) and
-  the staged GEMM's walk (`6ef670e`, below, 11-04 night) are in none yet. With it the README's
-  "You need" loses its Python line, and `VERSION` and the README's tables change.
+- 0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`): built
+  from `8232603` and checked from its ZIP (below, 11-05 later). Publishing is the owner's word:
+  `alchemist` pushed, `master` and `newnr` fast-forwarded to it, tag `v0.0.4` at `8232603`, the
+  release with the ZIP and its notes.
+- NR through OptiScaler (#38), and an FSR 3.1 proxy: read, not built or run. OptiScaler with XeSS
+  as its upscaler should load NR's proxy as it is; a test in Hogwarts and the proxy wait for the
+  owner's word (below, 11-05 later).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -323,6 +329,85 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## 0.0.4 built and checked; how NR could reach OptiScaler's and FSR 3.1's games (2026-11-05, later, branch `alchemist`)
+
+The owner: prepare the release, unhurried, and can NR take OptiScaler (#38), or at least hook FSR 3
+or newer?
+
+**0.0.4, waiting for the owner's word to publish.** `8232603`: `VERSION` 0.0.4 (as proposed; the
+owner did not name another), the README's "You need" without its Python line, Mortal Kombat 11's
+row at 0.4 and 1.0 as measured with this code (below, 11-04 night and 11-05), an A770 owner's
+three games at 1920x1080 (#37) in the tested-games table and in `players.json`, and that card's
+1080p figure in what to expect. The next commit gives Mortal Kombat 11's row as a band (below in
+this entry) and fixes `docs/DEVS.md`'s line on what a Windows release needs; neither file is in
+the ZIP, whose `README.md` is `docs/RELEASE-QUICKSTART.md`.
+- Built by `tools\deploy.bat --release D:\NRonWindows\rel\final-0.0.4\dlss-nr-windows-0.0.4`
+  (`NR_PYTHON` the native venv, the checkout clean) and zipped by `nr-game\zip-release.py`:
+  **`dlss-nr-windows-0.0.4-x64.zip`, 46 732 436 bytes, SHA-256
+  `a08b1ccca842989aa6ef8273a92ef8e10b14a169affb8c6d25b392f7227ece5b`**, `release-metadata.json`
+  naming 0.0.4, `8232603`, Python 3.14.10, NumPy 2.5.4, safetensors 0.8.0. The notes are
+  `work\pr-replies\release-notes-0.0.4.md`. `rel\dlss-nr-windows-0.0.4` and `rel\check-0.0.4` are
+  11-01's first build of 0.0.3.1 under this name, stale, and were left as they are.
+- **From the unpacked ZIP** (`rel\final-0.0.4\check`), on the stand-in
+  (`nr-game\standin-release-check.ps1`, which now sends the speed test a request naming no network,
+  as the button does, and saves the report apart from the bridge's result): discover chose
+  `python\python.exe`; Check; Install with both networks in 7 s; 623 frames, none rejected, by a
+  daemon on `python\python.exe`; the speed test, A (71 blocks) then B (31) in 39 s, B's network at
+  1920x1080 163 ms at 1.0 and 30 at 0.4, A's 333 and 58; Save report, 19 checks, none failing;
+  Remove NR, the folder as before.
+- **Mortal Kombat 11 from the same folder**, as a player gets it: network B, frames on the GPU,
+  the daemon on `python\python.exe` (`nr-game\release-mk11-check.ps1`, render scale 0.4 and then
+  1.0 through the root's `nr_settings.json`, put back after). In every run each frame took the GPU
+  path with nothing refused, no daemon outlived the game, and the folder was as before. The first
+  pair ran while `explorer.exe` held a core and Defender read the unpacked files: 32.1 frames a
+  second at 0.4 (network 17 ms) and 9.7 at 1.0 (85 ms). Once `quiet-check.ps1` read the machine
+  quiet: **34.3 at 0.4 (network 17 ms) and 9.8 at 1.0 (84 ms)**. The same code ran 38.3-38.7 and
+  10.4-10.6 on 11-04 night (network 16 and 81-82) and 38.0 from `e72be76`'s ZIP this morning: the
+  network is within 1-3 ms of those, the rest of the frame is not. The battery was charging (53 to
+  66 %); what took the rest is not established. The README's row gives the band, 34-38 at 0.4
+  (the next commit).
+
+**OptiScaler and FSR 3.1: read, nothing built.**
+- **OptiScaler** (GPL-3.0; its source read at `5bf6d19` in the session's scratchpad, nothing
+  copied). On DirectX 12 its upscaler is XeSS by default. `XeSSProxy::InitXeSS` loads
+  `libxess.dll` from `[Libraries] XeSSPath` when set, else from its own folder (an `OptiScaler`
+  folder beside the executable when there is one, else the executable's), else by name; it matches
+  names exactly, so the proxy's `libxess_nr_orig.dll` is not taken for XeSS. So DLSS or FSR inputs
+  → OptiScaler → XeSS → NR's proxy should need no code where setup puts the proxy in that folder:
+  `xess_libraries` takes the one beside the executable first, and looks in the folders under it
+  where that has none. A game's own XeSS in an Unreal plug-in would be taken before an `OptiScaler`
+  folder's, but such a game reaches NR without OptiScaler.
+- **XeSS SDK 3.0** (intel/xess, 3.0.2 of 07-24): `xess.h` and `xess_d3d12.h` are 2.0.1's but for
+  two comment typos, so the init and execute structs the proxy reads are unchanged. Its
+  `libxess.dll` is 77 795 704 bytes, as is the 2.0.2.68 that OptiScaler 0.9.0.12 carries, and that
+  one exports exactly the proxy's 72 names (`pe_exports`, on the copy below). The "XeSS 3.0" of
+  #38 is XeSS-SR 2.0.2.68 beside a newer frame generation, and Check takes it as tested.
+- **Untested:** the cut beside OptiScaler's own D3D12 hooks (its frame generation hooks the queue
+  and the swapchain); OptiScaler's DirectX 11 path (XeSS through 11on12 or `libxess_dx11.dll`,
+  which the proxy does not stand in front of); and #38's Stellar Blade, where it is not known
+  whether Check refused, the wrong executable or API was chosen, or the proxy got no frame. The
+  reply asks for Check's words, Save report and `nr-xess.log`
+  (`work\pr-replies\issue38-optiscaler.md`, not posted).
+- **On this PC:** `Mortal Kombat 1\MK12\Binaries\Win64` holds only mods (OptiScaler 0.9.0.12 with its
+  XeSS and FSR files, and a `dxgi.dll` from a d3d12-proxy project that reports an iGPU's memory
+  size to the game); the game itself is gone (no `MK12.exe`, no Steam manifest). Hogwarts Legacy
+  ships `Phoenix\Binaries\Win64\amd_fidelityfx_dx12.dll` 1.0.1.41314, FidelityFX SDK 1.1's FSR 3.1,
+  beside its XeSS 2.0.2.53, so it can carry both tests: OptiScaler with the game's DLSS or FSR in
+  and XeSS out, and an FSR 3.1 proxy.
+- **FSR 3.1:** games call AMD's FidelityFX API DLL, five exports (`ffxCreateContext`,
+  `ffxDestroyContext`, `ffxConfigure`, `ffxQuery`, `ffxDispatch`); FSR 2 and 3.0 are mostly linked
+  into the game, with nothing to stand in front of. A proxy as for XeSS would forward all five,
+  frame generation and its swapchain included, and on an upscale dispatch
+  (`FFX_API_DISPATCH_DESC_TYPE_UPSCALE`) of a context it saw created run NR on FSR's output, as
+  `mode=after` does, with the same cut, passes, session and panel. FidelityFX SDK 2.x games call it
+  `amd_fidelityfx_loader_dx12.dll`. New would be the FidelityFX structs (AMD's MIT headers), the
+  resource states they pass, a setup API and tests: some days, then Hogwarts with FSR 3.1 chosen.
+  It reaches games with FSR 3.1 and no XeSS without OptiScaler.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `8232603` once it is on GitHub
+(Open items). **Next on Windows:** the owner's word on publishing 0.0.4, on #38's reply, on
+OptiScaler in Hogwarts (the 0.9.0.12 copy on this disk, or 0.9.4), and on the FSR 3.1 proxy.
 
 ## Windows releases carry their own Python (2026-11-05, branch `alchemist`)
 

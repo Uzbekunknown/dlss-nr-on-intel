@@ -76,9 +76,9 @@ The network runs slower on Intel's Windows compiler at large frames — about 17
   This is written from one owner's report and tested by forcing the same path on the
   integrated GPU; it has not been measured on a discrete card.
 - On Linux: Python 3 with NumPy, a C compiler, `glslangValidator` and the Vulkan loader. On
-  Windows the release needs only a 64-bit Python and your DLL; building it needs MSVC and the
-  Vulkan SDK (`tools/build_win.bat`, [docs/WINDOWS.md](WINDOWS.md)). The network's output
-  is the same on both, bit for bit.
+  Windows the release needs only your DLL: since 0.0.4 it brings its own Python. Building it
+  needs a 64-bit Python, MSVC and the Vulkan SDK (`tools/build_win.bat`,
+  [docs/WINDOWS.md](WINDOWS.md)). The network's output is the same on both, bit for bit.
 - **ImageMagick** for the still-frame tools, which read and write pictures through
   `magick`. The game path does not touch it.
 - About 0.7 GiB of memory for the device buffers at 720p and 1.3 GiB at 1080p, the weights

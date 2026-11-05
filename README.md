@@ -99,7 +99,7 @@ date; a later release can do better or worse.
 
 | Game | Tested on | How it ran | Result | Checked |
 | --- | --- | --- | --- | --- |
-| Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | about 38 fps at 1280x720 and render scale 0.4, 10.5 at render scale 1.0 | 2026-11-05 |
+| Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 34-38 fps at 1280x720 and render scale 0.4, about 10 at render scale 1.0 | 2026-11-05 |
 | Euro Truck Simulator 2 | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 21-22 fps at 1920x1080 and render scale 0.4 with network B; 6 at full render scale | 2026-11-04 |
 | Star Wars Battlefront II (2017) | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | about 22 fps at 1920x1080 and render scale 0.4 with network B, once the player kept the PC's other Vulkan layers out (`VK_LOADER_LAYERS_DISABLE=~implicit~`) | 2026-11-04 |
 | Alien: Isolation | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 17-18 fps | 2026-11-04 |
