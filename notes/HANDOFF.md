@@ -170,6 +170,10 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `3d8292a`, the `hogwarts` profile (below, 11-06, early morning): `make test` in both memory modes
+  and CTest once `game-tuning` is on GitHub. The GPU image path's push block grew to 104 bytes
+  (`image_preprocess.comp`), `nr_frame` builds the automatic mask's lanes, and the panel's profile
+  row is 0..3.
 - `7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
   (below, 11-05 night and 11-06): `make test` in both memory modes and CTest once `fps-counter` is on
   GitHub. `nr_layer.c` and `nr_layer_state.h` gained the counts, the present waiting on the panel's
@@ -259,8 +263,12 @@ under that date. When an item is done, strike it through here and name the commi
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in no release yet (below, 11-05
   evening). Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no
   XeSS of its own. An FSR 3.1 proxy without OptiScaler: designed, not built (below, 11-05 later).
-- Hogwarts Legacy's DLSS 5 update, due on 11-05 with no hour published: once Epic has it, run
-  `D:\NRonWindows\nr-game\dlss5-update-check.ps1` (below, 11-05 evening).
+- ~~Hogwarts Legacy's DLSS 5 update, due on 11-05 with no hour published: once Epic has it, run
+  `D:\NRonWindows\nr-game\dlss5-update-check.ps1`~~: in on 11-06, with 310.9.16 unchanged; 0.0.4
+  runs in it (below, 11-06, early morning).
+- The `hogwarts` profile, the game's own tuning (`3d8292a`, local branch `game-tuning`, in a
+  worktree, `D:\NRonWindows\dlss-nr-tuning`): seen in the game with the owner; merging into
+  `alchemist` and pushing at the owner's word (below, 11-06, early morning).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -350,6 +358,75 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Hogwarts Legacy's DLSS 5 update, and the game's own NR tuning as a profile (2026-11-06, early morning, branch `game-tuning`)
+
+The update reached the owner's Epic copy around 03:00. The owner: look at what the other session
+produced (above Open items: pushed, `e1e37b3`), and then: "нам надо сделать так что бы эти новые
+настройки применялись ... для Hogwarts Legacy что бы у нас был выбор сделать настройки как
+задумывал Nvidia с разработчиками и стандартная настройка", for a video and a Reddit post.
+
+**The update** (`nr-game\dlss5-update-check.ps1`, `release-tests\hogwarts-1106-after\check.txt`):
+`nvngx_dlssnr.dll` 310.9.16.0 in `Engine\Plugins\Runtime\Nvidia\StreamlineCore\Binaries\ThirdParty\Win64`,
+**byte for byte ours** (SHA-256 `2bc19bc0…789f`): no new network, and Hogwarts owners now have the
+DLL. Also Streamline 2.14.16 with `sl.dlss_nr.dll`, DLSS SR, RR and FG 310.9.16, XeSS 2.0.2.53 to
+2.0.2.68, XeFG 1.3.1.78, build 2153883; FSR 3.1 unchanged. Setup takes all of it as tested.
+- **0.0.4 runs in it** (`nr-game\hogwarts-update-test.ps1`, the DLL taken from the game, as a
+  player would now): XeSS starts at the title screen, ~27 frames a second, each answered, none
+  declined, the panel on Insert. The counter's build (`rel\check-476d5f0`, `e1e37b3`'s code) in
+  DirectX 12: "Screen 26.9 fps NR 25.9 fps network 17.9 ms" in the panel and the top-right
+  corner, on the title screen, where XeFG adds no frames; play not looked at.
+- The first start came up with FSR 3 Quality. That was the 11-05 FSR 3 test's options: Epic
+  uploaded them when that test closed the game, and brought them back over the copy put back
+  after it. Not the update (the owner).
+- **The harness leaves the game's files alone** (the owner, 11-06: "Дай игре сохранить данные не
+  удаляй все без разбора"). Killing the game and putting its settings, `pc_info.json` and save
+  list back made it prepare its shaders at every start, and made Epic report a cloud sync
+  conflict. It now closes the game through its window (25-65 s), removes only NR's files, and
+  reports what the game wrote. `hogwarts-xess-test.ps1` must not run again: its clean copies
+  back XeSS 2.0.2.53 from 10-16.
+
+**What the game sets, read out of its executable** (`notes/phase73-game-tuning.md`): Tone 50,
+Detail 84 and Character 27 percent for every upscaler, times 0.01, into NVIDIA's Unreal
+plug-in's cvars (each 1.0 by default), and Streamline hands them to NGX unchanged. That gives
+tone 0.5, structure 0.84 and skin 0.27, at intensity 1 and style 0. The automatic mask's mode
+is in the game's packed config, not its code, and the skin strength needs it, so the profile
+turns it on.
+
+**The `hogwarts` profile** (`3d8292a`): `nr_frame.PROFILES["hogwarts"]`, with
+`AutomaticMask(0.27, -1)`; `feature_lanes` gives channels 10-14 to the native pass and the GPU,
+as MLX-DLSS's builder writes them. The GPU image path's push block grew two floats for channels
+13 and 14 (`image_preprocess.comp`, 104 bytes). The panel (its profile row is 0..3), the setup
+window ("Hogwarts Legacy" in its four languages), the Linux config and `nr_knobs` list it.
+- Offline, DOA5's 1280x720 frame on the GPU, network A, change against the game's frame:
+  `standard` 0.0369, `hogwarts` 0.0233, `hogwarts` without the mask 0.0293. The mask's share is on
+  skin, 7.5x concentrated: faces, chests, arms, the portraits.
+- In Hogwarts from a release built at `3d8292a` (`%USERPROFILE%\nr-rel\tuning-3d8292a`, on
+  C: since D: has 5.6 GB free), switched live through `nr_settings.json`: on the title screen,
+  change 0.029 with `standard`, 0.022 with `hogwarts`, 0.027 with `standard` again; 2750 frames,
+  none declined, no error. With the owner in play: the player character's face is softer under
+  `hogwarts`, its skin less worked and its shadows lighter, and `standard` brings the texture
+  back.
+
+**Checked on Windows:** the MSVC build (`build_win.bat`, `build_xess.bat`);
+- `test_nr_model.py` (the profile lanes, against MLX-DLSS's builder for every profile),
+  `test_native_image.py` (the mask, native and NumPy), and `test_image_preprocess.py`: the GPU's
+  features with the mask, bit for bit against the CPU;
+- the seven menu fixtures (`test_menu_choices`: 4 profile options, all labelled), `test_nr_xess`,
+  `test_xess_panel`;
+- `test_windows_wizard.py` 100, `test_release.py` 22, the bridge, controls, setup and launch
+  suites;
+- `test_image_pipeline`, `test_image_compose`, `test_settings_live`, `test_daemon`,
+  `test_gpu_transport` 49, `test_gpu_d3d12.py` plain and with `--network`;
+- `knob_doc --check`, `claims_check`, `publish_check`, `build_check`.
+
+Not run: Linux.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `game-tuning`'s head once it is on
+GitHub: `image_preprocess.comp`'s push block, `nr_frame`, the panel's profile row, `nr_config`,
+the menu strings. On Mesa the GPU image path's parity tests skip, as before. **Next on Windows:**
+the owner's word on merging `game-tuning` into `alchemist` and pushing. The README's DLL line could
+name Hogwarts Legacy, since 11-05.
 
 ## The Vulkan panel presents on a semaphore (2026-11-06, past midnight, branch `fps-counter`)
 
