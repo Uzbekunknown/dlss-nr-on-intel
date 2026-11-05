@@ -218,7 +218,7 @@ HINTS = {
     'en': {
         'render_scale': 'Fraction of each dimension processed by the network. Lower is cheaper, with coarser detail; minimum padding can limit the reduction.',
         'min_extent': 'Minimum padded network side. 320 matches the vendor; 128 costs less for small frames and changes the surrounding mirrored context.',
-        'profile': 'Standard adds texture; natural and cinematic preserve more highlights.',
+        'profile': "Standard adds texture; natural and cinematic preserve more highlights; Hogwarts Legacy is that game's own tuning by NVIDIA and its developers: milder, and faces milder still.",
         'intensity': 'Blend strength: 0 keeps the game image, 1 uses the model result, above 1 exaggerates the change.',
         'detail_strength': 'Strength of fine detail. Zero keeps only broad tone changes; above 1 adds more sharpening.',
         'colour_strength': 'Strength of tone and colour changes. Higher values can reduce saturation; zero preserves the game tone.',
@@ -231,7 +231,7 @@ HINTS = {
     'zh': {
         'render_scale': '网络处理的每个维度的比例。越低越省，细节也更粗；最小补齐可能限制降低幅度。',
         'min_extent': '补齐后的最小网络边长。320 与原厂一致；128 对小帧更省，但会改变周围镜像的上下文。',
-        'profile': '标准增加纹理；自然与电影保留更多高光。',
+        'profile': '标准增加纹理；自然与电影保留更多高光；《霍格沃茨之遗》是 NVIDIA 与该游戏开发者调校的设置：更温和，面部更温和。',
         'intensity': '混合强度：0 保留游戏画面，1 使用模型结果，大于 1 会夸大变化。',
         'detail_strength': '细节强度。零只保留大体的色调变化；大于 1 增加更多锐化。',
         'colour_strength': '色调与色彩变化的强度。更高会降低饱和度；零保留游戏色调。',
@@ -244,7 +244,7 @@ HINTS = {
     'ru': {
         'render_scale': 'Доля каждой стороны, которую обрабатывает сеть. Меньше — дешевле и грубее детали; минимальное дополнение может ограничить уменьшение.',
         'min_extent': 'Минимальная сторона сети с дополнением. 320 соответствует NVIDIA; 128 дешевле на малых кадрах и меняет зеркальное окружение сцены.',
-        'profile': 'Стандартный добавляет текстуру; естественный и кинематографический лучше сохраняют светлые участки; нейтральный сильно уменьшает эффект.',
+        'profile': 'Стандартный добавляет текстуру; естественный и кинематографический лучше сохраняют светлые участки; Hogwarts Legacy — настройка этой игры от NVIDIA и её разработчиков: мягче, а лица ещё мягче.',
         'intensity': 'Смешивание: 0 оставляет картинку игры, 1 использует результат модели, выше 1 преувеличивает изменения.',
         'detail_strength': 'Сила мелких деталей. Ноль оставляет только тональные изменения; выше 1 усиливает резкость.',
         'colour_strength': 'Сила тональных и цветовых изменений. Большие значения могут снижать насыщенность; ноль сохраняет тон игры.',
@@ -257,7 +257,7 @@ HINTS = {
     'es': {
         'render_scale': 'Fracción de cada dimensión que procesa la red. Menos es más barato, con detalle más grueso; el relleno mínimo puede limitar la reducción.',
         'min_extent': 'Lado mínimo de la red con relleno. 320 coincide con NVIDIA; 128 cuesta menos en fotogramas pequeños y cambia el contexto reflejado alrededor.',
-        'profile': 'Estándar añade textura; natural y cinematográfico conservan mejor las luces; neutro reduce mucho el efecto.',
+        'profile': 'Estándar añade textura; natural y cinematográfico conservan mejor las luces; Hogwarts Legacy es el ajuste de ese juego de NVIDIA y sus desarrolladores: más suave, y aún más en las caras.',
         'intensity': 'Fuerza de la mezcla: 0 deja la imagen del juego, 1 usa el resultado del modelo y más de 1 exagera el cambio.',
         'detail_strength': 'Fuerza del detalle fino. Cero deja solo los cambios generales de tono; más de 1 añade más nitidez.',
         'colour_strength': 'Fuerza de los cambios de tono y color. Los valores altos pueden bajar la saturación; cero conserva el tono del juego.',

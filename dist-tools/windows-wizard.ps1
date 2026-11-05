@@ -567,7 +567,7 @@ $script:Strings=@{
   'Knob.hold'='Hold unchanged pixels'; 'Knob.release'='Release moving pixels'; 'Knob.cut_limit'='Scene-cut threshold'
   'Hint.render_scale'='Fraction of each dimension processed by the network. Lower is cheaper, with coarser detail; minimum padding can limit the reduction.'
   'Hint.min_extent'='Minimum padded network side. 320 matches the vendor; 128 costs less for small frames and changes the surrounding mirrored context.'
-  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights.'
+  'Hint.profile'='Standard adds texture; natural and cinematic preserve more highlights; Hogwarts Legacy is that game''s own tuning by NVIDIA and its developers: milder, and faces milder still.'
   'Hint.intensity'='Blend strength: 0 keeps the game image, 1 uses the model result, above 1 exaggerates the change.'
   'Hint.detail_strength'='Strength of fine detail. Zero keeps only broad tone changes; above 1 adds more sharpening.'
   'Hint.colour_strength'='Strength of tone and colour changes. Higher values can reduce saturation; zero preserves the game tone.'
@@ -579,7 +579,7 @@ $script:Strings=@{
   Uninstall='Remove NR'; 'Loading.uninstall'='Removing NR from the game…'; 'Done.uninstall'='NR removed. The game folder is as it was before installation.'
   'Done.uninstall-steam'='Steam''s launch options restored and NR removed. The game folder is as it was before installation.'
   UninstallConfirm='Remove NR from this game? Setup deletes the dlss-nr folder and the files it put beside the game, and puts back the game files it set aside. If Steam still starts the game through an earlier setup''s launch options, they go back first, and Steam restarts. Your weights and settings stay in the DLSS-NR folder.'
-  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'
+  'Profile.standard'='Standard'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematic'; 'Profile.hogwarts'='Hogwarts Legacy'
   'Choice.weights.ht'='A: HT, the model this project reproduces'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, the faster model'
  }
  ru=@{
@@ -682,7 +682,7 @@ $script:Strings=@{
   'Knob.hold'='Удержание неподвижных пикселей'; 'Knob.release'='Освобождение при движении'; 'Knob.cut_limit'='Порог смены сцены'
   'Hint.render_scale'='Доля каждой стороны, которую обрабатывает сеть. Меньше — дешевле и грубее детали; минимальное дополнение может ограничить уменьшение.'
   'Hint.min_extent'='Минимальная сторона сети с дополнением. 320 соответствует NVIDIA; 128 дешевле на малых кадрах и меняет зеркальное окружение сцены.'
-  'Hint.profile'='Стандартный добавляет текстуру; естественный и кинематографический лучше сохраняют светлые участки; нейтральный сильно уменьшает эффект.'
+  'Hint.profile'='Стандартный добавляет текстуру; естественный и кинематографический лучше сохраняют светлые участки; Hogwarts Legacy — настройка этой игры от NVIDIA и её разработчиков: мягче, а лица ещё мягче.'
   'Hint.intensity'='Смешивание: 0 оставляет картинку игры, 1 использует результат модели, выше 1 преувеличивает изменения.'
   'Hint.detail_strength'='Сила мелких деталей. Ноль оставляет только тональные изменения; выше 1 усиливает резкость.'
   'Hint.colour_strength'='Сила тональных и цветовых изменений. Большие значения могут снижать насыщенность; ноль сохраняет тон игры.'
@@ -694,7 +694,7 @@ $script:Strings=@{
   Uninstall='Удалить NR'; 'Loading.uninstall'='Удаляем NR из игры…'; 'Done.uninstall'='NR удалён. Папка игры такая же, как до установки.'
   'Done.uninstall-steam'='Параметры запуска Steam возвращены, NR удалён. Папка игры такая же, как до установки.'
   UninstallConfirm='Удалить NR из этой игры? Мастер удалит папку dlss-nr и файлы, которые положил рядом с игрой, и вернёт отложенные файлы игры. Если Steam ещё запускает игру с параметрами от прежней версии мастера, сначала вернутся они, и Steam перезапустится. Веса и настройки останутся в папке DLSS-NR.'
-  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'
+  'Profile.standard'='Стандартный'; 'Profile.natural'='Естественный'; 'Profile.cinematic'='Кинематографический'; 'Profile.hogwarts'='Hogwarts Legacy'
   'Choice.weights.ht'='A: HT, модель, которую воспроизводит проект'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, быстрая модель'
  }
  es=@{
@@ -797,7 +797,7 @@ $script:Strings=@{
   'Knob.hold'='Mantener píxeles sin cambios'; 'Knob.release'='Liberar píxeles en movimiento'; 'Knob.cut_limit'='Umbral de cambio de escena'
   'Hint.render_scale'='Fracción de cada dimensión que procesa la red. Menos es más barato, con detalle más grueso; el relleno mínimo puede limitar la reducción.'
   'Hint.min_extent'='Lado mínimo de la red con relleno. 320 coincide con NVIDIA; 128 cuesta menos en fotogramas pequeños y cambia el contexto reflejado alrededor.'
-  'Hint.profile'='Estándar añade textura; natural y cinematográfico conservan mejor las luces; neutro reduce mucho el efecto.'
+  'Hint.profile'='Estándar añade textura; natural y cinematográfico conservan mejor las luces; Hogwarts Legacy es el ajuste de ese juego de NVIDIA y sus desarrolladores: más suave, y aún más en las caras.'
   'Hint.intensity'='Fuerza de la mezcla: 0 deja la imagen del juego, 1 usa el resultado del modelo y más de 1 exagera el cambio.'
   'Hint.detail_strength'='Fuerza del detalle fino. Cero deja solo los cambios generales de tono; más de 1 añade más nitidez.'
   'Hint.colour_strength'='Fuerza de los cambios de tono y color. Los valores altos pueden bajar la saturación; cero conserva el tono del juego.'
@@ -809,7 +809,7 @@ $script:Strings=@{
   Uninstall='Quitar NR'; 'Loading.uninstall'='Quitando NR del juego…'; 'Done.uninstall'='NR quitado. La carpeta del juego está como antes de la instalación.'
   'Done.uninstall-steam'='Se restauraron las opciones de inicio de Steam y se quitó NR. La carpeta del juego está como antes de la instalación.'
   UninstallConfirm='¿Quitar NR de este juego? El instalador borra la carpeta dlss-nr y los archivos que puso junto al juego, y devuelve los archivos del juego que guardó aparte. Si Steam todavía inicia el juego con las opciones de un instalador anterior, primero se restauran, y Steam se reinicia. Sus pesos y su configuración se quedan en la carpeta de DLSS-NR.'
-  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'
+  'Profile.standard'='Estándar'; 'Profile.natural'='Natural'; 'Profile.cinematic'='Cinematográfico'; 'Profile.hogwarts'='Hogwarts Legacy'
   'Choice.weights.ht'='A: HT, el modelo que reproduce el proyecto'; 'Choice.weights.cc_small_fp8'='B: CC small FP8, el modelo rápido'
  }
  zh=@{
@@ -912,7 +912,7 @@ $script:Strings=@{
    'Knob.hold'='保持未变像素'; 'Knob.release'='释放运动像素'; 'Knob.cut_limit'='转场阈值'
    'Hint.render_scale'='网络处理的每个维度的比例。越低越省，细节也更粗；最小补齐可能限制降低幅度。'
    'Hint.min_extent'='补齐后的最小网络边长。320 与原厂一致；128 对小帧更省，但会改变周围镜像的上下文。'
-   'Hint.profile'='标准增加纹理；自然与电影保留更多高光。'
+   'Hint.profile'='标准增加纹理；自然与电影保留更多高光；《霍格沃茨之遗》是 NVIDIA 与该游戏开发者调校的设置：更温和，面部更温和。'
    'Hint.intensity'='混合强度：0 保留游戏画面，1 使用模型结果，大于 1 会夸大变化。'
    'Hint.detail_strength'='细节强度。零只保留大体的色调变化；大于 1 增加更多锐化。'
    'Hint.colour_strength'='色调与色彩变化的强度。更高会降低饱和度；零保留游戏色调。'
@@ -924,7 +924,7 @@ $script:Strings=@{
    Uninstall='移除 NR'; 'Loading.uninstall'='正在从游戏移除 NR…'; 'Done.uninstall'='NR 已移除。游戏文件夹恢复如初。'
    'Done.uninstall-steam'='Steam 启动选项已恢复，NR 已移除。游戏文件夹恢复如初。'
    UninstallConfirm='要从本游戏移除 NR 吗？安装程序会删除 dlss-nr 文件夹和它放到游戏旁的文件，并还原它收起来的游戏文件。如果 Steam 仍通过此前安装的启动选项启动游戏，它们会先被恢复，然后 Steam 重启。你的权重和设置保留在 DLSS-NR 文件夹中。'
-   'Profile.standard'='标准'; 'Profile.natural'='自然'; 'Profile.cinematic'='电影'
+   'Profile.standard'='标准'; 'Profile.natural'='自然'; 'Profile.cinematic'='电影'; 'Profile.hogwarts'='霍格沃茨之遗'
    'Choice.weights.ht'='A：HT（本项目复现的模型）'; 'Choice.weights.cc_small_fp8'='B：CC small FP8（更快的模型）'
   }
 }

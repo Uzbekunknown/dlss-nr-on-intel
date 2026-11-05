@@ -171,13 +171,15 @@ typedef struct {
 static const nr_knob_def knobs[] = {
     { "render_scale",    0, 0.05f, 1.0f,   0.05f, 1.0f,  NULL },
     { "min_extent",      0, 128.0f, 320.0f, 64.0f, 320.0f, NULL },
-    /* Three profiles, so the range is 0..2 - it was 0..3 while `neutral` was a fourth.
+    /* Four profiles, so the range is 0..3. The fourth, `hogwarts`, is Hogwarts Legacy's own
+     * tuning (`nr_frame.PROFILES`, notes/phase73); `nr_knobs.PROFILES` holds the order.
      *
-     * `neutral` was `standard` with tone and structure at zero, which is the same thing the
-     * `intensity` knob already says ("0 is the game's frame untouched") by another route: two
-     * controls for one outcome, one of which looked like it did nothing. Removed from the list
-     * everywhere it is written down, which is five files plus this one. */
-    { "profile",         1, 0.0f, 2.0f,     1.0f,  0.0f,  "standard,natural,cinematic" },
+     * `neutral`, a fourth until it was removed, was `standard` with tone and structure at zero,
+     * which is the same thing the `intensity` knob already says ("0 is the game's frame
+     * untouched") by another route: two controls for one outcome, one of which looked like it
+     * did nothing. Removed from the list everywhere it is written down, which is five files plus
+     * this one. */
+    { "profile",         1, 0.0f, 3.0f,     1.0f,  0.0f,  "standard,natural,cinematic,hogwarts" },
     { "intensity",       0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },
     { "detail_strength", 0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },
     { "colour_strength", 0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },

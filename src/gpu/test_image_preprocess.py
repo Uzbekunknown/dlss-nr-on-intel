@@ -77,10 +77,11 @@ class RecorderContract(unittest.TestCase):
         self.rt = FakeRuntime()
 
     def test_push_abi(self):
-        self.assertEqual(ctypes.sizeof(ImagePreprocessPush), 96)
+        self.assertEqual(ctypes.sizeof(ImagePreprocessPush), 104)
         for name, offset in (("raw", 0), ("history", 8), ("features", 16), ("noise", 24),
                              ("source_w", 32), ("inner_h", 60), ("network_w", 64),
-                             ("flags", 72), ("ratio_y", 76), ("style", 80), ("ratio_x", 92)):
+                             ("flags", 72), ("ratio_y", 76), ("style", 80), ("ratio_x", 92),
+                             ("skin", 96), ("automatic", 100)):
             self.assertEqual(getattr(ImagePreprocessPush, name).offset, offset)
 
     def test_features_no_host_frame_access_and_cached_noise(self):
@@ -106,9 +107,17 @@ class RecorderContract(unittest.TestCase):
                              (90, 50, 9, 5, 72, 40, 36, 20))
             self.assertEqual(first.flags, BGRA | HISTORY)
             self.assertEqual((first.style, first.tone, first.structure), (1 / 128, .75, 1.5))
+            # No automatic mask: its two lanes say so.
+            self.assertEqual((first.skin, first.automatic), (-1, -1))
             self.assertEqual((groups, gy, gz), (256, 1, 1))
             self.assertEqual(prep.pipeline.calls[1][0].history, 0)
             self.assertEqual(prep.pipeline.calls[1][0].flags, BGRA)
+            # Hogwarts Legacy's profile: the mask on, so the structure lane is 1 and the two
+            # lanes carry the skin strength and, following it, the local structure, in half.
+            prep.record(raw, target, **nr_frame.PROFILES["hogwarts"])
+            third = prep.pipeline.calls[2][0]
+            self.assertEqual((third.style, third.tone, third.structure, third.skin, third.automatic),
+                             (0.0, 0.5, 1.0, float(np.float16(0.27)), float(np.float16(0.84))))
         self.assertIsNone(prep.noise)
         with self.assertRaises(RuntimeError):
             prep.record(raw, target)
@@ -138,7 +147,9 @@ class RecorderContract(unittest.TestCase):
                 GPUImagePreprocessor(self.rt, **values)
         with GPUImagePreprocessor(self.rt, 8, 8, 37) as prep:
             raw, target = self.rt.buffer(256, np.uint8), prep.allocate_features()
-            for kwargs in ({"control_mask": object()}, {"automatic_mask": object()},
+            for kwargs in ({"control_mask": object()},
+                           {"automatic_mask": nr_frame.AutomaticMask(np.nan, -1.0)},
+                           {"automatic_mask": nr_frame.AutomaticMask(0.27, 70000.0)},
                            {"local_tone_strength": np.nan}, {"normalized_style": np.inf},
                            {"local_structure_strength": 65505},
                            {"history": self.rt.buffer(1)}, {"history": target}):
@@ -233,6 +244,14 @@ class GPUParity(unittest.TestCase):
             dict(shape=(256, 320), inner=(128, 160), field=(128, 192), fmt=37, history=True),
             dict(shape=(189, 207), inner=(63, 69), field=(128, 128), fmt=44, history=True),
             dict(shape=(180, 240), inner=(36, 48), field=(128, 128), fmt=37),
+            # The automatic mask on: Hogwarts Legacy's profile, and a mask whose skin lane
+            # follows the local structure while its other lane does not.
+            dict(shape=(79, 121), inner=(31, 48), field=(128, 128), fmt=44, history=True,
+                 controls=dict(nr_frame.PROFILES["hogwarts"])),
+            dict(shape=(64, 80), inner=(64, 80), field=(128, 128), fmt=37,
+                 controls=dict(normalized_style=1 / 128, local_tone_strength=1.0,
+                               local_structure_strength=1.5,
+                               automatic_mask=nr_frame.AutomaticMask(-1.0, 0.6))),
         ]
         for case in cases:
             with self.subTest(case=case):

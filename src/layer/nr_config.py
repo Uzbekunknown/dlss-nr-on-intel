@@ -45,7 +45,7 @@ SETTINGS = (
     ("cut_limit",    "number", 0.0,  1.0,  0.01,  0.15, "Temporal",  "CutLimit"),
 )
 
-PROFILES = ("standard", "natural", "cinematic")
+PROFILES = ("standard", "natural", "cinematic", "hogwarts")
 
 # What the daemon's Settings class accepts, so what is written here is what it reads.
 DAEMON_KEYS = tuple(name for name, *_ in SETTINGS)
@@ -85,13 +85,15 @@ HEADER = """; DLSS-NR on Intel — settings
 
 COMMENTS = {
     "profile": ('VulkanUpscaler', 'Upscalers',
-                'standard, natural, cinematic',
+                'standard, natural, cinematic, hogwarts',
                 'standard',
                 'Which way to trade skin texture against highlights. Not a quality ladder:\n'
                 '; what one profile adds to texture it takes from highlights.\n'
                 ';   standard  - the default, adds the most texture\n'
                 ';   natural   - keeps more highlights, slightly darker and flatter\n'
-                ';   cinematic - keeps the most highlights, less saturated'),
+                ';   cinematic - keeps the most highlights, less saturated\n'
+                ';   hogwarts  - Hogwarts Legacy\'s own tuning by NVIDIA and its developers:\n'
+                ';               half the tone change, milder detail, faces milder still'),
     "intensity": ('Intensity', 'Sharpness', '0.0 to 2.0', '1.0',
                   'How far to go towards the model\'s picture. 1 is the model, 0 is the game\n'
                   '; untouched, above 1 exaggerates what it changed and can look overdone.'),

@@ -169,6 +169,18 @@ def feature_checks(rng):
                 colour, geometry=geometry, history=history,
                 out=np.empty_like(into), **nr_frame.PROFILES["standard"])
         same("build_features into half, NumPy fallback", fallback, into)
+        # Hogwarts Legacy's profile carries the automatic mask: its five lanes go to the
+        # native pass as they are, and build_features takes the profile whole either way.
+        hogwarts = nr_frame.PROFILES["hogwarts"]
+        with numpy_only():
+            reference = nr_frame.make_features(colour, geometry=geometry, **hogwarts)
+            fallback = nr_frame.build_features(colour, geometry=geometry, **hogwarts)
+        lanes = np.array(nr_frame.feature_lanes(**hogwarts), np.float32)
+        same("features with the automatic mask (hogwarts)",
+             nr_image.features(colour, rows, columns, noise, lanes), reference)
+        same("build_features with the automatic mask, native", nr_frame.build_features(
+            colour, geometry=geometry, **hogwarts), reference)
+        same("build_features with the automatic mask, NumPy fallback", fallback, reference)
 
 
 def half_checks():

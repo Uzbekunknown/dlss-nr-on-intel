@@ -33,18 +33,20 @@ def _positive_int(value, name):
 
 
 class ImagePreprocessPush(ctypes.Structure):
-    """96-byte scalar layout consumed by image_preprocess.comp."""
+    """104-byte scalar layout consumed by image_preprocess.comp. `skin` and `automatic` are
+    feature channels 13 and 14, the automatic mask's lanes: -1 with the mask off."""
     _fields_ = [
         ("raw", ctypes.c_uint64), ("history", ctypes.c_uint64),
         ("features", ctypes.c_uint64), ("noise", ctypes.c_uint64),
         *((name, ctypes.c_uint32) for name in
           ("source_w", "source_h", "left", "top", "active_w", "active_h",
            "inner_w", "inner_h", "network_w", "network_h", "flags")),
-        *((name, ctypes.c_float) for name in ("ratio_y", "style", "tone", "structure", "ratio_x")),
+        *((name, ctypes.c_float) for name in ("ratio_y", "style", "tone", "structure", "ratio_x",
+                                              "skin", "automatic")),
     ]
 
 
-assert ctypes.sizeof(ImagePreprocessPush) == 96
+assert ctypes.sizeof(ImagePreprocessPush) == 104
 
 
 class GPUImageResampler:
@@ -98,13 +100,15 @@ class GPUImageResampler:
         if getattr(buffer, "_lib", self.lib) is not self.lib:
             raise ValueError(f"{name} belongs to another Vulkan runtime")
 
-    def _push(self, source, target, *, history=None, noise=None, flags=0, controls=(0, 0, 0)):
+    def _push(self, source, target, *, history=None, noise=None, flags=0,
+              controls=(0, 0, 0, -1, -1)):
+        style, tone, structure, skin, automatic = controls
         return ImagePreprocessPush(
             source.address, history.address if history is not None else 0,
             target.address, noise.address if noise is not None else 0,
             self.width, self.height, self.left, self.top, self.active_w, self.active_h,
             self.inner_w, self.inner_h, self.network_w, self.network_h, flags,
-            self.ratio_y, *controls, self.ratio_x)
+            self.ratio_y, style, tone, structure, self.ratio_x, skin, automatic)
 
     def record(self, source, target):
         import xmxres        # deferred, as in __init__: this module is imported on platforms with no libxmx
@@ -188,9 +192,11 @@ class GPUImagePreprocessor(GPUImageResampler):
         graph input must stay FP16; run_device can consume it without CPU copies.
         This wrapper checks buffer extents before dispatch. The recorder inserts
         a visibility barrier before the next resident pass consumes the features.
+        An automatic mask is five constants like the rest (`nr_frame.feature_lanes`);
+        a control mask, an image, is not on this path.
         """
-        if control_mask is not None or automatic_mask is not None:
-            raise ValueError("GPU feature masks are unsupported; use CPU fallback")
+        if control_mask is not None:
+            raise ValueError("GPU control masks are unsupported; use CPU fallback")
         import xmxres        # deferred, as in __init__
         if self.noise is None:
             raise RuntimeError("the GPU image preprocessor is closed")
@@ -203,12 +209,18 @@ class GPUImagePreprocessor(GPUImageResampler):
             inputs.add(history.id)
         if target.id in inputs:
             raise ValueError("features must not alias raw pixels, history or noise")
-        controls = (normalized_style, local_tone_strength, local_structure_strength)
-        if not all(math.isfinite(float(v)) and abs(float(v)) <= 65504 for v in controls):
+        scalars = [normalized_style, local_tone_strength, local_structure_strength]
+        if automatic_mask is not None:
+            scalars += [automatic_mask.skin_structure_strength,
+                        automatic_mask.automatic_mask_structure_strength]
+        if not all(math.isfinite(float(v)) and abs(float(v)) <= 65504 for v in scalars):
             raise ValueError("feature controls must be finite FP16 values")
+        import nr_frame      # on sys.path since __init__
+        controls = nr_frame.feature_lanes(normalized_style, local_tone_strength,
+                                          local_structure_strength, automatic_mask)
         flags = (BGRA if self.vk_format in BGRA8_FORMATS else 0) | (HISTORY if history is not None else 0)
         self.pipeline.record(self._push(raw, target, history=history, noise=self.noise,
-                                        flags=flags, controls=tuple(float(v) for v in controls)),
+                                        flags=flags, controls=controls),
                              *xmxres.linear_grid((self.network_w * self.network_h + 63) // 64))
         self.runtime.recorded += 1
         return target

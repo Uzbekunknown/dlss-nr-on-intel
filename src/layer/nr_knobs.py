@@ -13,7 +13,7 @@ import collections
 
 Knob = collections.namedtuple("Knob", "name label kind low high step default summary detail")
 
-PROFILES = ("standard", "natural", "cinematic")
+PROFILES = ("standard", "natural", "cinematic", "hogwarts")
 
 # The choices behind a `choice` knob other than `profile`. `profile` reads PROFILES. **`weights` is
 # no longer one of them:** the network is `NR_PRESET`, one setting, chosen in the setup window and
@@ -59,7 +59,10 @@ KNOBS = (
         "texture; `natural` and `cinematic` keep more of the highlights, and on very bright "
         "scenes `cinematic` can smooth fine detail rather than add it. After the network, "
         "as NVIDIA grades them, `natural` comes out a little darker, flatter and less "
-        "saturated and `cinematic` less saturated. The profile is an input to the network, "
+        "saturated and `cinematic` less saturated. `hogwarts` is Hogwarts Legacy's own "
+        "tuning, as NVIDIA and the game's developers set it for DLSS 5: `standard`'s style "
+        "with half its tone change and 0.84 of its detail, and faces and skin milder still, "
+        "at 0.27, which the network finds by itself. The profile is an input to the network, "
         "so it takes effect on the next frame the network draws; the knobs below act after "
         "it.",
     ),

@@ -28,13 +28,17 @@ layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer RG
     float v[];
 };
 
-// 96 bytes. Explicit scalar members keep the C ABI independent of vec3 padding.
+// 104 bytes. Explicit scalar members keep the C ABI independent of vec3 padding.
+// style, tone, structure, skin and automatic are feature channels 10-14 as the host computed
+// them (nr_frame.feature_lanes): skin and automatic are the automatic mask's lanes, -1 with
+// the mask off, and structure is 1 with it on.
 layout(push_constant, std430) uniform Push {
     uint64_t raw, history, features, noise;
     uint source_w, source_h, left, top, active_w, active_h, inner_w, inner_h;
     uint network_w, network_h, flags;
     float ratio_y;
     float style, tone, structure, ratio_x;
+    float skin, automatic;
 } p;
 
 float decoded_byte(uint value) {
@@ -155,7 +159,7 @@ void main() {
     output_features.v[pixel * 16u + 10u] = float16_t(p.style);
     output_features.v[pixel * 16u + 11u] = float16_t(p.tone);
     output_features.v[pixel * 16u + 12u] = float16_t(p.structure);
-    output_features.v[pixel * 16u + 13u] = float16_t(-1.0);
-    output_features.v[pixel * 16u + 14u] = float16_t(-1.0);
+    output_features.v[pixel * 16u + 13u] = float16_t(p.skin);
+    output_features.v[pixel * 16u + 14u] = float16_t(p.automatic);
     output_features.v[pixel * 16u + 15u] = float16_t(0.0);
 }

@@ -1243,7 +1243,7 @@ class WizardFixture(unittest.TestCase):
             "render_scale", "min_extent", "profile", "intensity", "detail_strength",
             "colour_strength", "temporal", "hold", "release", "cut_limit"])
         names = {knob["name"]: knob for knob in catalogue}
-        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic"])
+        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic", "hogwarts"])
         # `weights` is gone: the network is `NR_PRESET`, one setting, not a knob with a list of
         # model names. A catalogue that still offered it would be the second selection path back.
         self.assertNotIn("weights", names)
