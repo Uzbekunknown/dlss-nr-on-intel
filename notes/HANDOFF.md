@@ -169,9 +169,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `7d70ff1`, the panel's frame counter (below, 11-05 night): `make test` in both memory modes and
-  CTest once `fps-counter` is on GitHub. `nr_layer.c` and `nr_layer_state.h` gained the counts, and
-  the daemon's FRAME reply carries the network's time.
+- `7d70ff1` and `489ee1f`, the panel's frame counter (below, 11-05 night): `make test` in both memory
+  modes and CTest once `fps-counter` is on GitHub. `nr_layer.c` and `nr_layer_state.h` gained the
+  counts, and the daemon's FRAME reply carries the network's time; `489ee1f` is Windows-only code.
 - `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
   `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, at GitHub's
   `alchemist` since 0.0.4 went out. `nr_daemon.py` puts its own folder on sys.path,
@@ -246,8 +246,10 @@ under that date. When an item is done, strike it through here and name the commi
 - The panel's frame counter (`7d70ff1`, branch `fps-counter`, below, 11-05 night): a game check,
   merging and pushing, at the owner's word. In Vulkan with NR off the corner waits for the game's
   frame before each present; a semaphore the present waits on, as MangoHud does, would take that out.
-- The Vulkan panel under `test_gpu_present --sync-validation` aborts at its first frame (0xC0000409,
-  ucrtbase), the 11-05 build too; not looked into (below, 11-05 night).
+- ~~The Vulkan panel under `test_gpu_present --sync-validation` aborts at its first frame (0xC0000409,
+  ucrtbase)~~: its own command buffers had no loader data, `489ee1f` (below, 11-05 night). Left
+  there: `VUID-vkCmdDraw-None-09600`, the UI image's layout after its render pass, and `menu.comp`'s
+  `rgba8` against a B8G8R8A8 swapchain; not fixed.
 - ~~0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`)~~:
   published on 11-05 at the owner's word, tag `v0.0.4` at `8232603` (below, 11-05 later).
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
@@ -350,8 +352,9 @@ under that date. When an item is done, strike it through here and name the commi
 
 The owner asked for a frame counter in the panel the Insert key opens, in both hosts, and then that
 the player choose where it shows, in the panel only or in a corner; issue #19's reporter had asked
-for an fps display. The change is `7d70ff1`, on a local branch `fps-counter` from `alchemist` at
-`6ef8041`, in a worktree of its own (`D:\NRonWindows\dlss-nr-fps`); nothing pushed.
+for an fps display. The change is `7d70ff1`, and `489ee1f` a fault it found, on a local branch
+`fps-counter` from `alchemist` at `6ef8041`, in a worktree of its own (`D:\NRonWindows\dlss-nr-fps`);
+nothing pushed.
 
 **Two rates, because under frame generation they differ.** NR runs on the frames the game renders;
 a generator adds its own after that, so the screen shows more (about twice at XeFG x2: Hogwarts' 27.7
@@ -397,13 +400,22 @@ the panel's submit signals and the present waits on, one per swapchain image; no
   (`present_wait_count` was left as it was), and with NR off the present waited again on the
   semaphores the panel's submit had taken. A binary semaphore is waited once. It now waits only on
   what nobody took and marks them taken, and the present goes without waits, as after `transfer()`,
-  its fence having seen the work complete.
+  its fence having seen the work complete. Under validation (next paragraph) the old rule gives
+  `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` (10 reports, the duplicate limit) with the panel
+  open and NR off, and the new one none.
 
-**The panel under validation.** `test_gpu_present --sync-validation` with the panel built ends at the
-panel's first frame with 0xC0000409 in ucrtbase (an abort), with the 11-05 build as with this one;
-without validation the same runs complete. So the panel's Vulkan path has had no validation run, and
-the second fault above is fixed from the specification, not from a report; vkcube cannot carry the
-panel (Vulkan 1.0).
+**The panel under validation, and a third fault** (`489ee1f`). `test_gpu_present --sync-validation`
+with the panel built ended at the panel's first frame with 0xC0000409 in ucrtbase (an abort), with
+the 11-05 build too. The cause: the UI's own command buffers, ImGui's for its texture uploads and the
+one-shot for the font, were never given the loader's data, so the validation layer found no device by
+them. Any layer below ours in a player's game, an overlay's or a capture's, would meet the same.
+`vkAllocateCommandBuffers` now reaches ImGui through a thunk that gives each buffer it, and the
+one-shot path does the same. With it the panel runs under synchronization validation: the panel open,
+the counter in a corner and no panel, NR off, 240 frames each, no synchronization or semaphore error.
+Left, older than all this: `VUID-vkCmdDraw-None-09600`, 4 a run, the UI image sampled as GENERAL
+after its render pass left it in COLOR_ATTACHMENT_OPTIMAL (UNDEFINED on the first frame); and a
+warning that `menu.comp`'s `rgba8` storage image is not a B8G8R8A8 swapchain's format. Not fixed.
+vkcube cannot carry the panel (Vulkan 1.0).
 
 **Checked on Windows:** MSVC `build_win.bat` (the three known C4068) and `build_xess.bat` with no new
 warning. The native fixtures, all ten (the seven `test_menu_*` and the three of the input path).
@@ -416,8 +428,8 @@ Also: `test_nr_xess`, `test_gpu_transport.py` (49, two new), `test_gpu_d3d12.py`
 `test_windows_wizard.py` 100, `test_release.py` 22, the bridge, controls, setup and launch suites,
 `claims_check`, `publish_check` and `build_check`. MinGW (gcc 16) CMake of the layer and the D3D12
 client: no warning in the changed files. `test_gpu_present` through the layer with NR off, the panel
-open and the corner, the panel's image dumped: the line, the row and the corner as meant. **Not
-run:** Linux; a game.
+open and the corner, the panel's image dumped: the line, the row and the corner as meant; and the
+same under synchronization validation since `489ee1f` (above). **Not run:** Linux; a game.
 
 **Next on Linux:** `make test` in both memory modes and CTest at `fps-counter`'s head, once it is on
 GitHub: `nr_layer.c` and `nr_layer_state.h` (the counts), `nr_gpu_transport.py` (`detail`) and
