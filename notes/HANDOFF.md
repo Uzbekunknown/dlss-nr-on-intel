@@ -169,9 +169,11 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `7d70ff1` and `489ee1f`, the panel's frame counter (below, 11-05 night): `make test` in both memory
-  modes and CTest once `fps-counter` is on GitHub. `nr_layer.c` and `nr_layer_state.h` gained the
-  counts, and the daemon's FRAME reply carries the network's time; `489ee1f` is Windows-only code.
+- `7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
+  (below, 11-05 night and 11-06): `make test` in both memory modes and CTest once `fps-counter` is on
+  GitHub. `nr_layer.c` and `nr_layer_state.h` gained the counts, the present waiting on the panel's
+  semaphore and a swapchain hook that is empty off Windows; the daemon's FRAME reply carries the
+  network's time; the rest is Windows-only code.
 - `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
   `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, at GitHub's
   `alchemist` since 0.0.4 went out. `nr_daemon.py` puts its own folder on sys.path,
@@ -243,13 +245,14 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- The panel's frame counter (`7d70ff1`, branch `fps-counter`, below, 11-05 night): a game check,
-  merging and pushing, at the owner's word. In Vulkan with NR off the corner waits for the game's
-  frame before each present; a semaphore the present waits on, as MangoHud does, would take that out.
+- The panel's frame counter (`7d70ff1`, branch `fps-counter`, below, 11-05 night): a look at it in
+  a game with the screen on, merging and pushing, at the owner's word. Mortal Kombat 11 ran it with
+  the screen locked (below, 11-06). ~~In Vulkan with NR off the corner waits for the game's frame
+  before each present~~: the present waits on a semaphore of the panel's, `476d5f0` (below, 11-06).
 - ~~The Vulkan panel under `test_gpu_present --sync-validation` aborts at its first frame (0xC0000409,
-  ucrtbase)~~: its own command buffers had no loader data, `489ee1f` (below, 11-05 night). Left
-  there: `VUID-vkCmdDraw-None-09600`, the UI image's layout after its render pass, and `menu.comp`'s
-  `rgba8` against a B8G8R8A8 swapchain; not fixed.
+  ucrtbase)~~: its own command buffers had no loader data, `489ee1f` (below, 11-05 night).
+  ~~`VUID-vkCmdDraw-None-09600`~~, the UI image's layout: `476d5f0` (below, 11-06). Left: a warning,
+  `menu.comp`'s `rgba8` against a B8G8R8A8 swapchain.
 - ~~0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`)~~:
   published on 11-05 at the owner's word, tag `v0.0.4` at `8232603` (below, 11-05 later).
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
@@ -347,6 +350,69 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The Vulkan panel presents on a semaphore (2026-11-06, past midnight, branch `fps-counter`)
+
+The owner, asked whether to take the GPU wait out of the corner first or try MK11 first: do what is
+right, then test. `476d5f0` on `fps-counter`, local; nothing pushed.
+
+**What changed.** The panel's submit took the game's present semaphores, so the present had nothing
+left to wait on and the layer waited on a fence: for the panel's blend, and so for the whole of the
+game's frame, since a fence covers everything before it on the queue. Now the submit signals a
+semaphore of the layer's own and the present waits on that, as MangoHud's overlay does (Mesa's overlay
+layer before it). For a frame's panel to still be running while the next is recorded:
+- a ring of 8 command buffers with their fences and the overlay's descriptor sets (`NR_MENU_SLOTS`),
+  each reused after its own fence; ImGui's ring of vertex buffers is as long;
+- the semaphore is per swapchain image, because a present's semaphore is free once that image is
+  acquired again (validation reports any other reuse); destroyed with the swapchain, through a
+  fourth hook, `nr_menu_layer_swapchain_gone`;
+- `menu_drain` waits for the whole ring before something shared is destroyed or rewritten: the UI
+  image on a resize, the font atlas when ImGui uploads a glyph on the UI's own queue
+  (`nrex_vk_drain_hook`), the views of a swapchain going, the pool when the queue family changes;
+- the UI render pass's two external dependencies are explicit: the implicit one into the pass starts
+  at no stage, so its layout transition was ordered after nothing, the previous frame's blend
+  included;
+- the view cache keeps a view for each image. A miss dropped every view, so with three images each
+  frame destroyed the view the previous frame had used.
+
+Also: the UI image starts UNDEFINED, which its load op clears anyway, and the dump's barriers go from
+and back to GENERAL - these were the four `VUID-vkCmdDraw-None-09600` a run; image and view handles
+reach the blend without a 32-bit `uintptr_t` cast on x86; `test_gpu_present.py` takes `--panel
+shut|open|corner`.
+
+**Measured** (quiet, Intel 101.9150, on AC, best performance). `test_gpu_present`, NR off, 800x600
+then 1024x640, 120 frames each at a 10 ms pause; a present's median over three rounds, against
+`aec70da` built the same way: the corner 2.67-2.84 ms before, 1.88-1.98 after; the panel open
+3.57-3.59, 2.52-2.56; no panel 0.69-0.71 and 0.64-0.67. What the corner still costs is the layer's own
+work on the CPU, the driver's present taking 28 us. Taken apart once: 0.41 ms is the panel looking
+for its window with `EnumWindows` on every present, since the fixture's window is hidden (a game in
+front is found by `GetForegroundWindow` first), 0.08 ms the trigger file's `access()`, and the
+panel's frame, recording and submit 0.38 ms. The first two are older than the counter and are paid
+whenever the panel is built, open or not; not changed.
+
+**Checked on Windows.** Synchronization validation, no message but the known `rgba8` warning:
+`test_gpu_present` with NR off, the panel open, the corner and none, Chinese with the panel open (its
+glyphs uploaded during the run), Russian with frames back to back; `test_gpu_present.py --run` with NR
+on the GPU path, the panel shut, open, in the corner, and in the corner with the trigger turned off
+and on (`--exercise-controls`), 78-80 frames answered each. MSVC x64 and x86 with no new warning,
+MinGW with none on a changed line; the ten native fixtures, `test_xess_panel` (both phases),
+`test_nr_xess`; `test_daemon`, `test_gpu_transport`, `test_gpu_d3d12`, `test_menu_ui_fixtures`,
+`test_menu_rows`, the six tool suites incl. `test_windows_wizard.py` (100); `claims_check`,
+`publish_check`, `build_check`.
+
+**Mortal Kombat 11** (DXVK) from a release built at `476d5f0` (`D:\NRonWindows\rel\check-476d5f0`,
+preset B, render scale 0.4), through `nr-game\mk11-counter-test.ps1`: Install NR, the counter's place
+in that install's settings, Steam's start, NR on, 40 s counted, NR off, Remove NR, the game folder
+compared. The screen was locked throughout (LogonUI, no window in front), and Windows let the game
+present about 8 frames a second: 7.92 frames answered a second with the corner, 7.90 with the counter
+in the panel, 7.97 with 0.0.4 in the same state, against 34.29 for 0.0.4 unlocked on 11-05 17:40.
+Four runs, every frame `gpu-shared`, none refused, the game closed through its window, no daemon
+left, the folder as before. The UI image the layer wrote in the game (`NR_MENU_DUMP`, through
+nr-env.txt) has the corner at the top right of 1280x720: "Screen 5.6 fps   NR off". **Not seen:**
+the corner on a screen, or any rate with the screen on.
+
+**Next on Windows:** MK11 with the screen on, the corner with NR off and on, and merging and pushing
+`fps-counter`, both at the owner's word. **Next on Linux:** as for `7d70ff1` (Open items).
 
 ## A frame counter in the in-game panel (2026-11-05, night, branch `fps-counter`)
 
