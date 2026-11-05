@@ -59,7 +59,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
     them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), level again that
     night, when the owner had both fast-forwarded to it (below, 11-04 night, later), and again
-    since 0.0.4 went out (below, 11-05 later);
+    since 0.0.4 went out (below, 11-05 later); on 11-06 all three went to the frame counter's
+    head, `fps-counter` fast-forwarded in (below, 11-06);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -245,10 +246,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- The panel's frame counter (`7d70ff1`, branch `fps-counter`, below, 11-05 night): a look at it in
-  a game with the screen on, merging and pushing, at the owner's word. Mortal Kombat 11 ran it with
-  the screen locked (below, 11-06). ~~In Vulkan with NR off the corner waits for the game's frame
-  before each present~~: the present waits on a semaphore of the panel's, `476d5f0` (below, 11-06).
+- ~~The panel's frame counter (`7d70ff1`, below, 11-05 night)~~: seen in Mortal Kombat 11 with the
+  screen on, and on GitHub's `alchemist`, `master` and `newnr` since 11-06, in no release yet; in
+  Vulkan the present waits on a semaphore of the panel's, `476d5f0` (below, 11-06).
 - ~~The Vulkan panel under `test_gpu_present --sync-validation` aborts at its first frame (0xC0000409,
   ucrtbase)~~: its own command buffers had no loader data, `489ee1f` (below, 11-05 night).
   ~~`VUID-vkCmdDraw-None-09600`~~, the UI image's layout: `476d5f0` (below, 11-06). Left: a warning,
@@ -408,11 +408,17 @@ present about 8 frames a second: 7.92 frames answered a second with the corner, 
 in the panel, 7.97 with 0.0.4 in the same state, against 34.29 for 0.0.4 unlocked on 11-05 17:40.
 Four runs, every frame `gpu-shared`, none refused, the game closed through its window, no daemon
 left, the folder as before. The UI image the layer wrote in the game (`NR_MENU_DUMP`, through
-nr-env.txt) has the corner at the top right of 1280x720: "Screen 5.6 fps   NR off". **Not seen:**
-the corner on a screen, or any rate with the screen on.
+nr-env.txt) has the corner at the top right of 1280x720: "Screen 5.6 fps   NR off".
 
-**Next on Windows:** MK11 with the screen on, the corner with NR off and on, and merging and pushing
-`fps-counter`, both at the owner's word. **Next on Linux:** as for `7d70ff1` (Open items).
+**With the screen on** (02:46, the owner back; not quiet, the Epic Games Launcher at 11 % CPU with
+Hogwarts' update), the same script and release, the game in a window: the corner read "Screen 60.0
+fps   NR off" with NR off, MK11's own limit, and "Screen 33.5 fps   NR 33.5 fps   network 18.3 ms"
+with NR on; 30.64 frames answered a second over the 40 s, and 29.69 for 0.0.4 with no counter right
+after, in the same state. Both runs clean, the folder as before.
+
+**Pushed** at the owner's word ("Можешь проверить в игре и пушить", 11-06): `fps-counter` fast-forwarded
+into `alchemist`, and `alchemist`, `master` and `newnr` to its head on GitHub. **Next on Linux:** as
+for `7d70ff1` (Open items).
 
 ## A frame counter in the in-game panel (2026-11-05, night, branch `fps-counter`)
 
