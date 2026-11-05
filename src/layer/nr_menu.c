@@ -1336,7 +1336,17 @@ static int utf8_next(const char **p, int *codepoint)
 void nr_menu_draw_overlay(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
                           uint64_t ui_view_handle, uint32_t width, uint32_t height)
 {
-    if (!m || !m->pipeline) return;
+    nr_menu_draw_overlay_rect(m, cmd_handle, target_handle, ui_view_handle, 0, 0, width, height);
+}
+
+/* Mode 3 over one rectangle. The shader already reads `at = panel_origin + local` from both images
+ * and stops at `panel_size`, so the rectangle is the push block's origin and size and the dispatch
+ * covers it alone; nothing in `menu.comp` changes. */
+void nr_menu_draw_overlay_rect(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
+                               uint64_t ui_view_handle, uint32_t x, uint32_t y,
+                               uint32_t width, uint32_t height)
+{
+    if (!m || !m->pipeline || !width || !height) return;
 
     VkCommandBuffer cmd = (VkCommandBuffer)(uintptr_t)cmd_handle;
     VkImage target = (VkImage)target_handle;
@@ -1389,8 +1399,8 @@ void nr_menu_draw_overlay(nr_menu *m, uint64_t cmd_handle, uint64_t target_handl
     nr_menu_push push;
     memset(&push, 0, sizeof push);
     push.count = 0;
-    push.panel_x = 0;
-    push.panel_y = 0;
+    push.panel_x = (float)x;
+    push.panel_y = (float)y;
     push.panel_w = (float)width;
     push.panel_h = (float)height;
     push.atlas_w = m->font.width;

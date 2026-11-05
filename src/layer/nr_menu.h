@@ -327,6 +327,15 @@ void nr_menu_draw(nr_menu *menu, uint64_t cmd, uint64_t image, uint32_t width, u
 void nr_menu_draw_overlay(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
                           uint64_t ui_view_handle, uint32_t width, uint32_t height);
 
+/* The same blend over one rectangle of the image only, `x`, `y`, `width` x `height` in image pixels:
+ * the part the UI drew into this frame (`nrex_drawn_rect`). With the panel shut and the frame
+ * counter in a corner, that is the corner, and the pass reads and writes a few thousand pixels
+ * instead of every pixel of the picture on every frame. The UI's image and the game's are the same
+ * size, so one rectangle names the same pixels in both. */
+void nr_menu_draw_overlay_rect(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
+                               uint64_t ui_view_handle, uint32_t x, uint32_t y,
+                               uint32_t width, uint32_t height);
+
 void nr_menu_draw_compare(nr_menu *menu, uint64_t cmd, uint64_t image, uint64_t reference,
                           uint32_t width, uint32_t height);
 

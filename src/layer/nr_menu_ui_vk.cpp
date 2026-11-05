@@ -650,6 +650,10 @@ extern "C" NREX_API void nrex_render(nrex_ui *base, uint64_t cmd_handle)
     nrex_vk_ui *ui = static_cast<nrex_vk_ui *>(base);
     if (!ui || !ui->in_frame) return;
     ImGui::Render();
+    /* What the frame covers, for the blend that lays it over the game's image: the C side blends
+     * that rectangle and no more (`nrex_drawn_rect`). The clear below stays whole - it is one fast
+     * clear, and it keeps the image transparent wherever a later, larger frame reads. */
+    nrex_note_drawn(ui, ImGui::GetDrawData(), ui->width, ui->height);
     VkCommandBuffer cmd = (VkCommandBuffer)(uintptr_t)cmd_handle;
 
     /* Clear to transparent, then draw. The blend-copy on the C side keeps alpha 0 pixels

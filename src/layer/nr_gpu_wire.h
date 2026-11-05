@@ -28,6 +28,9 @@ struct nr_gpu_packet {
     uint64_t input_memory, output_memory, ready_sem, done_sem;
     uint8_t device_uuid[NR_GPU_UUID_BYTES], driver_uuid[NR_GPU_UUID_BYTES];
 };
+/* `detail`: a HELLO's SUCCESS names the daemon's process. A FRAME's SUCCESS carries the network's
+ * time for that frame in microseconds since 2026-11-05, for the in-game panel's frame counter; it
+ * was 0 before and no client read it, and 0 still means the daemon measured none. */
 struct nr_gpu_reply { uint32_t status, detail, session_low, session_high; };
 
 /* Version 3, a D3D12 client on the network's adapter, reads the packet this way:

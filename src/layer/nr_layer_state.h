@@ -98,6 +98,15 @@ struct device_data {
 	uint32_t transfer_stage_capacity;
 	struct nr_layer_timing timing;
 	struct nr_surface_selection primary;
+	/* What the in-game panel's frame counter reads (nr_frame_rate.h), kept on every platform and
+	 * read only where there is a panel: presents that include the primary swapchain, the frames NR
+	 * answered and wrote back into it, and the network's time the daemon gave with them - its
+	 * microseconds summed, over the answers that carried any. Totals, written under the present
+	 * lock. */
+	uint64_t presents_counted;
+	uint64_t nr_frames;
+	uint64_t nr_network_us;
+	uint64_t nr_network_frames;
 #ifdef _WIN32
 	struct nr_gpu_bridge *gpu;
 	HANDLE gpu_peer;

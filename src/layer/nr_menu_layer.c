@@ -109,6 +109,19 @@ static void layer_trigger_set(void *user, int on)
 	if (trigger_path && *trigger_path) nr_layer_set_trigger_file(trigger_path, on);
 }
 
+/* The frame counter's totals, which `nr_layer.c` keeps on the device: presents of the primary
+ * swapchain, and the frames NR answered and wrote back into it, with the network's time the
+ * daemon gave for them. Read under the present lock the layer holds while the panel runs. */
+static void layer_counts(void *user, nr_frame_counts *out)
+{
+	const struct device_data *data = (const struct device_data *)user;
+	if (!data || !out) return;
+	out->presented = data->presents_counted;
+	out->nr_frames = data->nr_frames;
+	out->network_us = data->nr_network_us;
+	out->network_frames = data->nr_network_frames;
+}
+
 static void menu_build(struct device_data *data, struct swapchain_data *chain)
 {
 	if (data->menu_state) return;
@@ -203,7 +216,7 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 	 * pointer (`nr_panel.c`). The trigger is the layer's, and so are the pacing rows. */
 	char settings[1088];
 	menu_settings_path(settings, sizeof settings);
-	nr_panel_host host = { layer_trigger_get, layer_trigger_set, NULL, 1 };
+	nr_panel_host host = { layer_trigger_get, layer_trigger_set, data, 1, layer_counts };
 	data->panel = nr_panel_create(data->menu, data->menu_ui, settings, data->menu_language, &host);
 }
 
@@ -315,13 +328,24 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 			return 0;
 		}
 	}
+	/* **Made signalled, and reset only just before the submit** (2026-11-05). It was made unsignalled
+	 * and reset here, at the top - and the resize below waits on it, so the first frame the panel
+	 * drew on a swapchain, and the first after every change of its size, waited a whole second on a
+	 * fence nothing was going to signal: 1.02-1.08 s in `test_gpu_present` at both of its sizes,
+	 * with the 5 November build as with this one. Signalled while nothing is in flight, a wait on it
+	 * is a wait for the previous frame's work, which is what both waits here mean; the reset waits
+	 * for the submit, so a frame that gives up before it leaves the fence as it found it. The
+	 * corner's frame counter draws on every frame, so it met this on its first frame and would
+	 * have at every resize. */
 	if (!data->menu_fence) {
-		VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+		VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+			.flags = VK_FENCE_CREATE_SIGNALED_BIT };
 		if (CreateFence(data->device, &fi, NULL, &data->menu_fence) != VK_SUCCESS) return 0;
-	} else if (ResetFences(data->device, 1, &data->menu_fence) != VK_SUCCESS) {
-		data->device_error = VK_ERROR_DEVICE_LOST;
-		return 0;
 	}
+	/* The buffer is reused: the previous frame's must be done with it, which the end of that frame
+	 * waited for. Asked again rather than assumed, since that wait can give up. */
+	if (WaitForFences(data->device, 1, &data->menu_fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
+		return 0;
 	if (ResetCommandBuffer(data->menu_commands, 0) != VK_SUCCESS) return 0;
 
 	VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -428,10 +452,16 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 					chain->extent.width, chain->extent.height);
 			}
 		}
-		nr_menu_draw_overlay(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
-				     (uint64_t)(uintptr_t)chain->images[index],
-				     (uint64_t)(uintptr_t)nrex_image_view(data->menu_ui),
-				     chain->extent.width, chain->extent.height);
+		/* Over the part the frame drew into and no more: the panel's rectangle while it is open,
+		 * and with it shut the frame counter's corner alone, which is a few thousand pixels where
+		 * a pass over the whole image is millions on every frame the counter is shown. */
+		uint32_t rx = 0, ry = 0, rw = 0, rh = 0;
+		if (nrex_drawn_rect(data->menu_ui, &rx, &ry, &rw, &rh) &&
+		    rx + rw <= chain->extent.width && ry + rh <= chain->extent.height)
+			nr_menu_draw_overlay_rect(data->menu, (uint64_t)(uintptr_t)data->menu_commands,
+						  (uint64_t)(uintptr_t)chain->images[index],
+						  (uint64_t)(uintptr_t)nrex_image_view(data->menu_ui),
+						  rx, ry, rw, rh);
 	}
 
 	barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -451,12 +481,24 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 	 * the frame's own rendering finished. `transfer()` waits on `data->present_wait` for the same
 	 * reason and its pixels do reach the screen.
 	 *
-	 * Waiting does not consume a semaphore - it orders against it. What must not be signalled
-	 * twice is the signal, and the menu signals nothing.
+	 * **This said that waiting does not consume a semaphore, and for a binary semaphore it does**:
+	 * the wait leaves it unsignalled, which is why a semaphore can be waited once (below). The menu
+	 * signals nothing, which stays true.
 	 *
-	 * Zero waits is a real case, not a fallback: the layer captures the waits only while it is
-	 * capturing frames, so a game with NR off has none, and the menu still has to draw. */
-	uint32_t waits = data->present_wait_count;
+	 * Zero waits is a real case, not a fallback: the waits are gone once a capture has taken them,
+	 * and the menu still has to draw - ordered then by the capture's own completion, which the layer
+	 * waited for on its private fence before this submit was made.
+	 *
+	 * **Waits a capture already took are not waited again, and the ones this submit takes are
+	 * the present's no longer** (2026-11-05). A binary semaphore is unsignalled by the wait that
+	 * consumes it, so each can be waited once. The GPU path's capture takes the game's waits and
+	 * left `present_wait_count` as it was, so the menu waited on them a second time; and with NR off
+	 * the menu took them and the present waited on them again. Both are waits on a semaphore with
+	 * no signal to come, which Intel's driver has let pass. Now the menu waits only on what nobody
+	 * took, and marks them taken: the present then goes without waits, as after `transfer()`,
+	 * because the fence below has seen this submit - and with it the game's frame - complete. That
+	 * the frame counter can draw on every frame with NR off is what made it matter. */
+	uint32_t waits = data->waits_consumed ? 0 : data->present_wait_count;
 	if (waits > data->transfer_stage_capacity) {
 		VkPipelineStageFlags *grown = realloc(data->transfer_stages,
 						      (size_t)waits * sizeof *grown);
@@ -471,7 +513,25 @@ static int menu_composite(struct device_data *data, struct swapchain_data *chain
 		.pWaitDstStageMask = waits ? data->transfer_stages : NULL,
 		.commandBufferCount = 1, .pCommandBuffers = &data->menu_commands,
 		.signalSemaphoreCount = 0, .pSignalSemaphores = NULL };
-	if (QueueSubmit(queue, 1, &si, data->menu_fence) != VK_SUCCESS) return 0;
+	if (ResetFences(data->device, 1, &data->menu_fence) != VK_SUCCESS) {
+		data->device_error = VK_ERROR_DEVICE_LOST;
+		return 0;
+	}
+	if (QueueSubmit(queue, 1, &si, data->menu_fence) != VK_SUCCESS) {
+		/* Reset and never submitted, the fence would hold every later frame for a second at the
+		 * wait above. Made again, signalled, on the next frame instead. */
+		PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)
+			data->get_device_proc(data->device, "vkDestroyFence");
+		if (destroy_fence) {
+			destroy_fence(data->device, data->menu_fence, NULL);
+			data->menu_fence = VK_NULL_HANDLE;
+		}
+		return 0;
+	}
+	if (waits) {
+		data->waits_consumed = 1;
+		data->present_wait_count = 0;
+	}
 
 	/* Waited rather than deferred: the buffer is reused next frame, and the wait is the menu's own
 	 * cost - a compute dispatch over the panel - not the game's. Deferring would need a command

@@ -1344,7 +1344,16 @@ static int process_frame_gpu(struct device_data *data, struct swapchain_data *ch
         began = data->timing.active ? nr_time_us() : 0;
         result = nr_gpu_bridge_copy_output(bridge, chain->images[index], queue);
         if (data->timing.active) nr_timing_add(&data->timing, NR_TIME_RETURN, nr_time_us() - began);
-        if (result == VK_SUCCESS) return 2;
+        if (result == VK_SUCCESS) {
+            /* The network's time for this frame, which a FRAME's reply carries in `detail` since
+             * 2026-11-05 (nr_gpu_wire.h); 0 from a daemon before that, and then nothing is
+             * counted. The panel's frame counter shows it. */
+            if (reply.detail) {
+                data->nr_network_us += reply.detail;
+                data->nr_network_frames++;
+            }
+            return 2;
+        }
         /* An output submit may still own the swapchain image. Never forward an
          * unsynchronized present after that private fence failed. */
         data->device_error = VK_ERROR_DEVICE_LOST;
@@ -2077,6 +2086,14 @@ static VkResult present_locked(VkQueue queue,
 		data->queues_announced = 1;
 		announce_queues(data->device, queue, owner ? owner->family : data->queue_family);
 	}
+	/* The game's rate, for the panel's frame counter: the presents of the swapchain the layer works
+	 * on, the largest recent one, so a second window presenting too adds nothing to it. */
+	for (uint32_t i = 0; i < info->swapchainCount; ++i) {
+		if ((uint64_t)info->pSwapchains[i] == data->primary.handle) {
+			data->presents_counted++;
+			break;
+		}
+	}
 
 	/* Offered, not yet taken: a transfer claims them, and if none runs this present goes
 	 * through untouched with its own. */
@@ -2128,6 +2145,7 @@ static VkResult present_locked(VkQueue queue,
 				if (gpu) {
 					data->holding = 0;
 					nr_timing_finish(&data->timing, gpu == 2);
+					if (gpu == 2) data->nr_frames++;   /* answered, and in the image */
 					continue;
 				}
 #endif
@@ -2141,6 +2159,7 @@ static VkResult present_locked(VkQueue queue,
 					data->holding = 1;
 					int returned = transfer(data, chain, queue, index, 1) == 0;
 					nr_timing_finish(&data->timing, returned);
+					if (returned) data->nr_frames++;   /* the answer is in the image */
 #ifdef _WIN32
 					log_gpu_note(data);
 #endif
@@ -2202,6 +2221,7 @@ static VkResult present_locked(VkQueue queue,
 				data->holding = 1;
 				int returned = transfer(data, chain, queue, index, 1) == 0;
 				nr_timing_finish(&data->timing, returned);
+				if (returned) data->nr_frames++;
 			} else nr_timing_finish(&data->timing, 0);
 		} else if (wanted && data->holding
 			   && data->result_size == (VkDeviceSize)chain->extent.width

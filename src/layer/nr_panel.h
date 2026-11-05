@@ -23,6 +23,7 @@
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_ui.h"
+#include "nr_frame_rate.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,10 @@ typedef struct nr_panel_host {
 	 * DirectX 12 game has none of them - its frames are on the GPU, each on its own frame. The
 	 * network row is offered either way, whenever `nr-env.txt` could be read. */
 	int pacing;
+	/* The frame counter's totals (nr_frame_rate.h): the game's presents, the frames NR answered and
+	 * put into the picture, and the network's time the daemon gave with them. Asked once a present,
+	 * on the presenting thread. NULL leaves the counter out. */
+	void (*counts)(void *user, nr_frame_counts *out);
 } nr_panel_host;
 
 typedef struct nr_panel nr_panel;
@@ -71,15 +76,19 @@ nr_panel *nr_panel_create(nr_menu *menu, nrex_ui *ui, const char *settings, int 
 void nr_panel_destroy(nr_panel *panel);
 
 /* The frame's keys, every present, open or shut: the sweep, the hotkeys, the bridge's update, the
- * trigger, and the hold on the game's input. `window` is the window the frames go to when the host
- * knows it (a DXGI swap chain does), or NULL to find this process's own. Returns 1 when there is
- * something to draw. */
+ * trigger, the hold on the game's input, and the frame counter's sample. `window` is the window the
+ * frames go to when the host knows it (a DXGI swap chain does), or NULL to find this process's own.
+ * Returns 1 when there is something to draw: the panel, or with it shut the counter in its corner. */
 int nr_panel_input(nr_panel *panel, void *window);
 
 /* This frame's panel, after `nr_panel_input` said there is one: the rows, the pointer, ImGui's frame
- * and what the user did in it. `width` x `height` is the image it is drawn over. The host renders
- * ImGui's draw data after this, with its own backend. */
+ * and what the user did in it - or, with the panel shut, the counter alone in its corner, a window
+ * that takes no input. `width` x `height` is the image it is drawn over. The host renders ImGui's
+ * draw data after this, with its own backend. */
 void nr_panel_frame(nr_panel *panel, uint32_t width, uint32_t height);
+
+/* The counter's line as the panel last built it, for a test: "" before the first reading. */
+const char *nr_panel_rates_line(const nr_panel *panel);
 
 #ifdef __cplusplus
 }

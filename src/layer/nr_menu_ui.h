@@ -203,6 +203,25 @@ int nrex_resize(nrex_ui *ui, uint32_t width, uint32_t height);
 /* Language name for the tab the C side shows. */
 const char *nrex_language_name(int language);
 
+/* The frame counter (nr_panel.c builds its text from nr_frame_rate.h; this file only draws it).
+ * Call between nrex_new_frame and the render, before the panel's own calls.
+ *
+ *   panel_line   drawn at the top of the panel while it is open, with `hint` shown on hover;
+ *                NULL or "" draws nothing there
+ *   corner       where `corner_line` goes as well: 0 nowhere, 1-4 the top left, top right,
+ *                bottom left and bottom right of the picture (NR_COUNTER_* in nr_menu_bridge.h)
+ *
+ * The corner is a small window that takes NO input - no pointer, no keys, no focus, no navigation
+ * - so it can stay on screen while the panel is shut and the game has the keyboard and mouse. */
+void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint, int corner,
+                  const char *corner_line);
+
+/* The part of the picture the last rendered frame drew into, in image pixels: the bounds of its
+ * vertices, a pixel or two wider, inside the image. Valid after the renderer's render call until
+ * the next nrex_new_frame. Returns 0 when nothing was drawn. A host blends only this part onto the
+ * game's frame, which with the panel shut is the counter's corner and nothing else. */
+int nrex_drawn_rect(nrex_ui *ui, uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h);
+
 /* ------------------------------------------------------------------ Direct3D 12
  *
  * The same panel drawn by the DirectX 12 proxy (src/xess/nr_xess_panel.cpp) over a DXGI back buffer
