@@ -242,9 +242,12 @@ under that date. When an item is done, strike it through here and name the commi
 **Windows**
 - ~~0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`)~~:
   published on 11-05 at the owner's word, tag `v0.0.4` at `8232603` (below, 11-05 later).
-- NR through OptiScaler (#38), and an FSR 3.1 proxy: read, not built or run. OptiScaler with XeSS
-  as its upscaler should load NR's proxy as it is; a test in Hogwarts and the proxy wait for the
-  owner's word (below, 11-05 later).
+- NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
+  from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in no release yet (below, 11-05
+  evening). Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no
+  XeSS of its own. An FSR 3.1 proxy without OptiScaler: designed, not built (below, 11-05 later).
+- Hogwarts Legacy's DLSS 5 update, due on 11-05 with no hour published: once Epic has it, run
+  `D:\NRonWindows\nr-game\dlss5-update-check.ps1` (below, 11-05 evening).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -334,6 +337,66 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## NR through OptiScaler runs in Hogwarts, and the DLSS 5 update prepared for (2026-11-05, evening, branch `alchemist`)
+
+The owner: work on OptiScaler now, take its new version from GitHub, and get ready for Hogwarts
+Legacy's DLSS 5 update, due that night.
+
+**OptiScaler 0.9.4** (its latest release, 07-18; the 7z's SHA-256 is GitHub's digest,
+`575cb4df…0ad`), unpacked in `D:\NRonWindows\nr-game\optiscaler-0.9.4\package`: OptiScaler.dll
+0.9.4.0, its XeSS 2.0.2.68 (the proxy's 72 exports, as the entry below found), and FSR, XeFG and
+fakenvapi files. `nr-game\hogwarts-optiscaler-test.ps1 -Phase install|start|status|clean` puts in
+the three files the test needs (OptiScaler.dll as `dxgi.dll`, its `libxess.dll`, `OptiScaler.ini`
+with Dx12Upscaler=xess, Dxgi=false so no spoofing, ShortcutKey=0x23 since its menu's Insert opens
+NR's panel too, and a log file), then NR from 0.0.4's ZIP through the setup window's backend with the
+API `d3d12`, as a player would; it notes the executable's folder and the saves first, and a hidden
+watchdog cleans after 40 minutes. 0.0.4's Check took OptiScaler's `libxess.dll` beside the
+executable before the plug-in's, as `xess_libraries` orders them.
+- **From the game's XeSS** (UltraQualityPlus, the game's XeFG on), 19:47-20:05: OptiScaler took the
+  game's XeSS calls, loaded NR's `libxess.dll` from its folder ("loaded from Opti dll path"), and the
+  proxy started the daemon itself; every frame was answered on its own frame, 27.7 a second at 1280x720
+  and render scale 0.4 (network 512x320, B), 52 ms from the copy to the answer, none declined.
+- **From the game's FSR 3** (Quality, chosen in the menu by the owner at 20:05:40): OptiScaler took
+  the game's FidelityFX API context (`ffxCreateContext_Dx12`) and made a new XeSS for it; the proxy saw
+  the new init (quality 103, flags 0x10a, velocity scale 854x481, output R16G16B16A16_FLOAT) and its
+  session took the new output at once. 27.7 frames a second again, 64 ms from copy to answer, none
+  declined, to 20:29: 12,148 frames in the run. How the picture looked the owner has not said.
+- Editing `UpscaleMode` in `GameUserSettings.ini` does not choose FSR: the game keeps its options in
+  `SaveGames\<id>\SavedUserOptions.sav` and writes the ini from it at start.
+- The watchdog cleaned at 20:29: game and daemon stopped, Remove NR, OptiScaler's three files out,
+  the executable's folder as before. The owner's options, put back from the copy with the save list
+  and two crash-reporter session configs, are as before the test (XeSS UltraQualityPlus, XeFG x2);
+  against the baseline below the whole game is as it was but Epic's `.ovt` token, rewritten at launch.
+
+**Setup follows OptiScaler** (`d936d63`, local): `optiscaler()` reads `OptiScaler.ini` (beside the
+executable or in an `OptiScaler` folder) and takes the `libxess.dll` OptiScaler loads, in its own
+order: XeSSPath, its own folder (OptiDllPath, an `OptiScaler` folder, the executable's), the name
+alone. Check names it; refuses when OptiScaler upscales with anything but XeSS, or has no
+`libxess.dll` where it looks; warns when OptiScaler's menu is on Insert. On the way, a bug of 0.0.4:
+for a `libxess.dll` beside the executable (OptiScaler's, or a game's own) the record names no folder,
+so Check after Install took NR's `libxess.dll` for one setup has no record of, and Remove NR left
+`nr-xess.log`; `_xess_placed` now takes the executable's folder. The window's API reads "DirectX 12
+(games with XeSS or OptiScaler)" in its four languages, and the README and the release guide say how.
+Checked: `test_windows_wizard.py` 100 (two new), `test_release.py` 22, the window's self-test (89
+controls, 197 keys), and the new Check against the Hogwarts installation while the game ran.
+
+**The DLSS 5 update.** NVIDIA's announcement and the press give November 5 for Hogwarts Legacy (DLSS 5
+on RTX 50 and GeForce NOW, the game's other DLSS updated), no hour; the owner expects it near
+midnight UTC+9. The Epic copy was unchanged at 20:31 (files of 10-15). Ready for it:
+- a baseline, `D:\NRonWindows\nr-game\release-tests\hogwarts-1105-before`: every file's size and time,
+  and the 111 DLLs and executables with version and SHA-256. No `nvngx_dlssnr*.dll` is in the game.
+- `nr-game\dlss5-update-check.ps1`: what the update changed against it, every `nvngx_*`, `sl.*`,
+  `libxess*` and `amd_fidelityfx*` DLL with version, SHA-256 and signer, and a new
+  `nvngx_dlssnr.dll`'s resources against 310.9.16's (`dlss5-dll-compare.py`: WEIGHTS_HT, preset A,
+  147,695,410 bytes; WEIGHTS_CC_SMALL_FP8, preset B, 113,893,343). Both only read.
+- Setup takes a DLL of another version (Check says which were tested), and extraction needs the
+  `WEIGHTS_*` resources. New or changed ones would be a network to recover, as B was (phase72); no
+  DLL in the game would mean the model comes through NVIDIA's driver, not to be had from this game.
+
+**Next on Linux:** `make test` and CTest once `d936d63` is on GitHub (`test_windows_wizard.py`
+gained two cases, and `windows_wizard_core.py` changed). **Next on Windows:** the update's check;
+the owner's word on pushing `d936d63` and on the release that takes it.
 
 ## 0.0.4 built and checked; how NR could reach OptiScaler's and FSR 3.1's games (2026-11-05, later, branch `alchemist`)
 
