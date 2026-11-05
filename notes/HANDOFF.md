@@ -31,21 +31,24 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
-  (`86a5799`, 11-01) and **v0.0.3.1** (`c0b7f9d`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
-  `vulkan-1.dll` proxy and NR's `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through
+  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01) and **v0.0.4** (`8232603`, 11-05, the latest),
+  a ZIP with the setup window, DXVK 3.1.1, both layers, a `vulkan-1.dll` proxy, NR's `libxess.dll`
+  as `nr_xess.dll` and, since 0.0.4, its own Python. 0.0.2 brings DirectX 12 through
   XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
   that checks GitHub for a newer release (archive, 10-31). 0.0.3 brings the panel inside DirectX 12
   games, its keys and clicks kept from the game, and `nr_gpu_probe.exe`, the GPU report for Arc
   A-series owners (below, 11-01). 0.0.3.1 is what the first A-series reports asked for: the speed
   test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
-  11-01 later). All three went out on the owner's word before Linux's `make test` at their heads,
+  11-01 later). 0.0.4 brings Python with the release, so a player installs none (below, 11-05),
+  and the staged GEMM's walk, which takes 9-19 % off the network on Intel's Windows driver (below,
+  11-04 night). All four went out on the owner's word before Linux's `make test` at their heads,
   as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841`
-  (below, 11-04 later). Linux users build from source (README).
+  (below, 11-04 later); 0.0.4's is in Open items. Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
     the README for players (`d5bef2e`, 11-02) and `alchemist`'s head, at `72fb922` and again that
-    night (11-04, below);
+    night (11-04, below), and with it to 0.0.4 (`8232603`) and its HANDOFF entry (`9b73d96`, 11-05);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
@@ -54,8 +57,9 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
     players' data, and the entries of 11-04 below), level with `master` and `newnr` again on
     11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
-    them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), and level again
-    since that night, when the owner had both fast-forwarded to it (below, 11-04 night, later);
+    them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), level again that
+    night, when the owner had both fast-forwarded to it (below, 11-04 night, later), and again
+    since 0.0.4 went out (below, 11-05 later);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -163,10 +167,10 @@ under that date. When an item is done, strike it through here and name the commi
 
 **Linux** (what to pull and run, in order: below, 11-04)
 - `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
-  `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, once they are
-  on GitHub. `nr_daemon.py` puts its own folder on sys.path, `test_release.py` and
-  `test_windows_wizard.py` gained cases, and `test_toggle.py`'s page check reads the new README;
-  nothing Linux runs otherwise changed.
+  `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, at GitHub's
+  `alchemist` since 0.0.4 went out. `nr_daemon.py` puts its own folder on sys.path,
+  `test_release.py` and `test_windows_wizard.py` gained cases, and `test_toggle.py`'s page check
+  reads the new README; nothing Linux runs otherwise changed.
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -233,10 +237,8 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- 0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`): built
-  from `8232603` and checked from its ZIP (below, 11-05 later). Publishing is the owner's word:
-  `alchemist` pushed, `master` and `newnr` fast-forwarded to it, tag `v0.0.4` at `8232603`, the
-  release with the ZIP and its notes.
+- ~~0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`)~~:
+  published on 11-05 at the owner's word, tag `v0.0.4` at `8232603` (below, 11-05 later).
 - NR through OptiScaler (#38), and an FSR 3.1 proxy: read, not built or run. OptiScaler with XeSS
   as its upscaler should load NR's proxy as it is; a test in Hogwarts and the proxy wait for the
   owner's word (below, 11-05 later).
@@ -335,7 +337,13 @@ under that date. When an item is done, strike it through here and name the commi
 The owner: prepare the release, unhurried, and can NR take OptiScaler (#38), or at least hook FSR 3
 or newer?
 
-**0.0.4, waiting for the owner's word to publish.** `8232603`: `VERSION` 0.0.4 (as proposed; the
+**0.0.4, published on 11-05 at the owner's word** ("После этих изменений можешь релизить"), after
+the owner had the notes cut to what a player needs: Python included, the faster network (on Arc
+A-series cards, the same driver, expected and not measured), what is needed, how to install, the
+limits. Tag `v0.0.4` at `8232603`; `master`, `newnr` and `alchemist` fast-forwarded
+`0456e99..9b73d96` on GitHub and here. The release "DLSS-NR 0.0.4 for Windows" is the latest; its
+asset's digest is the ZIP's SHA-256 below, and its body is `work\pr-replies\release-notes-0.0.4.md`
+without the draft comment. `8232603`: `VERSION` 0.0.4 (as proposed; the
 owner did not name another), the README's "You need" without its Python line, Mortal Kombat 11's
 row at 0.4 and 1.0 as measured with this code (below, 11-04 night and 11-05), an A770 owner's
 three games at 1920x1080 (#37) in the tested-games table and in `players.json`, and that card's
@@ -405,9 +413,10 @@ the ZIP, whose `README.md` is `docs/RELEASE-QUICKSTART.md`.
   resource states they pass, a setup API and tests: some days, then Hogwarts with FSR 3.1 chosen.
   It reaches games with FSR 3.1 and no XeSS without OptiScaler.
 
-**Next on Linux:** `make test` in both memory modes and CTest at `8232603` once it is on GitHub
-(Open items). **Next on Windows:** the owner's word on publishing 0.0.4, on #38's reply, on
-OptiScaler in Hogwarts (the 0.9.0.12 copy on this disk, or 0.9.4), and on the FSR 3.1 proxy.
+**Next on Linux:** `git fetch`, fast-forward `master`, `newnr` and `alchemist` to GitHub's, then
+`make test` in both memory modes and CTest at its head (Open items). **Next on Windows:** the
+owner's word on #38's reply, on OptiScaler in Hogwarts (the 0.9.0.12 copy on this disk, or 0.9.4),
+and on the FSR 3.1 proxy.
 
 ## Windows releases carry their own Python (2026-11-05, branch `alchemist`)
 
