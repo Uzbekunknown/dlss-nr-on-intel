@@ -56,8 +56,10 @@ You need:
 
 - the **[latest release](https://github.com/Uzbekunknown/dlss-nr-on-intel/releases/latest)**, which
   brings its own Python: there is nothing else to install for it;
-- your own `nvngx_dlssnr.dll`, copied from a game you own that ships DLSS 5 Neural Rendering,
-  such as NBA 2K27. Version 310.9.16 or later holds both of NR's networks, A and B; 310.8 holds A.
+- your own `nvngx_dlssnr.dll`, copied from a game you own that ships DLSS 5 Neural Rendering:
+  Hogwarts Legacy since its DLSS 5 update (in
+  `Engine\Plugins\Runtime\Nvidia\StreamlineCore\Binaries\ThirdParty\Win64`), or NBA 2K27.
+  Version 310.9.16 or later holds both of NR's networks, A and B; 310.8 holds A.
 
 Then:
 
@@ -67,7 +69,9 @@ Then:
 3. Start the game the way you always do: Steam, Epic, a shortcut. In a DirectX 12 game, choose
    **XeSS** as the upscaler.
 4. In the game, **Home** turns NR on and off, and **Insert** opens its panel: render scale,
-   network, strength and the rest, changed as you play.
+   network, profile, strength and the rest, changed as you play, and a frame counter, which can
+   also stay in a corner. In Hogwarts Legacy, profile **hogwarts** is the look NVIDIA and the
+   game's developers chose for DLSS 5: milder than `standard`, faces milder still.
 5. To take it out, **Remove NR** puts the game's folder back as it was.
 
 Every button, the speed test, and setup without the window are in
@@ -88,6 +92,8 @@ NR runs a large neural network on every frame, on the same GPU as the game.
   scales. An A750's XMX engines measure about two thirds of an A770's.
 - **Network B**, NVIDIA's smaller model, is up to twice as fast as A and changes the picture a
   little less. Setup chooses it when your DLL has it.
+- **A game's frame generation** adds its frames after NR, so the screen shows about twice NR's
+  rate: in Hogwarts Legacy with XeSS frame generation, 51-52 fps on screen from NR's 25-26.
 - The picture is held steady from frame to frame; a little shimmer can remain where things move.
 
 Every setting, and NR's frame times on each GPU: [docs/SETTINGS.md](docs/SETTINGS.md).
@@ -99,14 +105,15 @@ date; a later release can do better or worse.
 
 | Game | Tested on | How it ran | Result | Checked |
 | --- | --- | --- | --- | --- |
+| Hogwarts Legacy, after its DLSS 5 update | Arc 140V | Windows, DirectX 12 through XeSS, network B | 25-26 fps of NR's at 1280x720 and render scale 0.4, and 51-52 on screen with XeSS frame generation x2; profile `standard` or `hogwarts` | 2026-11-06 |
 | Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 34-38 fps at 1280x720 and render scale 0.4, about 10 at render scale 1.0 | 2026-11-05 |
+| Hogwarts Legacy through OptiScaler 0.9.4 | Arc 140V | Windows, DirectX 12, OptiScaler's XeSS taking the game's XeSS or its FSR 3, network B | about 28 fps of NR's at 1280x720 and render scale 0.4 | 2026-11-05 |
 | Euro Truck Simulator 2 | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 21-22 fps at 1920x1080 and render scale 0.4 with network B; 6 at full render scale | 2026-11-04 |
 | Star Wars Battlefront II (2017) | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | about 22 fps at 1920x1080 and render scale 0.4 with network B, once the player kept the PC's other Vulkan layers out (`VK_LOADER_LAYERS_DISABLE=~implicit~`) | 2026-11-04 |
 | Alien: Isolation | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 17-18 fps | 2026-11-04 |
 | Assetto Corsa | Arc B580, a player's report ([#34](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/34)) | Windows, DirectX 11 through DXVK | smooth at 1920x1080 with network B and render scale 0.5; 9-15 fps with network A | 2026-11-03 |
 | Euro Truck Simulator 2 | Arc A750, a player's report ([#32](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/32)) | Windows | NR takes 154 ms a frame at 1920x1080 and render scale 0.6, so about 6 fps at most | 2026-11-02 |
 | Nuclear Option | Arc A770, a player's report ([#25](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/25)) | Windows, DirectX 11 through DXVK, or Vulkan | 40 fps at 1280x720 and render scale 0.4 through DirectX 11; 23 through Vulkan, on network A | 2026-11-01 |
-| Hogwarts Legacy | Arc 140V | Windows, DirectX 12 through XeSS, network B | about 26 fps at 1280x720 and render scale 0.4, with XeSS frame generation as well | 2026-10-31 |
 | Dead or Alive 5 Last Round | Arc 140V | Windows, DirectX 9 (32-bit) through DXVK, network B | about 22 fps | 2026-10-18 |
 | DOOM (2016) | Arc B580, a player's report ([#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17)) | Windows, Vulkan | 73 fps at 1920x1080 and render scale 0.4 with network B, 48 with network A | 2026-10-18 |
 | Driving Rogue | Arc B580, a player's report ([#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17)) | Windows, DirectX 11 through DXVK | 53 fps at 1920x1080 and render scale 0.5 with network B, 34 with network A; at full scale 18 and 10 | 2026-10-18 |
