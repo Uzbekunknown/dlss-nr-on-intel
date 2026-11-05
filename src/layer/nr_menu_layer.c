@@ -191,6 +191,8 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 		VkInstance ui_instance = VK_NULL_HANDLE;
 	PFN_vkGetInstanceProcAddr ui_next = NULL;
 	nr_layer_menu_globals(&ui_instance, &ui_next);
+		/* The UI's own command buffers get the loader's data, as `menu_commands` below does. */
+		nrex_vk_loader_data((void *)(uintptr_t)data->set_loader_data);
 	data->menu_ui = nrex_create(data->device, data->physical, (void *)ui_instance,
 					    (void *)ui_queue, ui_family_out,
 					    (uint32_t)chain->format, 420u << 12,

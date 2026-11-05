@@ -110,6 +110,41 @@ struct nrex_vk {
 typedef PFN_vkVoidFunction (VKAPI_PTR *nrex_gpa_device_fn)(VkDevice device, const char *name);
 typedef PFN_vkVoidFunction (VKAPI_PTR *nrex_gpa_instance_fn)(VkInstance instance, const char *name);
 
+/* **Every command buffer the UI allocates is given the loader's data** (2026-11-05).
+ *
+ * A command buffer is a dispatchable object, and its first word is the dispatch key every layer
+ * below this one looks its device up by. The loader writes that word for the objects an application
+ * makes; for an object a layer makes itself, the layer has to call `vkSetDeviceLoaderData`, as
+ * nr_menu_layer.c does for the menu's own buffer. ImGui's backend allocates one for its texture
+ * uploads, and `nrex_oneshot_begin` one for the font, and neither was given it. With nothing between
+ * this layer and the driver that went unseen; under the Khronos validation layer the panel's first
+ * frame aborted (0xC0000409, `test_gpu_present --sync-validation`), and any layer that sits there
+ * in a player's game - an overlay's, a capture's - would look up a device it cannot find.
+ *
+ * So `vkAllocateCommandBuffers` reaches ImGui through `nrex_alloc_cmds`, which calls the next one
+ * and then the loader's callback on what it made; the callback is the layer's, handed over by
+ * `nrex_vk_loader_data` before `nrex_create`. */
+typedef VkResult (VKAPI_PTR *nrex_set_loader_data_fn)(VkDevice device, void *object);
+static nrex_set_loader_data_fn g_set_loader_data = nullptr;
+static PFN_vkAllocateCommandBuffers g_next_alloc_cmds = nullptr;
+
+static VkResult VKAPI_CALL nrex_alloc_cmds(VkDevice device, const VkCommandBufferAllocateInfo *info,
+                                           VkCommandBuffer *out)
+{
+    if (!g_next_alloc_cmds) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult result = g_next_alloc_cmds(device, info, out);
+    if (result == VK_SUCCESS && g_set_loader_data && info && out)
+        for (uint32_t i = 0; i < info->commandBufferCount; ++i)
+            if (g_set_loader_data(device, out[i]) != VK_SUCCESS)
+                NREX_ERROR("[menu ui] the loader would not take a command buffer of the UI's\n");
+    return result;
+}
+
+extern "C" NREX_API void nrex_vk_loader_data(void *set_loader_data)
+{
+    g_set_loader_data = (nrex_set_loader_data_fn)(uintptr_t)set_loader_data;
+}
+
 /* The Vulkan renderer's state, after the part every renderer shares (nr_menu_ui_backend.h). */
 struct nrex_vk_ui : nrex_ui {
     VkDevice              device;
@@ -408,6 +443,11 @@ extern "C" NREX_API nrex_ui *nrex_create(void *device_v, void *physical_v, void 
             nrex_gpa_instance_fn gpa_ins = (nrex_gpa_instance_fn)(uintptr_t)ctx[1];
             PFN_vkVoidFunction f = gpa_dev((VkDevice)ctx[2], name);
             if (!f) f = gpa_ins((VkInstance)ctx[3], name);
+            /* Its command buffers get the loader's data on the way back (above). */
+            if (f && !strcmp(name, "vkAllocateCommandBuffers")) {
+                g_next_alloc_cmds = (PFN_vkAllocateCommandBuffers)f;
+                f = (PFN_vkVoidFunction)&nrex_alloc_cmds;
+            }
             if (!f) {
                 /* Window-system functions (vkDestroySurfaceKHR and friends) come from the
                  * loader's global entry point, which the instance resolver has already covered;
@@ -475,6 +515,9 @@ static bool nrex_oneshot_begin(nrex_vk_ui *u, VkCommandPool *pool, VkCommandBuff
     ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     if (u->vk.alloc_cmds(u->device, &ai, cmd) != VK_SUCCESS) return false;
+    /* The loader's data, as for every dispatchable object this layer makes (see nrex_alloc_cmds). */
+    if (g_set_loader_data && g_set_loader_data(u->device, *cmd) != VK_SUCCESS)
+        NREX_ERROR("[menu ui] the loader would not take the font upload's command buffer\n");
 
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, 0};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

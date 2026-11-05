@@ -112,6 +112,12 @@ nrex_ui *nrex_create(void *device, void *physical, void *instance, void *queue,
 
 void nrex_destroy(nrex_ui *ui);
 
+/* The loader's `vkSetDeviceLoaderData` (`PFN_vkSetDeviceLoaderData`, from the layer's device
+ * creation), for the command buffers the UI makes itself: a dispatchable object a layer makes has
+ * to be given the loader's data, or a layer below this one cannot find its device by it. Before
+ * `nrex_create`. */
+void nrex_vk_loader_data(void *set_loader_data);
+
 /* The frame's window. Call between nrex_new_frame and nrex_render.
  *
  * `hint` is the panel-level line the footer shows - the panel's own keys. NULL or empty draws
