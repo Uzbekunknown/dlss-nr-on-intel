@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "nr_panel.h"
+#include "nr_menu_floor.h"
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_ui.h"
@@ -47,6 +48,12 @@ struct nr_panel {
 
 	/* This frame's keyboard, swept once in `nr_panel_input`, and the window the frames go to. */
 	unsigned char keys[256];
+
+	/* The picture the panel is drawn over, as `nr_panel_frame` was told. The row builder needs it
+	 * for `render_scale`'s floor, and it runs before the rest of that function, so the size is
+	 * stored on entry rather than read later. Zero until the first frame. */
+	uint32_t frame_width;
+	uint32_t frame_height;
 	nr_ui_window window;
 	nr_ui_window window_hint;       /* the host's, when it knows: a DXGI swap chain's window */
 
@@ -287,6 +294,21 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 			float low = 0.0f, high = 1.0f, step = 0.01f;
 			if (nr_menu_bridge_knob_range(i, &low, &high, &step, NULL) == 0) {
 				low = 0.0f; high = 1.0f; step = 0.01f;
+			}
+			/* **`render_scale`'s floor moves with the picture.** See `nr_panel_lowest_scale`: below the
+			 * point where the frame clears `min_extent`, the network's field stops shrinking, so
+			 * five different settings ran the same 320x320 field and the row named a speedup that
+			 * was not there. The floor is the first step that does change the field.
+			 *
+			 * Only the slider's minimum: the value the file holds, what the daemon reads, and every
+			 * setting above the floor are untouched. A frame whose size is not known yet leaves the
+			 * knob's own minimum alone rather than guessing. */
+			if (strcmp(nr_menu_bridge_knob_name(i), "render_scale") == 0
+			    && data->frame_width && data->frame_height) {
+				int minimum = nr_menu_bridge_knob_min_extent(data->menu_bridge);
+				float floor_scale = nr_panel_lowest_scale(data->frame_width, data->frame_height,
+								       (uint32_t)minimum, step);
+				if (floor_scale > low && floor_scale <= high) low = floor_scale;
 			}
 			r->kind = NREX_KIND_FLOAT;
 			r->min = low;
@@ -1309,6 +1331,9 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 
 	/* The ImGui path: build the frame, convert the bridge's rows, and let the host render it -
 	 * into the UI's own image and onto the game's in Vulkan, over the back buffer in DirectX 12. */
+	/* Before the rows: `render_scale`'s floor is computed from the picture's size. */
+	data->frame_width = width;
+	data->frame_height = height;
 	nrex_row rows[MENU_UI_MAX_ROWS];
 	int count = menu_ui_rows(data, rows, MENU_UI_MAX_ROWS);
 
