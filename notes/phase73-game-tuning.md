@@ -35,7 +35,11 @@ data share `.data1` and `.arch`, and there is no `.text`. Addresses are those of
    `.Mask.Mode` (0 off, 1 the stencil mask, 2 the automatic mask) and `.Style` (0-2) are ints,
    default 0. The intensity's help reads "range [0..1]", and its setter clamps to that. The
    tone, structure and skin setters print the float into the cvar unchanged. The skin cvar's
-   help: "applies to skin regions defined by the auto mask mode".
+   help: "applies to skin regions defined by the auto mask mode". Every frame
+   (0x142861939-0x142861a02) the plug-in reads the values back and clamps each to [0, 1], the
+   intensity, tone, structure and skin alike, with no other arithmetic. The style it clamps to
+   [0, 2], and the automatic mask is on exactly when `Mask.Mode` is 2. So in an Unreal game these
+   strengths never exceed 1, where phase30's panel went to 2; the game's values are inside.
 3. **Streamline** (`sl.dlss_nr.dll`): `dlss_nrBackendNGX.cpp` sets the NGX parameters straight
    from the options, with no arithmetic. `movss xmm2, [opts+0xf8]` goes to `DLSSNR.Intensity`,
    `+0xfc` to `.LocalToneStrength`, `+0x100` to `.LocalStructureStrength`, `+0x114` to
