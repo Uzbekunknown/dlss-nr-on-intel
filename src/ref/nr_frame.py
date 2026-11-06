@@ -125,6 +125,34 @@ def network_geometry(width, height, minimum=VENDOR_MINIMUM_EXTENT):
 NetworkGeometry.vendor_aligned = classmethod(lambda cls, width, height: network_geometry(width, height))
 
 
+def lowest_effective_scale(width, height, minimum=VENDOR_MINIMUM_EXTENT, step=0.05):
+    """The lowest scale, on `step`, whose network field is smaller than the field one step below it.
+
+    Everything at or under this scale runs the SAME field as it does - the field has stopped
+    shrinking (`network_geometry` holds it at `minimum` a side) - so a knob that offered them would
+    be selling speed it cannot deliver. Measured at 720p: 0.25, 0.2, 0.15, 0.1 and 0.05 all ran
+    320x320, and the floor is 0.30.
+
+    The search walks the knob's own steps, because the field is aligned and the price is not
+    monotonic in the picture's size: `render_extent` picks the cheapest field at or above each
+    scale, and a step that starts smaller can land on a cheaper, larger field. `None` when the
+    picture's size is unknown, so a caller with no frame yet leaves its knob alone.
+    """
+    if not width or not height or step <= 0:
+        return None
+    previous = None
+    scale = step
+    while scale <= 1.0 + 1e-9:
+        extent = render_extent(width, height, min(scale, 1.0), minimum)
+        geometry = network_geometry(*extent, minimum=minimum)
+        area = geometry.network_width * geometry.network_height
+        if previous is not None and area > previous:
+            return round(scale, 4)
+        previous = area
+        scale = round(scale + step, 4)
+    return 1.0
+
+
 _EXTENTS: dict = {}
 
 

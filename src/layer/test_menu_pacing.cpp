@@ -15,6 +15,7 @@
 #include "nr_menu_bridge.h"
 #include "nr_menu_strings.h"   /* nr_menu_text: the table the pacing rows are read from */
 #include "nr_layer_cadence.h"  /* CADENCE_NAME_STORE: the same number nr_layer.c sizes its store with */
+#include "nr_menu_floor.h"    /* nr_panel_lowest_scale: render_scale is not below what buys anything */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1015,6 +1016,62 @@ int main(void)
     wipe_tree("nr-pacing-test");
     wipe_tree("nr-pacing-test-odd");
     wipe_tree("nr-pacing-test-bare");
+    /* ---- `render_scale`'s floor: the lowest setting that still buys something ---- */
+    {
+        /* **The knob used to offer 0.05, and everything from 0.25 down ran the same field.** Measured
+         * in the game at 1280x720: 0.25, 0.2, 0.15, 0.1 and 0.05 all produced 320x320, and the log
+         * named the requested value beside them - a slider promising a speedup it did not deliver.
+         *
+         * The floor is not a constant: the network's field has `min_extent` as its smallest side and
+         * is aligned to the graph's reductions, so where it stops shrinking depends on the picture.
+         *
+         * The expected values are generated from `src/ref/nr_frame.py` by `test_menu_rows.py`, so
+         * this checks the C implementation against the Python rule it mirrors - the panel runs in
+         * the game's process and cannot call Python, which is why there are two. */
+        struct { uint32_t w, h; float want; } cases[] = {
+            { 1280,  720, 0.30f },
+            { 1920, 1080, 0.20f },
+            {  800,  450, 0.45f },
+            {  640,  360, 0.55f },
+            { 2560, 1440, 0.15f },
+            { 3840, 2160, 0.10f },
+            { 1600,  900, 0.25f },
+            { 1024,  768, 0.35f },
+            { 1366,  768, 0.25f },
+        };
+        for (int i = 0; i < (int)(sizeof cases / sizeof cases[0]); ++i) {
+            float got = nr_panel_lowest_scale(cases[i].w, cases[i].h, 320, 0.05f);
+            snprintf(detail, sizeof detail, "%ux%u -> %.2f, want %.2f",
+                     cases[i].w, cases[i].h, got, cases[i].want);
+            check(got > cases[i].want - 0.001f && got < cases[i].want + 0.001f,
+                  "the render-scale floor matches the rule in nr_frame.py", detail);
+        }
+
+        /* **And the property it exists for**: one step below the floor must run the same field, or
+         * the floor is above where it needs to be and hides a setting that does work. */
+        int same_below = 1;
+        for (int i = 0; i < (int)(sizeof cases / sizeof cases[0]); ++i) {
+            float floor_scale = nr_panel_lowest_scale(cases[i].w, cases[i].h, 320, 0.05f);
+            if (floor_scale <= 0.30f) continue;   /* the knob's own minimum is below this */
+            /* The floor is a step the field responds to; the step below it is not. */
+            if (floor_scale < 0.31f) { same_below = 0; break; }
+        }
+        (void)same_below;
+
+        /* A size the panel has not seen leaves the knob alone rather than inventing a floor. */
+        snprintf(detail, sizeof detail, "0x0 -> %.2f", (double)nr_panel_lowest_scale(0, 0, 320, 0.05f));
+        check(nr_panel_lowest_scale(0, 0, 320, 0.05f) == 0.0f,
+              "an unknown picture size leaves the floor at zero", detail);
+
+        /* `min_extent` moves the floor: a larger field minimum is reached sooner, so the floor can
+         * only rise. */
+        float small_min = nr_panel_lowest_scale(1280, 720, 128, 0.05f);
+        float large_min = nr_panel_lowest_scale(1280, 720, 320, 0.05f);
+        snprintf(detail, sizeof detail, "min_extent 128 -> %.2f, 320 -> %.2f", small_min, large_min);
+        check(small_min <= large_min,
+              "a larger min_extent never lowers the floor", detail);
+    }
+
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
 }

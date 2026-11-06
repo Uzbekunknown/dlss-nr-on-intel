@@ -1862,6 +1862,19 @@ const char *nr_menu_bridge_pacing_gpu_blocker(const nr_menu_bridge *b, int langu
     return NULL;
 }
 
+int nr_menu_bridge_knob_min_extent(const nr_menu_bridge *b)
+{
+    if (!b) return 320;
+    for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
+        if (strcmp(knobs[i].key, "min_extent") != 0) continue;
+        float v = b->values[i];
+        if (v < knobs[i].low) v = knobs[i].low;
+        if (v > knobs[i].high) v = knobs[i].high;
+        return (int)(v + 0.5f);
+    }
+    return 320;
+}
+
 int nr_menu_bridge_knob_range(int index, float *low, float *high, float *step, float *default_value)
 {
     if (index < 0 || index >= NR_KNOBS_COUNT) return 0;

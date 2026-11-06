@@ -1122,6 +1122,19 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     # are never resampled and only the synthesised part is interpolated.
     inner = colour
     if live.render_scale < 1.0:
+        # **The floor, from the picture this frame actually is.** A saved value below the point
+        # where the field stops shrinking runs the same field as the one above it - 0.05 through
+        # 0.25 at 720p all produced 320x320 - and the log named a scale that was not the one that
+        # ran. The panel floors its slider at the first step that changes the field (see
+        # `nr_menu_floor.c`); the setup window cannot, because it runs before any picture does, so
+        # values below the floor still reach here. Raised to that step, per frame: the file keeps
+        # what was chosen, and a resolution change re-clamps on its own.
+        _floor = nr_frame.lowest_effective_scale(active_width, active_height,
+                                                 float(live.min_extent), 0.05)
+        if _floor is not None and live.render_scale < _floor:
+            print(f"settings: render_scale below {_floor:.2f} runs the same field at "
+                  f"{active_width}x{active_height}; clamped to {_floor:.2f}", flush=True)
+            live.render_scale = _floor
         # The scale's own frame, or the largest that lands on the same network field — the
         # same cost, more of the picture and less of its mirror image (`render_extent`).
         extent = nr_frame.render_extent(active_width, active_height, float(live.render_scale),
