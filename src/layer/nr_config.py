@@ -107,7 +107,11 @@ COMMENTS = {
     "render_scale": ('RenderScale', 'Upscalers', '0.05 to 1.0', '1.0',
                      'The fraction of each side the network runs on - the only setting that\n'
                      '; changes the frame rate. Lower is faster and draws coarser detail.\n'
-                     '; 0.35-0.6 is the useful range for play; 1.0 is for screenshots.'),
+                     '; 0.35-0.6 is the useful range for play; 1.0 is for screenshots.\n'
+                     '; The network has a smallest field, so below a point that depends on the\n'
+                     '; window and on MinExtent, a lower scale runs the same field and buys\n'
+                     '; nothing; the in-game panel floors its slider there, and the daemon says\n'
+                     '; what it clamped in its log.'),
     "min_extent": ('MinExtent', 'Upscalers', '128 to 320', '320',
                    'The smallest side the network\'s frame is padded to, by mirroring.\n'
                    '; 320 is what the vendor\'s driver uses. Lower is faster at small windows\n'
