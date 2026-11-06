@@ -31,7 +31,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
-  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01) and **v0.0.4** (`8232603`, 11-05, the latest),
+  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01), v0.0.4 (`8232603`, 11-05) and **v0.0.5**
+  (`bb9317b`, 11-06, the latest),
   a ZIP with the setup window, DXVK 3.1.1, both layers, a `vulkan-1.dll` proxy, NR's `libxess.dll`
   as `nr_xess.dll` and, since 0.0.4, its own Python. 0.0.2 brings DirectX 12 through
   XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
@@ -41,9 +42,11 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
   11-01 later). 0.0.4 brings Python with the release, so a player installs none (below, 11-05),
   and the staged GEMM's walk, which takes 9-19 % off the network on Intel's Windows driver (below,
-  11-04 night). All four went out on the owner's word before Linux's `make test` at their heads,
-  as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841`
-  (below, 11-04 later); 0.0.4's is in Open items. Linux users build from source (README).
+  11-04 night). 0.0.5 brings the `hogwarts` profile, Hogwarts Legacy's own tuning, the panel's
+  frame counter and OptiScaler's XeSS in setup (below, 11-06, morning). All five went out on the
+  owner's word before Linux's `make test` at their heads, as 0.0.1.3 did: 0.0.2's ran green after,
+  at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841` (below, 11-04 later); 0.0.4's and 0.0.5's
+  are in Open items. Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
@@ -60,7 +63,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), level again that
     night, when the owner had both fast-forwarded to it (below, 11-04 night, later), and again
     since 0.0.4 went out (below, 11-05 later); on 11-06 all three went to the frame counter's
-    head, `fps-counter` fast-forwarded in (below, 11-06);
+    head, `fps-counter` fast-forwarded in (below, 11-06), and then to 0.0.5's, `game-tuning`
+    fast-forwarded in (below, 11-06, morning);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -170,8 +174,8 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
-- `3d8292a`, the `hogwarts` profile (below, 11-06, early morning): `make test` in both memory modes
-  and CTest once `game-tuning` is on GitHub. The GPU image path's push block grew to 104 bytes
+- `3d8292a`, the `hogwarts` profile (below, 11-06, early morning), in 0.0.5: `make test` in both
+  memory modes and CTest at GitHub's `alchemist`. The GPU image path's push block grew to 104 bytes
   (`image_preprocess.comp`), `nr_frame` builds the automatic mask's lanes, and the panel's profile
   row is 0..3.
 - `7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
@@ -266,9 +270,11 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~Hogwarts Legacy's DLSS 5 update, due on 11-05 with no hour published: once Epic has it, run
   `D:\NRonWindows\nr-game\dlss5-update-check.ps1`~~: in on 11-06, with 310.9.16 unchanged; 0.0.4
   runs in it (below, 11-06, early morning).
-- The `hogwarts` profile, the game's own tuning (`3d8292a`, local branch `game-tuning`, in a
-  worktree, `D:\NRonWindows\dlss-nr-tuning`): seen in the game with the owner; merging into
-  `alchemist` and pushing at the owner's word (below, 11-06, early morning).
+- ~~The `hogwarts` profile, the game's own tuning (`3d8292a`, local branch `game-tuning`, in a
+  worktree, `D:\NRonWindows\dlss-nr-tuning`): merging and pushing at the owner's word~~: in 0.0.5,
+  published on 11-06 (below, 11-06, morning). The worktree can go once the owner says so.
+- The Reddit post on 0.0.5: comparisons, frame rates and OptiScaler, the owner's to post; a draft
+  and candidate pictures in `work\pr-replies\reddit-0.0.5.md` (below, 11-06, morning).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -358,6 +364,44 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## 0.0.5 released: Hogwarts Legacy's own tuning, the frame counter, OptiScaler (2026-11-06, morning, branches `alchemist`, `master`, `newnr`)
+
+The owner, 11-06: "Соберем релиз быстро без участия линукса. Проверки сделаем там позже. Нам после
+релиза надо сделать пост на реддит с такими сравнениями и сколько фпс можно получить и заявить о
+поддержке optiscaler", and after reading the notes: "можешь пускать в релиз", with the line on
+where Hogwarts Legacy keeps the DLL cut from them.
+
+- `bb9317b`: `VERSION` 0.0.5. The README names Hogwarts Legacy as a source of the DLL and gives
+  its rows of 11-06 and, through OptiScaler, of 11-05. What to expect gains frame generation, and
+  the install steps the counter and the profile. The release guide says the same.
+- **In the game, before the build:** with the owner in play, the panel's counter read **Screen
+  51.4-52.1 fps, NR 24.7-26.0, network 17.0-17.5 ms**. That is 1280x720, render scale 0.4,
+  network B and XeSS frame generation x2: the generator doubles what the screen shows.
+- **Built** by `tools\deploy.bat --release` into `%USERPROFILE%\nr-rel\final-0.0.5` (on C:,
+  D: had 5.6 GB free) and zipped by `nr-game\zip-release.py`: **`dlss-nr-windows-0.0.5-x64.zip`,
+  46 775 008 bytes, SHA-256 `4b28c8cabc39d3985e9395dd43d8e858a6d97110aec3195d0f8a195ddb8a24f2`**,
+  from `%USERPROFILE%\nr-rel\final-0.0.5-bb9317b`. The release commit was rebuilt as `bb9317b` to take
+  a home path out of two HANDOFF commits before the push; that build matches the checked one,
+  made at the first hash, in every file but `release-metadata.json`.
+  `release-metadata.json` names 0.0.5 and `bb9317b`.
+- **Checked from the unpacked ZIP** (`final-0.0.5\check`): the window's self-test, 89 controls and
+  198 keys in four languages. The stand-in run (`standin-release-check.ps1`):
+  - discover chose `python\python.exe`; Check; Install with both networks in 8 s;
+  - 572 frames, none rejected;
+  - the speed test, A with 71 blocks and B with 31, in 44 s;
+  - Save report, 19 checks, none failing;
+  - Remove NR, and the folder as before.
+- **Published:** the lightweight tag `v0.0.5` at `bb9317b`, as `v0.0.4` is. `alchemist`, `master`
+  and `newnr` were fast-forwarded from `e1e37b3` on GitHub and here. The release "DLSS-NR 0.0.5 for
+  Windows" carries the ZIP. Its body is `work\pr-replies\release-notes-0.0.5.md` without the draft
+  comment.
+- Not run: Linux (the owner: later).
+
+**Next on Linux:** `git fetch`, fast-forward the three branches to GitHub's, then `make test` in
+both memory modes and CTest (Open items: `3d8292a` and the frame counter's commits). **Next on
+Windows:** the Reddit post, the owner's to post (`work\pr-replies\reddit-0.0.5.md`). Removing the
+`game-tuning` worktree and the release folders on C:, at the owner's word.
 
 ## Hogwarts Legacy's DLSS 5 update, and the game's own NR tuning as a profile (2026-11-06, early morning, branch `game-tuning`)
 
