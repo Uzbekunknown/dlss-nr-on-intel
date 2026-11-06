@@ -63,8 +63,9 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
     them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), level again that
     night, when the owner had both fast-forwarded to it (below, 11-04 night, later), and again
     since 0.0.4 went out (below, 11-05 later); on 11-06 all three went to the frame counter's
-    head, `fps-counter` fast-forwarded in (below, 11-06), and then to 0.0.5's, `game-tuning`
-    fast-forwarded in (below, 11-06, morning);
+    head, `fps-counter` fast-forwarded in (below, 11-06), then to 0.0.5's, `game-tuning`
+    fast-forwarded in (below, 11-06, morning), and again to `game-tuning` with the daemon's fix
+    (below, 11-06, later);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (below,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -174,6 +175,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
+  11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
+  and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
 - `3d8292a`, the `hogwarts` profile (below, 11-06, early morning), in 0.0.5: `make test` in both
   memory modes and CTest at GitHub's `alchemist`. The GPU image path's push block grew to 104 bytes
   (`image_preprocess.comp`), `nr_frame` builds the automatic mask's lanes, and the panel's profile
@@ -273,8 +277,9 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The `hogwarts` profile, the game's own tuning (`3d8292a`, local branch `game-tuning`, in a
   worktree, `D:\NRonWindows\dlss-nr-tuning`): merging and pushing at the owner's word~~: in 0.0.5,
   published on 11-06 (below, 11-06, morning). The worktree can go once the owner says so.
-- The Reddit post on 0.0.5: comparisons, frame rates and OptiScaler, the owner's to post; a draft
-  and candidate pictures in `work\pr-replies\reddit-0.0.5.md` (below, 11-06, morning).
+- The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
+  r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
+  `work\pr-replies\reddit-0.0.5-media` (below, 11-06, later).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -364,6 +369,76 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The daemon keeps the panel's unsaved edits; the Reddit media; a Ko-fi link (2026-11-06, later, branch `game-tuning`)
+
+The owner asked for a short comparison video and screenshots for the Reddit posts, then, on the bug
+the shoot found: "Да, можешь пофиксить. А так же чуть редактируй страницу релиза и readme добавив
+ссылку на поддержку проекта https://ko-fi.com/uzbekunknown".
+
+**The media.** 0.0.5's own ZIP in Hogwarts Legacy through `nr-game\hogwarts-update-test.ps1`, with the
+owner in play. NR was switched with no keys, through the release's trigger file and the profile in
+`nr_settings.json`. Stills were taken while the game was in front; the clip was recorded by ffmpeg's
+ddagrab and Quick Sync. The game closed through its window after, NR removed, the folders as before.
+- `work\pr-replies\reddit-0.0.5-media`: a 38 s video (a live walk with NR off, `hogwarts` and
+  `standard`, two slider comparisons on one frame, a link card) and five screenshots;
+- `D:\NRonWindows\nr-game\video-1106`: the scripts and raw frames;
+- ffmpeg 9.0.2 in `%USERPROFILE%\tools`, downloaded at the owner's word, its SHA-256 gyan.dev's.
+
+It was all shot at render scale 0.4, not the owner's 0.6, because of the bug below; the owner kept
+0.4, which matches the posts' 25-26 NR frames a second.
+
+**The bug.** The owner had moved render scale to 0.6 in the panel without saving. At the shoot's
+first write of the saved file, the daemon logged `settings (saved): render_scale=0.4` and ran its
+network at 512x320 again, while the panel and its `.live` file still said 0.6. On a frame where
+only the saved file changed, `Settings.refresh` read the preview as None, "unchanged", and applied
+the saved values with nothing on top. The panel keeps unsaved edits for the session, and the saved
+file can change under them: the panel's own language key writes it (`save_language_only`), as do
+the setup window and `nr-ctl`, so a player meets it with no tool of ours. The other way round, a
+preview removed on its own (the panel's process ends, `nr_menu_bridge_destroy`) changed nothing,
+since a missing file read as unchanged too.
+
+**The fix** (`669135b`, `src/layer/nr_daemon.py`):
+- the last preview is kept (`preview_values`), as the saved values are, and goes on top of every
+  refresh;
+- `_read_json` returns `Settings._GONE` for a preview that was there at its last look and is not
+  now, which drops it;
+- the owner check runs on the kept preview at every refresh, and a refused one is forgotten, so a
+  later process with the same PID cannot revive it;
+- the log names the file that changed.
+
+The panel replaces both files atomically (`MoveFileExA` with `MOVEFILE_REPLACE_EXISTING`,
+`rename`), so neither is ever briefly missing. `test_settings_live.py` gained three cases: a saved
+write under a live preview, a preview removed on its own, and a kept preview whose menu has ended.
+The first two fail on the old code.
+
+**The support link.** The README's new section "Support the project" (`037970c`), and one line on
+the v0.0.5 release page before "Built from", edited on GitHub at the owner's word. The ZIP, the tag
+and "Latest" are as they were, and `work\pr-replies\release-notes-0.0.5.md` carries the line too.
+The release's own README (`docs/RELEASE-QUICKSTART.md`) does not, unless the owner wants it.
+
+Also on this branch: `3fa69b8`, phase73's finding that NVIDIA's Unreal plug-in clamps the strengths
+to 0..1 every frame.
+
+**Checked on Windows:**
+- `test_settings_live.py` 17 of 17, on MSYS2's Python 3.14 and on the release's own;
+- `test_daemon.py`, and `test_daemon_owner.py` (14, 3 skipped);
+- `test_gpu_d3d12.py` plain and with `--network`: a real daemon refreshing every frame, the client
+  from `dlss-nr-fps\work`, built at `7d70ff1`;
+- `test_image_pipeline.py`;
+- `test_windows_wizard.py` 100 (1 skipped), on the release's Python;
+- `test_release.py` 22 (5 skipped), and `test_toggle.py`'s page check;
+- `claims_check`, `publish_check`, `build_check`, `knob_doc --check`.
+
+Under MSYS2's Python, `test_windows_wizard.py` fails one fixture on a path separator
+(`dlss-nr\foreign.txt` against `dlss-nr/foreign.txt`), at `8a2a9cd` as well. Not run: Linux; a game.
+
+**Pushed** at the owner's word ("Yes, push", 11-06): `game-tuning`, with `3fa69b8`, `037970c`,
+`669135b` and this entry, fast-forwarded into `alchemist`, and `alchemist`, `master` and `newnr` to
+its head on GitHub and here.
+
+**Next on Linux:** `git fetch`, fast-forward the three branches to GitHub's, then `make test` in both
+memory modes and CTest (Open items). **Next on Windows:** the Reddit posts, the owner's.
 
 ## 0.0.5 released: Hogwarts Legacy's own tuning, the frame counter, OptiScaler (2026-11-06, morning, branches `alchemist`, `master`, `newnr`)
 
