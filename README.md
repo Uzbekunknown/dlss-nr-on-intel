@@ -152,6 +152,11 @@ and the evidence offered instead of a line-by-line defence:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the recovered network, for running it elsewhere.
 - [notes/INDEX.md](notes/INDEX.md): what was measured, the wrong turns included.
 
+## Support the project
+
+If NR is useful to you, you can support its development on
+[Ko-fi](https://ko-fi.com/uzbekunknown).
+
 ## Credits and licences
 
 **Apache License 2.0**: [LICENSE](LICENSE) and [NOTICE](NOTICE).
