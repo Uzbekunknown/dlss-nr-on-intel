@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -32,7 +33,6 @@ def _dead_pid():
     process on the machine the test happens to run on - which is how a "the owner is gone" case
     silently turns into a "the owner is alive" case and stops testing anything.
     """
-    import subprocess
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
     proc.wait()
     return proc.pid
@@ -162,6 +162,56 @@ def main():
         checks.append(("an unknown key in the preview is ignored",
                        abs(s.render_scale - 0.5) < 1e-6,
                        f"render_scale={s.render_scale}"))
+
+        # --- the saved file written under a live preview -------------------------------------------
+        #
+        # The panel keeps unsaved edits for the session, and the saved file can change under them:
+        # the panel's language key writes it (`save_language_only`), as do the setup window and
+        # `nr-ctl`. A refresh caused by that write alone read the preview as "unchanged" and applied
+        # the saved values with nothing on top, so the picture lost the edits the panel still showed
+        # (Hogwarts Legacy, 2026-11-06: a previewed 0.6 fell back to the saved 0.4).
+        write(settings, {"render_scale": 0.8, "intensity": 0.25, "profile": "cinematic",
+                         "menu_language": 1})
+        s.refresh()
+        scale_now, profile_now = s.render_scale, s.profile
+        checks.append(("a write of the saved file keeps the live preview on top",
+                       abs(scale_now - 0.5) < 1e-6 and profile_now == "cinematic",
+                       f"render_scale={scale_now} profile={profile_now}"))
+
+        # The panel removes its preview when its process ends (`nr_menu_bridge_destroy`), and writes
+        # nothing else. A daemon that outlives it goes back to the saved values on that alone: a
+        # missing file used to read as an unchanged one, and the removal did nothing. A preview of
+        # its own first, so this does not lean on the case above.
+        write_preview(pid="live", values={"render_scale": 0.4})
+        s.refresh()
+        previewed = s.render_scale
+        live.unlink()
+        s.refresh()
+        scale_now = s.render_scale
+        checks.append(("a preview removed on its own gives the saved values back",
+                       abs(previewed - 0.4) < 1e-6 and abs(scale_now - 0.8) < 1e-6,
+                       f"render_scale {previewed} previewed, {scale_now} after the removal"))
+
+        # A kept preview is a running menu's: once that process has ended, the next refresh drops
+        # it, unless a Save confirmed it.
+        owner = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        try:
+            write_preview({"render_scale": 0.3}, pid=owner.pid, confirmed=False)
+            s.refresh()
+            while_running = s.render_scale
+            owner.kill()
+            owner.wait()
+            write(settings, {"render_scale": 0.8, "intensity": 0.25, "profile": "cinematic",
+                             "menu_language": 2})
+            s.refresh()
+            after_end = s.render_scale
+        finally:
+            if owner.poll() is None:
+                owner.kill()
+                owner.wait()
+        checks.append(("a kept preview is dropped once its menu has ended",
+                       abs(while_running - 0.3) < 1e-6 and abs(after_end - 0.8) < 1e-6,
+                       f"render_scale {while_running} while it ran, {after_end} after"))
 
         # --- the reported bug -------------------------------------------------------------------
         #
