@@ -166,12 +166,25 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 		fprintf(stderr, "[nr_layer] no settings menu: %s\n", data->menu_reason);
 		return;
 	}
-	/* **And a device that cannot carry the panel gets none.** The panel's shader takes both of its
-	 * buffers by device address and is SPIR-V 1.6, so the device must have bufferDeviceAddress
-	 * enabled and run Vulkan 1.3. A Vulkan 1.0 title - DOOM (2016) among them - has neither, and
-	 * building the panel anyway is invalid usage: validation reported it on vkcube before a frame
-	 * was drawn. What the GPU supports is not the question, so vkCreateDevice recorded what the
-	 * game enabled (`menu_device_reason` in nr_layer.c). */
+	/* **What the panel asks of a device, which is less than it used to.** The pass is a compute
+	 * dispatch over two storage images, two storage buffers and a push constant - all Vulkan 1.0,
+	 * no feature of the application's to inspect, no extension to enable. It is built at
+	 * `--target-env vulkan1.0` for exactly that reason.
+	 *
+	 * Two requirements were removed here after refusing real games, and both were reported as
+	 * hardware facts that were really leftovers:
+	 *
+	 *   - a Vulkan version test, on the theory that a SPIR-V 1.6 module needed a 1.3 device. It
+	 *     compared the version the GAME DECLARED, which is not a ceiling on the device - a game on
+	 *     1.0 still creates a device at the hardware's version. The module is 1.0 now anyway.
+	 *   - `bufferDeviceAddress`, on the theory that the blend pass took both buffers by address.
+	 *     The pass moved to storage buffers and the usage flag stayed behind, where it made
+	 *     `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` illegal on a device without the feature
+	 *     (VUID-VkMemoryAllocateInfo-flags-03331) and so demanded a 1.2 feature nothing used.
+	 *
+	 * Measured, not argued: with both gone the panel builds and draws on vkcube's device, which
+	 * enables no features at all. `menu_device_reason` is what is left of the device test and
+	 * answers NULL; the surface's own `storage_ok` above is the only real gate. */
 	if (data->menu_device_reason) {
 		data->menu_reason = data->menu_device_reason;
 		fprintf(stderr, "[nr_layer] no settings menu: %s\n", data->menu_reason);

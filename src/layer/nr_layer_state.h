@@ -163,8 +163,10 @@ struct device_data {
 	nr_menu *menu;
 	int menu_state;
 	const char *menu_reason;
-	/* Why this device cannot carry the panel at all, decided at vkCreateDevice from what the game
-	 * enabled (see `menu_device_reason` in nr_layer.c); NULL when it can. */
+	/* Why this device cannot carry the panel at all, or NULL when it can (see
+	 * `menu_device_reason` in nr_layer.c). It answers NULL today - the panel needs no device
+	 * feature the application could decline - and is kept as the single place a real requirement
+	 * would go. */
 	const char *menu_device_reason;
 	int menu_language;
 	/* The menu's own recordings: a ring of command buffers, each with the fence its last submit

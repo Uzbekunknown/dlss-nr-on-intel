@@ -877,45 +877,38 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *inf
 }
 
 #ifdef _WIN32
-/* Why the in-game panel cannot be built on the device `info` made, or NULL when it can.
+/* **Why the in-game panel cannot be built on the device `info` made - and it should almost never
+ * answer.**
  *
- * The panel's blend pass takes its two buffers by device address and is a SPIR-V 1.6 module, so
- * the device must run Vulkan 1.3 and have bufferDeviceAddress ENABLED. What the GPU supports is
- * not the question: the Arc supports the feature, vkcube's device enables nothing, and building
- * the panel there was invalid usage. The feature is on when the GPU path's patch put it there
- * (`gpu_enabled`), or when the game asked for it itself, as DXVK does. Decided here because only
- * vkCreateDevice sees what was enabled. */
+ * The history here is a chain of requirements the panel did not actually have, and it is worth
+ * writing down because each one refused a real game:
+ *
+ *   - it refused when `min(application_version, device_version)` was below Vulkan 1.3, because
+ *     the module used to be built at `--target-env vulkan1.3` (SPIR-V 1.6). That compared the
+ *     version the GAME ASKED FOR against a shader's needs. A game declaring 1.0 still creates a
+ *     device at the hardware's own version, so SPIR-V 1.6 was legal there all along; Aperture
+ *     Desk Job, which declares 1.1, proved it by drawing with the refusal gone. And the module is
+ *     now built at `vulkan1.0` (SPIR-V 1.0), so nothing at all turns on the version.
+ *   - it then required `bufferDeviceAddress` ENABLED, because the blend pass took its two buffers
+ *     by device address. Those buffers became plain storage buffers, but the usage flag and its
+ *     `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` allocation survived the change - so the panel went
+ *     on requiring a Vulkan 1.2 device feature it never used. Every game that enabled nothing,
+ *     vkcube included, got "no settings menu" for a requirement that had been deleted from the
+ *     shader years of commits earlier.
+ *
+ * Both are gone. What is left is one honest test: the panel is a compute pass over storage images
+ * and storage buffers, so it needs a device, and `chain->storage_ok` - the surface's own answer,
+ * checked in `nr_menu_layer.c` - says whether the images qualify. There is no feature of the
+ * application's to inspect, and `gpu_enabled` no longer matters here.
+ *
+ * The version parameter stays because `menu_device_reason` also reports what the GPU path did;
+ * nothing below reads it. */
 static const char *menu_device_reason(const VkDeviceCreateInfo *info,
 				      int gpu_enabled)
 {
-	/* **The panel is not refused on the application's declared version.**
-	 *
-	 * This used to compute `min(layer_api_version, props.apiVersion)` and return when that was
-	 * below Vulkan 1.3, because the panel's module is SPIR-V 1.6. The rule is about the DEVICE,
-	 * not the request: an application that declares Vulkan 1.1 still creates a device at the
-	 * hardware's own version - `props.apiVersion` is 1.4.348 on this GPU - and a SPIR-V 1.6
-	 * module is legal there. The `min()` took a conservative request and used it as a ceiling.
-	 *
-	 * Measured in Aperture Desk Job, which declares 1.1: with this refusal gone the panel builds,
-	 * draws, and every frame is answered. That is the check being wrong, not the driver being
-	 * lenient.
-	 *
-	 * What the panel actually needs is `bufferDeviceAddress`, which the walk below decides - the
-	 * blend pass takes its two buffers by device address. `gpu_enabled` covers the case where the
-	 * GPU path's patch enabled it; the walk covers a game or wrapper that enabled it itself, as
-	 * DXVK does. */
-	if (gpu_enabled) return NULL;
-	int steps = 0;
-	for (const VkBaseInStructure *p = (const VkBaseInStructure *)info->pNext;
-	     p && ++steps <= 128; p = p->pNext) {
-		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
-		    && ((const VkPhysicalDeviceVulkan12Features *)p)->bufferDeviceAddress)
-			return NULL;
-		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
-		    && ((const VkPhysicalDeviceBufferDeviceAddressFeatures *)p)->bufferDeviceAddress)
-			return NULL;
-	}
-	return "the game's device does not enable bufferDeviceAddress, which the panel needs";
+	(void)info;
+	(void)gpu_enabled;
+	return NULL;
 }
 #endif
 
