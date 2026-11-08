@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -164,15 +165,18 @@ class Images:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None):
+    def process_device(self, raw, *_args, motion=None, output=None):
         self.events.append(("process", raw.id))
         self.motions.append(motion)
+        self.outputs = getattr(self, "outputs", []) + [output]
         if self.before_process:
             self.before_process()
         if isinstance(self.error, Exception):
             raise self.error
         if self.error:
             raise ValueError("controlled pipeline failure")
+        if getattr(self, "into_output", False) and output is not None:
+            return output      # composed straight into the shared output, as the real one does
         return Buffer(99, self.events)
 
     def reset_history(self):
@@ -346,6 +350,20 @@ class ProtocolTests(TransportCase):
         self.assertEqual(connection.replies[-1][0], 0)
         # The network's time goes back with the answer, in microseconds, for the panel's counter.
         self.assertEqual(connection.replies[-1][1], 3500)
+
+    def test_a_frame_composed_into_the_output_is_not_copied(self):
+        self.request(packet())
+        self.events.clear()
+        self.images.into_output = True
+        connection, _result = self.request(packet(T.FRAME))
+        self.assertEqual([e[0] for e in self.events],
+                         ["reset_history", "acquire", "process", "release", "reply"])
+        self.assertIsNotNone(self.images.outputs[-1])           # it was offered the output
+        self.assertEqual(connection.replies[-1][0], 0)
+        # a frame whose bytes are not the whole output is offered none, and copied as before
+        whole = SimpleNamespace(output=object())
+        self.assertIs(T._direct(whole, {"bytes": 16}, 2, 2), whole.output)
+        self.assertIsNone(T._direct(whole, {"bytes": 12}, 2, 2))
 
     def test_network_time_in_a_reply(self):
         self.assertEqual(T.network_us({"network_ms": 24.25}), 24250)

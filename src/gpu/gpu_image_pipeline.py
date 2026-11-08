@@ -122,16 +122,19 @@ class GPUImagePipeline:
             grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
         return ih,iw,ah,aw
 
-    def process_device(self, raw, width, height, fmt, live, motion=None):
+    def process_device(self, raw, width, height, fmt, live, motion=None, output=None):
         """Return a device wire-image buffer. Only line maxima and scalar reductions are read.
 
         ``motion``: the device address of each pixel's offset to where its surface was on the
         frame before this pipeline was last given, two float32 a pixel at the frame's extent,
-        NaN where it was not on screen; the history then follows it (`History.follow`)."""
+        NaN where it was not on screen; the history then follows it (`History.follow`).
+        ``output``: a buffer of the frame's bytes for the composition to write the answer into,
+        which is then what is returned - the transport's shared output, saving its copy. On a
+        refused frame it may hold part of an answer; the transport hands it on only on success."""
         reason=self.supported(width,height,fmt,live)
         if reason: raise ValueError(reason)
         try:
-            return self._process_device(raw,width,height,fmt,live,motion)
+            return self._process_device(raw,width,height,fmt,live,motion,output)
         except Exception:
             self.rt.abort()
             self.reset_history()
@@ -142,7 +145,7 @@ class GPUImagePipeline:
             self.follower=GPUImageFollower(self.rt,frame_size=(height,width),crop=crop,inner_size=(ih,iw))
         return self.follower
 
-    def _process_device(self, raw, width, height, fmt, live, motion=None):
+    def _process_device(self, raw, width, height, fmt, live, motion=None, output=None):
         started=time.perf_counter()
         crop=self.stats.region(raw,width,height,fmt)
         ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
@@ -188,10 +191,12 @@ class GPUImagePipeline:
         nonfinite_of=self.stats.record_nonfinite(head,self.geometry.network_width,
             self.geometry.network_height,4 if self.rt.compact_head else 16,slot="head")
         if history and follow:
-            result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels)
+            result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels,
+                                       target=output)
         else:
             result=self.compose.record(raw,head,history=self.previous_neural if history else None,
-                                       previous=self.previous_active if history else None)
+                                       previous=self.previous_active if history else None,
+                                       target=output)
         change_of=self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
         self.rt.submit()
         if nonfinite_of():

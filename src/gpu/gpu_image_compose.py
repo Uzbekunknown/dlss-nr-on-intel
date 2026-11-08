@@ -146,8 +146,11 @@ class GPUImageComposer:
         if buffer is None or buffer.nbytes < nbytes or buffer.id < 0:
             raise ValueError(f"{name} buffer is missing, freed or too small")
 
-    def record(self, raw, head, *, history=None, previous=None):
-        """Record one dispatch; buffers/commands must outlive submit completion."""
+    def record(self, raw, head, *, history=None, previous=None, target=None):
+        """Record one dispatch; buffers/commands must outlive submit completion.
+
+        `target`: where the encoded frame goes, every pixel of it, instead of this composer's
+        own buffer - the transport's shared output, which then needs no copy. Returned."""
         if self._closed:
             raise RuntimeError("GPUImageComposer is closed")
         self._check_buffer(raw, self.frame_width * self.frame_height * 4, "raw")
@@ -159,10 +162,16 @@ class GPUImageComposer:
             raise ValueError("previous game pixels require temporal history")
         if history is not None and history.id == self.neural.id:
             raise ValueError("history and next neural output must be distinct buffers")
+        if target is not None:
+            self._check_buffer(target, self.frame_width * self.frame_height * 4, "target")
+            if any(buf is not None and buf.id == target.id
+                   for buf in (raw, head, history, previous, self.neural, self.composed)):
+                raise ValueError("the encoded target must not alias an operand")
+        encoded = self.encoded if target is None else target
         flags = ((BGRA if self.bgra else 0) | (HISTORY if history is not None else 0)
                  | (PREVIOUS if previous is not None else 0) | (KEEP if self.keep_neural else 0)
                  | (GRADE if self.has_grade else 0))
-        operands = (raw, head, history, previous, self.encoded, self.neural,
+        operands = (raw, head, history, previous, encoded, self.neural,
                     self.composed, self.settings)
         push = _Push()
         push.buffers[:] = [b.address if b is not None else 0 for b in operands]
@@ -171,7 +180,7 @@ class GPUImageComposer:
                             self.height, self.head_width, self.head_height,
                             self.head_row_width, self.head_channels, flags)
         self.pipeline.record(push, *xmxres.linear_grid(-(-self.frame_width * self.frame_height // 256)))
-        return self.encoded
+        return encoded
 
     def close(self):
         if not self._closed:
