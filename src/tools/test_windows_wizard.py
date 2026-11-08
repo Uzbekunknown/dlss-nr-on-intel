@@ -1182,7 +1182,9 @@ class WizardFixture(unittest.TestCase):
         before = sentinel.read_bytes()
         self.assertFalse(core.install(self.profile)["ok"])
         self.assertEqual(sentinel.read_bytes(), before)
-        self.assertEqual(list(destination.iterdir()), [sentinel])
+        # By name: MSYS2's Python joins with "/" where iterdir() gives "\\", and the two paths
+        # then compare unequal although they are one file.
+        self.assertEqual([entry.name for entry in destination.iterdir()], [sentinel.name])
         core._atomic_json(destination / core.OWNER_NAME, {"schema_version": 1, "root": str(self.base / "foreign")})
         self.assertFalse(core.install(self.profile)["ok"])
         self.assertEqual(sentinel.read_bytes(), before)

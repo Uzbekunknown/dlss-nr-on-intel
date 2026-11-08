@@ -62,12 +62,17 @@ check('the layer compares width and height first',
       'nrex_image_width(data->menu_ui) != chain->extent.width' in layer
       and 'nrex_image_height(data->menu_ui) != chain->extent.height' in layer)
 
-# 5. The previous frame is waited for before the image is destroyed. Destroying an image the GPU is
-#    still reading is undefined, and the frame before this one both drew into it and sampled it.
+# 5. The earlier frames are waited for before the image is destroyed. Destroying an image the GPU
+#    is still reading is undefined, and the frames before this one both drew into it and sampled
+#    it. Since the panel presents on a semaphore (476d5f0) up to NR_MENU_SLOTS of its frames can be
+#    in flight, and `menu_drain` waits on every slot's fence.
 resize_at = layer.find('nrex_resize(')
 before = layer[max(0, resize_at - 1200):resize_at] if resize_at >= 0 else ''
-check('the previous frame is waited for before the resize',
-      'WaitForFences' in before)
+drain = re.search(r'static int menu_drain\s*\(struct device_data \*data\)\s*\{(.*?)\n\}', layer, re.S)
+drain_body = drain.group(1) if drain else ''
+check('the earlier frames are waited for before the resize',
+      'menu_drain(data)' in before and 'vkWaitForFences' in drain_body
+      and 'NR_MENU_SLOTS' in drain_body)
 
 # 6. The new frame is told the same extent the image was made for - the disagreement was the bug.
 #    The layer hands the panel the swapchain's extent, and the panel hands ImGui what it was given.

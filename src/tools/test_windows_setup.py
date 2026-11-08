@@ -15,7 +15,18 @@ import unittest
 import test_release as fixtures
 
 
+def _runs_setup(python):
+    """Whether `python` is one setup.bat accepts as NR_PYTHON: 64-bit, with NumPy and safetensors.
+    The same test as `test_setup_proxy.py`'s: CTest's Python under MSYS2 has no safetensors, and the
+    batch refuses it by design, so these tests would fail on the environment, not on the code."""
+    check = "import struct, numpy, safetensors; assert struct.calcsize('P') == 8"
+    return subprocess.run([python, "-c", check], capture_output=True).returncode == 0
+
+
 @unittest.skipUnless(os.name == "nt", "Windows installer requires cmd.exe")
+@unittest.skipUnless(os.name != "nt" or _runs_setup(sys.executable),
+                     "setup.bat needs NR_PYTHON with NumPy and safetensors; run this test with "
+                     "such a Python (this one lacks them)")
 class WindowsSetupTests(unittest.TestCase):
     write = fixtures.ReleaseTests.write
 
