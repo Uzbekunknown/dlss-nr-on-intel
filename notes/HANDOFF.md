@@ -175,6 +175,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
+  modes and CTest once it is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
+  `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
 - `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
   11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
   and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
@@ -290,7 +293,12 @@ under that date. When an item is done, strike it through here and name the commi
   them. It is half of a frame at 1280x720 there. Below, 11-03.
 - The speed test measures the CPU path (no `NR_` setting reaches its daemon), while the Windows
   release keeps a game's frames on the GPU since 0.0.2. At 1920x1080 its round trip reads 10-20 ms
-  worse than a game waits for. Below, 11-03.
+  worse than a game waits for. Below, 11-03. Measured on 11-08 at `perf-1108`, network B: with
+  `NR_GPU_IMAGE=1` in its daemon's environment (one line, `gpu-image-host`: frames still cross the
+  pipe, the passes around the network on the GPU) the round trips are 29.0 -> 24.3 ms at 1280x720
+  and 0.4, 57.0 -> 43.1 at 1920x1080 and 0.4, 108.9 -> 92.4 and 219.3 -> 196.2 at 1.0, the network
+  the same; a whole GPU-path frame there is ~21 and ~38 ms. The owner's call, since the window's
+  numbers move; not changed.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (archive, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
@@ -298,7 +306,11 @@ under that date. When an item is done, strike it through here and name the commi
   `src/tools/unpack_preset.py`, and offer `NR_PRESET` (A or B) in `nr-env.txt`~~: `a75e5da`, not
   yet in a game. Archive, 10-18, Windows.
 - Holding the GPU's clock up on Windows, as libxmx does on Linux: no per-process hint found.
-  Archive, 10-18, Windows.
+  Archive, 10-18, Windows. On 11-08 (`perf-1108`, B at 0.4, 1280x720, the pipeline on a device
+  buffer, 120 frames, two rounds): a 15 ms gap before each frame makes it 22.9-24.2 ms against
+  21.5-21.7 back to back, the network 17.2-18.0 against 16.2-17.1; a second process submitting a
+  tiny pass every millisecond through the gaps does not take it back (22.9-24.0, the network
+  18.1-19.0), so keeping the GPU busy from outside is not the hint.
 - ~~PR #20 (Paimonshen, 10-16): the in-game settings menu on Insert, in four languages, with Dear
   ImGui vendored, against `master`~~: merged into `newnr` on 10-30 (`097d6d4`), after the last
   fixes were made on its branch by us; issue #16 closed.
@@ -332,8 +344,11 @@ under that date. When an item is done, strike it through here and name the commi
   out as 2.0's. Archive, 10-30 evening.
 - ~~`dx12`: record a real Hogwarts sequence with the owner~~: recorded and replayed on 10-16,
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Archive, 10-16.
-- MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
-  gives three C4068 warnings that an `NR_IVDEP` macro would silence. Archive, 10-02 and 10-07.
+- MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc): MSVC vectorises innermost
+  loops only, and inside each pixel loop is a three-channel one (`/Qvec-report:2`, reasons 1106
+  and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
+- The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
+  there, then the owner's word on merging it into `alchemist` and pushing.
 - ~~`tools\build_win.bat` run from a folder other than the checkout stops at the layer's link
   (`LNK1181`): the layer's C objects are compiled with no `/Fo` and land in that folder~~: fixed
   in `2c04f2f`, with `/Fo:"%REPO%\\"` as the x86 step has. Below, 11-04 night, latest.
@@ -369,6 +384,113 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The GPU path's frame around the network, 9 % less; what the other ports do (2026-11-08, branch `perf-1108`)
+
+The owner, away for the afternoon: finish what is left, then look for speed, and see what the AMD
+ports do. Everything here is local, on `perf-1108` from `newnr` at `5836d29`, in a worktree of the
+session's; nothing is pushed.
+
+**What the other ports do.** mochizuki's DLSSNR-AMD left GitHub with its author's account and is
+on GitLab (`gitlab.com/mochizuki0323/DLSSNR-AMD`, MIT, 0.0.8.3 of 11-06). Its fast networks are
+not the vendor's: `*_OPTIMIZED` and `CC_SMALL_FP8_EXPERIMENTAL` refit the MLPs to ReLU, replace some
+decoder attention with fixed tables and put layers in int4, so the picture moves; not for this
+project. Its one exact trick, heads whose attention is the same for every input skipping Q and K,
+finds nothing here: no head of A or B has a scale of 0 (the smallest are 0.0145 and 0.21), and
+after the E4M3 publish no query is all zero. `chuanloop/dlssnr-b390` (MIT, 11-06) is an AMD port
+moved to an Arc B390 (Xe3): per-level fused kernels (QKV, norms, attention and projection in one
+workgroup at C = 64 and 128, where our `window_block` stops at 32), a fixed ladder of 37
+resolutions, and 39 of its shaders derived from NVIDIA's runtime, which it does not ship. It
+publishes no timings. `improve-b.md` already tried the nearest thing (a level-1 block whole,
+no faster).
+
+**Where a played frame's time goes** (network B at 512x320, 1280x720 at 0.4; `frame_profile.py
+--warm 25 --runs 5`, Intel 101.9150, quiet): 15.4-17.3 ms on the device, the staged GEMM 60 %;
+the bottleneck's four GEMMs at 64 tokens are 28-31 % of the frame and stream their weights at
+26-55 GB/s. The rule `improve-b.md` set on Mesa for those M = 64 GEMMs holds on Intel's driver
+too: every other routing, tried through a local switch (all of them on 32-row blocks, the 64-deep
+step everywhere or nowhere, none on 32 rows), made a call slower (the contract 0.23-0.25 -> 0.32
+ms off the 32-row deep build; the expand 0.14-0.16 -> 0.21-0.26 and the QKV 0.12-0.13 ->
+0.16-0.19 on 32-row blocks) and the frame 0.5-1 ms slower; the switch is not kept.
+`XMX_STAGED_WALK_Y` makes no difference at this field.
+
+**Around the network the GPU path spent 5.5 ms of a 1280x720 frame, in eight submits** (B at 0.4,
+the daemon's pipeline on a device buffer, timed submit by submit). Four exact changes, all bytes
+the same:
+- `268d6d7`: the cached letterbox check (`image_stats.comp` mode 3) ran eight working threads, each
+  reading a line a pixel at a time: 0.87 ms. A workgroup a line now, 0.21 ms; modes 0 and 3 word for
+  word the old ones on 18 frames from 1x1 to 2560x1440.
+- `71d21ad`: the history's three buffers trade places instead of three full-frame copies (0.74 ms
+  at 720p, 1.42 at 1080p). `NR_HISTORY_SWAP=0` is the comparison.
+- `61c3de9`: three submits fewer, where the CPU decides nothing between them: the cut test (or the
+  follower) with the decode, and the head's finite check, the composition and the change metric in
+  one. `GPUImageStats.record_delta`/`record_nonfinite` record into the caller's commands on scratch
+  of their own.
+- `95bb757`: the composition writes the answer straight into the transport's shared output; the
+  transport copied it there in a submit of its own, on both GPU transports.
+
+Results, against `5836d29`, three processes each alternating, quiet:
+
+| | before | after |
+| --- | --- | --- |
+| pipeline frame, B 0.4, 1280x720 (mean of 150) | 23.17-24.13 ms | 21.14-21.92 |
+| pipeline frame, B 0.4, 1920x1080 | 42.15-43.47 | 38.25-38.75 |
+| layer present, `test_gpu_present.py --run`, 1280x720 (median) | 41.08-44.08 | 37.95-39.41 |
+| the same at 1920x1080 | 70.59-74.04 | 67.15-68.01 |
+
+**The same bytes:** `test_image_pipeline.py --full-model` (8 frames against the CPU path, the history
+read after each); ten 1280x720 frames with motion through `1c49d04`'s pipeline and through these
+(answers and the three history buffers byte for byte; history, motion, cut and change the same to
+the last digit); `test_gpu_d3d12.py --network` (the client's frames changed the same channels by
+the same levels). Also `test_image_*`, `test_gpu_transport` (50), `test_daemon`,
+`test_settings_live`, `test_gpu_d3d12.py`, and `test_gpu_present.py --run` under synchronization
+validation, the panel shut, open and in a corner (0 errors, every frame on the GPU path). The
+release built from this branch passes `nr-game\standin-release-check.ps1` (723 frames, none
+rejected; the speed test A/71 and B/31; Save report 19 checks, none failing; the folder as before).
+`test_image_pipeline.py --full-model` gains the motion case (`efd4a6d`): eight frames, five along
+motion, byte for byte against the CPU path. MinGW (gcc 16): the build and CTest 67 of 67; MSVC `build_win.bat` with no
+warning at all, and CTest 67 of 67 on its libraries.
+
+**Left, for the owner:** the change metric (`stats.delta(composed, active)`) is a number in the
+frame log, and the composer's float `composed` buffer exists only for it. In whole frames the
+reduction alone costs 0.2 ms at 720p and 0.3-1.0 at 1080p (three processes each, without it against
+with it), and the reduction and the buffer's write together 0.4 ms at 720p (21.57-21.74 ms against
+20.99-21.58, four processes each) and ~0.3 at 1080p, where the bands overlap; keeping its last bits needs the reduction as it is, so
+computing it elsewhere, less often, or not at all changes the log, not the picture. The
+bytes-for-the-previous-frame lead (Leads left untried) would touch three shaders. The acquire and
+release waits are the transports' own synchronisation, and the layer's own capture and return are
+0.07 and 0.4 ms at 720p (`layer-timing.jsonl`).
+
+**The structural lead, for the owner** (days of work, exact if each fused kernel keeps its passes'
+order). `Ashley-QwQ/GlassBox-NR-Anatomy-public` (Apache-2.0, a dissection of the 310.8 DLL)
+lists NVIDIA's launches: every Swin block of the C = 32, 64, 128 and 256 tiers is one launch
+(`cc_tinlayout_fused_swin_{1h_32,2h_64,4h_128,8h_256}`, a first, chained and last-with-downsample
+variant each), the block's tokens kept on chip. Here a C = 32 block is two passes (`window_block`,
+`ffn_fused`) and a C >= 64 block about five (the QKV GEMM with the window gather, window attention,
+the projection with its residual, the gate and the contract). Of B's 15.2 ms at 512x320 listed by
+call site, the bottleneck is 4.7, the C >= 64 levels 4.7, the C = 32 window blocks 2.7 and their
+feed-forward 2.3. Fused C = 64-256 blocks, as the Xe3 port has per level, are where 1-2 ms of a
+played frame could come from; `improve-b.md`'s level-1 attempt (the C = 32 feed-forward inside the
+window block, no faster) is the warning: the feed-forward's weights shared over 256 tokens cost
+less than over a window's 64.
+
+**Tried and not kept** (all exact):
+- **A pass timed alone misleads here.** The features pass from the inner image the decode already
+  made, in two 16-byte stores a pixel, read 0.45 -> 0.23 ms at 720p and 0.87 -> 0.52 at 1080p
+  submitted alone, and nothing in whole frames: 1080p 37.4-37.7 ms before against 37.5-38.3 after
+  over two sets of three processes. Four pixels an invocation for the RGB32 decodes, three 16-byte
+  stores, no better either, and slower where they resample. A lone submit lets the GPU's clock
+  fall between dispatches; whole frames in separate processes are what count.
+- **The barrier between passes costs 0.4-2.6 us** on Intel's driver (200 dispatches in a submit,
+  with and without), and synchronization2's barrier on storage accesses alone is the same; B's frame
+  at 512x320 15.4-16.0 ms either way. A pass's fixed cost at small fields is the dispatch's own.
+- The M = 64 routings and `XMX_STAGED_WALK_Y` (above).
+
+Also: `1c49d04`, `NR_IVDEP` (Open items).
+
+**Next on Linux:** `make test` in both memory modes and CTest, once `perf-1108` is on GitHub (Open
+items). **Next on Windows:** a game with the owner, Mortal Kombat 11 at 0.4 before and after (and
+Hogwarts for the D3D12 transport); then the owner's word on merging and pushing.
 
 ## The daemon keeps the panel's unsaved edits; the Reddit media; a Ko-fi link (2026-11-06, later, branch `game-tuning`)
 
