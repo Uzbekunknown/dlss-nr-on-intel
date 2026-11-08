@@ -178,7 +178,8 @@ under that date. When an item is done, strike it through here and name the commi
 
 **Linux** (what to pull and run, in order: below, 11-04)
 - `cleanup` (PR #39): `make test` in both memory modes and CTest, the first run on a GPU of its
-  runner, `attention.comp`, libxmx and `nr_resident`. Below, 11-05.
+  runner, `attention.comp`, libxmx and `nr_resident`, now with `newnr` merged in and three tests
+  changed (below, 11-08). Below, 11-05.
 - `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
   11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
   and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
@@ -262,8 +263,8 @@ under that date. When an item is done, strike it through here and name the commi
 - ~~The README's live table~~: re-measured at `--warmup 3`, 10-14.
 
 **Windows**
-- `cleanup` (PR #39): `build_win.bat` and CTest, which now holds the setup's six suites. Below,
-  11-05.
+- ~~`cleanup` (PR #39): `build_win.bat` and CTest, which now holds the setup's six suites~~: green
+  with `newnr` merged in, after three tests were changed (`4cd720f`, below, 11-08).
 - ~~The panel's frame counter (`7d70ff1`, below, 11-05 night)~~: seen in Mortal Kombat 11 with the
   screen on, and on GitHub's `alchemist`, `master` and `newnr` since 11-06, in no release yet; in
   Vulkan the present waits on a semaphore of the panel's, `476d5f0` (below, 11-06).
@@ -375,6 +376,40 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Checked on Windows: `cleanup` with `newnr` merged in (2026-11-08, PR #39)
+
+The owner, 11-08: look at the open pull requests and start on them. `cleanup` was cut from `newnr`
+at `0456e99`, and `newnr` has 26 commits more, so the merge is what was tested: `newnr` (`5836d29`)
+into `cleanup`, conflicting only here, every hunk kept from both sides (`683a944`).
+
+**Three tests changed** (`4cd720f`). MinGW CTest failed 3 of its 68 entries:
+- `layer_ui_resize`, revived on this branch, looked for `WaitForFences` right before the UI
+  image's resize. Since `476d5f0` that wait is `menu_drain`, which waits on every slot's fence,
+  and the check now asks for that.
+- `tools_windows_setup`, new in CTest: `setup.bat` refuses a Python without NumPy and safetensors,
+  and MSYS2's has no safetensors. Its install test failed, and nine others passed only because the
+  refusal comes first (line 219) and looks like the failure each tests, exit 3 with an ERROR
+  line. The class skips under such a Python now, as `test_setup_proxy.py`'s batch tests do.
+- `tools_windows_wizard`, new in CTest: one fixture compared paths, and MSYS2's Python joins them
+  with `/`; it compares names now. It failed by hand under MSYS2's Python before (11-06).
+
+**Then everything passed:**
+- MinGW (gcc 16): the build, and CTest 68 of 68. The build's warnings are all in files this branch
+  does not touch.
+- MSVC `build_win.bat`: the three known C4068 and nothing else. CTest on its libraries: 68 of 68.
+- Under a native Python with both packages: `test_windows_setup.py` 14 of 14, and
+  `test_windows_wizard.py` 100, 1 skipped.
+- `frame_replay.py`, network A, on the MSVC libxmx: the heads and changed heads are October's,
+  `e62005b8…`/`e7c72789…` at 320x320 and `c217fd2f…`/`95f46f67…` at 1280x720. So removing
+  `NR_JOINT_QKV` and `NR_FUSE_BRANCHED_FFN` changes no byte the network writes on Intel's driver.
+
+The merge and the test change are on the local branch `pr39-merge`, in the Windows checkout's
+repository; nothing is pushed.
+
+**Next on Linux:** once `pr39-merge` is on GitHub's `cleanup`, or fetched from
+`D:\NRonWindows\dlss-nr`: `make test` in both memory modes and CTest. **Waiting for the owner:**
+the push to `cleanup`, then the merge into `newnr` once Linux is green.
 
 ## The daemon keeps the panel's unsaved edits; the Reddit media; a Ko-fi link (2026-11-06, later, branch `game-tuning`)
 
