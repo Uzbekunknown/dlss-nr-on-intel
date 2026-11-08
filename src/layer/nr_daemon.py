@@ -1750,7 +1750,10 @@ def run_owned(args):
             ("NR_FUSE_MERGE_FFN", "fuse_merge_ffn"), ("NR_FUSE_STEM_FFN", "fuse_stem_ffn"),
             ("NR_FUSE_POOL", "fuse_pool"), ("NR_FUSE_WINDOW_BLOCK", "fuse_window_block"),
             ("NR_FUSE_HEAD", "fuse_head"),
-            ("NR_FUSE_GLOBAL_ATTENTION", "fuse_global_attention"))),
+            ("NR_FUSE_GLOBAL_ATTENTION", "fuse_global_attention"),
+            # the bottleneck's weights as E4M3 bytes: libxmx's choice for this driver and
+            # the runtime's check that it decodes them exactly (xmxres.Runtime.e4m3_weights)
+            ("XMX_E4M3_WEIGHTS", "e4m3_weights"))),
           flush=True)
 
     if os.name == "nt":

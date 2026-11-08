@@ -76,6 +76,7 @@ static struct {
 	int staged_packed;        /* raw 128-bit staged operand copies, constant 2 (xmx_init) */
 	int staged_walk_y;        /* the staged GEMM's blocks read from a Y-major walk, constant 3 */
 	int preserve16;           /* float16 subnormals kept: DenormPreserve 16 on every module (xmx_init) */
+	int e4m3_weights;         /* the bottleneck's weights kept as E4M3 bytes (xmx_init) */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -121,7 +122,8 @@ static unsigned prof_each_n;
  * is HOST_CACHED, so the host can still write inputs and read outputs in place. */
 #define MAX_RBUF 8192
 struct rbuf { VkBuffer b; VkDeviceMemory m; void *p; VkDeviceAddress addr;
-		 VkDeviceSize size; int live, mapped; };
+		 VkDeviceSize size; int live, mapped;
+		 int e4m3;   /* E4M3 bytes, a GEMM's B only (xmx_buf_mark_e4m3) */ };
 static struct rbuf rbufs[MAX_RBUF];
 
 struct push {
@@ -639,6 +641,10 @@ int xmx_half_by_cast(void) { return g.half_by_cast; }
 /* Whether the staged GEMM reads its blocks from a Y-major walk, constant 3 (xmx_init). */
 int xmx_staged_walk_y(void) { return g.staged_walk_y; }
 
+/* Whether a GEMM's B may be E4M3 bytes, decoded in the staged loader (gemm_staged.comp,
+ * 0x4000000), and so whether the graph keeps the bottleneck's weights that way (xmx_init). */
+int xmx_e4m3_weights(void) { return g.e4m3_weights; }
+
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
 int xmx_driver(void) { return g.driver; }
@@ -1002,6 +1008,24 @@ int xmx_init(const char *spv_path)
 	if (!g.preserve16 && !(denorm && !strcmp(denorm, "driver")))
 		fprintf(stderr, "libxmx: %s cannot keep float16 subnormals by declaration; its own default "
 			"decides, and the picture may differ from other drivers'\n", g.name);
+	/* The bottleneck's weights as their E4M3 bytes, half of what its GEMMs stream: they wait
+	 * on those bytes on Intel's Windows driver (B at 512x320: 4.8 ms of the network, 4.0 with
+	 * half of them, HANDOFF 2026-11-08). The staged loader decodes a byte to its half
+	 * exactly, through a half subnormal where the value is an E4M3 one, so it needs float16
+	 * subnormals kept, and it is the packed loader's. `XMX_E4M3_WEIGHTS=0|1` sets it either
+	 * way where those hold, to compare; the bytes of the graph are the same. */
+	g.e4m3_weights = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+	const char *e4m3_weights = getenv("XMX_E4M3_WEIGHTS");
+	if (e4m3_weights) {
+		if (!strcmp(e4m3_weights, "1")) g.e4m3_weights = 1;
+		else if (!strcmp(e4m3_weights, "0")) g.e4m3_weights = 0;
+		else FAIL("XMX_E4M3_WEIGHTS must be 0 or 1", 0);
+	}
+	if (g.e4m3_weights && !(g.preserve16 && g.staged_packed)) {
+		if (e4m3_weights && !strcmp(e4m3_weights, "1"))
+			FAIL("XMX_E4M3_WEIGHTS=1 needs float16 subnormals kept and the packed staged loader", 0);
+		g.e4m3_weights = 0;
+	}
 	VkPhysicalDeviceVulkan13Features v13 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &cm,
 		.subgroupSizeControl = (g.pin32 & 1) ? VK_TRUE : VK_FALSE,
@@ -1418,6 +1442,16 @@ failed_kind:
 
 int xmx_buf_create(unsigned long long bytes) { return xmx_buf_create_kind(bytes, 0); }
 
+/* Mark a buffer as E4M3 bytes, for a GEMM to read as its B (record_gemm): the staged
+ * kernel's packed loader decodes them, and no other pass may take the buffer. */
+int xmx_buf_mark_e4m3(int id)
+{
+	if (id < 0 || id >= MAX_RBUF || !rbufs[id].live) FAIL("buffer is not live", 0);
+	if (!g.e4m3_weights) FAIL("E4M3 GEMM operands are off on this device (xmx_e4m3_weights)", 0);
+	rbufs[id].e4m3 = 1;
+	return 0;
+}
+
 int xmx_buf_host_visible(int id)
 {
 	return (id >= 0 && id < MAX_RBUF && rbufs[id].live && rbufs[id].mapped) ? 1 : 0;
@@ -1751,6 +1785,9 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 		       int pooled)
 {
 	if (!g.recording) FAIL("not recording", 0);
+	/* B as E4M3 bytes (xmx_buf_mark_e4m3): bit 0x4000000 of gemm_staged.comp */
+	int e4m3_b = b >= 0 && b < MAX_RBUF && rbufs[b].live && rbufs[b].e4m3;
+	if (e4m3_b) bt |= 0x4000000u;
 	struct push p = { .a = addr_of(a), .b = addr_of(b), .c = addr_of(c),
 			  .m = M, .n = N, .k = K, .batch = batch,
 			  .sa = sa, .sb = sb, .sc = sc, .flags = bt,
@@ -1793,7 +1830,7 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	}
 	/* Element offsets are folded into the addresses, so a sub-matrix needs no shader
 	 * support: A and B are half, and C is float unless the epilogue narrows it. */
-	p.a += (uint64_t)oa * 2; p.b += (uint64_t)ob * 2;
+	p.a += (uint64_t)oa * 2; p.b += (uint64_t)ob * (e4m3_b ? 1u : 2u);
 	p.c += (uint64_t)oc * ((bt & 0x1000u) ? 2 : 4);
 	/* The register-tiled kernel keeps a 16x32 block of the output in one subgroup's
 	 * registers, which needs both extents to be a whole block; the 8x16 kernel takes
@@ -1840,6 +1877,9 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 			FAIL("a window-gathered A needs its geometry, whole blocks and one batch", 0);
 		staged = 1;
 	}
+	/* an E4M3 B is the staged kernel's to read (gemm_staged.comp), whatever M and the depth
+	 * of K: its last block may be partial, and no other kernel reads bytes */
+	if (e4m3_b && N % 32 == 0 && K % 32 == 0) staged = 1;
 	int tiled = M % g.tilem == 0 && N % g.tilen == 0 && K >= g.tiling;
 	if ((bt & 0x10000u) && (bt & 0x20000u))
 		FAIL("compact head and fused residual are exclusive", 0);
@@ -1851,7 +1891,7 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	/* The QKV epilogue normalises a head inside one workgroup, so the column block must
 	 * be one head exactly: 32 wide, which the staged block always is and the tiled one
 	 * is unless XMX_TILE_N moved it. The 8x16 kernel never qualifies. */
-	if ((bt & 0x100000u) && !(qkv && (bt & ~0x40e000u) == 0x100000u
+	if ((bt & 0x100000u) && !(qkv && (bt & ~0x440e000u) == 0x100000u
 				  && (staged || (tiled && g.tilen == 32))))
 		FAIL("QKV epilogue needs its targets, no other flag, and a 32-column block", 0);
 	if ((bt & 0x4000u) && !(bt & 0x400000u))
@@ -1862,6 +1902,13 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	if ((bt & 0x800000u) && (!staged || small))
 		FAIL("a pooled window residual runs on the 64-row staged kernel", 0);
 	small = small && staged;
+	/* An E4M3 B is read by the staged kernel's packed loader alone, which needs both operands
+	 * aligned, one batch, B not transposed and A not gathered (gemm_staged.comp). */
+	if (e4m3_b && !(staged && g.staged_packed && !(bt & 0x400001u) && batch <= 1
+			&& !(p.a & 15u) && !(p.b & 7u) && !((lda ? lda : K) & 7u)
+			&& !((ldb ? ldb : N) & 7u)))
+		FAIL("an E4M3 B needs the staged kernel's packed loads: aligned, one batch, "
+		     "not transposed or gathered", 0);
 	int deep = small && N <= 1024 && K % 64 == 0;
 	VkPipeline pipeline;
 	if (small) {

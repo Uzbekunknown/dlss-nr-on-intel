@@ -373,6 +373,7 @@ endif
 	python3 src/gpu/test_staged_partial.py
 	python3 src/gpu/test_staged32.py
 	python3 src/gpu/test_staged_packed.py
+	python3 src/gpu/test_gemm_e4m3.py
 	python3 src/gpu/test_epilogue.py
 	python3 src/gpu/test_specialization.py
 	python3 src/gpu/test_softmax_pack.py

@@ -130,7 +130,15 @@ Mesa starts them with X, so on it the staged GEMM reads which block to compute c
 from that walk, and a row block's operand comes from memory once instead of once per column
 block. On Arc 140V with driver 101.9150 that took 9-19 % off the network at 1920x1152 and
 2560x1472, network B at 2560x1472 from 303-312 to 259-260 ms, with the same output bytes.
-`XMX_STAGED_WALK_Y=0` keeps the old order, `=1` takes the new one on any driver. Rebuild both
+`XMX_STAGED_WALK_Y=0` keeps the old order, `=1` takes the new one on any driver. On Intel's
+Windows driver the bottleneck also keeps its weights as their E4M3 bytes, one byte a value
+where half takes two: NVIDIA's weights are E4M3 values to the last one, and the staged loader
+decodes each byte to the same half, so the output bytes are the same (`test_gemm_e4m3.py`).
+Its GEMMs wait on those bytes: on Arc 140V the network takes 0.3-0.5 ms less at 1280x720 and
+render scale 0.4, the bottleneck 1.4 ms less at 1920x1080 and 0.4, and the device holds 96 MiB
+less. The decode needs float16 subnormals kept, and each runtime first checks that this driver
+decodes all 254 values exactly, or keeps the weights as half. `XMX_E4M3_WEIGHTS=0` keeps them
+as half, `=1` takes the bytes on any driver that keeps float16 subnormals. Rebuild both
 `libxmx` and the three staged shaders
 in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
 an already running daemon or a separate MSVC build.

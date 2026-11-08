@@ -175,6 +175,12 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
+  in both memory modes and CTest once it is on GitHub. It is off on Mesa unless
+  `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
+  it is off; run it once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values, B's
+  320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both ways.
+  `gemm_staged.comp`, `libxmx.c`, `xmxres.py` and `nr_resident.py` changed.
 - `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
   modes and CTest once it is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
   `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
@@ -349,6 +355,9 @@ under that date. When an item is done, strike it through here and name the commi
   and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
 - The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
   there, then the owner's word on merging it into `alchemist` and pushing.
+- The bottleneck's weights as E4M3 bytes, `e4m3-weights` on `perf-1108` (below, 11-08, evening):
+  the same game check, and whether it stays on by default for every GPU on Intel's Windows
+  driver; desktop Arc cards and the B580 have not run it.
 - ~~`tools\build_win.bat` run from a folder other than the checkout stops at the layer's link
   (`LNK1181`): the layer's C objects are compiled with no `/Fo` and land in that folder~~: fixed
   in `2c04f2f`, with `/Fo:"%REPO%\\"` as the x86 step has. Below, 11-04 night, latest.
@@ -384,6 +393,65 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The bottleneck's weights as their E4M3 bytes (2026-11-08, evening, branch `e4m3-weights`)
+
+After the entry below, still at the owner's "look for speed": on `e4m3-weights`, a local branch
+on `perf-1108`, in the same worktree; nothing pushed.
+
+**Why.** Network B at 512x320, 1280x720 at render scale 0.4: the bottleneck's eight blocks are
+4.5-5.0 ms of 15.6-16.6 on the device, four GEMMs at 64 tokens streaming 25 MB of half weights
+a block. Reading half of B's bytes (a timing proxy, every B row read twice) took them to 3.9-4.1 ms
+on Intel's driver, where `improve-b.md` found 7 % on Mesa: here they wait on those bytes. Every
+value of the 84 large matrices of A and B but the four attention-bias tables is an E4M3 value
+(the DLL ships them as E4M3), so the bytes are the weights, exactly.
+
+**The change** (all bit-identical):
+- `gemm_staged.comp`, bit 0x4000000: B is E4M3 bytes, read by the packed loader (eight bytes a
+  thread where it took sixteen) and decoded to halves before the shared-memory store. A byte's
+  sign and magnitude go to a half's places, the half reading the value times 2^-8 (an E4M3
+  subnormal a half subnormal), and a multiply by 256 gives the value: exact with float16
+  subnormals kept. Each four columns' bytes are stored 0 2 1 3, so one shift and two masks
+  make a pair of halves from a word and no byte moves alone (`e4m3x4_halves`); the first
+  version, which moved each byte, took 0.3 ms off the bottleneck where this takes 0.4-0.75.
+- `libxmx.c`: `xmx_buf_mark_e4m3` marks a buffer as E4M3 bytes, `record_gemm` sets the bit for
+  such a B, takes its offsets in bytes, sends it to the staged kernel at any M, and refuses it
+  where the packed loader cannot read it (transposed, gathered, a batch, unaligned).
+  `xmx_e4m3_weights` is on for Intel's Windows driver, where float16 subnormals are kept and the
+  packed loader is on; `XMX_E4M3_WEIGHTS=0|1` sets it.
+- `xmxres.py`: `Runtime.buffer_e4m3` (the bytes in that order, `e4m3_codes`, or None where a
+  value is no E4M3 one), and a check at each runtime's start, 7 ms: an identity times all 254
+  values on each staged build the bottleneck uses, bytes against half, or the weights stay half.
+- `nr_resident.GlobalBlockWeights` keeps the four GEMMs' weights that way where the runtime may,
+  and the daemon's `runtime options` line names `XMX_E4M3_WEIGHTS=0|1`, so a Save report says
+  which ran.
+
+**The same bytes:** `test_gemm_e4m3.py` (new; 82 cases: the bottleneck's shapes and a partial and
+a 32-row block, plain, published, the gate, the residual with both skips and the ViT's QKV
+epilogue, specialised and not, B holding every E4M3 value); the heads of A and B at 320x512 and
+768x1344, original and changed input, with `XMX_E4M3_WEIGHTS=0` and `=1`; the 30 GPU suites of
+CTest's list, `test_image_pipeline.py --full-model`, `test_gpu_transport`, `test_gpu_d3d12.py
+--network`, `test_daemon`. MSVC `build_win.bat` with no warning.
+
+**Measured** (Intel 101.9150, quiet, each in a process of its own, alternating):
+
+| | half | E4M3 |
+| --- | --- | --- |
+| B 512x320, the bottleneck's four GEMMs (`frame_profile`, 6 processes each) | 4.5-5.0 ms | 4.1-4.4 |
+| B 512x320, the device's total | 15.6-16.6 | 15.3-16.1 |
+| B 768x448 (1920x1080 at 0.4), the bottleneck / the device | 7.0 / 29.5-30.4 | 5.5-5.7 / 28.2-28.3 |
+| A 512x320, the bottleneck / the device | 5.1-5.2 / 30.8-32.0 | 4.3 / 28.8-29.2 |
+| B, the pipeline's frame at 1280x720, network (4 processes) | 15.95-16.59 | 15.91-16.13 |
+| A, the same (3 processes) | 30.30-30.61 | 29.79-30.10 |
+
+So 0.3-0.5 ms of the network at 1280x720 and 0.4, more at 1920x1080, and 96 MiB less on the
+device (294 -> 198 MiB for B at 320x512). The 32-row deep build stays the right one for the
+contract with E4M3 too (1.81-1.88 ms against 1.98-2.09 on 64-row blocks).
+
+**Not run:** a game; Linux; Arc A-series and Battlemage cards, which take it by default on the
+same driver, and whose start-up check is the only thing between them and a wrong decode.
+
+**Next on Linux:** Open items. **Next on Windows:** a game with the owner, with `perf-1108`.
 
 ## The GPU path's frame around the network, 9 % less; what the other ports do (2026-11-08, branch `perf-1108`)
 

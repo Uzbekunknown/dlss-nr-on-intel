@@ -159,7 +159,9 @@ def _load():
             ("xmx_profile", [ctypes.c_int]),
             ("xmx_rec_history", [ctypes.c_int] * 3 + [ctypes.c_uint] * 5),
             ("xmx_device_lost", []),
-            ("xmx_driver", [])):
+            ("xmx_driver", []),
+            ("xmx_buf_mark_e4m3", [ctypes.c_int]),
+            ("xmx_e4m3_weights", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -246,7 +248,7 @@ class Buffer:
     says so.
     """
 
-    __slots__ = ("id", "nbytes", "kind", "_lib")
+    __slots__ = ("id", "nbytes", "kind", "_lib", "e4m3")
 
     def __init__(self, nbytes, kind=GRAPH):
         self._lib = _load()
@@ -255,6 +257,7 @@ class Buffer:
             raise failure(self._lib, "xmx_buf_create")
         self.nbytes = int(nbytes)
         self.kind = int(kind)
+        self.e4m3 = False   # E4M3 bytes, a GEMM's B only (Runtime.buffer_e4m3)
 
     @property
     def mapped(self):
@@ -265,7 +268,7 @@ class Buffer:
         """Import a same-device dedicated GPU allocation; ownership stays explicit."""
         obj=cls.__new__(cls)
         obj._lib=_load()
-        obj.nbytes,obj.kind=int(nbytes),DEVICE
+        obj.nbytes,obj.kind,obj.e4m3=int(nbytes),DEVICE,False
         obj.id=obj._lib.xmx_buf_import_win32(int(pid),int(handle),int(nbytes),
                                             int(allocation_size),int(memory_type))
         if obj.id<0: raise failure(obj._lib,"xmx_buf_import_win32")
@@ -276,7 +279,7 @@ class Buffer:
         """Import the first `nbytes` of a shared committed D3D12 buffer, unmapped."""
         obj=cls.__new__(cls)
         obj._lib=_load()
-        obj.nbytes,obj.kind=int(nbytes),DEVICE
+        obj.nbytes,obj.kind,obj.e4m3=int(nbytes),DEVICE,False
         obj.id=obj._lib.xmx_buf_import_d3d12(int(pid),int(handle),int(nbytes))
         if obj.id<0: raise failure(obj._lib,"xmx_buf_import_d3d12")
         return obj
@@ -348,6 +351,50 @@ class Buffer:
             self.free()
         except Exception:
             pass
+
+
+def _e4m3_lookup():
+    """Each half bit pattern's E4M3 byte (OCP E4M3FN: no infinities, 0x7f and 0xff NaN, and
+    neither taken), or -1 where the half is no E4M3 value."""
+    codes = np.arange(256, dtype=np.int64)
+    exponent, mantissa = (codes >> 3) & 15, codes & 7
+    value = np.where(exponent == 0, mantissa / 8.0 * 2.0 ** -6,
+                     (1.0 + mantissa / 8.0) * 2.0 ** (exponent - 7.0))
+    halves = np.where(codes & 0x80, -value, value).astype(np.float16)
+    lookup = np.full(65536, -1, np.int16)
+    taken = (codes & 0x7F) != 0x7F
+    lookup[halves[taken].view(np.uint16)] = codes[taken]
+    return lookup
+
+
+_E4M3_LOOKUP = None
+
+
+def e4m3_bytes(array):
+    """`array` as half, each value's E4M3 byte, or None where one of them is no E4M3 value:
+    the byte the staged loader decodes to exactly that half, ±0 included."""
+    global _E4M3_LOOKUP
+    if _E4M3_LOOKUP is None:
+        _E4M3_LOOKUP = _e4m3_lookup()
+    codes = _E4M3_LOOKUP[np.ascontiguousarray(array, dtype=np.float16).view(np.uint16)]
+    return None if (codes < 0).any() else codes.astype(np.uint8)
+
+
+def e4m3_codes(array):
+    """A GEMM's B as an E4M3 B holds it (Runtime.buffer_e4m3): each value's byte, and each
+    four columns' bytes in the order 0 2 1 3, which the staged loader decodes with a shift
+    and two masks a pair (gemm_staged.comp, e4m3x4_halves). None where a value is no E4M3
+    one, or the rows are not a whole number of fours."""
+    array = np.asarray(array)
+    codes = e4m3_bytes(array)
+    if codes is None or array.ndim == 0 or array.shape[-1] % 4:
+        return None
+    return np.ascontiguousarray(codes.reshape(-1, 4)[:, [0, 2, 1, 3]]).reshape(codes.shape)
+
+
+def _b_bytes(buffer):
+    """Bytes an element of a GEMM's B: one where it holds E4M3 bytes, else two."""
+    return 1 if getattr(buffer, "e4m3", False) else 2
 
 
 def host_view(buffer, dtype=np.float32, shape=None, count=None):
@@ -756,6 +803,9 @@ class Runtime:
         self.fuse_head = os.environ.get("NR_FUSE_HEAD", "1") != "0"
         # A bottleneck block's QK^T, softmax, PV and head merge in one pass, no score stored.
         self.fuse_global_attention = os.environ.get("NR_FUSE_GLOBAL_ATTENTION", "1") != "0"
+        # The bottleneck's weights as their E4M3 bytes where libxmx allows it, once this
+        # driver has decoded every byte to its half in each staged build (_e4m3_decodes).
+        self._e4m3 = bool(self.lib.xmx_e4m3_weights()) and self._e4m3_decodes()
 
     def graph_key(self):
         return (self.lib.xmx_specialization() | (int(self.fuse_qk) << 3)
@@ -825,6 +875,65 @@ class Runtime:
             if pad:
                 buffer.zero()
             buffer.upload(array.reshape(-1))
+        return buffer
+
+    @property
+    def e4m3_weights(self):
+        """Whether a GEMM's B may be E4M3 bytes on this device (`xmx_e4m3_weights`,
+        `XMX_E4M3_WEIGHTS`): the bottleneck keeps its weights that way where it may."""
+        return self._e4m3
+
+    def _e4m3_decodes(self):
+        """Whether this driver decodes every E4M3 byte of a GEMM's B to its half: an identity
+        A times a B holding all 254 values, as bytes and as half, compared bit for bit on
+        each staged build that takes the bottleneck's GEMMs (64 rows; 32 rows, a 64-deep step
+        and not). Once a runtime; a driver that flushed a half subnormal would fail it, and
+        the bottleneck then keeps its weights as half."""
+        global _E4M3_LOOKUP
+        if _E4M3_LOOKUP is None:
+            _E4M3_LOOKUP = _e4m3_lookup()
+        values = np.flatnonzero(_E4M3_LOOKUP >= 0).astype(np.uint16).view(np.float16)
+        buffers = []
+        try:
+            for rows, inner in ((64, 64), (64, 1024), (32, 96)):
+                b = np.zeros((inner, 32), np.float16)
+                b.reshape(-1)[:rows * 32] = np.resize(values, rows * 32)
+                a = np.zeros((rows, inner), np.float16)
+                a[:, :rows] = np.eye(rows, dtype=np.float16)
+                a_buf, half_b = self.buffer_from(a, np.float16), self.buffer_from(b, np.float16)
+                byte_b = self.buffer_from(e4m3_codes(b), np.uint8)
+                buffers += [a_buf, half_b, byte_b]
+                if self.lib.xmx_buf_mark_e4m3(byte_b.id) != 0:
+                    return False
+                byte_b.e4m3 = True
+                outs = []
+                for operand in (half_b, byte_b):
+                    out = Buffer(rows * 32 * 4, kind=HOST_READ)
+                    buffers.append(out)
+                    self.begin()
+                    self.gemm(a_buf, operand, out, rows, 32, inner)
+                    self.submit()
+                    outs.append(host_view(out, np.float32, count=rows * 32).copy())
+                if not (np.array_equal(outs[0].view(np.uint32), outs[1].view(np.uint32))
+                        and np.array_equal(outs[1], b[:rows].astype(np.float32).reshape(-1))):
+                    return False
+            return True
+        finally:
+            for buffer in buffers:
+                buffer.free()
+
+    def buffer_e4m3(self, array):
+        """A GEMM's B as its E4M3 bytes, a byte an element, or None where `array` holds a
+        value E4M3 cannot: the staged GEMM decodes every byte to the half `array` rounds
+        to, so the GEMM's output is the half B's bit for bit (`test_gemm_e4m3.py`)."""
+        codes = e4m3_codes(array) if self._e4m3 else None
+        if codes is None:
+            return None
+        buffer = self.buffer_from(codes, np.uint8)
+        if self.lib.xmx_buf_mark_e4m3(buffer.id) != 0:
+            buffer.free()
+            raise failure(self.lib, "xmx_buf_mark_e4m3")
+        buffer.e4m3 = True
         return buffer
 
     # -- recording -----------------------------------------------------
@@ -920,7 +1029,7 @@ class Runtime:
             raise ValueError("GEMM residual output must not alias matrix inputs or cosine")
         if target.id == skip.id and narrow != skip_half:
             raise ValueError("in-place residual requires matching skip and output widths")
-        for buf, size in ((a, rows * inner * 2), (b, inner * cols * 2),
+        for buf, size in ((a, rows * inner * 2), (b, inner * cols * _b_bytes(b)),
                           (skip, output_rows * cols * (2 if skip_half else 4)), (cosine, cols * 4),
                           (target, output_rows * cols * (2 if narrow else 4))):
             if buf.nbytes < size:
@@ -1118,7 +1227,8 @@ class Runtime:
             return self
         if publish_image:
             raise ValueError("only a window-gathered projection publishes its image")
-        for buf, size in ((a, rows * channels * 2), (weight, channels * 3 * channels * 2),
+        for buf, size in ((a, rows * channels * 2),
+                          (weight, channels * 3 * channels * _b_bytes(weight)),
                           (q, rows * channels * 2), (k, rows * channels * 2),
                           (v, rows * channels * 2), (scale, heads * 4)):
             if buf.nbytes < size:

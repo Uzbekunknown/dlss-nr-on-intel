@@ -60,6 +60,26 @@ layout(buffer_reference, scalar, buffer_reference_align = 16) buffer FloatBuf { 
 layout(buffer_reference, scalar, buffer_reference_align = 8)  buffer Half4Buf { f16vec4   v4[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Float4Buf { vec4     v4[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Packed8Buf { uvec4    v8[]; };
+layout(buffer_reference, scalar, buffer_reference_align = 8)  buffer Byte8Buf   { uvec2    v2[]; };
+
+/* Bit 0x4000000: B is E4M3 bytes, a byte an element where the half B takes two — the
+ * bottleneck's weights, which are E4M3 values to the last one (the vendor ships them so).
+ * Each byte's sign and magnitude go to a half's places, where the half reads the value
+ * times 2^-8 (an E4M3 subnormal a half subnormal), and a multiply by 256 gives the value:
+ * exact, both steps, with float16 subnormals kept, which libxmx requires before it sets
+ * the bit. Each four columns' bytes are stored in the order 0 2 1 3 (xmxres.e4m3_codes), so
+ * one shift and two masks put bytes 0 and 2 of a word into a pair of halves, columns 0 and
+ * 1, and bytes 1 and 3 into the next, columns 2 and 3: no byte is moved on its own. Eight
+ * bytes in, eight halves out, in the order the half B's 16 bytes hold them. */
+uvec2 e4m3x4_halves(uint word) {
+    uvec2 bits = uvec2(((word << 7) & 0x3f803f80u) | ((word << 8) & 0x80008000u),
+                       ((word >> 1) & 0x3f803f80u) | (word & 0x80008000u));
+    return uvec2(packFloat2x16(unpackFloat2x16(bits.x) * f16vec2(256.0)),
+                 packFloat2x16(unpackFloat2x16(bits.y) * f16vec2(256.0)));
+}
+uvec4 e4m3x8_halves(uvec2 bytes) {
+    return uvec4(e4m3x4_halves(bytes.x), e4m3x4_halves(bytes.y));
+}
 
 /* Raw 128-bit operand copies: faster on Intel's Windows compiler and, where the graph is
  * large, on Mesa. libxmx sets this on every driver (XMX_STAGED_PACKED=0 to compare); the
@@ -147,8 +167,13 @@ void main() {
      * that away. Falls back to scalars when a row stride leaves the base unaligned. */
     Half4Buf a4 = Half4Buf(uint64_t(pc.a)), b4 = Half4Buf(uint64_t(pc.b));
     Packed8Buf a8 = Packed8Buf(uint64_t(pc.a)), b8 = Packed8Buf(uint64_t(pc.b));
+    Byte8Buf b1 = Byte8Buf(uint64_t(pc.b));
+    /* E4M3 B (0x4000000) is read by the packed loader alone; libxmx sets the bit only
+     * where that loader takes both operands (record_gemm). */
+    bool b_e4m3 = (operation_flags() & 0x4000000u) != 0u;
     bool packed_a_ok = (uint(uint64_t(pc.a)) & 15u) == 0u && (lda & 7u) == 0u && (ao & 7u) == 0u;
-    bool packed_b_ok = (uint(uint64_t(pc.b)) & 15u) == 0u && (ldb & 7u) == 0u && (bo & 7u) == 0u;
+    bool packed_b_ok = (uint(uint64_t(pc.b)) & (b_e4m3 ? 7u : 15u)) == 0u
+                       && (ldb & 7u) == 0u && (bo & 7u) == 0u;
     bool wide_a = (uint(uint64_t(pc.a)) & 7u) == 0u && (lda & 3u) == 0u && (ao & 3u) == 0u;
     bool wide_b = (uint(uint64_t(pc.b)) & 7u) == 0u && (ldb & 3u) == 0u && (bo & 3u) == 0u;
 
@@ -181,6 +206,7 @@ void main() {
             const uint STEP = (32u * WARPS) / 4u;
             const uint A_PER = BM / STEP, B_PER = BK / STEP;
             uvec4 ra[A_PER * KC], rb[B_PER];
+            uvec2 rb1[B_PER];      // E4M3 B: its bytes, decoded only once all loads are out
             for (uint p = 0u; p < A_PER; p++)
                 for (uint q = 0u; q < KC; q++) {
                     uint at = ao + min(row + lr + p * STEP, last) * lda + k0 + q * 32u + lc;
@@ -188,7 +214,8 @@ void main() {
                 }
             for (uint p = 0u; p < B_PER; p++) {
                 uint at = bo + (k0 + lr + p * STEP) * ldb + col + lc;
-                rb[p] = b8.v8[at >> 3];
+                if (b_e4m3) rb1[p] = b1.v2[at >> 3];
+                else rb[p] = b8.v8[at >> 3];
             }
             for (uint p = 0u; p < A_PER; p++)
                 for (uint q = 0u; q < KC; q++) {
@@ -197,7 +224,7 @@ void main() {
                 }
             for (uint p = 0u; p < B_PER; p++) {
                 uint kk = lr + p * STEP;
-                packed_b[(kk * SB + lc) >> 3] = rb[p];
+                packed_b[(kk * SB + lc) >> 3] = b_e4m3 ? e4m3x8_halves(rb1[p]) : rb[p];
             }
         } else if (!window_a && wide_a && wide_b && !transposed) {
             const uint STEP = (32u * WARPS) / 4u;

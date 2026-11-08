@@ -103,15 +103,25 @@ class GlobalBlockWeights:
         self.index, self.heads, self.split, self.branched = index, 32, False, False
         self.projection = weights[f"block{index}.layer4.projection_weight"]
         self.channels = self.projection.shape[0]
-        self.expand = runtime.buffer_from(weights[f"block{index}.layer0.weight"], np.float16)
-        self.ffn_proj = runtime.buffer_from(weights[f"block{index}.layer1.weight"], np.float16)
+        # The four GEMMs' weights, 25 MB a block as half. With 64 tokens these GEMMs wait on
+        # those bytes on Intel's Windows driver, so where the device takes it they are kept as
+        # their E4M3 bytes, which the vendor's are to the last value, and the staged loader
+        # decodes each to the same half (xmxres.Runtime.buffer_e4m3; HANDOFF 2026-11-08).
+        def weight(array):
+            if getattr(runtime, "e4m3_weights", False):
+                kept = runtime.buffer_e4m3(array)
+                if kept is not None:
+                    return kept
+            return runtime.buffer_from(array, np.float16)
+        self.expand = weight(weights[f"block{index}.layer0.weight"])
+        self.ffn_proj = weight(weights[f"block{index}.layer1.weight"])
         self.hidden_width = weights[f"block{index}.layer0.weight"].shape[1]
         self.ffn_cos = runtime.buffer_from(weights[f"block{index}.layer1.ffn_cos_skip"])
-        self.qkv = runtime.buffer_from(weights[f"block{index}.layer2.qkv_weight"], np.float16)
+        self.qkv = weight(weights[f"block{index}.layer2.qkv_weight"])
         # the learned scale alone: the ViT's query takes half(sqrt(32)) as a multiply of its
         # own before it (VIT_ROOT in cosine_tree.glsl)
         self.scale = runtime.buffer_from(weights[f"block{index}.layer2.attn_scale"])
-        self.out = runtime.buffer_from(self.projection, np.float16)
+        self.out = weight(self.projection)
         self.attn_cos = runtime.buffer_from(weights[f"block{index}.layer4.attn_cos_skip"])
 
 
