@@ -885,17 +885,25 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *inf
  * the panel there was invalid usage. The feature is on when the GPU path's patch put it there
  * (`gpu_enabled`), or when the game asked for it itself, as DXVK does. Decided here because only
  * vkCreateDevice sees what was enabled. */
-static const char *menu_device_reason(VkPhysicalDevice physical, const VkDeviceCreateInfo *info,
+static const char *menu_device_reason(const VkDeviceCreateInfo *info,
 				      int gpu_enabled)
 {
-	PFN_vkGetPhysicalDeviceProperties properties = (PFN_vkGetPhysicalDeviceProperties)
-		next_instance_proc(layer_instance, "vkGetPhysicalDeviceProperties");
-	VkPhysicalDeviceProperties props;
-	memset(&props, 0, sizeof props);
-	if (properties) properties(physical, &props);
-	uint32_t version = layer_api_version < props.apiVersion ? layer_api_version : props.apiVersion;
-	if (version < VK_API_VERSION_1_3)
-		return "the device runs Vulkan below 1.3, and the panel's shader needs 1.3";
+	/* **The panel is not refused on the application's declared version.**
+	 *
+	 * This used to compute `min(layer_api_version, props.apiVersion)` and return when that was
+	 * below Vulkan 1.3, because the panel's module is SPIR-V 1.6. The rule is about the DEVICE,
+	 * not the request: an application that declares Vulkan 1.1 still creates a device at the
+	 * hardware's own version - `props.apiVersion` is 1.4.348 on this GPU - and a SPIR-V 1.6
+	 * module is legal there. The `min()` took a conservative request and used it as a ceiling.
+	 *
+	 * Measured in Aperture Desk Job, which declares 1.1: with this refusal gone the panel builds,
+	 * draws, and every frame is answered. That is the check being wrong, not the driver being
+	 * lenient.
+	 *
+	 * What the panel actually needs is `bufferDeviceAddress`, which the walk below decides - the
+	 * blend pass takes its two buffers by device address. `gpu_enabled` covers the case where the
+	 * GPU path's patch enabled it; the walk covers a game or wrapper that enabled it itself, as
+	 * DXVK does. */
 	if (gpu_enabled) return NULL;
 	int steps = 0;
 	for (const VkBaseInStructure *p = (const VkBaseInStructure *)info->pNext;
@@ -982,7 +990,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 #ifdef _WIN32
 		data->gpu_enabled = gpu_enabled;
 		memcpy(data->gpu_note, gpu_note, sizeof data->gpu_note);
-		data->menu_device_reason = menu_device_reason(physical, info, gpu_enabled);
+		data->menu_device_reason = menu_device_reason(info, gpu_enabled);
 #endif
 		data->present = (PFN_vkQueuePresentKHR)next_device(*device, "vkQueuePresentKHR");
 		data->get_device_queue =
