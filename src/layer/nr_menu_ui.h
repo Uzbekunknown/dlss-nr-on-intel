@@ -95,7 +95,9 @@ typedef struct nrex_ui nrex_ui;
  *   format            the swapchain's format, so the intermediate image matches
  *   api_version       the instance's declared API version, for the backend's pipeline layout
  *   min_image_count   the swapchain's minimum image count
- *   image_count       the swapchain's image count
+ *   image_count       how many of the caller's recordings can be in flight at once: the backend
+ *                     keeps a vertex and an index buffer for each and rewrites one a frame, in
+ *                     turn, so this must be at least the caller's ring (NR_MENU_SLOTS)
  *   load_fn           vkGetDeviceProcAddr, for everything device-level
  *   load_instance_fn  vkGetInstanceProcAddr, for the physical-device queries the device resolver
  *                     deliberately refuses (the loader's contract, learned the hard way)
@@ -111,6 +113,19 @@ nrex_ui *nrex_create(void *device, void *physical, void *instance, void *queue,
                      const char **why);
 
 void nrex_destroy(nrex_ui *ui);
+
+/* The loader's `vkSetDeviceLoaderData` (`PFN_vkSetDeviceLoaderData`, from the layer's device
+ * creation), for the command buffers the UI makes itself: a dispatchable object a layer makes has
+ * to be given the loader's data, or a layer below this one cannot find its device by it. Before
+ * `nrex_create`. */
+void nrex_vk_loader_data(void *set_loader_data);
+
+/* What the backend calls before it touches something an earlier recording may still be using: the
+ * font atlas, which it uploads on its own queue whenever a glyph is new, and the UI image the
+ * verification dump copies. `drain` waits until none of the caller's recordings is in flight
+ * (2026-11-06, when the caller stopped waiting for each one before presenting). NULL waits for
+ * nothing, which is right only for a caller that waits for every recording itself. */
+void nrex_vk_drain_hook(nrex_ui *ui, void (*drain)(void *user), void *user);
 
 /* The frame's window. Call between nrex_new_frame and nrex_render.
  *
@@ -202,6 +217,25 @@ int nrex_resize(nrex_ui *ui, uint32_t width, uint32_t height);
 
 /* Language name for the tab the C side shows. */
 const char *nrex_language_name(int language);
+
+/* The frame counter (nr_panel.c builds its text from nr_frame_rate.h; this file only draws it).
+ * Call between nrex_new_frame and the render, before the panel's own calls.
+ *
+ *   panel_line   drawn at the top of the panel while it is open, with `hint` shown on hover;
+ *                NULL or "" draws nothing there
+ *   corner       where `corner_line` goes as well: 0 nowhere, 1-4 the top left, top right,
+ *                bottom left and bottom right of the picture (NR_COUNTER_* in nr_menu_bridge.h)
+ *
+ * The corner is a small window that takes NO input - no pointer, no keys, no focus, no navigation
+ * - so it can stay on screen while the panel is shut and the game has the keyboard and mouse. */
+void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint, int corner,
+                  const char *corner_line);
+
+/* The part of the picture the last rendered frame drew into, in image pixels: the bounds of its
+ * vertices, a pixel or two wider, inside the image. Valid after the renderer's render call until
+ * the next nrex_new_frame. Returns 0 when nothing was drawn. A host blends only this part onto the
+ * game's frame, which with the panel shut is the counter's corner and nothing else. */
+int nrex_drawn_rect(nrex_ui *ui, uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h);
 
 /* ------------------------------------------------------------------ Direct3D 12
  *

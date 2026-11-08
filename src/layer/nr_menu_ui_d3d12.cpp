@@ -518,11 +518,18 @@ extern "C" int nrex_render_d3d12(nrex_ui* base, void* list_v, int frame_index, v
         for (ImTextureData* tex : *draw->Textures)
             if (tex->Status != ImTextureStatus_OK) update_texture(u, tex, list, frame);
 
+    /* Only what the frame draws into is cleared and laid over the back buffer: the panel's
+     * rectangle while it is open, and with it shut the frame counter's corner alone - a few hundred
+     * pixels rather than a pass over the whole picture on every frame the counter is shown. The
+     * rest of the image is never read, so it need not be cleared. */
+    const bool drew_any = nrex_note_drawn(u, draw, width, height);
+    const D3D12_RECT drawn = {LONG(u->drawn[0]), LONG(u->drawn[1]), LONG(u->drawn[2]), LONG(u->drawn[3])};
+
     /* ImGui into the panel's image, from nothing. */
     barrier(list, u->image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
     const D3D12_CPU_DESCRIPTOR_HANDLE image_rtv = rtv(u, 0);
     const float clear[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    list->ClearRenderTargetView(image_rtv, clear, 0, nullptr);
+    if (drew_any) list->ClearRenderTargetView(image_rtv, clear, 1, &drawn);
     if (draw->TotalVtxCount > 0 && draw->DisplaySize.x > 0.0f && draw->DisplaySize.y > 0.0f) {
         if (frame.vertex_room < UINT(draw->TotalVtxCount)) {
             drop(frame.vertices);
@@ -611,6 +618,9 @@ extern "C" int nrex_render_d3d12(nrex_ui* base, void* list_v, int frame_index, v
         }
     }
     barrier(list, u->image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    /* Nothing drawn: the back buffer is left alone. The list still holds the image's barriers and
+     * any texture upload, so it is still to be executed. */
+    if (!drew_any) return 1;
 
     /* That image over the back buffer, which is in PRESENT at a Present and goes back to it. */
     const D3D12_CPU_DESCRIPTOR_HANDLE back_rtv = rtv(u, 1);
@@ -621,9 +631,8 @@ extern "C" int nrex_render_d3d12(nrex_ui* base, void* list_v, int frame_index, v
     barrier(list, target, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     list->OMSetRenderTargets(1, &back_rtv, FALSE, nullptr);
     const D3D12_VIEWPORT viewport = {0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
-    const D3D12_RECT scissor = {0, 0, LONG(width), LONG(height)};
     list->RSSetViewports(1, &viewport);
-    list->RSSetScissorRects(1, &scissor);
+    list->RSSetScissorRects(1, &drawn);
     list->SetPipelineState(over);
     list->SetGraphicsRootSignature(u->over_root);
     list->SetGraphicsRootDescriptorTable(1, srv_gpu(u, u->image_srv));

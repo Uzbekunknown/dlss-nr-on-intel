@@ -228,6 +228,36 @@ def test_mask_lanes():
     check("modes 1-3 do nothing while the automatic mask is off", np.array_equal(plain, off))
 
 
+def test_profile_lanes():
+    """Each profile's channels 10-14, as `feature_lanes` gives them to the native pass and the
+    GPU, against MLX-DLSS's builder; and Hogwarts Legacy's tuning as the game sets it (phase73)."""
+    print("profile lanes")
+    import nr_frame as frame
+    rng = np.random.default_rng(5)
+    colour = rng.random((40, 56, 3), dtype=np.float32)
+    for name, values in frame.PROFILES.items():
+        built = frame.make_features(colour, **values)
+        want = tuple(float(built[0, 0, c]) for c in range(10, 15))
+        got = frame.feature_lanes(**values)
+        check(f"{name}: feature_lanes is the builder's channels 10-14", got == want,
+              f"{got} vs {want}")
+        check(f"{name}: and the same over the whole frame",
+              all(np.all(built[..., 10 + c] == np.float32(got[c])) for c in range(5)))
+    hogwarts = frame.PROFILES["hogwarts"]
+    check("hogwarts: the game's Tone 50, Detail 84 and Character 27 percent, times 0.01",
+          (hogwarts["normalized_style"], hogwarts["local_tone_strength"],
+           hogwarts["local_structure_strength"]) == (0.0, 0.5, 0.84)
+          and hogwarts["automatic_mask"] == frame.AutomaticMask(0.27, -1.0))
+    check("hogwarts: the automatic mask on, so structure 1 and the lanes skin and structure",
+          frame.feature_lanes(**hogwarts)
+          == (0.0, 0.5, 1.0, float(np.float16(0.27)), float(np.float16(0.84))))
+    check("no mask: the lanes are -1", frame.feature_lanes(**frame.PROFILES["standard"])[3:] == (-1.0, -1.0))
+    # A profile's mask reaches run_head's builder, and the caller's own wins over it.
+    values = frame.controls("hogwarts")
+    check("controls() carries the profile's automatic mask",
+          values.get("automatic_mask") == frame.AutomaticMask(0.27, -1.0))
+
+
 def test_geometry():
     """The network's extent: the vendor's field by default, the graph's floor on request."""
     print("network geometry")
@@ -405,6 +435,7 @@ def main():
     test_primitives()
     test_composition()
     test_mask_lanes()
+    test_profile_lanes()
     test_geometry()
     test_temporal()
     test_display_codec()

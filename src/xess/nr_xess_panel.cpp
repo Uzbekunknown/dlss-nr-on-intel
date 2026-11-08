@@ -22,6 +22,12 @@
  * process, whichever swap chain shows it, made on the first Present and made again when the game
  * changes its device. The pacing rows of the Vulkan layer are not offered: a DirectX 12 game's frames
  * are on the GPU, each on its own frame. The network row is, through the daemon's live preview.
+ *
+ * The frame counter (2026-11-05). The screen's rate is this hook's Presents of the largest swap
+ * chain presenting - under frame generation the generator's, its frames included - and NR's is the
+ * proxy's answered frames (nr_xess.c), with the network's time from the daemon's replies. With the
+ * panel shut and a corner chosen, the counter alone is drawn there, over that corner of the back
+ * buffer only.
  */
 #define _CRT_SECURE_NO_WARNINGS
 #include "nr_xess_panel.h"
@@ -262,6 +268,38 @@ ID3D12Device* g_failed_device = nullptr;   // the device the panel could not be 
 void* g_unqueued = nullptr;                 // the swap chain no queue was found for (said once)
 int g_dumped = 0;
 
+/* The frame counter's presents (nr_frame_rate.h), under g_draw like everything above.
+ *
+ * Counted for one swap chain: the largest that has presented within the last second. Every D3D12
+ * swap chain of dxgi's class presents through the hook - the game's, or under XeSS frame
+ * generation the generator's, which presents its own frames and the game's and so is the one the
+ * screen shows - and a second, smaller one (a launcher's, an overlay's) adds nothing to the
+ * screen's rate. A total since the process loaded this proxy, for the panel to take differences of. */
+std::atomic<uint64_t> g_presented{0};
+void* g_counted_chain = nullptr;
+UINT64 g_counted_area = 0;
+ULONGLONG g_counted_seen = 0;
+
+void count_present(IDXGISwapChain* sc, const DXGI_SWAP_CHAIN_DESC& desc)
+{
+    const UINT64 area = UINT64(desc.BufferDesc.Width) * desc.BufferDesc.Height;
+    const ULONGLONG now = GetTickCount64();
+    if (sc != g_counted_chain && g_counted_chain && area <= g_counted_area && now - g_counted_seen < 1000)
+        return;   /* another, no larger, while the counted one still presents */
+    g_counted_chain = sc;
+    g_counted_area = area;
+    g_counted_seen = now;
+    g_presented.fetch_add(1, std::memory_order_relaxed);
+}
+
+/* What the panel asks once a Present: the presents above, and the proxy's answers. */
+void panel_counts(void*, nr_frame_counts* out)
+{
+    out->presented = g_presented.load(std::memory_order_relaxed);
+    if (g_host.nr_counts)
+        g_host.nr_counts(g_host.user, &out->nr_frames, &out->network_us, &out->network_frames);
+}
+
 void wait_for(UINT64 value)
 {
     if (!value || !g_over.fence || g_over.fence->GetCompletedValue() >= value) return;
@@ -301,7 +339,7 @@ bool make(ID3D12Device* device)
     }
     g_menu = nr_menu_create_headless();
     if (g_host.env_file[0]) nr_menu_bridge_use_env_file(g_host.env_file);
-    const nr_panel_host host = {g_host.trigger_get, g_host.trigger_set, g_host.user, 0};
+    const nr_panel_host host = {g_host.trigger_get, g_host.trigger_set, g_host.user, 0, panel_counts};
     g_panel = g_menu ? nr_panel_create(g_menu, g_ui, g_host.settings, NR_MENU_LANG_EN, &host) : nullptr;
     g_over.device = device;
     device->AddRef();
@@ -506,9 +544,12 @@ void draw_on(IDXGISwapChain* sc, UINT flags)
                      static_cast<void*>(sc));
             }
             /* The keys on every Present, whether or not there is a queue to draw on: Home turns NR
-             * on and off with the panel shut. */
+             * on and off with the panel shut. The present is counted first, so the counter's
+             * sample in nr_panel_input has it. */
             DXGI_SWAP_CHAIN_DESC desc = {};
-            if (g_panel && SUCCEEDED(sc->GetDesc(&desc)) && nr_panel_input(g_panel, desc.OutputWindow) && queue)
+            const bool described = g_panel && SUCCEEDED(sc->GetDesc(&desc));
+            if (described) count_present(sc, desc);
+            if (described && nr_panel_input(g_panel, desc.OutputWindow) && queue)
                 draw(sc, queue, desc);
             device->Release();
         }
@@ -533,6 +574,19 @@ extern "C" void nr_xess_panel_start(const nr_xess_panel_host* host)
 extern "C" int nr_xess_panel_hooked(void)
 {
     return g_hooked.load() ? 1 : 0;
+}
+
+extern "C" uint64_t nr_xess_panel_presents(void)
+{
+    return g_presented.load();
+}
+
+extern "C" const char* nr_xess_panel_rates(void)
+{
+    static char line[192];
+    std::lock_guard<std::mutex> lock(g_draw);
+    std::snprintf(line, sizeof line, "%s", g_panel ? nr_panel_rates_line(g_panel) : "");
+    return line;
 }
 
 extern "C" void nr_xess_panel_list(ID3D12GraphicsCommandList* list)

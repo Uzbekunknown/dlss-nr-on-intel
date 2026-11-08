@@ -9,6 +9,12 @@
  * found (read out of the swap chain, or the thread's), the panel is drawn over the frame with the
  * game's pixels kept round it, and the frame still presents.
  *
+ * Then the frame counter (2026-11-05), in a second process of its own, started by the first as
+ * `test_xess_panel.exe corner`, since the hook is the process's: the panel shut, the settings file
+ * putting the counter in the top right corner, frames presented for two seconds so the counter has
+ * readings, and its frame written out. The counter must be in its corner and every other pixel the
+ * game's, every Present counted, and the line built from the presents and the proxy's answers.
+ *
  * The window is never shown, so it is never in front: the panel reads no keys and takes no pointer,
  * and the fixture runs while somebody uses the machine. It needs a D3D12 device, so it skips with 77
  * where there is none.
@@ -21,6 +27,7 @@
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +54,18 @@ static int trigger = 1;
 static int trigger_get(void *user) { (void)user; return trigger; }
 static void trigger_set(void *user, int on) { (void)user; trigger = on; }
 
+/* The proxy's answers, for the frame counter: one for every second Present, 24 ms of network each -
+ * frame generation's x2, as Hogwarts Legacy runs it. The panel asks once a Present. */
+static uint64_t asked;
+static void nr_counts(void *user, uint64_t *frames, uint64_t *network_us, uint64_t *reported)
+{
+	(void)user;
+	++asked;
+	*frames = asked / 2;
+	*network_us = (asked / 2) * 24000;
+	*reported = asked / 2;
+}
+
 /* One pixel of a binary PPM, as read back; 0 when the file is not one this wrote. */
 static int pixel(const unsigned char *ppm, size_t size, int x, int y, unsigned char rgb[3])
 {
@@ -64,10 +83,42 @@ static int green(const unsigned char rgb[3])
 	return rgb[0] <= 2 && rgb[1] >= 151 && rgb[1] <= 155 && rgb[2] <= 2;
 }
 
-int main(void)
+/* The second phase, this program again with `corner`; its own lines print beside these. */
+static void run_corner_phase(const wchar_t *dir)
+{
+	wchar_t self[MAX_PATH], command[MAX_PATH + 32];
+	if (!GetModuleFileNameW(NULL, self, MAX_PATH)) return;
+	_snwprintf(command, sizeof command / sizeof command[0], L"\"%ls\" corner", self);
+	STARTUPINFOW si;
+	memset(&si, 0, sizeof si);
+	si.cb = sizeof si;
+	/* Its lines go where these go, a console or a log. */
+	si.dwFlags = STARTF_USESTDHANDLES;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	PROCESS_INFORMATION pi;
+	printf("\n");
+	if (!CreateProcessW(self, command, NULL, NULL, TRUE, 0, NULL, dir, &si, &pi)) {
+		check(0, "the frame counter's phase starts", "CreateProcess refused");
+		return;
+	}
+	DWORD waited = WaitForSingleObject(pi.hProcess, 120000), code = 1;
+	if (waited != WAIT_OBJECT_0) TerminateProcess(pi.hProcess, 1);
+	GetExitCodeProcess(pi.hProcess, &code);
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	char detail[64];
+	snprintf(detail, sizeof detail, "exit %lu", (unsigned long)code);
+	check(code == 0 || code == 77, "the frame counter in a corner, with the panel shut", detail);
+}
+
+int main(int argc, char **argv)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
-	printf("the panel over a DirectX 12 swap chain\n");
+	const int corner = argc > 1 && !strcmp(argv[1], "corner");
+	printf(corner ? "the frame counter in a corner of a DirectX 12 swap chain, the panel shut\n"
+		      : "the panel over a DirectX 12 swap chain\n");
 
 	wchar_t dir[MAX_PATH];
 	DWORD n = GetModuleFileNameW(NULL, dir, MAX_PATH);
@@ -79,22 +130,28 @@ int main(void)
 	host.say = said;
 	host.trigger_get = trigger_get;
 	host.trigger_set = trigger_set;
+	host.nr_counts = nr_counts;
 	_snwprintf(host.probe, 1024, L"%lsnr_present_probe.exe", dir);
 	_snwprintf(host.answer, 1024, L"%lstest_xess_panel_present.txt", dir);
-	DeleteFileW(host.answer);   /* the probe runs, rather than an earlier answer being read */
+	/* The probe runs, rather than an earlier answer being read; the second phase takes the first's,
+	 * which the first removes when both are done. */
+	if (!corner) DeleteFileW(host.answer);
 	char dir_a[MAX_PATH * 2], dump[MAX_PATH * 2];
 	WideCharToMultiByte(CP_ACP, 0, dir, -1, dir_a, sizeof dir_a, NULL, NULL);
-	snprintf(host.settings, sizeof host.settings, "%stest_xess_panel_settings.json", dir_a);
-	snprintf(dump, sizeof dump, "%stest_xess_panel.ppm", dir_a);
+	snprintf(host.settings, sizeof host.settings,
+		 corner ? "%stest_xess_panel_corner_settings.json" : "%stest_xess_panel_settings.json", dir_a);
+	snprintf(dump, sizeof dump, corner ? "%stest_xess_panel_corner.ppm" : "%stest_xess_panel.ppm", dir_a);
 	remove(dump);
 	FILE *settings = fopen(host.settings, "wb");
 	if (settings) {
-		fputs("{\"render_scale\": 0.4}\n", settings);
+		fputs(corner ? "{\"render_scale\": 0.4, \"menu_counter\": 2}\n" : "{\"render_scale\": 0.4}\n",
+		      settings);
 		fclose(settings);
 	}
-	_putenv_s("NR_MENU_OPEN", "1");
+	_putenv_s("NR_MENU_OPEN", corner ? "0" : "1");
 	_putenv_s("NR_MENU_DUMP", dump);
 
+	int skipped = 0;
 	nr_xess_panel_start(&host);
 	for (int i = 0; i < 300 && !nr_xess_panel_hooked(); ++i) Sleep(100);
 	check(nr_xess_panel_hooked(), "DXGI's Present is hooked through the probe's answer",
@@ -105,7 +162,8 @@ int main(void)
 		ID3D12Device *device = NULL;
 		if (FAILED(D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&device))) {
 			printf("  skipped: no D3D12 device here\n");
-			return 77;
+			skipped = 1;
+			goto out;
 		}
 		WNDCLASSEXW wc;
 		memset(&wc, 0, sizeof wc);
@@ -157,9 +215,13 @@ int main(void)
 		if (ready) ID3D12GraphicsCommandList_Close(list);
 		UINT64 value = 0;
 		int presented = 0;
+		/* The open panel draws from its first frame. The counter has its first reading half a
+		 * second in, so the corner's phase presents for two seconds, at about 100 frames a second. */
+		const int frames = corner ? 200 : 40;
+		const uint64_t counted_before = nr_xess_panel_presents();
 		D3D12_CPU_DESCRIPTOR_HANDLE rtv = { 0 };
 		if (ready) ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(rtvs, &rtv);
-		for (int frame = 0; ready && frame < 40; ++frame) {
+		for (int frame = 0; ready && frame < frames; ++frame) {
 			ID3D12Resource *back = NULL;
 			UINT index = IDXGISwapChain3_GetCurrentBackBufferIndex(chain3);
 			if (FAILED(IDXGISwapChain3_GetBuffer(chain3, index, &IID_ID3D12Resource, (void **)&back))) break;
@@ -190,32 +252,72 @@ int main(void)
 				ID3D12Fence_SetEventOnCompletion(fence, value, event);
 				WaitForSingleObject(event, 5000);
 			}
+			if (corner) Sleep(10);
 		}
-		check(presented == 40, "every frame presents with the hook in front of it",
-		      presented == 40 ? "40 of 40" : "a Present failed");
+		char detail[256];
+		snprintf(detail, sizeof detail, "%d of %d", presented, frames);
+		check(presented == frames, "every frame presents with the hook in front of it", detail);
 
 		FILE *f = fopen(dump, "rb");
 		static unsigned char ppm[1280 * 720 * 3 + 64];
 		size_t size = f ? fread(ppm, 1, sizeof ppm, f) : 0;
 		if (f) fclose(f);
-		check(size > 1280 * 720 * 3, "the panel's frame was written out", size ? dump : "no file");
+		check(size > 1280 * 720 * 3, corner ? "the counter's frame was written out" : "the panel's frame was written out",
+		      size ? dump : "no file");
 		unsigned char rgb[3] = { 0, 0, 0 };
-		char detail[96];
-		int got = pixel(ppm, size, 1200, 400, rgb);
-		snprintf(detail, sizeof detail, "(%u, %u, %u) at 1200,400", rgb[0], rgb[1], rgb[2]);
-		check(got && green(rgb), "the game's frame is kept beside the panel", detail);
-		got = pixel(ppm, size, 4, 4, rgb);
-		snprintf(detail, sizeof detail, "(%u, %u, %u) at 4,4", rgb[0], rgb[1], rgb[2]);
-		check(got && green(rgb), "and above it", detail);
-		/* The panel: dark, slightly blue, over most of its 640x672 at (24,24). */
-		int panel = 0, total = 0;
-		for (int y = 60; y < 680; y += 8)
-			for (int x = 40; x < 650; x += 8) {
-				++total;
-				if (pixel(ppm, size, x, y, rgb) && !green(rgb)) ++panel;
+		int got;
+		if (!corner) {
+			got = pixel(ppm, size, 1200, 400, rgb);
+			snprintf(detail, sizeof detail, "(%u, %u, %u) at 1200,400", rgb[0], rgb[1], rgb[2]);
+			check(got && green(rgb), "the game's frame is kept beside the panel", detail);
+			got = pixel(ppm, size, 4, 4, rgb);
+			snprintf(detail, sizeof detail, "(%u, %u, %u) at 4,4", rgb[0], rgb[1], rgb[2]);
+			check(got && green(rgb), "and above it", detail);
+			/* The panel: dark, slightly blue, over most of its 640x672 at (24,24). */
+			int panel = 0, total = 0;
+			for (int y = 60; y < 680; y += 8)
+				for (int x = 40; x < 650; x += 8) {
+					++total;
+					if (pixel(ppm, size, x, y, rgb) && !green(rgb)) ++panel;
+				}
+			snprintf(detail, sizeof detail, "%d of %d samples inside it are not the game's", panel, total);
+			check(total && panel * 10 >= total * 9, "the panel is drawn over the frame", detail);
+			/* The counter's line at its top: the presents and the answers have readings by now only
+			 * if the frames took half a second, so it is not asked for here. */
+		} else {
+			/* Every Present counted, on the one swap chain there is. */
+			uint64_t counted = nr_xess_panel_presents() - counted_before;
+			snprintf(detail, sizeof detail, "%llu counted of %d", (unsigned long long)counted, presented);
+			check(counted == (uint64_t)presented, "every Present is counted for the screen's rate", detail);
+			const char *line = nr_xess_panel_rates();
+			snprintf(detail, sizeof detail, "'%s'", line);
+			check(strstr(line, "Screen ") && strstr(line, "NR ") && strstr(line, "network 24.0 ms"),
+			      "the line has the screen's rate, NR's and the network's time", detail);
+			/* The counter: a dark box against the top right corner. Its text sets its width, so
+			 * only the strip nearest the corner is asked for. */
+			int box = 0, total = 0;
+			for (int y = 12; y <= 24; y += 4)
+				for (int x = 1230; x <= 1266; x += 6) {
+					++total;
+					if (pixel(ppm, size, x, y, rgb) && !green(rgb)) ++box;
+				}
+			snprintf(detail, sizeof detail, "%d of %d samples by the corner are not the game's", box, total);
+			check(total && box * 10 >= total * 9, "the counter is drawn in the top right corner", detail);
+			/* And nothing else: where the panel would be, the middle, the other three corners. */
+			static const int kept[][2] = { {4, 4}, {300, 300}, {640, 360}, {4, 715}, {1275, 715},
+						       {1100, 120}, {60, 30} };
+			int all = 1;
+			for (size_t i = 0; i < sizeof kept / sizeof kept[0]; ++i) {
+				got = pixel(ppm, size, kept[i][0], kept[i][1], rgb);
+				if (!got || !green(rgb)) {
+					all = 0;
+					snprintf(detail, sizeof detail, "(%u, %u, %u) at %d,%d", rgb[0], rgb[1], rgb[2],
+						 kept[i][0], kept[i][1]);
+				}
 			}
-		snprintf(detail, sizeof detail, "%d of %d samples inside it are not the game's", panel, total);
-		check(total && panel * 10 >= total * 9, "the panel is drawn over the frame", detail);
+			if (all) snprintf(detail, sizeof detail, "%d points the game's", (int)(sizeof kept / sizeof kept[0]));
+			check(all, "and the rest of the frame is the game's, the panel shut", detail);
+		}
 		check(strstr(said_all, "the panel over the back buffer is in") != NULL,
 		      "the panel said where it wrote the frame", "NR_MENU_DUMP");
 
@@ -231,14 +333,16 @@ int main(void)
 		if (window) DestroyWindow(window);
 		ID3D12Device_Release(device);
 	}
+	if (!corner) run_corner_phase(dir);
 out:
-	DeleteFileW(host.answer);
+	if (!corner) DeleteFileW(host.answer);
 	remove(host.settings);
 	{
 		char live[1200];
 		snprintf(live, sizeof live, "%s.live", host.settings);
 		remove(live);
 	}
+	if (skipped && !failures) return 77;
 	printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);
 	return failures ? 1 : 0;
 }

@@ -126,6 +126,16 @@ int nr_menu_bridge_pacing_available(const nr_menu_bridge *bridge);
 /* Which network runs: 0 for A, 1 for B. Read from `nr-env.txt` with the pacing rows, so the panel
  * shows what the layer will actually load rather than what the settings file happens to say. */
 int nr_menu_bridge_preset(const nr_menu_bridge *bridge);
+
+/* Where the panel's frame counter is shown: in the panel only, the default, or in a corner of the
+ * screen as well, where it stays while the panel is shut and takes no input (nr_panel.c draws it).
+ * Kept in the settings file as `menu_counter`: it takes effect at once, Save writes it, Revert
+ * brings the saved place back, and Reset leaves it alone, as it leaves the language and the
+ * network. The values are the order of the option's choices in the strings table. */
+enum { NR_COUNTER_PANEL = 0, NR_COUNTER_TOP_LEFT = 1, NR_COUNTER_TOP_RIGHT = 2,
+       NR_COUNTER_BOTTOM_LEFT = 3, NR_COUNTER_BOTTOM_RIGHT = 4, NR_COUNTER_PLACES = 5 };
+int nr_menu_bridge_counter(const nr_menu_bridge *bridge);
+void nr_menu_bridge_set_counter(nr_menu_bridge *bridge, int where);
 int nr_menu_bridge_pacing_async(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_gpu_image(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_every(const nr_menu_bridge *bridge);

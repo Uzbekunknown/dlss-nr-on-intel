@@ -218,6 +218,11 @@ static int g_nr_request = -1;
  * that lost copy is why a dragged slider changed nothing. */
 static nrex_row *g_rows = nullptr;
 
+/* The frame counter's line for the top of the panel, and what it means, as `nrex_counter` was last
+ * handed them. Copied, like the footer's hint. 1024 for the hint: its Russian is over 500 bytes. */
+static char g_counter_line[192] = "";
+static char g_counter_hint[1024] = "";
+
 /* The knob's explanation, shown while the pointer rests on the row just submitted.
  *
  * Call it immediately after the item the tip belongs to: `IsItemHovered` asks about the last item,
@@ -416,6 +421,15 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
      *
      * `ImGuiKey_Home`, not the End key: the toggle is Home and the comparison it replaced was
      * Home, so there is no second key to keep clear here. */
+
+    /* The frame counter's line, above the rows: the screen's rate, NR's and the network's time,
+     * with what the two rates are on hover. Text, not an item - keyboard navigation starts at the
+     * first row as it always has. */
+    if (g_counter_line[0]) {
+        ImGui::TextUnformatted(g_counter_line);
+        nrex_hint_tooltip(g_counter_hint);
+        ImGui::Separator();
+    }
 
     /* Three fixed columns, so the controls line up as a table rather than drifting with each
      * label's length.
@@ -719,6 +733,96 @@ extern "C" NREX_API void nrex_set_nr_enabled(nrex_ui *ui, int on)
 {
     (void)ui;
     g_nr_enabled = on < 0 ? -1 : (on ? 1 : 0);
+}
+
+/* The frame counter: the panel's line is kept for `nrex_draw_panel`, and the corner is drawn here
+ * and now, as its own window.
+ *
+ * **The corner takes no input, and every flag below is part of that.** It is on screen while the
+ * panel is shut, when the keyboard and the mouse are the game's: `NoInputs` keeps the pointer from
+ * hovering or clicking it and keeps it out of keyboard navigation, `NoFocusOnAppearing` and
+ * `NoBringToFrontOnFocus` keep it from ever taking the focus the panel claims when it opens, and
+ * `NoDecoration` and `NoMove` leave nothing to grab. With the panel shut the C side also tells
+ * ImGui there is no pointer at all and hands it no keys (`nrex_listen`), so nothing could reach the
+ * corner if a flag were missing - the flags are the second door, not the first.
+ *
+ * Placed against its corner every frame with the pivot on that corner, so its size - which follows
+ * its text - grows away from the edge. Drawn before the panel's window, which takes the focus and
+ * so stays on top of it. */
+extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint,
+                                      int corner, const char *corner_line)
+{
+    (void)ui;
+    snprintf(g_counter_line, sizeof g_counter_line, "%s", panel_line ? panel_line : "");
+    snprintf(g_counter_hint, sizeof g_counter_hint, "%s", hint ? hint : "");
+    if (corner < 1 || corner > 4 || !corner_line || !corner_line[0]) return;
+
+    ImGuiIO &io = ImGui::GetIO();
+    const float margin = 8.0f;
+    const bool right = corner == 2 || corner == 4;
+    const bool bottom = corner == 3 || corner == 4;
+    ImGui::SetNextWindowPos(ImVec2(right ? io.DisplaySize.x - margin : margin,
+                                   bottom ? io.DisplaySize.y - margin : margin),
+                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.60f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 3));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    if (ImGui::Begin("##nr_frame_counter", nullptr, flags))
+        ImGui::TextUnformatted(corner_line);
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+bool nrex_note_drawn(nrex_ui *ui, const ImDrawData *draw, unsigned width, unsigned height)
+{
+    if (!ui) return false;
+    ui->drawn_any = false;
+    ui->drawn[0] = ui->drawn[1] = ui->drawn[2] = ui->drawn[3] = 0;
+    if (!draw || draw->TotalVtxCount <= 0 || !width || !height) return false;
+    float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX;
+    for (const ImDrawList *list : draw->CmdLists) {
+        for (const ImDrawVert &v : list->VtxBuffer) {
+            if (v.pos.x < x0) x0 = v.pos.x;
+            if (v.pos.y < y0) y0 = v.pos.y;
+            if (v.pos.x > x1) x1 = v.pos.x;
+            if (v.pos.y > y1) y1 = v.pos.y;
+        }
+    }
+    if (x1 < x0 || y1 < y0) return false;
+    /* Into image pixels, outward, and two wider for the anti-aliased fringe ImGui draws past a
+     * shape's edge; then inside the image. */
+    x0 -= draw->DisplayPos.x + 2.0f;
+    y0 -= draw->DisplayPos.y + 2.0f;
+    x1 = x1 - draw->DisplayPos.x + 2.0f;
+    y1 = y1 - draw->DisplayPos.y + 2.0f;
+    int ix0 = x0 < 0.0f ? 0 : (int)x0;
+    int iy0 = y0 < 0.0f ? 0 : (int)y0;
+    int ix1 = x1 > (float)width ? (int)width : (int)x1 + 1;
+    int iy1 = y1 > (float)height ? (int)height : (int)y1 + 1;
+    if (ix1 > (int)width) ix1 = (int)width;
+    if (iy1 > (int)height) iy1 = (int)height;
+    if (ix1 <= ix0 || iy1 <= iy0) return false;
+    ui->drawn[0] = ix0;
+    ui->drawn[1] = iy0;
+    ui->drawn[2] = ix1;
+    ui->drawn[3] = iy1;
+    ui->drawn_any = true;
+    return true;
+}
+
+extern "C" NREX_API int nrex_drawn_rect(nrex_ui *ui, uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h)
+{
+    if (!ui || !ui->drawn_any) return 0;
+    if (x) *x = (uint32_t)ui->drawn[0];
+    if (y) *y = (uint32_t)ui->drawn[1];
+    if (w) *w = (uint32_t)(ui->drawn[2] - ui->drawn[0]);
+    if (h) *h = (uint32_t)(ui->drawn[3] - ui->drawn[1]);
+    return 1;
 }
 
 extern "C" NREX_API int nrex_nr_toggle_request(nrex_ui *ui)

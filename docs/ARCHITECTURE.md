@@ -126,7 +126,7 @@ else — a grade, a mask — makes it run. `notes/phase70-post-process.md`.
 
 ### The controls
 
-Four profiles: three scalars for the network, and for two of them a colour grade after it,
+Five profiles: three scalars for the network, and for two of them a colour grade after it,
 read out of the DLL's own style table — each value times the tone clamped to [0, 1]:
 
 | profile | style | tone | structure | the grade after the network |
@@ -135,8 +135,15 @@ read out of the DLL's own style table — each value times the tone clamped to [
 | `natural` | 1/128 | 1 | 1 | exposure -0.1 EV, contrast -0.25, saturation -10 % |
 | `cinematic` | 2/128 | 1 | 1 | saturation -15 % |
 | `neutral` | 0 | 0 | 0 | none |
+| `hogwarts` | 0 | 0.5 | 0.84, skin 0.27 | none |
 
 The contrast is a smoothstep blend, `c + k * (c²(3 - 2c) - c)`, and the saturation is HSL's.
+
+`hogwarts` is what Hogwarts Legacy sets through NVIDIA's Unreal plug-in: its sliders' Tone
+50, Detail 84 and Character 27 percent, times 0.01, with the automatic mask on. With the mask
+on, channel 12 (structure) is 1, and channels 13 and 14 carry the skin strength and the
+structure for the rest; a negative one takes the local structure. With it off both are -1. The
+network finds the skin itself. `notes/phase73-game-tuning.md`.
 
 They are a trade, not a quality ladder: everything the pass adds to skin texture it takes
 out of speculars and colour. `notes/phase44-profile-tradeoff.md` measures the curve.

@@ -71,6 +71,9 @@ static const char *const extra_names[] = {
     "every", "every_hint", "every_frame", "every_nth_few", "every_nth_many",
     "choice_weights_ht", "choice_weights_cc_small_fp8",
     "gpu_blocked_both", "gpu_blocked_detail", "gpu_blocked_colour",
+    "fps_screen", "fps_nr", "fps_nr_off", "fps_network", "fps_hint",
+    "counter", "counter_hint", "counter_panel", "counter_top_left", "counter_top_right",
+    "counter_bottom_left", "counter_bottom_right",
 };
 
 int nr_menu_extra_key_for(const char *name)

@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("build_release", ROOT / "scripts/build_release.py")
@@ -63,6 +64,11 @@ class ReleaseTests(unittest.TestCase):
             self.write(name, "dxvk:" + name)
         self.write("work/dxvk/LICENSE", "zlib/libpng licence fixture")
         self.write("work/dxvk/VERSION", "3.1.1\n")
+        # The release's own Python (scripts/fetch_python.py): what build_release.py requires of it.
+        for name in release.PYTHON_FILES:
+            self.write(f"{release.PYTHON_RUNTIME}/{name}", "python fixture: " + name)
+        self.write(f"{release.PYTHON_RUNTIME}/NR-PYTHON.json", json.dumps(
+            {"python": "3.14.10", "packages": {"numpy": "2.5.4", "safetensors": "0.8.0"}, "sha256": {}}))
         # The notices a package must carry beside LICENSE and NOTICE, named by NOTICE and by
         # the shipped shader sources. Their own text is irrelevant here; their presence is not.
         for source, _ in release.LICENCES:
@@ -87,7 +93,16 @@ class ReleaseTests(unittest.TestCase):
                      "src/ref/local.safetensors", "src/ref/local.pt", "src/bench/frame.png",
                      "work/mlx-dlss/python/mlxdlss/cache.npy"):
             self.write(name, "must stay local")
+        self.write(f"{release.PYTHON_RUNTIME}/Lib/__pycache__/os.cpython-314.pyc", "a local compile")
         release.assemble(self.root, self.target, "windows")
+        # The release's own Python, whole, and what it is in the metadata; no local compile.
+        self.assertEqual((self.target / "python/python.exe").read_text(), "python fixture: python.exe")
+        self.assertTrue((self.target / "python/Lib/site-packages/numpy/__init__.py").is_file())
+        self.assertTrue((self.target / "python/LICENSE.txt").is_file())
+        self.assertFalse((self.target / "python/Lib/__pycache__").exists())
+        metadata = json.loads((self.target / "release-metadata.json").read_text())
+        self.assertEqual(metadata["python"], "3.14.10")
+        self.assertEqual(metadata["python_packages"], {"numpy": "2.5.4", "safetensors": "0.8.0"})
         self.assertEqual((self.target / "work/libnr_alloc.dll").read_text(), "libnr_alloc.dll")
         self.assertTrue((self.target / "nr_layer.dll").is_file())
         self.assertEqual((self.target / "nr_layer32.dll").read_text(), "nr_layer32.dll")
@@ -127,6 +142,9 @@ class ReleaseTests(unittest.TestCase):
         if os.name != "nt":
             self.assertTrue(os.access(self.target / "setup.sh", os.X_OK))
         self.assertFalse((self.target / "work/libnr_alloc.dll").exists())
+        # Linux users run their own Python.
+        self.assertFalse((self.target / "python").exists())
+        self.assertIsNone(json.loads((self.target / "release-metadata.json").read_text())["python"])
 
     def test_windows_wizard_ships_without_git_or_local_profiles(self):
         self.write("work/windows-profile.json", "local paths must stay private")
@@ -194,7 +212,8 @@ class ReleaseTests(unittest.TestCase):
     def test_windows_release_needs_dxvk_and_the_32bit_layer(self):
         for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE",
                      "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll", release.XESS_PROXY[0],
-                     release.XESS_PROBE[0], release.GPU_PROBE[0]):
+                     release.XESS_PROBE[0], release.GPU_PROBE[0], "work/python/python.exe",
+                     "work/python/Lib/site-packages/numpy/__init__.py", "work/python/LICENSE.txt"):
             path = self.root / name
             saved = path.read_bytes()
             path.unlink()
@@ -232,6 +251,61 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fetch.fetch(target, archive, pin)
         self.assertEqual((target / "VERSION").read_text().strip(), "9.9")
+
+    def test_fetch_python_takes_only_the_pinned_files(self):
+        spec = importlib.util.spec_from_file_location("fetch_python", ROOT / "scripts/fetch_python.py")
+        fetch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fetch)
+        files = self.base / "downloads"
+        files.mkdir()
+
+        def zipped(name, members):
+            path = files / name
+            with zipfile.ZipFile(path, "w") as archive:
+                for member, text in members.items():
+                    archive.writestr(member, text)
+            return path
+
+        def entry(path, **more):
+            return {"name": path.name, "url": "https://example.invalid/" + path.name,
+                    "sha256": fetch.sha256(path), **more}
+
+        embed = zipped("python-9.9.0-embed-amd64.zip", {"python.exe": "MZ fixture", "LICENSE.txt": "PSF",
+                                                        "python399._pth": "python399.zip\n.\n\n#import site\n"})
+        numpy_wheel = zipped("numpy-9.9-cp399-cp399-win_amd64.whl", {
+            "numpy/__init__.py": "", "numpy-9.9.dist-info/licenses/LICENSE.txt": "BSD"})
+        safetensors_wheel = zipped("safetensors-9.9-cp310-abi3-win_amd64.whl", {"safetensors/__init__.py": ""})
+        pinned = {"python": entry(embed, version="9.9.0"),
+                  "wheels": [entry(numpy_wheel, package="numpy", version="9.9"),
+                             entry(safetensors_wheel, package="safetensors", version="9.9")]}
+        pin = self.base / "python.json"
+        pin.write_text(json.dumps(pinned))
+        target = self.base / "work/python"
+        fetch.fetch(target, files, pin)
+        self.assertEqual((target / "python.exe").read_text(), "MZ fixture")
+        # One line more in the ._pth, the folder the wheels went into, as Windows' Python reads it.
+        self.assertEqual((target / "python399._pth").read_text().splitlines(),
+                         ["python399.zip", ".", "", "#import site", "Lib\\site-packages"])
+        self.assertTrue((target / "Lib/site-packages/safetensors/__init__.py").is_file())
+        self.assertTrue((target / "Lib/site-packages/numpy-9.9.dist-info/licenses/LICENSE.txt").is_file())
+        self.assertEqual(json.loads((target / fetch.MARKER).read_text())["packages"],
+                         {"numpy": "9.9", "safetensors": "9.9"})
+        fetch.fetch(target, self.base / "absent", pin)  # current: no file is read
+        # A file that is not the pinned one is refused, and what was there stays.
+        pin.write_text(json.dumps(dict(pinned, wheels=[dict(pinned["wheels"][0], sha256="0" * 64),
+                                                       pinned["wheels"][1]])))
+        with self.assertRaises(ValueError):
+            fetch.fetch(target, files, pin)
+        self.assertTrue((target / "Lib/site-packages/numpy/__init__.py").is_file())
+        # So is a wheel member pip would place elsewhere, and one that would land outside.
+        for member in ("numpy-9.8.data/scripts/f2py.exe", "../outside.py"):
+            bad = zipped("numpy-9.8-cp399-cp399-win_amd64.whl", {"numpy/__init__.py": "", member: "x"})
+            pin.write_text(json.dumps(dict(pinned, wheels=[entry(bad, package="numpy", version="9.8"),
+                                                           pinned["wheels"][1]])))
+            with self.subTest(member=member), self.assertRaises(ValueError):
+                fetch.fetch(target, files, pin)
+        self.assertFalse((self.base / "work/outside.py").exists())
+        self.assertEqual(json.loads((target / fetch.MARKER).read_text())["packages"]["numpy"], "9.9")
 
     def test_missing_runtime_fails_before_creating_a_release(self):
         for name in ("work/libxmx.dll", "work/libnr_image.dll", "work/libnr_alloc.dll",

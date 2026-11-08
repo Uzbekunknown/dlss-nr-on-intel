@@ -16,7 +16,7 @@
 #define NR_MENU_STRINGS_H
 
 #define NR_MENU_LANG_COUNT 4
-#define NR_MENU_KEY_COUNT 37
+#define NR_MENU_KEY_COUNT 49
 #define NR_MENU_COMPARE_COUNT 3
 /* The hints are one per KNOB, which is fewer than the keys: a key like `title` or `on` is
  * a string the menu shows, not a knob it explains. Declaring them with the key count left
@@ -73,6 +73,18 @@ enum {
     NR_STR_GPU_BLOCKED_BOTH = 34,
     NR_STR_GPU_BLOCKED_DETAIL = 35,
     NR_STR_GPU_BLOCKED_COLOUR = 36,
+    NR_STR_FPS_SCREEN = 37,
+    NR_STR_FPS_NR = 38,
+    NR_STR_FPS_NR_OFF = 39,
+    NR_STR_FPS_NETWORK = 40,
+    NR_STR_FPS_HINT = 41,
+    NR_STR_COUNTER = 42,
+    NR_STR_COUNTER_HINT = 43,
+    NR_STR_COUNTER_PANEL = 44,
+    NR_STR_COUNTER_TOP_LEFT = 45,
+    NR_STR_COUNTER_TOP_RIGHT = 46,
+    NR_STR_COUNTER_BOTTOM_LEFT = 47,
+    NR_STR_COUNTER_BOTTOM_RIGHT = 48,
 };
 
 /* [language][key] */

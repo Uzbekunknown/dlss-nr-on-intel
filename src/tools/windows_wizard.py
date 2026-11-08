@@ -11,7 +11,12 @@ import shlex
 import sys
 import traceback
 
-import windows_wizard_core as core
+# This file's folder, for windows_wizard_core and windows_launch beside it. The release's own
+# Python leaves it off sys.path: its ._pth makes it isolated, as -I would (scripts/fetch_python.py).
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import windows_wizard_core as core  # noqa: E402
 
 
 def release_root() -> Path:
@@ -91,7 +96,7 @@ def main() -> int:
     try:
         if args.action == 'discover':
             profile = core.load_profile(args.root)
-            result = {'ok': True, 'candidates': core.discover_python(),
+            result = {'ok': True, 'candidates': core.discover_python(args.root),
                       'profile': profile.to_dict() if profile else None}
         elif args.action in ('settings', 'settings-save', 'settings-reset'):
             # Runtime controls are root-scoped and available before installation.

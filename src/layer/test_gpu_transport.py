@@ -344,6 +344,17 @@ class ProtocolTests(TransportCase):
                          ["reset_history", "acquire", "process", "begin", "copy", "submit", "release", "reply"])
         self.assertEqual(result["network_ms"], 3.5)
         self.assertEqual(connection.replies[-1][0], 0)
+        # The network's time goes back with the answer, in microseconds, for the panel's counter.
+        self.assertEqual(connection.replies[-1][1], 3500)
+
+    def test_network_time_in_a_reply(self):
+        self.assertEqual(T.network_us({"network_ms": 24.25}), 24250)
+        self.assertEqual(T.network_us({"network_ms": 0.0}), 0)       # measured nothing
+        self.assertEqual(T.network_us({}), 0)
+        self.assertEqual(T.network_us(None), 0)
+        self.assertEqual(T.network_us({"network_ms": float("nan")}), 0)
+        self.assertEqual(T.network_us({"network_ms": True}), 0)
+        self.assertEqual(T.network_us({"network_ms": 1e12}), 0xFFFFFFFF)
 
     def test_failed_pipeline_releases_ownership_before_failure_ack(self):
         self.request(packet())

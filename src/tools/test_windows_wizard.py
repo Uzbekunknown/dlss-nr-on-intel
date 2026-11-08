@@ -452,6 +452,73 @@ class WizardFixture(unittest.TestCase):
         write_pe_exporting(deep.joinpath(*"abcde") / core.XESS_NAME, XESS_EXPORTS)
         self.assertEqual(core.xess_libraries(write_pe(deep / "Game.exe")), [])
 
+    def optiscaler_beside(self, exe, ini="", folder=None):
+        """OptiScaler as its package lays it out beside a game's executable (issue #38): its DLL as
+        dxgi.dll, its OptiScaler.ini, and the libxess.dll it comes with, in `folder` when given."""
+        here = Path(exe).parent
+        (here / "dxgi.dll").write_bytes(b"OptiScaler")
+        (here / core.OPTISCALER_INI).write_text("[Upscalers]\nDx12Upscaler=auto\n" + ini, encoding="utf-8")
+        xess = folder or here
+        write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"OptiScaler's XeSS")
+        return xess
+
+    def test_d3d12_follows_optiscalers_xess(self):
+        # Hogwarts Legacy as run on 2026-11-05: XeSS in the engine's plug-in, OptiScaler beside the
+        # executable with its own XeSS, which it upscales with whichever upscaler the game uses.
+        profile, plugin = self.unreal_game()
+        games = (plugin / core.XESS_NAME).read_bytes()
+        opti = self.optiscaler_beside(profile.game_exe)
+        theirs = (opti / core.XESS_NAME).read_bytes()
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn(f"in {opti},", detail["detail"])
+        self.assertIn("OptiScaler loads", detail["detail"])
+        self.assertIn("ShortcutKey", detail["detail"])   # its menu on Insert, as NR's panel is
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((opti / core.XESS_NAME).read_bytes(), (self.root / core.XESS_PROXY).read_bytes())
+        self.assertEqual((opti / core.XESS_ORIGINAL).read_bytes(), theirs)
+        self.assertEqual((plugin / core.XESS_NAME).read_bytes(), games)
+        # Installed beside the executable, the record names no folder; Check still knows NR's.
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        (opti / core.XESS_LOG).write_text("what NR's libxess.dll said in the game\n")
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual((opti / core.XESS_NAME).read_bytes(), theirs)
+        self.assertFalse((opti / core.XESS_ORIGINAL).exists())
+        self.assertFalse((opti / core.XESS_LOG).exists())
+
+    def test_d3d12_takes_the_xess_optiscaler_loads(self):
+        top = self.base / "OptiScaler game (test)"
+        exe = write_pe(top / "Game.exe")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        profile = replace(self.profile, api="d3d12", game_exe=exe)
+        ini = top / core.OPTISCALER_INI
+        # Its own folder beside the executable, and its menu moved off Insert.
+        own = self.optiscaler_beside(exe, "[Menu]\nShortcutKey=0x23\n", folder=top / core.OPTISCALER_FOLDER)
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn(f"in {own},", detail["detail"])
+        self.assertNotIn("ShortcutKey", detail["detail"])
+        # A folder of the player's, named by XeSSPath.
+        chosen = top / "xess-2.0"
+        write_pe_exporting(chosen / core.XESS_NAME, XESS_EXPORTS[:-1])
+        ini.write_text(f"[Libraries]\nXeSSPath={chosen}\n", encoding="utf-8")
+        self.assertIn(f"in {chosen},", self.checks(profile)["xess_library"]["detail"])
+        # Set to upscale with FSR, OptiScaler would never call XeSS: Check says what to change.
+        ini.write_text("[Upscalers]\nDx12Upscaler=fsr31\n", encoding="utf-8")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Dx12Upscaler=xess", detail["detail"])
+        # No libxess.dll where OptiScaler looks for it.
+        ini.write_text("[Upscalers]\nDx12Upscaler=xess\n", encoding="utf-8")
+        (own / core.XESS_NAME).unlink()
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("comes with OptiScaler", detail["detail"])
+        # Without OptiScaler, the game's folders are searched as before.
+        ini.unlink()
+        self.assertIn(f"in {chosen}", self.checks(profile)["xess_library"]["detail"])
+
     def test_d3d12_network_changes_in_the_running_game(self):
         profile, _ = self.unreal_game()
         write_weights(self.root / core.PRESETS["B"][0], count=core.PRESETS["B"][1])
@@ -1176,7 +1243,7 @@ class WizardFixture(unittest.TestCase):
             "render_scale", "min_extent", "profile", "intensity", "detail_strength",
             "colour_strength", "temporal", "hold", "release", "cut_limit"])
         names = {knob["name"]: knob for knob in catalogue}
-        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic"])
+        self.assertEqual(names["profile"]["choices"], ["standard", "natural", "cinematic", "hogwarts"])
         # `weights` is gone: the network is `NR_PRESET`, one setting, not a knob with a list of
         # model names. A catalogue that still offered it would be the second selection path back.
         self.assertNotIn("weights", names)
@@ -1407,6 +1474,9 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(core.runtime_env(core.Profile.from_dict(result["profile"]))["NR_PYTHON"], str(local))
 
     def test_prepare_python_venv_and_pip_are_local_argv_without_shell(self):
+        local = self.root / "work/windows-python/Scripts/python.exe"
+        # The chosen Python lacks both packages; the environment made from it has them.
+        self.native.side_effect = lambda python, **kwargs: python_info() if Path(python) == local else python_info(packages={}, package_errors={"numpy": "missing", "safetensors": "missing"})
         calls = []
         def run(command, **kwargs):
             calls.append([str(arg) for arg in command])
@@ -1418,13 +1488,13 @@ class WizardFixture(unittest.TestCase):
         with patch.object(core, "_run", side_effect=run):
             result = core.ensure_dependencies(self.profile)
         self.assertTrue(result["ok"], result)
-        local = self.root / "work/windows-python/Scripts/python.exe"
         self.assertEqual(calls[0][:4], [str(self.python), "-I", "-m", "venv"])
         self.assertEqual(calls[1][:4], [str(local), "-I", "-m", "pip"])
         self.assertIn("--only-binary=:all:", calls[1])
         self.assertEqual(result["profile"]["python"], str(local))
 
     def test_foreign_local_python_directory_is_preserved(self):
+        self.native.return_value = python_info(packages={}, package_errors={"numpy": "missing"})
         directory = self.root / "work/windows-python"
         directory.mkdir()
         sentinel = directory / "foreign.txt"
@@ -1433,6 +1503,36 @@ class WizardFixture(unittest.TestCase):
             self.assertFalse(core.ensure_dependencies(self.profile)["ok"])
         run.assert_not_called()
         self.assertEqual(sentinel.read_bytes(), b"preserve")
+
+    def test_prepare_python_leaves_a_python_with_both_packages_as_it_is(self):
+        # The release's own Python has both (scripts/fetch_python.py), and no venv module to make
+        # an environment from: Prepare Python must not try.
+        with patch.object(core, "_run") as run:
+            result = core.ensure_dependencies(self.profile)
+        self.assertTrue(result["ok"], result)
+        run.assert_not_called()
+        self.assertEqual(result["profile"]["python"], str(self.python))
+        self.assertFalse((self.root / "work/windows-python").exists())
+
+    def test_discovery_puts_the_release_python_first_with_time_for_numpy(self):
+        own = write_pe(self.root / "python" / "python.exe")
+        environment = {key: value for key, value in os.environ.items() if key != "NR_PYTHON"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(core.sys, "executable", str(self.python)), patch.object(core.shutil, "which", return_value=None):
+            found = core.discover_python(self.root)
+        self.assertEqual(found[0], str(own.resolve()))
+        self.assertIn(str(self.python), found)
+        self.assertEqual(found.count(str(own.resolve())), 1)
+        # Asked once, with _python_info's own timeout, not the two seconds the others get.
+        asked = [call for call in self.native.call_args_list if Path(call.args[0]) == own]
+        self.assertEqual(len(asked), 1)
+        self.assertNotIn("timeout", asked[0].kwargs)
+
+    def test_discovery_keeps_nr_python_ahead_of_the_release_python(self):
+        own = write_pe(self.root / "python" / "python.exe")
+        chosen = write_pe(self.base / "developer Python" / "python.exe")
+        with patch.dict(os.environ, {"NR_PYTHON": str(chosen)}), patch.object(core.sys, "executable", str(self.python)), patch.object(core.shutil, "which", return_value=None):
+            found = core.discover_python(self.root)
+        self.assertEqual(found[:2], [str(chosen.resolve()), str(own.resolve())])
 
     def test_install_nr_returns_steams_launch_options_first(self):
         # An earlier setup could leave Steam starting a game through NR's wrapper. That no

@@ -317,15 +317,41 @@ void nr_menu_draw(nr_menu *menu, uint64_t cmd, uint64_t image, uint32_t width, u
  *
  * `reference` is a device buffer holding the game's own frame for this present, or 0 for "cut the
  * image against itself". Passing it is what makes the wipe a comparison of two frames. */
+/* How many recordings of the panel the layer keeps going at once (2026-11-06): a ring of command
+ * buffers, each reused only after its own fence, so the present does not wait for the GPU. The
+ * overlay pass keeps a descriptor set for each place in the ring - the one set it rewrote every frame
+ * would otherwise be rewritten while an earlier frame's dispatch still read it. 8 is MAX_IMAGES, the
+ * most images a swapchain the layer tracks can have. */
+#define NR_MENU_SLOTS 8
+
 /* Blends the ImGui UI's image onto the game's image, whole-frame.
  *
  * `ui_view` is the UI's image view; the shader samples it through the `reference` binding and
  * composites it over the target with straight alpha, so a transparent pixel is the game's own
  * frame and the panel sits on top. This is the ImGui path's equivalent of `nr_menu_draw`, and it
  * is the reason the UI's image exists at all: the swapchain image has no colour-attachment usage,
- * so ImGui cannot draw into it directly. */
-void nr_menu_draw_overlay(nr_menu *m, uint64_t cmd_handle, uint64_t target_handle,
+ * so ImGui cannot draw into it directly.
+ *
+ * `slot` is the caller's place in its ring of recordings (mod NR_MENU_SLOTS): that slot's set is
+ * rewritten, so whatever last recorded with the same slot must have finished. */
+void nr_menu_draw_overlay(nr_menu *m, uint32_t slot, uint64_t cmd_handle, uint64_t target_handle,
                           uint64_t ui_view_handle, uint32_t width, uint32_t height);
+
+/* The same blend over one rectangle of the image only, `x`, `y`, `width` x `height` in image pixels:
+ * the part the UI drew into this frame (`nrex_drawn_rect`). With the panel shut and the frame
+ * counter in a corner, that is the corner, and the pass reads and writes a few thousand pixels
+ * instead of every pixel of the picture on every frame. The UI's image and the game's are the same
+ * size, so one rectangle names the same pixels in both. */
+void nr_menu_draw_overlay_rect(nr_menu *m, uint32_t slot, uint64_t cmd_handle,
+                               uint64_t target_handle, uint64_t ui_view_handle, uint32_t x,
+                               uint32_t y, uint32_t width, uint32_t height);
+
+/* The views the overlay writes the game's images through, one per image, kept between frames.
+ * `nr_menu_view_ready` says whether `image` has one or there is room for one; when there is not,
+ * the caller waits for its recordings and calls `nr_menu_forget_views`, which is also what it does
+ * when a swapchain goes - a view a pending dispatch writes through must not be destroyed. */
+int nr_menu_view_ready(nr_menu *m, uint64_t image);
+void nr_menu_forget_views(nr_menu *m);
 
 void nr_menu_draw_compare(nr_menu *menu, uint64_t cmd, uint64_t image, uint64_t reference,
                           uint32_t width, uint32_t height);

@@ -216,6 +216,8 @@ def main():
     parser.add_argument("--fenced", action="store_true", help="force the fixture's memory-only fenced protocol v2")
     parser.add_argument("--loader-debug", choices=("error,warn", "all"), default="error,warn")
     parser.add_argument("--disable-steam-overlay", action="store_true", help="disable the implicit overlay only for this owned fixture")
+    parser.add_argument("--panel", choices=("shut", "open", "corner"), default="shut",
+                        help="the in-game panel: built and shut (the default), open, or shut with the frame counter in a corner")
     parser.add_argument("--startup-timeout", type=float, default=90)
     parser.add_argument("--run-timeout", type=float, default=60)
     args = parser.parse_args()
@@ -281,7 +283,7 @@ def main():
             "exercise_controls": args.exercise_controls, "gpu_test": bool(args.run), "baseline": args.baseline,
             "force_fence": args.fenced, "restart_daemon": args.restart_daemon,
             "gpu_only": args.gpu_only, "extents": [args.extent, args.resize_extent],
-            "unsupported": args.unsupported,
+            "unsupported": args.unsupported, "panel": args.panel,
             "render_scale": args.render_scale, "timing_warmup": args.warmup,
             "fixture_extra_environment": {"NR_GPU_TRANSPORT_FENCE": "1"} if args.fenced else {}}
     plan["artifact_sha256"] = {str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path):
@@ -296,8 +298,11 @@ def main():
     atomic_json(manifest, {"file_format_version": "1.0.0", "layer": {
         "name": "VK_LAYER_dlssnr_intel", "type": "GLOBAL", "library_path": str(layer),
         "api_version": "1.3.0", "implementation_version": "1", "description": "Owned GPU present smoke"}})
+    # The panel's place for the frame counter, 2 being the top right corner (`nr_menu_bridge.h`).
+    panel_settings = {"menu_counter": 2} if args.panel == "corner" else {}
     atomic_json(settings, {"render_scale": args.render_scale, "min_extent": 128, "profile": "standard",
-                           "detail_strength": 0.5 if args.unsupported == "settings" else 1, "colour_strength": 1})
+                           "detail_strength": 0.5 if args.unsupported == "settings" else 1, "colour_strength": 1,
+                           **panel_settings})
     trigger.touch()
     environment = {name: value for name, value in os.environ.items()
                    if not name.upper().startswith(("NR_", "XMX_", "VK_"))
@@ -315,6 +320,8 @@ def main():
         NR_INPUT_FP16="1", NR_DLL_PATH=r"C:\msys64\ucrt64\bin", PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
     if args.gpu_only:
         environment["NR_GPU_ONLY"] = "1"
+    if args.panel == "open":
+        environment["NR_MENU_OPEN"] = "1"
     if args.unsupported == "async":
         environment["NR_LAYER_ASYNC"] = "1"
     # Startup watcher concerns only this harness, so a crashed harness cannot

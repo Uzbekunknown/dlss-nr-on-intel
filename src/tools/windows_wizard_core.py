@@ -77,8 +77,17 @@ XESS_DEPTH = 4
 XESS_ORIGINAL = "libxess_nr_orig.dll"
 XESS_SETTINGS = "nr-xess.txt"
 XESS_LOG = "nr-xess.log"
-# The XeSS versions the proxy has run in a game: Hogwarts Legacy's 2.0.2.53 (2026-10-28 and -30).
+# The XeSS versions the proxy has run in a game: Hogwarts Legacy's 2.0.2.53 (2026-10-28 and -30),
+# and OptiScaler 0.9.4's 2.0.2.68 (2026-11-05).
 TESTED_XESS = ("2.0.2",)
+# OptiScaler (github.com/optiscaler/OptiScaler) takes a DirectX 12 game's DLSS, FSR or XeSS and
+# upscales with XeSS unless its OptiScaler.ini says otherwise, from the libxess.dll it loads
+# (issue #38). NR's goes in front of that one, so NR runs after OptiScaler's XeSS, whichever
+# upscaler the game itself offers. OptiScaler's own menu opens on Insert, as NR's panel does,
+# unless its ShortcutKey names another key.
+OPTISCALER_INI = "OptiScaler.ini"
+OPTISCALER_FOLDER = "OptiScaler"
+OPTISCALER_ON_INSERT = ("auto", "", "0x2d", "45")
 RUNTIME_MODULES = (
     "src/layer/nr_daemon.py", "src/layer/nr_alloc.py", "src/layer/nr_pipe.py",
     "src/layer/nr_paths.py", "src/layer/nr_knobs.py", "src/ref/nr_frame.py",
@@ -723,16 +732,74 @@ def xess_libraries(game_exe):
     return found
 
 
-def _xess_placed(record):
-    """The folder NR's libxess.dll went into, by an installation's record, or None."""
+def _ini_values(path):
+    """An INI file's values by section and key, both in lower case, the last line winning; lines
+    starting with ';' or '#' are comments. None when it cannot be read."""
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    values, section = {}, ""
+    for line in (raw.strip() for raw in text.splitlines()):
+        if not line or line[0] in ";#":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        key, equals, value = line.partition("=")
+        if equals:
+            values.setdefault(section, {})[key.strip().lower()] = value.strip()
+    return values
+
+
+def optiscaler(game_exe):
+    """OptiScaler beside the game's executable, as its OptiScaler.ini sets it up: None when there is
+    none, else {"ini", "xess": the libxess.dll it loads or None, "upscaler", "menu_key"}.
+
+    OptiScaler 0.9 looks for XeSS (`XeSSProxy::InitXeSS`, `Util::LoadProxyLibrary`) in the file or
+    folder its [Libraries] XeSSPath names; then in its own folder, which is OptiDllPath when set,
+    else an `OptiScaler` folder beside the executable when there is one, else the executable's;
+    then by name alone, which finds the executable's first."""
+    folder = Path(game_exe).parent
+    ini = next((path for path in (folder / OPTISCALER_INI, folder / OPTISCALER_FOLDER / OPTISCALER_INI)
+                if path.is_file()), None)
+    values = _ini_values(ini) if ini else None
+    if values is None:
+        return None
+    libraries = values.get("libraries", {})
+
+    def named(key):
+        value = libraries.get(key, "auto")
+        if not value or value.lower() == "auto":
+            return None
+        path = Path(value)
+        return path if path.is_absolute() else folder / path
+
+    candidates = []
+    chosen = named("xesspath")
+    if chosen is not None:
+        candidates.append(chosen / XESS_NAME if chosen.is_dir() else chosen)
+    own = named("optidllpath") or folder / OPTISCALER_FOLDER
+    candidates += [(own if own.is_dir() else folder) / XESS_NAME, folder / XESS_NAME]
+    return {"ini": ini, "xess": next((path for path in candidates if path.is_file()), None),
+            "upscaler": values.get("upscalers", {}).get("dx12upscaler", "auto").lower() or "auto",
+            "menu_key": values.get("menu", {}).get("shortcutkey", "auto").lower()}
+
+
+def _xess_placed(record, profile):
+    """The folder NR's libxess.dll went into, by an installation's record, or None. The record names
+    the folder only where it is not the executable's (`_place_game_files`), as for OptiScaler's
+    XeSS or a game's own kept beside the executable."""
     entry = record["files"].get(XESS_NAME, {})
-    return Path(entry["folder"]) if entry.get("placed") and entry.get("folder") else None
+    if not entry.get("placed"):
+        return None
+    return Path(entry["folder"]) if entry.get("folder") else Path(profile.game_exe).parent
 
 
 def _xess_original(profile, folder, record, stage=None):
     """The game's own libxess.dll: in its folder until NR's takes its place, then set aside in the
     installation, or in its stage while one is being made."""
-    if _xess_placed(record) and record["files"][XESS_NAME].get("backup"):
+    if _xess_placed(record, profile) and record["files"][XESS_NAME].get("backup"):
         return Path(stage or installed_path(profile)) / GAME_BACKUP / XESS_NAME
     return folder / XESS_NAME
 
@@ -741,14 +808,27 @@ def _xess_check(profile, record=None):
     """Whether NR can go in front of the game's XeSS: (its folder, what it is), or (None, why not).
 
     NR's libxess.dll must export every name the game's does, since the game may call any of them; a
-    game's older XeSS exports fewer, and the ones it lacks answer XESS_RESULT_ERROR_NOT_IMPLEMENTED."""
+    game's older XeSS exports fewer, and the ones it lacks answer XESS_RESULT_ERROR_NOT_IMPLEMENTED.
+    With OptiScaler beside the game, the XeSS is the one OptiScaler loads (`optiscaler`)."""
     if pe_architecture(profile.game_exe) != "x64":
         return None, "DirectX 12 through XeSS is for 64-bit games"
     try:
         record = record or _game_record(installed_path(profile))
     except (OSError, ValueError) as error:
         return None, str(error)
-    folder = _xess_placed(record)
+    opti = optiscaler(profile.game_exe)
+    if opti is not None and opti["upscaler"] not in ("auto", "xess"):
+        return None, (f"OptiScaler upscales this game with {opti['upscaler']} (Dx12Upscaler in {opti['ini']}), "
+                      "and NR runs after OptiScaler's XeSS: set Dx12Upscaler=xess there")
+    folder = _xess_placed(record, profile)
+    if folder is None and opti is not None:
+        if opti["xess"] is None:
+            return None, ("OptiScaler is beside the game, with no libxess.dll where it loads XeSS from: put the "
+                          "libxess.dll that comes with OptiScaler beside it, then Check again")
+        if opti["xess"].name.lower() != XESS_NAME:
+            return None, (f"OptiScaler loads XeSS from {opti['xess']} (XeSSPath in {opti['ini']}), a file NR's "
+                          f"{XESS_NAME} cannot stand in for: name its folder there, or leave XeSSPath=auto")
+        folder = opti["xess"].parent
     if folder is None:
         found = xess_libraries(profile.game_exe)
         if not found:
@@ -772,11 +852,42 @@ def _xess_check(profile, record=None):
         return None, (f"This game's XeSS, {version}, has functions NR's does not: " + ", ".join(missing[:8])
                       + ("..." if len(missing) > 8 else ""))
     tested = any(version.startswith(prefix + ".") for prefix in TESTED_XESS)
-    return folder, f"XeSS {version} in {folder}" + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
+    detail = f"XeSS {version} in {folder}"
+    if opti is not None:
+        detail += ", which OptiScaler loads: NR runs after OptiScaler's XeSS"
+        if opti["menu_key"] in OPTISCALER_ON_INSERT:
+            detail += ("; OptiScaler's menu opens on Insert, as NR's panel does: set ShortcutKey in "
+                       f"{opti['ini']} to another key, such as 0x23 (End)")
+    return folder, detail + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
 
 
-def discover_python():
-    """Prefer native CPython over the MinGW toolchain, within a ten-second budget."""
+def bundled_python(root):
+    """The interpreter a Windows release carries in `python\\` (scripts/fetch_python.py), if any."""
+    if root is None:
+        return None
+    path = Path(root) / "python" / "python.exe"
+    return path if path.is_file() else None
+
+
+def discover_python(root=None):
+    """The release's own Python first, then native CPython over the MinGW toolchain, within a
+    ten-second budget.
+
+    The release's own is asked before the budget starts and given the time a first numpy import
+    takes while Windows' scanner reads it (`_python_info`): it is the one a player has, and at the
+    two seconds each other candidate gets, a fresh one could be passed over. NR_PYTHON, when set
+    and usable, stays ahead of it, as a developer's choice."""
+    bundled = bundled_python(root)
+    own = str(bundled.resolve()) if bundled is not None and _native_python(_python_info(bundled)) else None
+    found = _discover_others(skip=own)
+    if own:
+        override = os.environ.get("NR_PYTHON")
+        first = found and override and _canonical(found[0]) == _canonical(override)
+        found.insert(1 if first else 0, own)
+    return found
+
+
+def _discover_others(skip=None):
     deadline = time.monotonic() + 9.5
     candidates = [os.environ.get("NR_PYTHON"), sys.executable]
     for name in ("python", "python3"):
@@ -815,6 +926,8 @@ def discover_python():
         value.lower()))
     found = []
     for value in ordered:
+        if skip and _canonical(value) == _canonical(skip):
+            continue
         remaining = deadline - time.monotonic()
         if remaining < 0.2:
             break
@@ -1135,6 +1248,14 @@ def ensure_dependencies(profile, emit=None):
     info = _python_info(profile.python)
     if not _native_python(info):
         return {"ok": False, "error": "Choose native x64 Windows Python before preparing dependencies", "output": info.get("output", "")}
+    packages = info.get("packages", {})
+    if not info.get("package_errors") and all(name in packages for name in ("numpy", "safetensors")):
+        # Nothing to prepare. The release's own Python comes with both (scripts/fetch_python.py),
+        # and so may one the player chose; and the embeddable package has no venv module to make
+        # an environment from.
+        return {"ok": True, "error": None, "python": str(profile.python), "profile": profile.to_dict(),
+                "output": (f"{profile.python} already has numpy {packages['numpy']} and "
+                           f"safetensors {packages['safetensors']}\n"), "commands": []}
     directory = profile.root / "work/windows-python"
     interpreter = directory / "Scripts/python.exe"
     commands = []
@@ -1451,7 +1572,7 @@ def uninstall(profile, emit=None):
     try:
         record = _game_record(destination)
         placed_any = any(entry.get("placed") for entry in record["files"].values())
-        xess = _xess_placed(record)
+        xess = _xess_placed(record, profile)
         for name in sorted(record["files"]):
             entry = record["files"][name]
             if entry.get("placed"):

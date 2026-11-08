@@ -23,7 +23,7 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
 
 ---
 
-## Where things stand (2026-11-04)
+## Where things stand (2026-11-05)
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
@@ -31,31 +31,41 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
-  (`86a5799`, 11-01) and **v0.0.3.1** (`c0b7f9d`, 11-01, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
-  `vulkan-1.dll` proxy and NR's `libxess.dll` as `nr_xess.dll`. 0.0.2 brings DirectX 12 through
+  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01), v0.0.4 (`8232603`, 11-05) and **v0.0.5**
+  (`bb9317b`, 11-06, the latest),
+  a ZIP with the setup window, DXVK 3.1.1, both layers, a `vulkan-1.dll` proxy, NR's `libxess.dll`
+  as `nr_xess.dll` and, since 0.0.4, its own Python. 0.0.2 brings DirectX 12 through
   XeSS, the in-game panel (PR #20), network B and frames on the GPU by default, and an About tab
   that checks GitHub for a newer release (archive, 10-31). 0.0.3 brings the panel inside DirectX 12
   games, its keys and clicks kept from the game, and `nr_gpu_probe.exe`, the GPU report for Arc
   A-series owners (below, 11-01). 0.0.3.1 is what the first A-series reports asked for: the speed
   test measures both networks and names each, and setup finds a game's XeSS in a subfolder (below,
-  11-01 later). All three went out on the owner's word before Linux's `make test` at their heads,
-  as 0.0.1.3 did: 0.0.2's ran green after, at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841`
-  (below, 11-04 later). Linux users build from source (README).
+  11-01 later). 0.0.4 brings Python with the release, so a player installs none (below, 11-05),
+  and the staged GEMM's walk, which takes 9-19 % off the network on Intel's Windows driver (below,
+  11-04 night). 0.0.5 brings the `hogwarts` profile, Hogwarts Legacy's own tuning, the panel's
+  frame counter and OptiScaler's XeSS in setup (below, 11-06, morning). All five went out on the
+  owner's word before Linux's `make test` at their heads, as 0.0.1.3 did: 0.0.2's ran green after,
+  at `eb9b281`, and 0.0.3's and 0.0.3.1's at `d28e841` (below, 11-04 later); 0.0.4's and 0.0.5's
+  are in Open items. Linux users build from source (README).
 - **Branches**, on GitHub since 10-30:
   - `master`, the default: 0.0.1.2 (`2f90064`) until 10-30, then fast-forwarded to `newnr`, and
     with it to 0.0.2 (`81b0a59`, 10-31), 0.0.3 (`86a5799`, 11-01), 0.0.3.1 (`c0b7f9d`, 11-01),
     the README for players (`d5bef2e`, 11-02) and `alchemist`'s head, at `72fb922` and again that
-    night (11-04, below);
+    night (11-04, below), and with it to 0.0.4 (`8232603`) and its HANDOFF entry (`9b73d96`, 11-05);
   - `newnr`: everything since, with PR #20 merged at `097d6d4` and `dx12` on top of it
     (`cc2b8b7`, 10-30); level with `master`;
   - `media`: the README's pictures;
   - `improve-int8`, kept for INT8 experiments;
-  - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (below,
+  - `alchemist`: the Arc A-series work, from `newnr` at `0a6000f`, on GitHub since 11-01 (archive,
     10-31 evening). Level with `newnr` until 11-02, ahead of it from 11-03 (`911e9ba`, the
     players' data, and the entries of 11-04 below), level with `master` and `newnr` again on
     11-04, when all three went to its head at the owner's word (below, 11-04 later), ahead of
-    them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), and level again
-    since that night, when the owner had both fast-forwarded to it (below, 11-04 night, later);
+    them that evening (`20a0253`, `6ef670e`, `c744581` and the Linux check), level again that
+    night, when the owner had both fast-forwarded to it (below, 11-04 night, later), and again
+    since 0.0.4 went out (below, 11-05 later); on 11-06 all three went to the frame counter's
+    head, `fps-counter` fast-forwarded in (below, 11-06), then to 0.0.5's, `game-tuning`
+    fast-forwarded in (below, 11-06, morning), and again to `game-tuning` with the daemon's fix
+    (below, 11-06, later);
   - `cleanup`: from `newnr` at `0456e99`, the shorter brief, `make test` in parallel and the
     leftovers removed; PR #39 into `newnr`, a draft until it has run on a GPU (below, 11-05);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
@@ -104,7 +114,8 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   1080p and 1440p fields, 1.6-2.1x Mesa's time and all of Windows' loss, every other pass level
   or faster (below, 11-04 evening). Most of it was the driver's walk order: since `6ef670e` the
   network takes 9-19 % less there, and B at 2560x1472 is within 2 % of Linux (below, 11-04
-  night); the speed test's Windows figures predate it. The README's table
+  night), and 7-9 % less in Mortal Kombat 11 at 1280x720 and render scale 1.0 (below, 11-04
+  night, latest); the speed test's Windows figures predate it. The README's table
   (`nr_knobs.RATES`) was measured with `live_rates.py --warmup 3`, again on 10-18 with the clock
   hint, and the default warm-up of 25 now reads the same. On Linux libxmx asks the driver for its
   low-latency clock strategy since 10-18 (`XMX_LOW_LATENCY`): without it the GPU's governor
@@ -118,7 +129,10 @@ the entries before 10-30 went, and the file fell from 156 KB to 69 KB; on 11-04 
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
   the repository or a release. A Linux agent and a Windows agent work on this one laptop; the owner
   relays between them, and this file is how they hand work over. A release updates the README's
-  GPU and tested-games tables in the same commit (the owner, 11-02).
+  GPU and tested-games tables in the same commit (the owner, 11-02). What people read, replies in
+  issues and pull requests, PR descriptions, release notes, carries no "Generated by Claude Code"
+  line or other mention of AI: people are uncomfortable reading it (the owner, 11-05, who had it
+  taken out of the six replies that carried it, #19, #23, #25, #27, #29 and #38).
 
 ## Open items (collected 2026-10-14, from this file and its archive)
 
@@ -165,6 +179,23 @@ under that date. When an item is done, strike it through here and name the commi
 **Linux** (what to pull and run, in order: below, 11-04)
 - `cleanup` (PR #39): `make test` in both memory modes and CTest, the first run on a GPU of its
   runner, `attention.comp`, libxmx and `nr_resident`. Below, 11-05.
+- `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
+  11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
+  and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
+- `3d8292a`, the `hogwarts` profile (below, 11-06, early morning), in 0.0.5: `make test` in both
+  memory modes and CTest at GitHub's `alchemist`. The GPU image path's push block grew to 104 bytes
+  (`image_preprocess.comp`), `nr_frame` builds the automatic mask's lanes, and the panel's profile
+  row is 0..3.
+- `7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
+  (below, 11-05 night and 11-06): `make test` in both memory modes and CTest once `fps-counter` is on
+  GitHub. `nr_layer.c` and `nr_layer_state.h` gained the counts, the present waiting on the panel's
+  semaphore and a swapchain hook that is empty off Windows; the daemon's FRAME reply carries the
+  network's time; the rest is Windows-only code.
+- `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
+  `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, at GitHub's
+  `alchemist` since 0.0.4 went out. `nr_daemon.py` puts its own folder on sys.path,
+  `test_release.py` and `test_windows_wizard.py` gained cases, and `test_toggle.py`'s page check
+  reads the new README; nothing Linux runs otherwise changed.
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -233,6 +264,28 @@ under that date. When an item is done, strike it through here and name the commi
 **Windows**
 - `cleanup` (PR #39): `build_win.bat` and CTest, which now holds the setup's six suites. Below,
   11-05.
+- ~~The panel's frame counter (`7d70ff1`, below, 11-05 night)~~: seen in Mortal Kombat 11 with the
+  screen on, and on GitHub's `alchemist`, `master` and `newnr` since 11-06, in no release yet; in
+  Vulkan the present waits on a semaphore of the panel's, `476d5f0` (below, 11-06).
+- ~~The Vulkan panel under `test_gpu_present --sync-validation` aborts at its first frame (0xC0000409,
+  ucrtbase)~~: its own command buffers had no loader data, `489ee1f` (below, 11-05 night).
+  ~~`VUID-vkCmdDraw-None-09600`~~, the UI image's layout: `476d5f0` (below, 11-06). Left: a warning,
+  `menu.comp`'s `rgba8` against a B8G8R8A8 swapchain.
+- ~~0.0.4, with the release's own Python (`e72be76`) and the staged GEMM's walk (`6ef670e`)~~:
+  published on 11-05 at the owner's word, tag `v0.0.4` at `8232603` (below, 11-05 later).
+- NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
+  from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in no release yet (below, 11-05
+  evening). Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no
+  XeSS of its own. An FSR 3.1 proxy without OptiScaler: designed, not built (below, 11-05 later).
+- ~~Hogwarts Legacy's DLSS 5 update, due on 11-05 with no hour published: once Epic has it, run
+  `D:\NRonWindows\nr-game\dlss5-update-check.ps1`~~: in on 11-06, with 310.9.16 unchanged; 0.0.4
+  runs in it (below, 11-06, early morning).
+- ~~The `hogwarts` profile, the game's own tuning (`3d8292a`, local branch `game-tuning`, in a
+  worktree, `D:\NRonWindows\dlss-nr-tuning`): merging and pushing at the owner's word~~: in 0.0.5,
+  published on 11-06 (below, 11-06, morning). The worktree can go once the owner says so.
+- The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
+  r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
+  `work\pr-replies\reddit-0.0.5-media` (below, 11-06, later).
 - ~~The GPU report for Arc A-series owners (`nr_gpu_probe.exe`, branch `alchemist`, archive, 10-31
   evening): the MSVC build, a run on Intel's driver, and a double click from a release's ZIP;
   then the next release~~: in 0.0.3 (`86a5799`, 11-01).
@@ -287,6 +340,9 @@ under that date. When an item is done, strike it through here and name the commi
   and the trail found in it fixed (`e803624`). Its look in the game is untested. Archive, 10-16.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
   gives three C4068 warnings that an `NR_IVDEP` macro would silence. Archive, 10-02 and 10-07.
+- ~~`tools\build_win.bat` run from a folder other than the checkout stops at the layer's link
+  (`LNK1181`): the layer's C objects are compiled with no `/Fo` and land in that folder~~: fixed
+  in `2c04f2f`, with `/Fo:"%REPO%\\"` as the x86 step has. Below, 11-04 night, latest.
 - Housekeeping: each release root in `D:\NRonWindows\rel` holds ~440 MB of extracted weights, and
   `D:` ran out of space mid-test. Archive, 10-12.
 
@@ -319,6 +375,488 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The daemon keeps the panel's unsaved edits; the Reddit media; a Ko-fi link (2026-11-06, later, branch `game-tuning`)
+
+The owner asked for a short comparison video and screenshots for the Reddit posts, then, on the bug
+the shoot found: "Да, можешь пофиксить. А так же чуть редактируй страницу релиза и readme добавив
+ссылку на поддержку проекта https://ko-fi.com/uzbekunknown".
+
+**The media.** 0.0.5's own ZIP in Hogwarts Legacy through `nr-game\hogwarts-update-test.ps1`, with the
+owner in play. NR was switched with no keys, through the release's trigger file and the profile in
+`nr_settings.json`. Stills were taken while the game was in front; the clip was recorded by ffmpeg's
+ddagrab and Quick Sync. The game closed through its window after, NR removed, the folders as before.
+- `work\pr-replies\reddit-0.0.5-media`: a 38 s video (a live walk with NR off, `hogwarts` and
+  `standard`, two slider comparisons on one frame, a link card) and five screenshots;
+- `D:\NRonWindows\nr-game\video-1106`: the scripts and raw frames;
+- ffmpeg 9.0.2 in `%USERPROFILE%\tools`, downloaded at the owner's word, its SHA-256 gyan.dev's.
+
+It was all shot at render scale 0.4, not the owner's 0.6, because of the bug below; the owner kept
+0.4, which matches the posts' 25-26 NR frames a second.
+
+**The bug.** The owner had moved render scale to 0.6 in the panel without saving. At the shoot's
+first write of the saved file, the daemon logged `settings (saved): render_scale=0.4` and ran its
+network at 512x320 again, while the panel and its `.live` file still said 0.6. On a frame where
+only the saved file changed, `Settings.refresh` read the preview as None, "unchanged", and applied
+the saved values with nothing on top. The panel keeps unsaved edits for the session, and the saved
+file can change under them: the panel's own language key writes it (`save_language_only`), as do
+the setup window and `nr-ctl`, so a player meets it with no tool of ours. The other way round, a
+preview removed on its own (the panel's process ends, `nr_menu_bridge_destroy`) changed nothing,
+since a missing file read as unchanged too.
+
+**The fix** (`669135b`, `src/layer/nr_daemon.py`):
+- the last preview is kept (`preview_values`), as the saved values are, and goes on top of every
+  refresh;
+- `_read_json` returns `Settings._GONE` for a preview that was there at its last look and is not
+  now, which drops it;
+- the owner check runs on the kept preview at every refresh, and a refused one is forgotten, so a
+  later process with the same PID cannot revive it;
+- the log names the file that changed.
+
+The panel replaces both files atomically (`MoveFileExA` with `MOVEFILE_REPLACE_EXISTING`,
+`rename`), so neither is ever briefly missing. `test_settings_live.py` gained three cases: a saved
+write under a live preview, a preview removed on its own, and a kept preview whose menu has ended.
+The first two fail on the old code.
+
+**The support link.** The README's new section "Support the project" (`037970c`), and one line on
+the v0.0.5 release page before "Built from", edited on GitHub at the owner's word. The ZIP, the tag
+and "Latest" are as they were, and `work\pr-replies\release-notes-0.0.5.md` carries the line too.
+The release's own README (`docs/RELEASE-QUICKSTART.md`) does not, unless the owner wants it.
+
+Also on this branch: `3fa69b8`, phase73's finding that NVIDIA's Unreal plug-in clamps the strengths
+to 0..1 every frame.
+
+**Checked on Windows:**
+- `test_settings_live.py` 17 of 17, on MSYS2's Python 3.14 and on the release's own;
+- `test_daemon.py`, and `test_daemon_owner.py` (14, 3 skipped);
+- `test_gpu_d3d12.py` plain and with `--network`: a real daemon refreshing every frame, the client
+  from `dlss-nr-fps\work`, built at `7d70ff1`;
+- `test_image_pipeline.py`;
+- `test_windows_wizard.py` 100 (1 skipped), on the release's Python;
+- `test_release.py` 22 (5 skipped), and `test_toggle.py`'s page check;
+- `claims_check`, `publish_check`, `build_check`, `knob_doc --check`.
+
+Under MSYS2's Python, `test_windows_wizard.py` fails one fixture on a path separator
+(`dlss-nr\foreign.txt` against `dlss-nr/foreign.txt`), at `8a2a9cd` as well. Not run: Linux; a game.
+
+**Pushed** at the owner's word ("Yes, push", 11-06): `game-tuning`, with `3fa69b8`, `037970c`,
+`669135b` and this entry, fast-forwarded into `alchemist`, and `alchemist`, `master` and `newnr` to
+its head on GitHub and here.
+
+**Next on Linux:** `git fetch`, fast-forward the three branches to GitHub's, then `make test` in both
+memory modes and CTest (Open items). **Next on Windows:** the Reddit posts, the owner's.
+
+## 0.0.5 released: Hogwarts Legacy's own tuning, the frame counter, OptiScaler (2026-11-06, morning, branches `alchemist`, `master`, `newnr`)
+
+The owner, 11-06: "Соберем релиз быстро без участия линукса. Проверки сделаем там позже. Нам после
+релиза надо сделать пост на реддит с такими сравнениями и сколько фпс можно получить и заявить о
+поддержке optiscaler", and after reading the notes: "можешь пускать в релиз", with the line on
+where Hogwarts Legacy keeps the DLL cut from them.
+
+- `bb9317b`: `VERSION` 0.0.5. The README names Hogwarts Legacy as a source of the DLL and gives
+  its rows of 11-06 and, through OptiScaler, of 11-05. What to expect gains frame generation, and
+  the install steps the counter and the profile. The release guide says the same.
+- **In the game, before the build:** with the owner in play, the panel's counter read **Screen
+  51.4-52.1 fps, NR 24.7-26.0, network 17.0-17.5 ms**. That is 1280x720, render scale 0.4,
+  network B and XeSS frame generation x2: the generator doubles what the screen shows.
+- **Built** by `tools\deploy.bat --release` into `%USERPROFILE%\nr-rel\final-0.0.5` (on C:,
+  D: had 5.6 GB free) and zipped by `nr-game\zip-release.py`: **`dlss-nr-windows-0.0.5-x64.zip`,
+  46 775 008 bytes, SHA-256 `4b28c8cabc39d3985e9395dd43d8e858a6d97110aec3195d0f8a195ddb8a24f2`**,
+  from `%USERPROFILE%\nr-rel\final-0.0.5-bb9317b`. The release commit was rebuilt as `bb9317b` to take
+  a home path out of two HANDOFF commits before the push; that build matches the checked one,
+  made at the first hash, in every file but `release-metadata.json`.
+  `release-metadata.json` names 0.0.5 and `bb9317b`.
+- **Checked from the unpacked ZIP** (`final-0.0.5\check`): the window's self-test, 89 controls and
+  198 keys in four languages. The stand-in run (`standin-release-check.ps1`):
+  - discover chose `python\python.exe`; Check; Install with both networks in 8 s;
+  - 572 frames, none rejected;
+  - the speed test, A with 71 blocks and B with 31, in 44 s;
+  - Save report, 19 checks, none failing;
+  - Remove NR, and the folder as before.
+- **Published:** the lightweight tag `v0.0.5` at `bb9317b`, as `v0.0.4` is. `alchemist`, `master`
+  and `newnr` were fast-forwarded from `e1e37b3` on GitHub and here. The release "DLSS-NR 0.0.5 for
+  Windows" carries the ZIP. Its body is `work\pr-replies\release-notes-0.0.5.md` without the draft
+  comment.
+- Not run: Linux (the owner: later).
+
+**Next on Linux:** `git fetch`, fast-forward the three branches to GitHub's, then `make test` in
+both memory modes and CTest (Open items: `3d8292a` and the frame counter's commits). **Next on
+Windows:** the Reddit post, the owner's to post (`work\pr-replies\reddit-0.0.5.md`). Removing the
+`game-tuning` worktree and the release folders on C:, at the owner's word.
+
+## Hogwarts Legacy's DLSS 5 update, and the game's own NR tuning as a profile (2026-11-06, early morning, branch `game-tuning`)
+
+The update reached the owner's Epic copy around 03:00. The owner: look at what the other session
+produced (above Open items: pushed, `e1e37b3`), and then: "нам надо сделать так что бы эти новые
+настройки применялись ... для Hogwarts Legacy что бы у нас был выбор сделать настройки как
+задумывал Nvidia с разработчиками и стандартная настройка", for a video and a Reddit post.
+
+**The update** (`nr-game\dlss5-update-check.ps1`, `release-tests\hogwarts-1106-after\check.txt`):
+`nvngx_dlssnr.dll` 310.9.16.0 in `Engine\Plugins\Runtime\Nvidia\StreamlineCore\Binaries\ThirdParty\Win64`,
+**byte for byte ours** (SHA-256 `2bc19bc0…789f`): no new network, and Hogwarts owners now have the
+DLL. Also Streamline 2.14.16 with `sl.dlss_nr.dll`, DLSS SR, RR and FG 310.9.16, XeSS 2.0.2.53 to
+2.0.2.68, XeFG 1.3.1.78, build 2153883; FSR 3.1 unchanged. Setup takes all of it as tested.
+- **0.0.4 runs in it** (`nr-game\hogwarts-update-test.ps1`, the DLL taken from the game, as a
+  player would now): XeSS starts at the title screen, ~27 frames a second, each answered, none
+  declined, the panel on Insert. The counter's build (`rel\check-476d5f0`, `e1e37b3`'s code) in
+  DirectX 12: "Screen 26.9 fps NR 25.9 fps network 17.9 ms" in the panel and the top-right
+  corner, on the title screen, where XeFG adds no frames; play not looked at.
+- The first start came up with FSR 3 Quality. That was the 11-05 FSR 3 test's options: Epic
+  uploaded them when that test closed the game, and brought them back over the copy put back
+  after it. Not the update (the owner).
+- **The harness leaves the game's files alone** (the owner, 11-06: "Дай игре сохранить данные не
+  удаляй все без разбора"). Killing the game and putting its settings, `pc_info.json` and save
+  list back made it prepare its shaders at every start, and made Epic report a cloud sync
+  conflict. It now closes the game through its window (25-65 s), removes only NR's files, and
+  reports what the game wrote. `hogwarts-xess-test.ps1` must not run again: its clean copies
+  back XeSS 2.0.2.53 from 10-16.
+
+**What the game sets, read out of its executable** (`notes/phase73-game-tuning.md`): Tone 50,
+Detail 84 and Character 27 percent for every upscaler, times 0.01, into NVIDIA's Unreal
+plug-in's cvars (each 1.0 by default), and Streamline hands them to NGX unchanged. That gives
+tone 0.5, structure 0.84 and skin 0.27, at intensity 1 and style 0. The automatic mask's mode
+is in the game's packed config, not its code, and the skin strength needs it, so the profile
+turns it on.
+
+**The `hogwarts` profile** (`3d8292a`): `nr_frame.PROFILES["hogwarts"]`, with
+`AutomaticMask(0.27, -1)`; `feature_lanes` gives channels 10-14 to the native pass and the GPU,
+as MLX-DLSS's builder writes them. The GPU image path's push block grew two floats for channels
+13 and 14 (`image_preprocess.comp`, 104 bytes). The panel (its profile row is 0..3), the setup
+window ("Hogwarts Legacy" in its four languages), the Linux config and `nr_knobs` list it.
+- Offline, DOA5's 1280x720 frame on the GPU, network A, change against the game's frame:
+  `standard` 0.0369, `hogwarts` 0.0233, `hogwarts` without the mask 0.0293. The mask's share is on
+  skin, 7.5x concentrated: faces, chests, arms, the portraits.
+- In Hogwarts from a release built at `3d8292a` (`%USERPROFILE%\nr-rel\tuning-3d8292a`, on
+  C: since D: has 5.6 GB free), switched live through `nr_settings.json`: on the title screen,
+  change 0.029 with `standard`, 0.022 with `hogwarts`, 0.027 with `standard` again; 2750 frames,
+  none declined, no error. With the owner in play: the player character's face is softer under
+  `hogwarts`, its skin less worked and its shadows lighter, and `standard` brings the texture
+  back.
+
+**Checked on Windows:** the MSVC build (`build_win.bat`, `build_xess.bat`);
+- `test_nr_model.py` (the profile lanes, against MLX-DLSS's builder for every profile),
+  `test_native_image.py` (the mask, native and NumPy), and `test_image_preprocess.py`: the GPU's
+  features with the mask, bit for bit against the CPU;
+- the seven menu fixtures (`test_menu_choices`: 4 profile options, all labelled), `test_nr_xess`,
+  `test_xess_panel`;
+- `test_windows_wizard.py` 100, `test_release.py` 22, the bridge, controls, setup and launch
+  suites;
+- `test_image_pipeline`, `test_image_compose`, `test_settings_live`, `test_daemon`,
+  `test_gpu_transport` 49, `test_gpu_d3d12.py` plain and with `--network`;
+- `knob_doc --check`, `claims_check`, `publish_check`, `build_check`.
+
+Not run: Linux.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `game-tuning`'s head once it is on
+GitHub: `image_preprocess.comp`'s push block, `nr_frame`, the panel's profile row, `nr_config`,
+the menu strings. On Mesa the GPU image path's parity tests skip, as before. **Next on Windows:**
+the owner's word on merging `game-tuning` into `alchemist` and pushing. The README's DLL line could
+name Hogwarts Legacy, since 11-05.
+
+## The Vulkan panel presents on a semaphore (2026-11-06, past midnight, branch `fps-counter`)
+
+The owner, asked whether to take the GPU wait out of the corner first or try MK11 first: do what is
+right, then test. `476d5f0` on `fps-counter`, local; nothing pushed.
+
+**What changed.** The panel's submit took the game's present semaphores, so the present had nothing
+left to wait on and the layer waited on a fence: for the panel's blend, and so for the whole of the
+game's frame, since a fence covers everything before it on the queue. Now the submit signals a
+semaphore of the layer's own and the present waits on that, as MangoHud's overlay does (Mesa's overlay
+layer before it). For a frame's panel to still be running while the next is recorded:
+- a ring of 8 command buffers with their fences and the overlay's descriptor sets (`NR_MENU_SLOTS`),
+  each reused after its own fence; ImGui's ring of vertex buffers is as long;
+- the semaphore is per swapchain image, because a present's semaphore is free once that image is
+  acquired again (validation reports any other reuse); destroyed with the swapchain, through a
+  fourth hook, `nr_menu_layer_swapchain_gone`;
+- `menu_drain` waits for the whole ring before something shared is destroyed or rewritten: the UI
+  image on a resize, the font atlas when ImGui uploads a glyph on the UI's own queue
+  (`nrex_vk_drain_hook`), the views of a swapchain going, the pool when the queue family changes;
+- the UI render pass's two external dependencies are explicit: the implicit one into the pass starts
+  at no stage, so its layout transition was ordered after nothing, the previous frame's blend
+  included;
+- the view cache keeps a view for each image. A miss dropped every view, so with three images each
+  frame destroyed the view the previous frame had used.
+
+Also: the UI image starts UNDEFINED, which its load op clears anyway, and the dump's barriers go from
+and back to GENERAL - these were the four `VUID-vkCmdDraw-None-09600` a run; image and view handles
+reach the blend without a 32-bit `uintptr_t` cast on x86; `test_gpu_present.py` takes `--panel
+shut|open|corner`.
+
+**Measured** (quiet, Intel 101.9150, on AC, best performance). `test_gpu_present`, NR off, 800x600
+then 1024x640, 120 frames each at a 10 ms pause; a present's median over three rounds, against
+`aec70da` built the same way: the corner 2.67-2.84 ms before, 1.88-1.98 after; the panel open
+3.57-3.59, 2.52-2.56; no panel 0.69-0.71 and 0.64-0.67. What the corner still costs is the layer's own
+work on the CPU, the driver's present taking 28 us. Taken apart once: 0.41 ms is the panel looking
+for its window with `EnumWindows` on every present, since the fixture's window is hidden (a game in
+front is found by `GetForegroundWindow` first), 0.08 ms the trigger file's `access()`, and the
+panel's frame, recording and submit 0.38 ms. The first two are older than the counter and are paid
+whenever the panel is built, open or not; not changed.
+
+**Checked on Windows.** Synchronization validation, no message but the known `rgba8` warning:
+`test_gpu_present` with NR off, the panel open, the corner and none, Chinese with the panel open (its
+glyphs uploaded during the run), Russian with frames back to back; `test_gpu_present.py --run` with NR
+on the GPU path, the panel shut, open, in the corner, and in the corner with the trigger turned off
+and on (`--exercise-controls`), 78-80 frames answered each. MSVC x64 and x86 with no new warning,
+MinGW with none on a changed line; the ten native fixtures, `test_xess_panel` (both phases),
+`test_nr_xess`; `test_daemon`, `test_gpu_transport`, `test_gpu_d3d12`, `test_menu_ui_fixtures`,
+`test_menu_rows`, the six tool suites incl. `test_windows_wizard.py` (100); `claims_check`,
+`publish_check`, `build_check`.
+
+**Mortal Kombat 11** (DXVK) from a release built at `476d5f0` (`D:\NRonWindows\rel\check-476d5f0`,
+preset B, render scale 0.4), through `nr-game\mk11-counter-test.ps1`: Install NR, the counter's place
+in that install's settings, Steam's start, NR on, 40 s counted, NR off, Remove NR, the game folder
+compared. The screen was locked throughout (LogonUI, no window in front), and Windows let the game
+present about 8 frames a second: 7.92 frames answered a second with the corner, 7.90 with the counter
+in the panel, 7.97 with 0.0.4 in the same state, against 34.29 for 0.0.4 unlocked on 11-05 17:40.
+Four runs, every frame `gpu-shared`, none refused, the game closed through its window, no daemon
+left, the folder as before. The UI image the layer wrote in the game (`NR_MENU_DUMP`, through
+nr-env.txt) has the corner at the top right of 1280x720: "Screen 5.6 fps   NR off".
+
+**With the screen on** (02:46, the owner back; not quiet, the Epic Games Launcher at 11 % CPU with
+Hogwarts' update), the same script and release, the game in a window: the corner read "Screen 60.0
+fps   NR off" with NR off, MK11's own limit, and "Screen 33.5 fps   NR 33.5 fps   network 18.3 ms"
+with NR on; 30.64 frames answered a second over the 40 s, and 29.69 for 0.0.4 with no counter right
+after, in the same state. Both runs clean, the folder as before.
+
+**Pushed** at the owner's word ("Можешь проверить в игре и пушить", 11-06): `fps-counter` fast-forwarded
+into `alchemist`, and `alchemist`, `master` and `newnr` to its head on GitHub. **Next on Linux:** as
+for `7d70ff1` (Open items).
+
+## A frame counter in the in-game panel (2026-11-05, night, branch `fps-counter`)
+
+The owner asked for a frame counter in the panel the Insert key opens, in both hosts, and then that
+the player choose where it shows, in the panel only or in a corner; issue #19's reporter had asked
+for an fps display. The change is `7d70ff1`, and `489ee1f` a fault it found, on a local branch
+`fps-counter` from `alchemist` at `6ef8041`, in a worktree of its own (`D:\NRonWindows\dlss-nr-fps`);
+nothing pushed.
+
+**Two rates, because under frame generation they differ.** NR runs on the frames the game renders;
+a generator adds its own after that, so the screen shows more (about twice at XeFG x2: Hogwarts' 27.7
+frames a second on 11-05 evening were NR's, the screen's about 55, unmeasured).
+- The screen's: every present of the swap chain the panel is drawn on. In the Vulkan layer, the
+  presents that include its primary swapchain; in DirectX 12, the Present hook's, of the largest
+  swap chain presenting within the last second, which under XeFG is the generator's.
+- NR's: the frames the daemon answered and the host put into the picture. The layer's GPU path
+  (`gpu == 2`) and its CPU write-backs; the proxy's cut and copy answers, what its "NR: N frames in
+  5 s" lines count.
+- The network's ms a frame: a FRAME's SUCCESS reply carries it in `detail` now, in microseconds
+  (`nr_gpu_wire.h`; it was 0 and no client read it). The CPU path reports none, and none is shown.
+- `src/layer/nr_frame_rate.h`: the host keeps totals, the panel samples them once a present; the
+  rates are over the last second, read every half second, with a comma for the decimals in Russian
+  and Spanish. "NR off" while the trigger is off.
+
+**Where.** A line at the top of the open panel ("Screen 63.3 fps    NR 32.1 fps    network 24.0
+ms"), its tooltip saying what the two rates are, and a row "Frame counter": in the panel only, the
+default, or one of the four corners, where the counter stays with the panel shut. The corner is an
+ImGui window with no input, focus or navigation; with the panel shut ImGui is handed no pointer and
+no keys at all. The place is `menu_counter` in `nr_settings.json`: shown at once, written by Save
+(once it is not the default), back with Revert, left by Reset, as the language is. Twelve strings in
+four languages, `OWN` in `tools/gen_menu_strings.py`, the tables regenerated.
+
+**What the corner costs.** Each host now draws over the part ImGui drew and no more
+(`nrex_drawn_rect`): the Vulkan blend's dispatch, and in DirectX 12 the clear and the overlay's
+scissor. With the panel shut that is the corner, about 350x24 pixels. In DirectX 12 the panel's work
+goes on the presenting queue with no wait on the CPU. In Vulkan the panel's submit is still waited
+for before the present, as it always was: with NR on the layer waits for the frame anyway; with NR
+off the present now waits for the game's frame on the GPU. `test_gpu_present`, light GPU work, NR
+off: a present's median 0.32 ms without the panel, 1.45 with the corner, 2.0 with the panel open. In
+a native Vulkan game bound by its GPU, with NR off, that wait takes away the overlap of its CPU and
+GPU, so the corner would read the screen's rate lower than it is without it; not measured. DXVK
+presents from a thread of its own, which should lose less. The way out is MangoHud's: a semaphore
+the panel's submit signals and the present waits on, one per swapchain image; not done.
+
+**Two old faults of the Vulkan panel's submit**, both in `nr_menu_layer.c`, found by the counter:
+- Its fence was made unsignalled and reset at the top of each frame, and the UI image's resize waited
+  on it: the first frame the panel drew on a swapchain, and the first after each change of size,
+  stalled a second. `test_gpu_present` showed 1.02-1.08 s at both sizes, with the 11-05 build as with
+  the new one. The fence is made signalled now and reset just before the submit.
+- It waited on the game's present semaphores after the GPU path's capture had taken them
+  (`present_wait_count` was left as it was), and with NR off the present waited again on the
+  semaphores the panel's submit had taken. A binary semaphore is waited once. It now waits only on
+  what nobody took and marks them taken, and the present goes without waits, as after `transfer()`,
+  its fence having seen the work complete. Under validation (next paragraph) the old rule gives
+  `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` (10 reports, the duplicate limit) with the panel
+  open and NR off, and the new one none.
+
+**The panel under validation, and a third fault** (`489ee1f`). `test_gpu_present --sync-validation`
+with the panel built ended at the panel's first frame with 0xC0000409 in ucrtbase (an abort), with
+the 11-05 build too. The cause: the UI's own command buffers, ImGui's for its texture uploads and the
+one-shot for the font, were never given the loader's data, so the validation layer found no device by
+them. Any layer below ours in a player's game, an overlay's or a capture's, would meet the same.
+`vkAllocateCommandBuffers` now reaches ImGui through a thunk that gives each buffer it, and the
+one-shot path does the same. With it the panel runs under synchronization validation: the panel open,
+the counter in a corner and no panel, NR off, 240 frames each, no synchronization or semaphore error.
+Left, older than all this: `VUID-vkCmdDraw-None-09600`, 4 a run, the UI image sampled as GENERAL
+after its render pass left it in COLOR_ATTACHMENT_OPTIMAL (UNDEFINED on the first frame); and a
+warning that `menu.comp`'s `rgba8` storage image is not a B8G8R8A8 swapchain's format. Not fixed.
+vkcube cannot carry the panel (Vulkan 1.0).
+
+**Checked on Windows:** MSVC `build_win.bat` (the three known C4068) and `build_xess.bat` with no new
+warning. The native fixtures, all ten (the seven `test_menu_*` and the three of the input path).
+`test_menu_panel` gained 15 checks: the rates, every
+language's line, the comma, NR off, a pause and totals going back, the corner's bounds, a click on
+the corner, the open panel's line. `test_menu_actions` gained 11, on the place. `test_xess_panel` has
+a second phase, a process of its own: the panel shut, the counter in the top right corner by the
+settings file, every Present counted, the line built, and the rest of the frame the game's.
+Also: `test_nr_xess`, `test_gpu_transport.py` (49, two new), `test_gpu_d3d12.py`, `test_daemon.py`,
+`test_windows_wizard.py` 100, `test_release.py` 22, the bridge, controls, setup and launch suites,
+`claims_check`, `publish_check` and `build_check`. MinGW (gcc 16) CMake of the layer and the D3D12
+client: no warning in the changed files. `test_gpu_present` through the layer with NR off, the panel
+open and the corner, the panel's image dumped: the line, the row and the corner as meant; and the
+same under synchronization validation since `489ee1f` (above). **Not run:** Linux; a game.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `fps-counter`'s head, once it is on
+GitHub: `nr_layer.c` and `nr_layer_state.h` (the counts), `nr_gpu_transport.py` (`detail`) and
+`test_gpu_transport.py`'s two cases. **Next on Windows:** the owner's word on a game check (Mortal
+Kombat 11 with `pacing-game-test.ps1`, the corner on and off, NR on and off; Hogwarts once its
+update is in and the game is free), on merging `fps-counter` into `alchemist` and pushing, and on the
+semaphore present.
+
+## NR through OptiScaler runs in Hogwarts, and the DLSS 5 update prepared for (2026-11-05, evening, branch `alchemist`)
+
+The owner: work on OptiScaler now, take its new version from GitHub, and get ready for Hogwarts
+Legacy's DLSS 5 update, due that night.
+
+**OptiScaler 0.9.4** (its latest release, 07-18; the 7z's SHA-256 is GitHub's digest,
+`575cb4df…0ad`), unpacked in `D:\NRonWindows\nr-game\optiscaler-0.9.4\package`: OptiScaler.dll
+0.9.4.0, its XeSS 2.0.2.68 (the proxy's 72 exports, as the entry below found), and FSR, XeFG and
+fakenvapi files. `nr-game\hogwarts-optiscaler-test.ps1 -Phase install|start|status|clean` puts in
+the three files the test needs (OptiScaler.dll as `dxgi.dll`, its `libxess.dll`, `OptiScaler.ini`
+with Dx12Upscaler=xess, Dxgi=false so no spoofing, ShortcutKey=0x23 since its menu's Insert opens
+NR's panel too, and a log file), then NR from 0.0.4's ZIP through the setup window's backend with the
+API `d3d12`, as a player would; it notes the executable's folder and the saves first, and a hidden
+watchdog cleans after 40 minutes. 0.0.4's Check took OptiScaler's `libxess.dll` beside the
+executable before the plug-in's, as `xess_libraries` orders them.
+- **From the game's XeSS** (UltraQualityPlus, the game's XeFG on), 19:47-20:05: OptiScaler took the
+  game's XeSS calls, loaded NR's `libxess.dll` from its folder ("loaded from Opti dll path"), and the
+  proxy started the daemon itself; every frame was answered on its own frame, 27.7 a second at 1280x720
+  and render scale 0.4 (network 512x320, B), 52 ms from the copy to the answer, none declined.
+- **From the game's FSR 3** (Quality, chosen in the menu by the owner at 20:05:40): OptiScaler took
+  the game's FidelityFX API context (`ffxCreateContext_Dx12`) and made a new XeSS for it; the proxy saw
+  the new init (quality 103, flags 0x10a, velocity scale 854x481, output R16G16B16A16_FLOAT) and its
+  session took the new output at once. 27.7 frames a second again, 64 ms from copy to answer, none
+  declined, to 20:29: 12,148 frames in the run. How the picture looked the owner has not said.
+- Editing `UpscaleMode` in `GameUserSettings.ini` does not choose FSR: the game keeps its options in
+  `SaveGames\<id>\SavedUserOptions.sav` and writes the ini from it at start.
+- The watchdog cleaned at 20:29: game and daemon stopped, Remove NR, OptiScaler's three files out,
+  the executable's folder as before. The owner's options, put back from the copy with the save list
+  and two crash-reporter session configs, are as before the test (XeSS UltraQualityPlus, XeFG x2);
+  against the baseline below the whole game is as it was but Epic's `.ovt` token, rewritten at launch.
+
+**Setup follows OptiScaler** (`d936d63`, local): `optiscaler()` reads `OptiScaler.ini` (beside the
+executable or in an `OptiScaler` folder) and takes the `libxess.dll` OptiScaler loads, in its own
+order: XeSSPath, its own folder (OptiDllPath, an `OptiScaler` folder, the executable's), the name
+alone. Check names it; refuses when OptiScaler upscales with anything but XeSS, or has no
+`libxess.dll` where it looks; warns when OptiScaler's menu is on Insert. On the way, a bug of 0.0.4:
+for a `libxess.dll` beside the executable (OptiScaler's, or a game's own) the record names no folder,
+so Check after Install took NR's `libxess.dll` for one setup has no record of, and Remove NR left
+`nr-xess.log`; `_xess_placed` now takes the executable's folder. The window's API reads "DirectX 12
+(games with XeSS or OptiScaler)" in its four languages, and the README and the release guide say how.
+Checked: `test_windows_wizard.py` 100 (two new), `test_release.py` 22, the window's self-test (89
+controls, 197 keys), and the new Check against the Hogwarts installation while the game ran.
+
+**The DLSS 5 update.** NVIDIA's announcement and the press give November 5 for Hogwarts Legacy (DLSS 5
+on RTX 50 and GeForce NOW, the game's other DLSS updated), no hour; the owner expects it near
+midnight UTC+9. The Epic copy was unchanged at 20:31 (files of 10-15). Ready for it:
+- a baseline, `D:\NRonWindows\nr-game\release-tests\hogwarts-1105-before`: every file's size and time,
+  and the 111 DLLs and executables with version and SHA-256. No `nvngx_dlssnr*.dll` is in the game.
+- `nr-game\dlss5-update-check.ps1`: what the update changed against it, every `nvngx_*`, `sl.*`,
+  `libxess*` and `amd_fidelityfx*` DLL with version, SHA-256 and signer, and a new
+  `nvngx_dlssnr.dll`'s resources against 310.9.16's (`dlss5-dll-compare.py`: WEIGHTS_HT, preset A,
+  147,695,410 bytes; WEIGHTS_CC_SMALL_FP8, preset B, 113,893,343). Both only read.
+- Setup takes a DLL of another version (Check says which were tested), and extraction needs the
+  `WEIGHTS_*` resources. New or changed ones would be a network to recover, as B was (phase72); no
+  DLL in the game would mean the model comes through NVIDIA's driver, not to be had from this game.
+
+**Next on Linux:** `make test` and CTest once `d936d63` is on GitHub (`test_windows_wizard.py`
+gained two cases, and `windows_wizard_core.py` changed). **Next on Windows:** the update's check;
+the owner's word on pushing `d936d63` and on the release that takes it.
+
+## 0.0.4 built and checked; how NR could reach OptiScaler's and FSR 3.1's games (2026-11-05, later, branch `alchemist`)
+
+The owner: prepare the release, unhurried, and can NR take OptiScaler (#38), or at least hook FSR 3
+or newer?
+
+**0.0.4, published on 11-05 at the owner's word** ("После этих изменений можешь релизить"), after
+the owner had the notes cut to what a player needs: Python included, the faster network (on Arc
+A-series cards, the same driver, expected and not measured), what is needed, how to install, the
+limits. Tag `v0.0.4` at `8232603`; `master`, `newnr` and `alchemist` fast-forwarded
+`0456e99..9b73d96` on GitHub and here. The release "DLSS-NR 0.0.4 for Windows" is the latest; its
+asset's digest is the ZIP's SHA-256 below, and its body is `work\pr-replies\release-notes-0.0.4.md`
+without the draft comment. `8232603`: `VERSION` 0.0.4 (as proposed; the
+owner did not name another), the README's "You need" without its Python line, Mortal Kombat 11's
+row at 0.4 and 1.0 as measured with this code (below, 11-04 night and 11-05), an A770 owner's
+three games at 1920x1080 (#37) in the tested-games table and in `players.json`, and that card's
+1080p figure in what to expect. The next commit gives Mortal Kombat 11's row as a band (below in
+this entry) and fixes `docs/DEVS.md`'s line on what a Windows release needs; neither file is in
+the ZIP, whose `README.md` is `docs/RELEASE-QUICKSTART.md`.
+- Built by `tools\deploy.bat --release D:\NRonWindows\rel\final-0.0.4\dlss-nr-windows-0.0.4`
+  (`NR_PYTHON` the native venv, the checkout clean) and zipped by `nr-game\zip-release.py`:
+  **`dlss-nr-windows-0.0.4-x64.zip`, 46 732 436 bytes, SHA-256
+  `a08b1ccca842989aa6ef8273a92ef8e10b14a169affb8c6d25b392f7227ece5b`**, `release-metadata.json`
+  naming 0.0.4, `8232603`, Python 3.14.10, NumPy 2.5.4, safetensors 0.8.0. The notes are
+  `work\pr-replies\release-notes-0.0.4.md`. `rel\dlss-nr-windows-0.0.4` and `rel\check-0.0.4` are
+  11-01's first build of 0.0.3.1 under this name, stale, and were left as they are.
+- **From the unpacked ZIP** (`rel\final-0.0.4\check`), on the stand-in
+  (`nr-game\standin-release-check.ps1`, which now sends the speed test a request naming no network,
+  as the button does, and saves the report apart from the bridge's result): discover chose
+  `python\python.exe`; Check; Install with both networks in 7 s; 623 frames, none rejected, by a
+  daemon on `python\python.exe`; the speed test, A (71 blocks) then B (31) in 39 s, B's network at
+  1920x1080 163 ms at 1.0 and 30 at 0.4, A's 333 and 58; Save report, 19 checks, none failing;
+  Remove NR, the folder as before.
+- **Mortal Kombat 11 from the same folder**, as a player gets it: network B, frames on the GPU,
+  the daemon on `python\python.exe` (`nr-game\release-mk11-check.ps1`, render scale 0.4 and then
+  1.0 through the root's `nr_settings.json`, put back after). In every run each frame took the GPU
+  path with nothing refused, no daemon outlived the game, and the folder was as before. The first
+  pair ran while `explorer.exe` held a core and Defender read the unpacked files: 32.1 frames a
+  second at 0.4 (network 17 ms) and 9.7 at 1.0 (85 ms). Once `quiet-check.ps1` read the machine
+  quiet: **34.3 at 0.4 (network 17 ms) and 9.8 at 1.0 (84 ms)**. The same code ran 38.3-38.7 and
+  10.4-10.6 on 11-04 night (network 16 and 81-82) and 38.0 from `e72be76`'s ZIP this morning: the
+  network is within 1-3 ms of those, the rest of the frame is not. The battery was charging (53 to
+  66 %); what took the rest is not established. The README's row gives the band, 34-38 at 0.4
+  (the next commit).
+
+**OptiScaler and FSR 3.1: read, nothing built.**
+- **OptiScaler** (GPL-3.0; its source read at `5bf6d19` in the session's scratchpad, nothing
+  copied). On DirectX 12 its upscaler is XeSS by default. `XeSSProxy::InitXeSS` loads
+  `libxess.dll` from `[Libraries] XeSSPath` when set, else from its own folder (an `OptiScaler`
+  folder beside the executable when there is one, else the executable's), else by name; it matches
+  names exactly, so the proxy's `libxess_nr_orig.dll` is not taken for XeSS. So DLSS or FSR inputs
+  → OptiScaler → XeSS → NR's proxy should need no code where setup puts the proxy in that folder:
+  `xess_libraries` takes the one beside the executable first, and looks in the folders under it
+  where that has none. A game's own XeSS in an Unreal plug-in would be taken before an `OptiScaler`
+  folder's, but such a game reaches NR without OptiScaler.
+- **XeSS SDK 3.0** (intel/xess, 3.0.2 of 07-24): `xess.h` and `xess_d3d12.h` are 2.0.1's but for
+  two comment typos, so the init and execute structs the proxy reads are unchanged. Its
+  `libxess.dll` is 77 795 704 bytes, as is the 2.0.2.68 that OptiScaler 0.9.0.12 carries, and that
+  one exports exactly the proxy's 72 names (`pe_exports`, on the copy below). The "XeSS 3.0" of
+  #38 is XeSS-SR 2.0.2.68 beside a newer frame generation, and Check takes it as tested.
+- **Untested:** the cut beside OptiScaler's own D3D12 hooks (its frame generation hooks the queue
+  and the swapchain); OptiScaler's DirectX 11 path (XeSS through 11on12 or `libxess_dx11.dll`,
+  which the proxy does not stand in front of); and #38's Stellar Blade, where it is not known
+  whether Check refused, the wrong executable or API was chosen, or the proxy got no frame. The
+  reply, posted at the owner's word (issuecomment-6654620978), gives the steps and asks for
+  Check's words, Save report and `nr-xess.log`.
+- **On this PC:** `Mortal Kombat 1\MK12\Binaries\Win64` holds only mods (OptiScaler 0.9.0.12 with its
+  XeSS and FSR files, and a `dxgi.dll` from a d3d12-proxy project that reports an iGPU's memory
+  size to the game); the game itself is gone (no `MK12.exe`, no Steam manifest). Hogwarts Legacy
+  ships `Phoenix\Binaries\Win64\amd_fidelityfx_dx12.dll` 1.0.1.41314, FidelityFX SDK 1.1's FSR 3.1,
+  beside its XeSS 2.0.2.53, so it can carry both tests: OptiScaler with the game's DLSS or FSR in
+  and XeSS out, and an FSR 3.1 proxy.
+- **FSR 3.1:** games call AMD's FidelityFX API DLL, five exports (`ffxCreateContext`,
+  `ffxDestroyContext`, `ffxConfigure`, `ffxQuery`, `ffxDispatch`); FSR 2 and 3.0 are mostly linked
+  into the game, with nothing to stand in front of. A proxy as for XeSS would forward all five,
+  frame generation and its swapchain included, and on an upscale dispatch
+  (`FFX_API_DISPATCH_DESC_TYPE_UPSCALE`) of a context it saw created run NR on FSR's output, as
+  `mode=after` does, with the same cut, passes, session and panel. FidelityFX SDK 2.x games call it
+  `amd_fidelityfx_loader_dx12.dll`. New would be the FidelityFX structs (AMD's MIT headers), the
+  resource states they pass, a setup API and tests: some days, then Hogwarts with FSR 3.1 chosen.
+  It reaches games with FSR 3.1 and no XeSS without OptiScaler.
+
+**Next on Linux:** `git fetch`, fast-forward `master`, `newnr` and `alchemist` to GitHub's, then
+`make test` in both memory modes and CTest at its head (Open items). **Next on Windows:** #38's
+reporter's answer; the owner's word on OptiScaler in Hogwarts (the 0.9.0.12 copy on this disk, or
+0.9.4), and on the FSR 3.1 proxy.
 
 ## `cleanup`: a shorter brief, `make test` in parallel, and the leftovers removed (2026-11-05, branch `cleanup`, PR #39)
 
@@ -357,6 +895,103 @@ whether the working rules take `make test-gpu` for the second memory mode, and C
 when CMake changes. Proposed and not done: INT8 out of the main line (it is in libxmx, the shader
 lists and the release's file lists), Configure/Restore Steam (tied to the live launch path), one
 build system instead of three.
+
+## Windows releases carry their own Python (2026-11-05, branch `alchemist`)
+
+The owner asked for an easier install, with no Python for a player to set up. Python's own share
+of a frame is half a millisecond (below, 11-04 night, latest), so a daemon in C would buy nothing
+worth its weeks; the release carries the interpreter instead. The change is `e72be76`.
+
+- **What a release carries:** python.org's embeddable CPython 3.14.10 for x64 in `python\`, with
+  NumPy 2.5.4 and safetensors 0.8.0 unpacked from their PyPI wheels into
+  `python\Lib\site-packages`. `dist-tools/python.json` pins the three files by URL and the SHA-256
+  python.org's release page and PyPI publish. `scripts/fetch_python.py` takes them into
+  `work\python` once, refusing any other file, a wheel member pip would place elsewhere and one
+  that would land outside, and adds the `._pth` line for the wheels' folder; `tools\deploy.bat
+  --release` runs it beside `fetch_dxvk.py`, and `release-metadata.json` names the versions.
+  NOTICE names the three and where their licences are in a release.
+- **The embeddable package is isolated by its `._pth`, as `-I` would make it:** no PYTHONPATH, no
+  user site-packages, and not the script's own folder on sys.path (`sys.flags.safe_path`,
+  checked here). `windows_wizard.py` and `nr_daemon.py` now put their own folder there; every
+  other script a release runs already set its paths, or is loaded by its path (MLX-DLSS's tools
+  import only the standard library, NumPy and safetensors). The package has no `venv`,
+  `ensurepip` or `tkinter`.
+- **What chooses it:** the window's `Find-BootPython`, the backend's `discover_python` and
+  `setup.bat`, each after `NR_PYTHON`, a developer's choice. `discover_python` probes it with the
+  time a first NumPy import takes under Windows' scanner (`_python_info`, 30 s), not the 2 s each
+  other candidate gets. Prepare Python leaves a Python with both packages as it is.
+- **Size:** the ZIP is 46.7 MB, against 0.0.3.1's 21.6; `python\` is 64 MB of the 116 unpacked.
+
+**Checked on Windows:** `test_release.py` 22 (a new fetch case), `test_windows_wizard.py` 98 (three
+new), the bridge 7, `test_windows_launch.py` 43, and the window's self-test (89 controls, 197
+keys). The shipped interpreter itself, run without its `._pth`: the 50 CMake GPU, image, ref and
+tool tests, and the Windows layer tests; four Linux-only layer tests fail there as on 3.12.
+- **From the unpacked ZIP of `e72be76`**, on a stand-in (the SDK's vkcube in a scratch folder,
+  `D:\NRonWindows\nr-game\standin-release-check.ps1`), every call on `python\python.exe`: discover
+  chose it; Check (3.14.10, NumPy 2.5.4, safetensors 0.8.0); Install with both networks out of the
+  310.9.16 DLL, in 6 s; 649 frames, all answered, by a daemon on `python\python.exe`; the speed
+  test of A and B in 34 s (B at 1280x720: 16 and 80 ms at 0.4 and 1.0, A 29 and 152); Save report
+  with 19 checks and none failing; Remove NR, the folder as before.
+- **In Mortal Kombat 11** from the same folder, B at 0.4: 1520 frames in 40 s, 38.0 a second, network
+  16 ms, every one through the GPU path; one daemon process (a venv's was two, its launcher and
+  the interpreter); the game's folder and its ten writable files as before, no launch options in
+  Steam. `quiet-check.ps1` read the machine busy just before (14 % CPU, the scanner reading the
+  unpacked files, likely), so the rate is a check, not a measurement.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `e72be76` (Open items). **Next on
+Windows:** the next release, at the owner's word (Open items).
+
+## `6ef670e` in a game: Mortal Kombat 11 (2026-11-04, night, latest, branch `alchemist`)
+
+At the owner's word, the new order in a game, and, as the owner asked, at 1280x720 with render
+scale 1.0 as well as the release's 0.4. A release built at `0456e99` (`tools\deploy.bat
+--release`, the weights copied in) went into Mortal Kombat 11 through the setup window's backend,
+as a player's goes: DirectX 11 through DXVK, frames on the GPU, 1280x720.
+`nr-game\pacing-game-test.ps1` counts the frames the daemon answers in 40 s after a 15 s warm-up
+and reads the network's time from its log, each run in a game and a daemon of its own. The old
+order was set with `XMX_STAGED_WALK_Y=0` in the installed `nr-env.txt`, the new one by nothing, as
+players get it; two rounds, the second in reverse order. Intel's 101.9150, on mains, "best
+performance", `quiet-check.ps1` quiet before and after. The runs are in
+`D:\NRonWindows\nr-game\release-tests\walk1104-*` (0.4) and `walk1104s-*` (1.0), and the two
+series scripts beside `pacing-game-test.ps1`.
+
+Frames the daemon answered a second, and the network's ms (the daemon's split, in whole ms):
+
+| | old order | new order |
+| --- | --- | --- |
+| B at 1.0 (network 1344x768) | 9.75-9.82, 87-89 | 10.44-10.57, 81-82 |
+| A at 1.0 | 5.40-5.47, 170 | 5.85-5.92, 154-157 |
+| B at 0.4 (network 512x320) | 36.1-36.8, 16-17 | 38.3-38.7, 16 |
+| A at 0.4 | 23.3-23.8, 32-33 | 22.8-23.8, 32-33 |
+
+- **At render scale 1.0 the network takes 7-9 % less, A and B alike, and the game gets a frame
+  6-10 % more often.** At 0.4 B's frame comes 5-6 % more often in both rounds, and A's runs do
+  not tell the two orders apart: at 512x320 the GEMMs' operands mostly stay in the cache, where
+  the walk matters little (the entry below).
+- All 16 runs: every frame on the GPU path, none refused or fallen back; no daemon outlived its
+  game; the game's folder as before after each, its ten files a run could write byte-identical to
+  the October backup, and no launch options in Steam.
+- The picture was not looked at: the bytes are the same by `test_staged_packed.py` and the heads
+  (the entry below).
+
+**Python's share of the frame, the same night** (the owner asked whether the daemon's Python
+costs speed). The GPU image path run as a game's frame goes through it, the frame already on the
+device, with every call into libxmx timed (`D:\NRonWindows\nr-game\profile-frame.py`, `-I`): Python
+and numpy between those calls take 0.48-0.55 ms a frame, 2.4 % of B's 20.1 ms at 0.4 and 0.4 % of
+A's 155.5 at 1.0, and the process's CPU time is 0.6-1.3 ms a frame. Outside the network's one
+graph replay, the frame is the image passes' eight submits with their waits, 3.7-5.9 ms. So a
+daemon written in C would take at most half a millisecond off a frame; fewer submits is the larger
+lever, unmeasured.
+
+**A trap on the way.** `tools\build_win.bat`, run from a folder other than the checkout, stops at
+the layer's link (`LNK1181`, `nr_layer.obj`): the layer's C objects are compiled with no `/Fo`, so
+they land in the current folder, and unlike the C++ objects nothing moves them. Here they landed in
+`D:\NRonWindows` and were removed. `2c04f2f` gives them `/Fo:"%REPO%\\"`, as the x86 step has:
+built from another folder and from the checkout, no object is left in either, all 62 outputs keep
+their sizes, and the layer's fixtures and `test_daemon.py` pass.
+
+**Next on Linux:** nothing waits. **Next on Windows:** the residual at K = 64 and the QKV gather,
+if the owner wants them; the next release, which takes `6ef670e` to players, at the owner's word.
 
 ## Checked on Linux: `6ef670e`, and the walk on Mesa (2026-11-04, night, later, branch `alchemist`)
 
@@ -405,6 +1040,8 @@ entries of 10-30 and 10-31 moved word for word to `notes/archive/HANDOFF-2026-10
 **Next on Linux:** nothing waits. **Next on Windows:** `git fetch`, then fast-forward `master`,
 `newnr` and `alchemist` to GitHub's; then the entry below's: a game with the new build, at the
 owner's word.
+
+Done: both on Windows, the game in Mortal Kombat 11 (above, 11-04 night, latest).
 
 ## The staged GEMM reads its blocks from Intel's Y-major walk (2026-11-04, night, branch `alchemist`)
 

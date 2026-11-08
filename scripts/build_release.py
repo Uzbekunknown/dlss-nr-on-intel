@@ -37,6 +37,12 @@ GPU_PROBE = ("work/coopmat_probe.exe", "nr_gpu_probe.exe")
 DXVK = tuple(f"work/dxvk/{directory}/{name}" for directory in ("x64", "x32")
              for name in ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"))
 DXVK_INFO = ("work/dxvk/LICENSE", "work/dxvk/VERSION")
+# The interpreter a Windows release runs on, from scripts/fetch_python.py: python.org's embeddable
+# CPython with numpy and safetensors beside it, so a player installs no Python and setup downloads
+# no packages. Copied whole as `python\`; these are what must be there, licences included.
+PYTHON_RUNTIME = "work/python"
+PYTHON_FILES = ("python.exe", "NR-PYTHON.json", "LICENSE.txt",
+                "Lib/site-packages/numpy/__init__.py", "Lib/site-packages/safetensors/__init__.py")
 # Licences that must travel with the package, as (source in this checkout, path in a release).
 # `src/gpu/publish.glsl` and `src/bench/e4m3_probe.comp` both cite `licenses/rdna3-e4m3-MIT.txt`
 # by that path, and those two files ARE shipped - a release without it therefore points at
@@ -175,6 +181,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         files.append(root / XESS_PROBE[0])
         files.append(root / GPU_PROBE[0])
         files += [root / name for name in (*DXVK, *DXVK_INFO)]
+        files += [root / PYTHON_RUNTIME / name for name in PYTHON_FILES]
         files += [root / "dist-tools" / name for name in WINDOWS_UI]
         files += [root / "src/tools" / name for name in WINDOWS_TOOLS]
     missing = [str(path.relative_to(root)) for path in files if not path.is_file()]
@@ -232,6 +239,10 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
                 shutil.copy2(root / "dist-tools" / name, stage / name)
             for name in WINDOWS_TOOLS:
                 shutil.copy2(root / "src/tools" / name, stage / "scripts" / name)
+            shutil.copytree(root / PYTHON_RUNTIME, stage / "python",
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        runtime = (json.loads((root / PYTHON_RUNTIME / "NR-PYTHON.json").read_text(encoding="utf-8"))
+                   if windows else None)
         # Bug reports from a prebuilt package do not require an installed Git.
         commit = source_commit(root)
         (stage / "release-metadata.json").write_text(
@@ -239,7 +250,9 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
                         "source_commit": commit,
                         "platform": platform, "windows_wizard": windows,
                         "dxvk": (root / "work/dxvk/VERSION").read_text(encoding="utf-8").strip()
-                        if windows else None}, indent=2) + "\n",
+                        if windows else None,
+                        "python": runtime["python"] if runtime else None,
+                        "python_packages": runtime["packages"] if runtime else None}, indent=2) + "\n",
             encoding="utf-8")
         (stage / "setup.sh").chmod(0o755)
         for name in ("LICENSE", "NOTICE"):

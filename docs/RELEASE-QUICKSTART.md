@@ -2,11 +2,14 @@
 
 This folder contains the Intel runtime, the Vulkan layer, shaders and Python
 modules. It does not contain NVIDIA's DLL or model weights. Windows releases carry
-the layer for **64-bit and 32-bit games**, and DXVK for DirectX 8–11 games.
+the layer for **64-bit and 32-bit games**, DXVK for DirectX 8–11 games, and **their own
+Python** in `python\` (CPython 3.14 with `numpy` and `safetensors`), so nothing else
+needs installing.
 
-You need a supported Intel Xe2 GPU, a working Vulkan graphics driver, **64-bit
-Python 3** with `numpy` and `safetensors`, and your own compatible
-`nvngx_dlssnr.dll`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
+You need a supported Intel Xe2 GPU, a working Vulkan graphics driver and your own
+compatible `nvngx_dlssnr.dll` (Hogwarts Legacy carries one since its DLSS 5 update, in
+`Engine\Plugins\Runtime\Nvidia\StreamlineCore\Binaries\ThirdParty\Win64`); on Linux, also **Python 3** with `numpy` and
+`safetensors`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
 and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
 A770) is experimental: NR has computed correctly on six A770s, at speeds that vary. If you
 have one, double-click `nr_gpu_probe.exe` in this folder and post the `nr-gpu-report.txt`
@@ -22,15 +25,15 @@ Extract the Windows ZIP into a permanent folder and double-click **`NR-Setup.exe
 (`NR-Setup.cmd` is an alternative).
 The window uses Windows PowerShell/WPF, so it opens without Python or a compiler.
 Select your own `nvngx_dlssnr.dll` and the **game's executable**, 64-bit or 32-bit.
-Python is detected automatically; you can choose another native Windows x64 interpreter.
-Use **Check**, then **Install NR**. If only the Python packages are missing,
-installation prepares a private Python environment inside this release. The
-separate **Prepare Python** button also creates that local environment; it does
-not install packages globally. A missing Python installation still needs to be
-installed from [python.org](https://www.python.org/downloads/windows/).
+The window chooses the release's own Python in `python\`; you can choose another native
+Windows x64 interpreter. Use **Check**, then **Install NR**. If a Python you chose lacks
+the packages, installation prepares a private Python environment inside this release
+from it, and the separate **Prepare Python** button does the same; neither installs
+packages globally, and neither is needed with the release's own Python.
 
 Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
-**DirectX 12 (games with XeSS)** for a DirectX 12 game that offers Intel XeSS. For Vulkan and
+**DirectX 12 (games with XeSS or OptiScaler)** for a DirectX 12 game that offers Intel XeSS,
+or one with OptiScaler set to XeSS (below). For Vulkan and
 DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for DirectX 8–11 DXVK
 3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
 file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
@@ -43,11 +46,22 @@ the game's own stays beside it as `libxess_nr_orig.dll`. In the game, choose **X
 the upscaler: NR then runs on XeSS's output, the upscaled scene before the game draws its
 interface, so the interface stays as the game drew it. The first frame through XeSS starts
 NR's daemon, which takes a few seconds to load the network; **Enable NR** and **Disable NR**
-work while the game runs. NR has run in Hogwarts Legacy (XeSS 2.0.2): at 1280×720 with network
-B about 26 frames a second at render scale 0.4 and 21 at 0.5 on the Arc 140V, and with the
-game's frame generation on. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
+work while the game runs. NR has run in Hogwarts Legacy (XeSS 2.0.2, before and after the game's
+DLSS 5 update): at 1280×720 with network B about 26 frames a second at render scale 0.4 and 21
+at 0.5 on the Arc 140V; with the game's frame generation the screen shows twice as many, about
+52. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
 puts the game's `libxess.dll` back; when a game update has replaced NR's, use **Remove NR**
 and then **Install NR** again.
+
+**DirectX 12 games without XeSS, through OptiScaler.** [OptiScaler](https://github.com/optiscaler/OptiScaler)
+takes over a game's DLSS, FSR or XeSS and upscales with XeSS, from the `libxess.dll` that comes
+with it, so NR runs after OptiScaler's XeSS. Put OptiScaler's files beside the game's
+executable as its guide says, and in `OptiScaler.ini` keep its upscaler on XeSS
+(`Dx12Upscaler=auto` or `xess`) and move its menu off Insert, which opens NR's panel
+(`ShortcutKey=0x23` puts it on End). Then choose the game's executable and **DirectX 12** in
+setup: **Check** names OptiScaler's `libxess.dll` and says if its settings keep NR from the
+frames. Use **Remove NR** before you remove OptiScaler. Checked so far in Hogwarts Legacy with
+OptiScaler 0.9.4 taking the game's XeSS.
 
 For a Vulkan game, choose the executable that draws with Vulkan: NR works only in the one
 chosen. Steam starts DOOM (2016)'s `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the
@@ -87,6 +101,16 @@ fresh processed game frames; processed-frame throughput is not a game FPS measur
 **In the game**, **Insert** opens NR's panel, where the settings below and the network change as
 you play, and **Home** turns NR on and off. While the panel is open the game does not get your
 keys and clicks, unless it reads the keyboard directly or you use a gamepad.
+
+The top of the panel counts frames: **Screen** is what the game shows, **NR** the frames NR
+redrew. With a game's frame generation the first is about twice the second, since the generated
+frames come after NR. **Frame counter** keeps the count in a corner of the screen with the panel
+shut.
+
+**Profile `hogwarts`** is Hogwarts Legacy's own tuning, as NVIDIA and the game's developers set it
+for DLSS 5. It changes the tone half as much as `standard` and draws a little less detail, and
+faces and skin milder still. The network finds the skin itself. It works in any game, and was
+made for that one.
 
 Open **NR controls** for the same ten live settings as Linux `nr-panel`: render
 scale, minimum network side, profile, intensity, detail strength, colour strength,
@@ -144,7 +168,8 @@ Windows, and has a language selector at the top. The manual setup below remains 
 
 ## Manual setup
 
-Install the Python packages into the interpreter the daemon will use:
+On Windows, `setup.bat` takes the release's own `python\python.exe`, which has the
+packages. Anywhere else, install them into the interpreter the daemon will use:
 
 ```text
 python -m pip install numpy safetensors

@@ -144,6 +144,19 @@ def carries_motion(p):
     return p["input_alloc"] >= p["bytes"] + p["width"] * p["height"] * MOTION
 
 
+def network_us(last):
+    """The network's time for the frame just answered, in microseconds, for a FRAME's SUCCESS.
+
+    The reply's `detail` was 0 for a FRAME until 2026-11-05 and no client read it, so it carries
+    this now, for the in-game panel's frame counter (nr_gpu_wire.h); a client before then ignores
+    it. 0 when the pipeline measured nothing, which a client reads as "not reported".
+    """
+    ms = (last or {}).get("network_ms")
+    if not isinstance(ms, (int, float)) or isinstance(ms, bool) or not ms > 0:
+        return 0
+    return min(int(round(ms * 1000.0)), 0xFFFFFFFF)
+
+
 class _Context:
     def __init__(self, lib, packet, process):
         self.lib, self.packet, self.process = lib, packet, process
@@ -381,7 +394,7 @@ class GPUSharedTransport:
             # Pixel ownership still transfers through GPU queue-family barriers.
             self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
                          "sync": "fence" if p["version"] == 2 else "semaphore"}
-            self._reply(connection, p, 0)
+            self._reply(connection, p, 0, network_us(self.last))
             return self.last
         except Exception:
             context.usable = False
@@ -445,7 +458,7 @@ class GPUSharedTransport:
             context.answered = value
             self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
                          "sync": "d3d12"}
-            self._reply(connection, p, 0)
+            self._reply(connection, p, 0, network_us(self.last))
             return self.last
         except Exception:
             context.usable = False

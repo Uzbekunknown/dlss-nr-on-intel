@@ -227,6 +227,101 @@ int main(void)
               detail);
     }
 
+    /* ---- the frame counter's place: at once, kept by Save, back with Revert, kept by Reset ----
+     *
+     * A panel preference like the language, kept the way the knobs are: choosing a corner shows
+     * the counter there now, writes nothing, and goes with Revert; Save writes `menu_counter`;
+     * Reset - the picture's defaults - leaves it where it is. */
+    {
+        nr_menu_bridge_destroy(b);
+        f = fopen(path, "wb");
+        if (!f) { printf("  FAIL  could not rewrite the fixture\n"); return 1; }
+        fputs("{\n  \"render_scale\": 0.6,\n  \"menu_language\": 2\n}\n", f);
+        fclose(f);
+        b = nr_menu_bridge_create_headless(path, 0);
+        if (!b) { printf("  FAIL  no bridge for the counter\n"); return 1; }
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_PANEL,
+              "a file without menu_counter keeps the counter in the panel", detail);
+
+        nr_menu_bridge_set_counter(b, NR_COUNTER_TOP_RIGHT);
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_TOP_RIGHT, "a corner chosen takes effect at once",
+              detail);
+        int found = file_says(path, "menu_counter", text, sizeof text);
+        snprintf(detail, sizeof detail, "menu_counter = %s", found ? text : "(absent)");
+        check(!found, "and is not written before Save", detail);
+
+        nr_menu_bridge_revert(b);
+        nr_menu_bridge_update(b, 1.0f / 60.0f);
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_PANEL, "Revert brings the saved place back",
+              detail);
+
+        nr_menu_bridge_set_counter(b, NR_COUNTER_BOTTOM_LEFT);
+        int saved = nr_menu_bridge_save(b);
+        found = file_says(path, "menu_counter", text, sizeof text);
+        snprintf(detail, sizeof detail, "save %d, menu_counter = %s", saved, found ? text : "(absent)");
+        check(saved == 1 && found && atoi(text) == NR_COUNTER_BOTTOM_LEFT, "Save writes menu_counter",
+              detail);
+        found = file_says(path, "menu_language", text, sizeof text);
+        snprintf(detail, sizeof detail, "menu_language = %s", found ? text : "(missing)");
+        check(found && atoi(text) == 2, "and keeps the language beside it", detail);
+
+        nr_menu_bridge_reset(b);
+        nr_menu_bridge_update(b, 1.0f / 60.0f);
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_BOTTOM_LEFT,
+              "Reset leaves the counter where it is", detail);
+
+        nr_menu_bridge_set_counter(b, NR_COUNTER_PLACES);   /* not a place */
+        nr_menu_bridge_set_counter(b, -1);
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_BOTTOM_LEFT, "a place that is none is refused",
+              detail);
+
+        /* Back to the panel: the key is in the file now, so Save writes it in place, once. */
+        nr_menu_bridge_set_counter(b, NR_COUNTER_PANEL);
+        nr_menu_bridge_save(b);
+        FILE *g = fopen(path, "rb");
+        int occurrences = 0;
+        if (g) {
+            static char all[8192];
+            size_t n = fread(all, 1, sizeof all - 1, g);
+            all[n] = '\0';
+            fclose(g);
+            for (const char *p = all; (p = strstr(p, "\"menu_counter\"")) != NULL; ++p) ++occurrences;
+        }
+        found = file_says(path, "menu_counter", text, sizeof text);
+        snprintf(detail, sizeof detail, "%d occurrence(s), menu_counter = %s", occurrences,
+                 found ? text : "(absent)");
+        check(occurrences == 1 && found && atoi(text) == NR_COUNTER_PANEL,
+              "Save puts the panel back in place, once", detail);
+
+        /* The next start: a saved corner comes back, and a place this panel does not know is the
+         * panel alone rather than a corner nobody chose. */
+        nr_menu_bridge_destroy(b);
+        f = fopen(path, "wb");
+        if (!f) { printf("  FAIL  could not rewrite the fixture\n"); return 1; }
+        fputs("{\n  \"menu_counter\": 4\n}\n", f);
+        fclose(f);
+        b = nr_menu_bridge_create_headless(path, 0);
+        if (!b) { printf("  FAIL  no bridge for the saved corner\n"); return 1; }
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_BOTTOM_RIGHT, "a saved corner comes back at start",
+              detail);
+        nr_menu_bridge_destroy(b);
+        f = fopen(path, "wb");
+        if (!f) { printf("  FAIL  could not rewrite the fixture\n"); return 1; }
+        fputs("{\n  \"menu_counter\": 7\n}\n", f);
+        fclose(f);
+        b = nr_menu_bridge_create_headless(path, 0);
+        if (!b) { printf("  FAIL  no bridge for the unknown place\n"); return 1; }
+        snprintf(detail, sizeof detail, "counter = %d", nr_menu_bridge_counter(b));
+        check(nr_menu_bridge_counter(b) == NR_COUNTER_PANEL, "an unknown place starts in the panel",
+              detail);
+    }
+
     nr_menu_bridge_destroy(b);
     remove(path);
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);

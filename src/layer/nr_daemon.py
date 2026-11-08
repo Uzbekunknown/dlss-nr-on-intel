@@ -47,6 +47,11 @@ for _i, _arg in enumerate(sys.argv):
         break
 if os.environ.get("NR_ROOT"):
     ROOT = pathlib.Path(os.environ["NR_ROOT"])
+# This file's folder too, for nr_pipe, nr_alloc and the rest beside it. A Windows release's own
+# Python leaves it off sys.path: its ._pth makes it isolated, as -I would
+# (scripts/fetch_python.py). Behind src/ref and src/gpu, where a script's folder always was.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "src" / "ref"))
 sys.path.insert(0, str(ROOT / "src" / "gpu"))
 
@@ -187,6 +192,10 @@ class Settings:
     KNOBS = ("profile", "intensity", "detail_strength", "colour_strength", "render_scale",
              "temporal", "cut_limit", "hold", "release", "min_extent")
 
+    # What `_read_json` returns, when asked, for a file that was there at its last look and is not
+    # now: the panel removes its preview when its process ends (`nr_menu_bridge_destroy`).
+    _GONE = object()
+
     def __init__(self, args):
         self.path = args.settings
         self.stamp = None
@@ -209,6 +218,14 @@ class Settings:
         # The last settings object read, kept so the preview can be applied over it on a frame where
         # the saved file itself did not change. See `refresh`.
         self.saved_values = {}
+        # And the last preview read, kept for the other direction: a frame where only the saved
+        # file changed must still have the panel's unsaved edits on top. The panel keeps them for
+        # the session (closing it dismisses, nothing is undone), and the saved file can change under
+        # them: the panel's own language key writes it (`save_language_only`), and so do the setup
+        # window and `nr-ctl`. Without this, such a write dropped the edits from the picture while
+        # the panel still showed them (Hogwarts Legacy, 2026-11-06: a previewed render scale of 0.6
+        # fell back to the saved 0.4). None while there is no preview. See `refresh`.
+        self.preview_values = None
         for knob in self.KNOBS:
             setattr(self, knob, getattr(args, knob, None))
         # **The network is one setting, and it is this one.**
@@ -304,11 +321,23 @@ class Settings:
         preview" mean "back to what is saved", which is the behaviour the user asked for.
         """
         saved = self._read_json(self.path, "saved", "stamp")
-        preview = self._read_json(self.live_path, "preview", "live_stamp")
+        fresh = self._read_json(self.live_path, "preview", "live_stamp", gone=self._GONE)
 
         # Nothing to do until one of them has actually changed.
-        if saved is None and preview is None:
+        if saved is None and fresh is None:
             return
+
+        # The preview is KEPT as well, the mirror of the saved values below. When only the saved
+        # file changed, the preview reads back as "unchanged" - and unchanged means it still stands,
+        # so it goes on top of the new saved values instead of being left out (`preview_values`).
+        # A preview removed since the last look is the end of the menu that wrote it, and that
+        # alone is a change: before, a missing file read as "unchanged" too, and the removal did
+        # nothing until some other write came.
+        if fresh is self._GONE:
+            self.preview_values = None
+        elif fresh is not None:
+            self.preview_values = fresh
+        preview = self.preview_values
 
         # A preview whose author is gone, and that no Save confirmed, is not a preview.
         #
@@ -338,8 +367,12 @@ class Settings:
         # moved another knob. The PID answers the only question that matters - is anyone still
         # standing behind this file - and a second, weaker rule on top of it produced false
         # rejections that turned the live effect off.
+        #
+        # It is asked of the kept preview at every refresh, since its menu can end while the file
+        # stays, and a refused preview is forgotten, so that a later process given the same PID
+        # does not bring it back.
         if preview is not None and not self._owner_alive(preview) and not self._confirmed(preview):
-            preview = None
+            preview = self.preview_values = None
 
         # The saved values are KEPT, not just read when they change.
         #
@@ -354,7 +387,8 @@ class Settings:
         merged = dict(self.saved_values)
         if preview:
             merged.update(preview)
-        self._apply(merged, "preview" if preview else "saved")
+        # Named for the file that changed: a saved write under a kept preview is the saved file's.
+        self._apply(merged, "preview" if preview and fresh is not None else "saved")
 
         # **The network, which is not a knob and so is not in `KNOBS`.**
         #
@@ -432,11 +466,13 @@ class Settings:
         except (PermissionError, OSError):
             return True
 
-    def _read_json(self, path, source, attr):
+    def _read_json(self, path, source, attr, gone=None):
         """The object in `path`, or None when there is nothing new to read.
 
         None means "unchanged or unreadable", which is distinct from an empty dict - the caller
-        uses it to tell "no new information" from "this file now says nothing".
+        uses it to tell "no new information" from "this file now says nothing". A file that was
+        there at the last look and is missing now returns `gone`, which is None unless the caller
+        asks to be told: for the preview, removal is news, the end of the menu that wrote it.
 
         The stamp is compared first because it is one stat call, but a stamp match is NOT the
         answer on its own: this filesystem gives consecutive writes the SAME `st_mtime_ns` when
@@ -451,8 +487,12 @@ class Settings:
             stamp = os.stat(path).st_mtime_ns
         except OSError:
             # A missing preview is the normal case: it appears when the menu is first moved and is
-            # not required to exist. A missing settings file is equally normal on a first run.
-            return None
+            # not required to exist. A missing settings file is equally normal on a first run. The
+            # stamp is forgotten, so a file that comes back is read even with its old stamp.
+            was_there = getattr(self, attr) is not None
+            setattr(self, attr, None)
+            setattr(self, attr + "_bytes", None)
+            return gone if was_there else None
 
         same_stamp = (stamp == getattr(self, attr))
         setattr(self, attr, stamp)

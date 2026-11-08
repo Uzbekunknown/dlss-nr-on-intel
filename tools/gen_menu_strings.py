@@ -99,6 +99,31 @@ EXTRA = {
     "gpu_blocked_colour": (None,       "Colour strength is not 1, which GPU composition does not "
                                        "accept: the picture is still processed, on the CPU path. "
                                        "Set it to 1 to use the GPU path."),
+    # The frame counter (2026-11-05): two rates, because under frame generation they differ. The
+    # screen's is every frame the game presents, the generated ones included; NR's is the frames
+    # the daemon answered and the host put into the picture. `{}` takes the number, which the
+    # panel formats with the language's own decimal mark. The network's time comes from the
+    # daemon's answer, and is left out where the daemon gave none.
+    "fps_screen":  (None,              "Screen {} fps"),
+    "fps_nr":      (None,              "NR {} fps"),
+    "fps_nr_off":  (None,              "NR off"),
+    "fps_network": (None,              "network {} ms"),
+    "fps_hint":    (None,              "Screen: the frames the game presents each second, frame "
+                                       "generation's included. NR: the frames NR answered and put "
+                                       "into the picture each second. Under frame generation the "
+                                       "screen shows more frames than NR made. Network: the "
+                                       "network's time for one frame."),
+    # Where the counter is shown: in the panel only, or in a corner of the screen as well, where it
+    # stays while the panel is shut. The option's row and its five choices, in this order.
+    "counter":              (None,     "Frame counter"),
+    "counter_hint":         (None,     "Where the frame rates are shown. In a corner they stay on "
+                                       "screen with the panel closed and take no keys or clicks. "
+                                       "Saved with the other settings."),
+    "counter_panel":        (None,     "In the panel only"),
+    "counter_top_left":     (None,     "Top left corner"),
+    "counter_top_right":    (None,     "Top right corner"),
+    "counter_bottom_left":  (None,     "Bottom left corner"),
+    "counter_bottom_right": (None,     "Bottom right corner"),
 }
 
 # Compare modes, in the order the key cycles them. OptiScaler's own names are Off / Side by side /
@@ -146,6 +171,22 @@ OWN = {
         "gpu_blocked_colour": "Colour strength is not 1, which GPU composition does not accept: the "
                               "picture is still processed, on the CPU path. Set it to 1 to use the "
                               "GPU path.",
+        "fps_screen":    "Screen {} fps",
+        "fps_nr":        "NR {} fps",
+        "fps_nr_off":    "NR off",
+        "fps_network":   "network {} ms",
+        "fps_hint":      "Screen: the frames the game presents each second, frame generation's "
+                         "included. NR: the frames NR answered and put into the picture each second. "
+                         "Under frame generation the screen shows more frames than NR made. "
+                         "Network: the network's time for one frame.",
+        "counter":       "Frame counter",
+        "counter_hint":  "Where the frame rates are shown. In a corner they stay on screen with the "
+                         "panel closed and take no keys or clicks. Saved with the other settings.",
+        "counter_panel": "In the panel only",
+        "counter_top_left":     "Top left corner",
+        "counter_top_right":    "Top right corner",
+        "counter_bottom_left":  "Bottom left corner",
+        "counter_bottom_right": "Bottom right corner",
     },
     "zh": {
         "hint":          "\u4e0a/\u4e0b \u9009\u62e9  \u5de6/\u53f3 \u8c03\u6574  L \u8bed\u8a00  "
@@ -181,6 +222,22 @@ OWN = {
         "gpu_blocked_colour": "\u8272\u5f69\u5f3a\u5ea6\u4e0d\u4e3a 1\uff0cGPU \u5408\u6210\u4e0d\u63a5\u53d7\uff1a"
                               "\u753b\u9762\u4ecd\u5728\u5904\u7406\uff0c\u4f46\u8d70\u7684\u662f CPU \u8def\u5f84\u3002"
                               "\u628a\u8272\u5f69\u5f3a\u5ea6\u8c03\u56de 1 \u518d\u7528 GPU \u8def\u5f84\u3002",
+        "fps_screen":    "\u753b\u9762 {} \u5e27/\u79d2",
+        "fps_nr":        "NR {} \u5e27/\u79d2",
+        "fps_nr_off":    "NR \u5173\u95ed",
+        "fps_network":   "\u7f51\u7edc {} \u6beb\u79d2",
+        "fps_hint":      "\u753b\u9762\uff1a\u6e38\u620f\u6bcf\u79d2\u5448\u73b0\u7684\u5e27\u6570\uff0c\u5305\u62ec\u5e27\u751f\u6210\u7684\u5e27\u3002"
+                         "NR\uff1aNR \u6bcf\u79d2\u5904\u7406\u5e76\u5199\u5165\u753b\u9762\u7684\u5e27\u6570\u3002"
+                         "\u5f00\u542f\u5e27\u751f\u6210\u65f6\uff0c\u753b\u9762\u663e\u793a\u7684\u5e27\u591a\u4e8e NR \u5904\u7406\u7684\u5e27\u3002"
+                         "\u7f51\u7edc\uff1a\u7f51\u7edc\u5904\u7406\u4e00\u5e27\u6240\u7528\u7684\u65f6\u95f4\u3002",
+        "counter":       "\u5e27\u7387\u663e\u793a",
+        "counter_hint":  "\u5e27\u7387\u663e\u793a\u7684\u4f4d\u7f6e\u3002\u653e\u5728\u89d2\u843d\u65f6\uff0c\u9762\u677f\u5173\u95ed\u540e\u4ecd\u4f1a\u663e\u793a\uff0c"
+                         "\u4e14\u4e0d\u63a5\u6536\u6309\u952e\u6216\u70b9\u51fb\u3002\u4e0e\u5176\u4ed6\u8bbe\u7f6e\u4e00\u8d77\u4fdd\u5b58\u3002",
+        "counter_panel": "\u4ec5\u5728\u9762\u677f\u4e2d",
+        "counter_top_left":     "\u5de6\u4e0a\u89d2",
+        "counter_top_right":    "\u53f3\u4e0a\u89d2",
+        "counter_bottom_left":  "\u5de6\u4e0b\u89d2",
+        "counter_bottom_right": "\u53f3\u4e0b\u89d2",
     },
     "ru": {
         "hint":          "\u0412\u0432\u0435\u0440\u0445/\u0412\u043d\u0438\u0437 \u0432\u044b\u0431\u043e\u0440  "
@@ -239,6 +296,32 @@ OWN = {
                               "\u043d\u0435 \u043f\u0440\u0438\u043d\u0438\u043c\u0430\u0435\u0442: \u043a\u0430\u0434\u0440\u044b \u0432\u0441\u0451 \u0440\u0430\u0432\u043d\u043e "
                               "\u043e\u0431\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u044e\u0442\u0441\u044f, \u043d\u043e \u043d\u0430 CPU. "
                               "\u041f\u043e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 1, \u0447\u0442\u043e\u0431\u044b \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c GPU.",
+        "fps_screen":    "\u042d\u043a\u0440\u0430\u043d {} \u043a\u0430\u0434\u0440/\u0441",
+        "fps_nr":        "NR {} \u043a\u0430\u0434\u0440/\u0441",
+        "fps_nr_off":    "NR \u0432\u044b\u043a\u043b.",
+        "fps_network":   "\u0441\u0435\u0442\u044c {} \u043c\u0441",
+        "fps_hint":      "\u042d\u043a\u0440\u0430\u043d: \u043a\u0430\u0434\u0440\u044b, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0438\u0433\u0440\u0430 "
+                         "\u0432\u044b\u0432\u043e\u0434\u0438\u0442 \u0437\u0430 \u0441\u0435\u043a\u0443\u043d\u0434\u0443, "
+                         "\u0432\u043c\u0435\u0441\u0442\u0435 \u0441 \u043a\u0430\u0434\u0440\u0430\u043c\u0438 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438. "
+                         "NR: \u043a\u0430\u0434\u0440\u044b, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 NR \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043b "
+                         "\u0438 \u0432\u044b\u0432\u0435\u043b \u0437\u0430 \u0441\u0435\u043a\u0443\u043d\u0434\u0443. "
+                         "\u041f\u0440\u0438 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u043a\u0430\u0434\u0440\u043e\u0432 "
+                         "\u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435 \u0438\u0445 \u0431\u043e\u043b\u044c\u0448\u0435, "
+                         "\u0447\u0435\u043c \u0441\u0434\u0435\u043b\u0430\u043b NR. "
+                         "\u0421\u0435\u0442\u044c: \u0432\u0440\u0435\u043c\u044f \u0441\u0435\u0442\u0438 \u043d\u0430 \u043e\u0434\u0438\u043d \u043a\u0430\u0434\u0440.",
+        "counter":       "\u0421\u0447\u0451\u0442\u0447\u0438\u043a \u043a\u0430\u0434\u0440\u043e\u0432",
+        "counter_hint":  "\u0413\u0434\u0435 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0447\u0430\u0441\u0442\u043e\u0442\u0443 \u043a\u0430\u0434\u0440\u043e\u0432. "
+                         "\u0412 \u0443\u0433\u043b\u0443 \u043e\u043d\u0430 \u0432\u0438\u0434\u043d\u0430 \u0438 \u043f\u0440\u0438 "
+                         "\u0437\u0430\u043a\u0440\u044b\u0442\u043e\u0439 \u043f\u0430\u043d\u0435\u043b\u0438 \u0438 \u043d\u0435 "
+                         "\u043f\u0435\u0440\u0435\u0445\u0432\u0430\u0442\u044b\u0432\u0430\u0435\u0442 \u043d\u0438 \u043a\u043b\u0430\u0432\u0438\u0448\u0438, "
+                         "\u043d\u0438 \u0449\u0435\u043b\u0447\u043a\u0438. "
+                         "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442\u0441\u044f \u0432\u043c\u0435\u0441\u0442\u0435 \u0441 "
+                         "\u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u043c\u0438 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u043c\u0438.",
+        "counter_panel": "\u0422\u043e\u043b\u044c\u043a\u043e \u0432 \u043f\u0430\u043d\u0435\u043b\u0438",
+        "counter_top_left":     "\u0412 \u043b\u0435\u0432\u043e\u043c \u0432\u0435\u0440\u0445\u043d\u0435\u043c \u0443\u0433\u043b\u0443",
+        "counter_top_right":    "\u0412 \u043f\u0440\u0430\u0432\u043e\u043c \u0432\u0435\u0440\u0445\u043d\u0435\u043c \u0443\u0433\u043b\u0443",
+        "counter_bottom_left":  "\u0412 \u043b\u0435\u0432\u043e\u043c \u043d\u0438\u0436\u043d\u0435\u043c \u0443\u0433\u043b\u0443",
+        "counter_bottom_right": "\u0412 \u043f\u0440\u0430\u0432\u043e\u043c \u043d\u0438\u0436\u043d\u0435\u043c \u0443\u0433\u043b\u0443",
     },
     "es": {
         "hint":          "Arriba/Abajo elegir  Izq/Der cambiar  L idioma  Home activar  "
@@ -276,6 +359,23 @@ OWN = {
         "gpu_blocked_colour": "La fuerza del color no es 1, y la composici\u00f3n por GPU no acepta "
                               "ese valor: la imagen se sigue procesando, en la ruta de CPU. Ponla "
                               "en 1 para usar la ruta de GPU.",
+        "fps_screen":    "Pantalla {} fps",
+        "fps_nr":        "NR {} fps",
+        "fps_nr_off":    "NR desactivado",
+        "fps_network":   "red {} ms",
+        "fps_hint":      "Pantalla: los fotogramas que el juego presenta por segundo, incluidos los de "
+                         "la generaci\u00f3n de fotogramas. NR: los fotogramas que NR proces\u00f3 y puso "
+                         "en la imagen por segundo. Con generaci\u00f3n de fotogramas la pantalla "
+                         "muestra m\u00e1s de los que hizo NR. Red: el tiempo de la red por fotograma.",
+        "counter":       "Contador de fotogramas",
+        "counter_hint":  "D\u00f3nde se muestran las tasas de fotogramas. En una esquina siguen en "
+                         "pantalla con el panel cerrado y no toman teclas ni clics. Se guarda con los "
+                         "dem\u00e1s ajustes.",
+        "counter_panel": "Solo en el panel",
+        "counter_top_left":     "Esquina superior izquierda",
+        "counter_top_right":    "Esquina superior derecha",
+        "counter_bottom_left":  "Esquina inferior izquierda",
+        "counter_bottom_right": "Esquina inferior derecha",
     },
 }
 

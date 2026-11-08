@@ -141,8 +141,10 @@ rem that is "newline in constant" at compile time and mojibake in the literal at
 rem looks like a font bug long after it stopped being one. user32 is GetAsyncKeyState, gdi32 is
 rem GetGlyphOutlineW - the two the menu needs and the layer did not.
 rem
-rem No /Fo with more than one source: D8036, "cannot specify multiple source files with this
-rem option". The objects land beside their sources and the .def names what is exported.
+rem With more than one source, /Fo must name a folder (a trailing backslash): a file name stops cl
+rem with D8036, "cannot specify multiple source files with this option", and with no /Fo at all
+rem the objects land in whatever folder the script was started from. The .def names what is
+rem exported.
 rem ImGui (third_party\imgui, MIT) is C++ and this layer is C, so the UI lives in one C++
 rem translation unit behind a plain-C interface (nr_menu_ui.h) and is compiled /TP into the same
 rem DLL. It links no Vulkan import library either: the backend's function pointers all come from
@@ -177,7 +179,11 @@ rem function with no prototype, C assuming it returns `int`, and a 64-bit pointe
 rem its top half gone. The first one crashed a game inside a frame; the second stopped MinGW and
 rem Linux from compiling the layer at all. GCC treats it as an error already (14 made it one), so
 rem this is only bringing MSVC up to the standard the other two compilers hold.
-cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
+rem
+rem /Fo puts these objects in the checkout, where the links below read them, whatever folder the
+rem script runs from. Without it they landed in the caller's folder, and run from anywhere but the
+rem checkout the layer's link stopped at LNK1181 on nr_layer.obj (2026-11-04).
+cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%REPO%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
 if errorlevel 1 ( echo ERROR: layer C objects failed & exit /b 1 )
 rem link.exe, not cl, for the mixed C/C++ link: cl with /TC recompiles .obj inputs it is handed
 rem on the same command line (C2018, reading the binary as source), which is not a link at all.
@@ -293,8 +299,9 @@ echo   skipped: no x86 tools
 echo     %VCX86%
 goto :image
 :have_x86
-rem The same sources as the 64-bit step, /utf-8 included. No /Fo with more than one source
-rem (D8036), so the objects land beside their sources and the .def names what is exported.
+rem The same sources as the 64-bit step, /utf-8 included, their objects in a folder of their own
+rem (/Fo naming a folder; a file name with more than one source is D8036). The .def names what is
+rem exported.
 rem
 rem The UI is C++ and the layer is C, so the x86 build needs its own ImGui objects: an amd64
 rem .obj cannot be linked into an x86 DLL (LNK1112), and the C++ objects are not

@@ -17,6 +17,8 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "nr_menu_ui.h"
+#include "nr_menu_ui_backend.h"
+#include "nr_frame_rate.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -469,6 +471,166 @@ int main(void)
         nrex_end_panel(nullptr);
         int none = nrex_last_footer_text(empty, sizeof empty);
         check(none == 0, "an empty hint holds nothing", none ? "held something" : "nothing");
+    }
+
+    /* ---- 7. the frame counter ----
+     *
+     * Two rates, because under frame generation they differ: the screen's, every present, and
+     * NR's, the frames the daemon answered (nr_frame_rate.h). The arithmetic on a clock of the
+     * fixture's own; then the corner, drawn as the shut panel draws it, which must take no input;
+     * then the line at the top of the open panel. */
+    {
+        char detail[256];
+
+        /* The rates: 60 presents a second, NR on every other one, 24.5 ms of network each - frame
+         * generation's x2, as Hogwarts runs it. */
+        nr_frame_rates r;
+        nr_frame_rates_reset(&r);
+        nr_frame_counts c = {0, 0, 0, 0};
+        double t = 0.0;
+        char line[192];
+        nr_frame_rates_sample(&r, t, &c);
+        check(!r.ready && !nr_frame_rates_line(&r, NR_LANG_EN, 1, "  ", line, sizeof line) && !line[0],
+              "the counter says nothing before its first reading");
+        for (int i = 1; i <= 150; ++i) {
+            t = i / 60.0;
+            c.presented++;
+            if (i % 2 == 0) { c.nr_frames++; c.network_us += 24500; c.network_frames++; }
+            nr_frame_rates_sample(&r, t, &c);
+        }
+        snprintf(detail, sizeof detail, "screen %.2f, NR %.2f, network %.2f ms", r.screen_fps, r.nr_fps,
+                 r.network_ms);
+        check(r.ready && fabs(r.screen_fps - 60.0) < 1.5 && fabs(r.nr_fps - 30.0) < 1.5 &&
+              fabs(r.network_ms - 24.5) < 0.01, "60 presents and 30 answers a second read as such", detail);
+
+        nr_frame_rates_line(&r, NR_LANG_EN, 1, "  ", line, sizeof line);
+        snprintf(detail, sizeof detail, "'%s'", line);
+        check(strstr(line, "Screen 60") && strstr(line, "NR 30") && strstr(line, "network 24.5 ms") &&
+              !strstr(line, "{}"), "the English line names both rates and the network's time", detail);
+        nr_frame_rates_line(&r, NR_LANG_RU, 1, "  ", line, sizeof line);
+        snprintf(detail, sizeof detail, "'%s'", line);
+        check(strstr(line, "24,5") && !strstr(line, "24.5") && !strstr(line, "{}"),
+              "Russian takes a decimal comma", detail);
+        nr_frame_rates_line(&r, NR_LANG_EN, 0, "  ", line, sizeof line);
+        snprintf(detail, sizeof detail, "'%s'", line);
+        check(strstr(line, "NR off") && !strstr(line, "network"), "with NR off it says so, and no time",
+              detail);
+        int every = 1;
+        for (int lang = 0; lang < NR_MENU_LANG_COUNT; ++lang) {
+            for (int on = -1; on <= 1; ++on) {
+                if (!nr_frame_rates_line(&r, lang, on, "  ", line, sizeof line) || !line[0] ||
+                    strstr(line, "{}") || strlen(line) + 1 >= sizeof line)
+                    every = 0;
+            }
+            for (int key = NR_STR_FPS_SCREEN; key <= NR_STR_COUNTER_BOTTOM_RIGHT; ++key)
+                if (!nr_menu_text(lang, key)[0]) every = 0;
+        }
+        check(every, "every language builds its line, whole, and has every counter string");
+
+        /* A pause - a load, an alt-tab - starts over rather than averaging the pause in. */
+        t += 3.0;
+        nr_frame_rates_sample(&r, t, &c);
+        check(!r.ready, "a pause of three seconds starts the counting over");
+        /* And so do totals that went back, as a host that counts afresh hands over. */
+        for (int i = 1; i <= 60; ++i) { c.presented++; nr_frame_rates_sample(&r, t + i / 60.0, &c); }
+        nr_frame_counts fresh = {0, 0, 0, 0};
+        nr_frame_rates_sample(&r, t + 1.1, &fresh);
+        check(!r.ready, "totals that go back start the counting over");
+        /* A span with no answer that carried the network's time has none to show. */
+        nr_frame_rates_reset(&r);
+        nr_frame_counts quiet = {0, 0, 0, 0};
+        for (int i = 0; i <= 90; ++i) {
+            quiet.presented++;
+            quiet.nr_frames++;
+            nr_frame_rates_sample(&r, i / 60.0, &quiet);
+        }
+        nr_frame_rates_line(&r, NR_LANG_EN, 1, "  ", line, sizeof line);
+        snprintf(detail, sizeof detail, "'%s'", line);
+        check(r.ready && r.network_ms < 0.0 && !strstr(line, "network"),
+              "no time reported, none shown", detail);
+
+        /* The corner, as the shut panel draws it: no panel window, the counter alone, and no
+         * pointer handed to ImGui. AlwaysAutoResize hides a window its first frame, so two. */
+        static nrex_ui drawn;
+        memset(&drawn, 0, sizeof drawn);
+        for (int i = 0; i < 2; ++i) {
+            ImGuiIO &dio = ImGui::GetIO();
+            dio.DisplaySize = ImVec2(800.0f, 600.0f);
+            dio.DeltaTime = 1.0f / 60.0f;
+            ImGui::NewFrame();
+            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms");
+            ImGui::Render();
+        }
+        int any = nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600);
+        uint32_t rx = 0, ry = 0, rw = 0, rh = 0;
+        nrex_drawn_rect(&drawn, &rx, &ry, &rw, &rh);
+        snprintf(detail, sizeof detail, "drawn %ux%u at %u,%u", rw, rh, rx, ry);
+        check(any && rx >= 400 && ry < 16 && rx + rw <= 800 && rw < 400 && rh < 60,
+              "the top right corner holds the counter, and the frame draws nothing else", detail);
+        ImGuiWindow *corner = ImGui::FindWindowByName("##nr_frame_counter");
+        check(corner && (corner->Flags & ImGuiWindowFlags_NoInputs) == ImGuiWindowFlags_NoInputs &&
+              (corner->Flags & ImGuiWindowFlags_NoFocusOnAppearing),
+              "the corner is a window that takes no input and no focus");
+
+        /* A pointer over it, pressed: it is not hovered, it asks for no mouse, nothing is reported. */
+        if (corner) {
+            ImGuiIO &mio = ImGui::GetIO();
+            ImVec2 at(corner->Pos.x + corner->Size.x * 0.5f, corner->Pos.y + corner->Size.y * 0.5f);
+            mio.AddMousePosEvent(at.x, at.y);
+            mio.AddMouseButtonEvent(0, true);
+            int captured = 0, hovered = 0;
+            for (int i = 0; i < 2; ++i) {
+                ImGui::NewFrame();
+                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps");
+                captured |= mio.WantCaptureMouse ? 1 : 0;
+                hovered |= ImGui::GetCurrentContext()->HoveredWindow == corner ? 1 : 0;
+                ImGui::Render();
+            }
+            mio.AddMouseButtonEvent(0, false);
+            mio.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+            ImGui::NewFrame();
+            ImGui::Render();
+            snprintf(detail, sizeof detail, "WantCaptureMouse %d, hovered %d", captured, hovered);
+            check(!captured && !hovered, "a click on the corner is not the corner's", detail);
+        }
+
+        /* In the panel's place the counter's place is nowhere: nothing is drawn. */
+        ImGui::NewFrame();
+        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps");
+        ImGui::Render();
+        check(!nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600),
+              "with the counter in the panel, a shut panel draws nothing");
+
+        /* The open panel's line: drawn above the rows, and nothing the panel reports changes. */
+        int plain = frame(0);
+        ImGuiIO &pio = ImGui::GetIO();
+        pio.DisplaySize = ImVec2(800.0f, 600.0f);
+        pio.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps    network 24.5 ms", "what they are", 0,
+                     nullptr);
+        nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
+        nrex_rows(nullptr, rows, ROWS, 0);
+        int with_line = nrex_end_panel(nullptr);
+        ImGui::Render();
+        int verts_line = 0;
+        ImDrawData *dd = ImGui::GetDrawData();
+        if (dd)
+            for (int i = 0; i < dd->CmdListsCount; ++i) verts_line += dd->CmdLists[i]->VtxBuffer.Size;
+        ImGui::NewFrame();
+        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr);
+        nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
+        nrex_rows(nullptr, rows, ROWS, 0);
+        nrex_end_panel(nullptr);
+        ImGui::Render();
+        int verts_plain = 0;
+        dd = ImGui::GetDrawData();
+        if (dd)
+            for (int i = 0; i < dd->CmdListsCount; ++i) verts_plain += dd->CmdLists[i]->VtxBuffer.Size;
+        snprintf(detail, sizeof detail, "%d vertices with the line, %d without", verts_line, verts_plain);
+        check(verts_line > verts_plain, "the open panel draws the counter's line", detail);
+        check(with_line == plain, "and reports what it did without it",
+              "identical actions with and without the line");
     }
 
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);

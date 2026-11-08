@@ -10,6 +10,7 @@
 #define NR_XESS_PANEL_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <wchar.h>
 #include <d3d12.h>
 
@@ -28,6 +29,10 @@ typedef struct nr_xess_panel_host {
 	int (*trigger_get)(void *user);
 	void (*trigger_set)(void *user, int on);
 	void *user;
+	/* For the panel's frame counter: the frames the daemon answered so far, and the network's time
+	 * it gave with them, in microseconds summed over the `reported` answers that carried any.
+	 * Totals, asked once a Present; the presents themselves the panel counts. NULL: no NR rate. */
+	void (*nr_counts)(void *user, uint64_t *frames, uint64_t *network_us, uint64_t *reported);
 } nr_xess_panel_host;
 
 /* From DllMain: keeps the host and starts the thread that finds DXGI's Present (the probe, or its
@@ -40,6 +45,11 @@ void nr_xess_panel_list(ID3D12GraphicsCommandList *list);
 
 /* 1 once DXGI's Present is hooked, for a test that has to wait for the install thread. */
 int nr_xess_panel_hooked(void);
+
+/* The presents the frame counter has counted so far, and the counter's line as the panel last built
+ * it ("" before its first reading), for a test. */
+uint64_t nr_xess_panel_presents(void);
+const char *nr_xess_panel_rates(void);
 
 #ifdef __cplusplus
 }

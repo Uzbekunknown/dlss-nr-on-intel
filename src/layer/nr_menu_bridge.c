@@ -171,13 +171,15 @@ typedef struct {
 static const nr_knob_def knobs[] = {
     { "render_scale",    0, 0.05f, 1.0f,   0.05f, 1.0f,  NULL },
     { "min_extent",      0, 128.0f, 320.0f, 64.0f, 320.0f, NULL },
-    /* Three profiles, so the range is 0..2 - it was 0..3 while `neutral` was a fourth.
+    /* Four profiles, so the range is 0..3. The fourth, `hogwarts`, is Hogwarts Legacy's own
+     * tuning (`nr_frame.PROFILES`, notes/phase73); `nr_knobs.PROFILES` holds the order.
      *
-     * `neutral` was `standard` with tone and structure at zero, which is the same thing the
-     * `intensity` knob already says ("0 is the game's frame untouched") by another route: two
-     * controls for one outcome, one of which looked like it did nothing. Removed from the list
-     * everywhere it is written down, which is five files plus this one. */
-    { "profile",         1, 0.0f, 2.0f,     1.0f,  0.0f,  "standard,natural,cinematic" },
+     * `neutral`, a fourth until it was removed, was `standard` with tone and structure at zero,
+     * which is the same thing the `intensity` knob already says ("0 is the game's frame
+     * untouched") by another route: two controls for one outcome, one of which looked like it
+     * did nothing. Removed from the list everywhere it is written down, which is five files plus
+     * this one. */
+    { "profile",         1, 0.0f, 3.0f,     1.0f,  0.0f,  "standard,natural,cinematic,hogwarts" },
     { "intensity",       0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },
     { "detail_strength", 0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },
     { "colour_strength", 0, 0.0f, 2.0f,     0.05f, 1.0f,  NULL },
@@ -251,6 +253,12 @@ struct nr_menu_bridge {
     int preset;
     int preset_saved;
     int preset_moved;
+    /* Where the frame counter is shown, one of NR_COUNTER_*: in the panel only, or in a corner of
+     * the screen as well. A panel preference like the language, not a knob - the daemon never
+     * reads it and Reset leaves it - but kept the way the knobs are: it takes effect at once, Save
+     * writes it as `menu_counter`, and Revert brings back `counter_saved`, what the file says. */
+    int counter;
+    int counter_saved;
     char env_path[1088];
     /* `NR_ROOT` from the same file: where the release lives, and so where the setup window's
      * profile is. Empty when the line is absent, and then nothing is written back. */
@@ -796,6 +804,8 @@ static int load_settings(nr_menu_bridge *b)
     size_t size = 0;
     if (!nr_read_file(b->settings_path, &text, &size)) {
         b->stamp = 0;
+        /* No file says nothing about the counter either: it is in the panel, the default. */
+        b->counter = b->counter_saved = NR_COUNTER_PANEL;
         return 0;
     }
 
@@ -817,6 +827,16 @@ static int load_settings(nr_menu_bridge *b)
         int nr_at = nr_settings_find(&settings, "nr_enabled");
         if (nr_at >= 0)
             b->nr_enabled_saved = atoi(settings.value[nr_at]) ? 1 : 0;
+
+        /* Where the frame counter goes. Absent, or a place this panel does not know, is the panel
+         * alone: a counter nobody asked for must not appear over a game. */
+        b->counter_saved = NR_COUNTER_PANEL;
+        int counter_at = nr_settings_find(&settings, "menu_counter");
+        if (counter_at >= 0) {
+            int where = atoi(settings.value[counter_at]);
+            if (where >= 0 && where < NR_COUNTER_PLACES) b->counter_saved = where;
+        }
+        b->counter = b->counter_saved;
 
         for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
             const nr_knob_def *k = &knobs[i];
@@ -1045,6 +1065,7 @@ static int save_settings(nr_menu_bridge *b)
     memset(written, 0, sizeof written);
     int wrote_language = 0;
     int wrote_nr = 0;
+    int wrote_counter = 0;
 
     /* Whether a field has already been emitted, so the comma goes BEFORE a field rather than after
      * it. Writing `"key": value,\n` for every field and closing with `}` leaves a trailing comma
@@ -1091,6 +1112,14 @@ static int save_settings(nr_menu_bridge *b)
                 continue;
             }
 
+            /* And the frame counter's place, the same way. */
+            if (strcmp(name, "menu_counter") == 0) {
+                snprintf(moved_text, sizeof moved_text, "%d", b->counter);
+                NR_EMIT("  \"%s\": %s", name, moved_text);
+                wrote_counter = 1;
+                continue;
+            }
+
             /* **Not the network.** It lives in `NR_PRESET`, written below; a `preset` key that
              * round ten's Save left here is dropped, so no file keeps a second answer. */
             if (strcmp(name, "preset") == 0) continue;
@@ -1121,6 +1150,11 @@ static int save_settings(nr_menu_bridge *b)
      * after this change adds it and every later Save substitutes in place. */
     if (!wrote_nr) NR_EMIT("  \"nr_enabled\": %d", b->nr_enabled_saved > 0 ? 1 : 0);
 
+    /* The counter's place, appended only once it is somewhere other than the default: a file
+     * nobody chose a corner for does not gain the key. */
+    if (!wrote_counter && b->counter != NR_COUNTER_PANEL)
+        NR_EMIT("  \"menu_counter\": %d", b->counter);
+
     /* Append the keys the user moved that were not already there. */
     for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
         if (written[i] || !b->moved[i]) continue;
@@ -1143,6 +1177,7 @@ static int save_settings(nr_menu_bridge *b)
     if (!ok) return 0;
 
     b->stamp = nr_file_stamp(b->settings_path);
+    b->counter_saved = b->counter;
 
     /* **The network goes where the setup window keeps it**: `NR_PRESET` in `nr-env.txt`, which the
      * layer reads at the next start, and the profile the window shows. Round ten wrote a `preset`
@@ -1661,6 +1696,21 @@ const char *nr_menu_bridge_selected_key(const nr_menu_bridge *b)
 int nr_menu_bridge_preset(const nr_menu_bridge *b)
 {
     return b ? b->preset : 0;
+}
+
+/* ------------------------------------------------------------------ the frame counter's place */
+
+int nr_menu_bridge_counter(const nr_menu_bridge *b)
+{
+    return b ? b->counter : NR_COUNTER_PANEL;
+}
+
+void nr_menu_bridge_set_counter(nr_menu_bridge *b, int where)
+{
+    if (!b || where < 0 || where >= NR_COUNTER_PLACES) return;
+    /* Shown at once, written by the next Save: nothing here goes to the daemon. */
+    b->counter = where;
+    b->dirty = 1;
 }
 
 int nr_menu_bridge_pacing_available(const nr_menu_bridge *b)

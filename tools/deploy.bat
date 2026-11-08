@@ -261,6 +261,10 @@ rem DXVK for DirectX 8-11 games: the pinned release, downloaded once into work\d
 rem checked against its SHA-256 (dist-tools\dxvk.json).
 "%PY%" "%REPO%\scripts\fetch_dxvk.py"
 if errorlevel 1 exit /b 3
+rem The release's own Python, so a player installs none: python.org's embeddable CPython with numpy
+rem and safetensors, once into work\python, each file checked against dist-tools\python.json.
+"%PY%" "%REPO%\scripts\fetch_python.py"
+if errorlevel 1 exit /b 3
 "%PY%" "%REPO%\scripts\build_release.py" "%RELEASE%" --platform windows
 if errorlevel 1 exit /b 3
 endlocal

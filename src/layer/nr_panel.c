@@ -112,7 +112,20 @@ struct nr_panel {
 	 * always came first; a DirectX 12 panel shows the network row alone, at the place the first
 	 * pacing row had, so the row now says what it is. */
 	int row_what[MENU_UI_MAX_ROWS];
+
+	/* The frame counter (nr_frame_rate.h): the rates from the host's counts, sampled once a
+	 * present, and the two lines built from them - the panel's, and the corner's, which is the
+	 * same text closer together. `trigger_live` is the trigger as the keys last read it, so the
+	 * counter can say "NR off" without asking the host a second time a frame. */
+	nr_frame_rates rates;
+	char rates_line[192];
+	char rates_corner[192];
+	int trigger_live;
 };
+
+/* The frame counter's row among `row_what`'s values: not pacing, and not the bridge's pacing entry
+ * point - its value goes to `nr_menu_bridge_set_counter`. */
+#define NR_PANEL_ROW_COUNTER 100
 
 /* The effect's state, through the host: 1 on, 0 off, -1 for an installation with no trigger. */
 static int trigger_state(struct nr_panel *data)
@@ -208,6 +221,8 @@ nr_panel *nr_panel_create(nr_menu *menu, nrex_ui *ui, const char *settings, int 
 	data->menu_ui = ui;
 	if (host) data->host = *host;
 	for (int i = 0; i < MENU_UI_MAX_ROWS; ++i) data->row_what[i] = -1;
+	nr_frame_rates_reset(&data->rates);
+	data->trigger_live = -1;
 
 	/* ImGui owns the panel now, so the menu stops reading the panel's keys. Leaving both readers on
 	 * is what made one keypress act twice - Enter opening a combo while the bridge stepped the
@@ -467,6 +482,31 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 			data->row_what[n] = NR_PACING_PRESET;
 			n++;
 		}
+	}
+
+	/* Where the frame counter is shown: in the panel only, or in a corner of the screen as well,
+	 * where it stays while the panel is shut (the owner, 2026-11-05: "let the user choose"). Last,
+	 * because it is about the panel and not the picture; offered wherever the panel draws with
+	 * ImGui, which is the only panel that can put anything in a corner. The five choices are the
+	 * strings table's, in NR_COUNTER_*'s order. */
+	if (data->menu_ui && data->host.counts && n < capacity && n < MENU_UI_MAX_ROWS) {
+		nrex_row *r = &out[n];
+		memset(r, 0, sizeof *r);
+		r->label = nr_menu_text(language, NR_STR_COUNTER);
+		r->hint = nr_menu_text(language, NR_STR_COUNTER_HINT);
+		r->kind = NREX_KIND_CHOICE;
+		for (int c = 0; c < NR_COUNTER_PLACES && c < MENU_UI_MAX_CHOICES - 1; ++c) {
+			snprintf(name_storage[n][c], sizeof name_storage[n][c], "%s",
+				 nr_menu_text(language, NR_STR_COUNTER_PANEL + c));
+			names[n][c] = name_storage[n][c];
+		}
+		names[n][NR_COUNTER_PLACES] = NULL;
+		r->choices = (const char *const *)names[n];
+		r->choice_count = NR_COUNTER_PLACES;
+		r->choice_index = nr_menu_bridge_counter(data->menu_bridge);
+		r->value = names[n][r->choice_index];
+		data->row_what[n] = NR_PANEL_ROW_COUNTER;
+		n++;
 	}
 
 	return n;
@@ -1112,6 +1152,8 @@ static int menu_read_keys(struct nr_panel *data, const unsigned char *keys)
 	/* Tell the menu whether NR is on, so its status line is the truth rather than a guess. An
 	 * installation with no trigger reads as off here, and as "unknown" in the panel's checkbox. */
 	nr_menu_set_nr_enabled(data->menu, live > 0);
+	/* And the frame counter, which says "NR off" rather than a rate of nothing. */
+	data->trigger_live = live;
 
 	/* And keep Save's memory of it honest.
 	 *
@@ -1177,6 +1219,19 @@ int nr_panel_input(nr_panel *data, void *window)
 
 	int composite = menu_read_keys(data, keys);
 
+	/* The frame counter's sample, on every present, open or shut, as the rates are per present.
+	 * With the panel shut its corner is the only thing to draw, once there is a reading to show;
+	 * the panel's own frames carry the counter too (`nr_panel_frame`). */
+	if (data->host.counts) {
+		nr_frame_counts counts;
+		memset(&counts, 0, sizeof counts);
+		data->host.counts(data->host.user, &counts);
+		nr_frame_rates_sample(&data->rates, nr_now_seconds(), &counts);
+		if (data->menu_ui && data->menu_bridge && data->rates.ready &&
+		    nr_menu_bridge_counter(data->menu_bridge) != NR_COUNTER_PANEL)
+			composite = 1;
+	}
+
 	/* While the panel is open, what it takes is the panel's alone (nr_input_guard.h): the game's
 	 * window is kept from the keys, the clicks and the raw input it would otherwise act on too.
 	 * After the keys, so the frame INS opens the panel on is already held. */
@@ -1184,9 +1239,70 @@ int nr_panel_input(nr_panel *data, void *window)
 	return composite;
 }
 
+const char *nr_panel_rates_line(const nr_panel *data)
+{
+	return data ? data->rates_line : "";
+}
+
+/* The counter's two lines for this frame, in the menu's language: the panel's, with room between
+ * the parts, and the corner's, closer together. "" until the first reading. */
+static void panel_rates_text(struct nr_panel *data)
+{
+	int language = data->menu ? nr_menu_language(data->menu) : NR_MENU_LANG_EN;
+	nr_frame_rates_line(&data->rates, language, data->trigger_live, "    ", data->rates_line,
+			    sizeof data->rates_line);
+	nr_frame_rates_line(&data->rates, language, data->trigger_live, "   ", data->rates_corner,
+			    sizeof data->rates_corner);
+}
+
+/* Seconds since THIS panel was last drawn, not a fixed step.
+ *
+ * ImGui's OWN keyboard repeat is timed on `io.DeltaTime`, and a fixed 1/60 here ties that repeat to
+ * the present rate: measured on the panel's own frames, a held Down moved the selection once per
+ * second at 240 frames and about ten times per second at 60 - so the selection's speed depends on
+ * how many frames a second the game draws, which is not what a keypress means. The panel's value
+ * repeat (`nrex_repeat`) is unaffected: it is already on a wall clock, so this changes only the half
+ * that was wrong.
+ *
+ * Clamped at a quarter second, so a load hitch or an alt-tab does not arrive as a multi-second delta
+ * that re-targets focus half the panel away. Held across frames, and left alone when the clock is
+ * unavailable, so a machine without one falls back to the fixed step rather than moving nothing. */
+static float panel_step(struct nr_panel *data)
+{
+	float dt = 1.0f / 60.0f;
+	double now = nr_now_seconds();
+	if (data->menu_ui_last_draw != 0.0 && now > data->menu_ui_last_draw) {
+		double elapsed = now - data->menu_ui_last_draw;
+		if (elapsed < 0.000001) elapsed = 0.000001;
+		if (elapsed > 0.25) elapsed = 0.25;
+		dt = (float)elapsed;
+	}
+	data->menu_ui_last_draw = now;
+	return dt;
+}
+
 void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 {
 	if (!data || !data->menu_ui) return;
+
+	/* The frame counter: where it goes, and its text for this frame. */
+	int corner = data->menu_bridge && data->host.counts ? nr_menu_bridge_counter(data->menu_bridge)
+							    : NR_COUNTER_PANEL;
+	panel_rates_text(data);
+
+	/* **The panel shut: the counter alone, in its corner.** `nr_panel_input` asks for this frame
+	 * only for it, and nothing in it may act on the game's input. So the pointer is not read at
+	 * all - ImGui is told there is none, and draws no cursor - the keys stay where the shut panel
+	 * keeps them (`nrex_listen`), and the corner is a window that takes no input. The frame is
+	 * ImGui's like any other, so the host renders it the same way; it covers only the corner, and
+	 * the hosts draw only what the draw data covers (`nrex_drawn_rect`). */
+	if (!data->menu || !nr_menu_is_open(data->menu)) {
+		nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
+		nrex_set_software_cursor(data->menu_ui, 0);
+		nrex_new_frame(data->menu_ui, (float)width, (float)height, panel_step(data));
+		nrex_counter(data->menu_ui, NULL, NULL, corner, data->rates_corner);
+		return;
+	}
 
 	/* The panel's checkbox writes the same trigger the Home key does; the trigger is the host's. */
 	int live = trigger_state(data);
@@ -1198,31 +1314,12 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 
 	/* The pointer, before NewFrame: ImGui consumes queued input when the frame opens. */
 	menu_ui_mouse(data, width, height, data->keys);
-	/* Seconds since THIS panel was last drawn, not a fixed step.
-	 *
-	 * ImGui's OWN keyboard repeat is timed on `io.DeltaTime`, and a fixed 1/60 here ties that
-	 * repeat to the present rate: measured on the panel's own frames, a held Down moved the
-	 * selection once per second at 240 frames and about ten times per second at 60 - so the
-	 * selection's speed depends on how many frames a second the game draws, which is not what a
-	 * keypress means. The panel's value repeat (`nrex_repeat`) is unaffected: it is already on a
-	 * wall clock, so this changes only the half that was wrong.
-	 *
-	 * Clamped at a quarter second, so a load hitch or an alt-tab does not arrive as a multi-second
-	 * delta that re-targets focus half the panel away. */
-	float dt = 1.0f / 60.0f;
-	{
-		/* Held across frames, and left alone when the clock is unavailable so a machine
-		 * without one falls back to the fixed step above rather than moving nothing. */
-		double now = nr_now_seconds();
-		if (data->menu_ui_last_draw != 0.0 && now > data->menu_ui_last_draw) {
-			double elapsed = now - data->menu_ui_last_draw;
-			if (elapsed < 0.000001) elapsed = 0.000001;
-			if (elapsed > 0.25) elapsed = 0.25;
-			dt = (float)elapsed;
-		}
-		data->menu_ui_last_draw = now;
-	}
-	nrex_new_frame(data->menu_ui, (float)width, (float)height, dt);
+	nrex_new_frame(data->menu_ui, (float)width, (float)height, panel_step(data));
+	/* The counter: its line at the top of the panel, with what the two rates are on hover, and the
+	 * corner too when one is chosen, so choosing it shows where it goes. */
+	nrex_counter(data->menu_ui, data->host.counts ? data->rates_line : NULL,
+		     nr_menu_text(nr_menu_language(data->menu), NR_STR_FPS_HINT), corner,
+		     data->rates_corner);
 	/* The menu's CURRENT language, not the one this device started with.
 	 *
 	 * The language the bridge was created with is read once and never updated - so passing it
@@ -1253,6 +1350,11 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 		if (!rows[i].changed) continue;
 		float v = (rows[i].kind == NREX_KIND_FLOAT) ? rows[i].value_f
 							    : (float)rows[i].value_i;
+		/* The frame counter's place, the panel's own: shown at once, kept by Save. */
+		if (data->row_what[i] == NR_PANEL_ROW_COUNTER) {
+			nr_menu_bridge_set_counter(data->menu_bridge, (int)v);
+			continue;
+		}
 		/* The pacing rows and the network come after the knobs and are not knobs: their values
 		 * live in the proxy's environment file, not the settings file, so they go to the bridge's
 		 * own entry point. Each such row said what it is when it was built (`row_what`). */

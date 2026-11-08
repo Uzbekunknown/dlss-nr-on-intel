@@ -187,12 +187,44 @@ def _cached_noise(height, width, frame_index=0):
 
 features_mod.deterministic_noise = _cached_noise
 deterministic_noise = _cached_noise
-PROFILES = features_mod.PROFILES
 compose_head = composition_mod.compose_head
 compose_detail = composition_mod.compose_detail
 AutomaticMask = features_mod.AutomaticMask
 half = features_mod.half
 scaled_color = features_mod.scaled_color
+
+# MLX-DLSS's profiles, and Hogwarts Legacy's own tuning: what the game sets through NVIDIA's
+# Unreal plug-in since its DLSS 5 update of 2026-11-05, read out of its executable. The game's
+# defaults are Tone 50, Detail 84 and Character 27 percent for every upscaler
+# (`GetDefaultNeuralRenderingInfoForUpscaler`), and it hands each to the plug-in times 0.01, as
+# `r.Streamline.DLSSNR.ToneStrength`, `.StructuralStrength` and `.Mask.SkinStructureStrength`,
+# which Streamline passes to NGX unchanged as `DLSSNR.LocalToneStrength`,
+# `.LocalStructureStrength` and `.SkinStructureStrength`. Intensity and style it leaves at the
+# plug-in's 1.0 and 0. The skin strength acts only with the automatic mask on; the game's packed
+# config, not its code, sets the mask's mode, and a Character slider would do nothing without
+# it, so the mask is on here. A profile's `automatic_mask` goes to the feature builders with the
+# three scalars. `notes/phase73-game-tuning.md`.
+PROFILES = {**features_mod.PROFILES,
+            "hogwarts": {"normalized_style": 0.0, "local_tone_strength": 0.5,
+                         "local_structure_strength": 0.84,
+                         "automatic_mask": AutomaticMask(0.27, -1.0)}}
+
+
+def feature_lanes(normalized_style=0.0, local_tone_strength=1.0, local_structure_strength=1.0,
+                  automatic_mask=None):
+    """Feature channels 10-14 of a frame with no control mask, as MLX-DLSS's `make_features`
+    writes them, each rounded to half: the style, the tone, the structure and the two automatic-
+    mask lanes. With the automatic mask on (either of its strengths >= 0) the structure lane is
+    1 and the two lanes carry the skin and the automatic-mask strengths, a negative one taking
+    the local structure; with it off they are -1 (`notes/phase72`)."""
+    style, tone = float(half(normalized_style)), float(half(local_tone_strength))
+    if automatic_mask is not None and max(automatic_mask.skin_structure_strength,
+                                          automatic_mask.automatic_mask_structure_strength) >= 0:
+        def lane(strength):
+            return float(half(strength if strength >= 0 else local_structure_strength))
+        return (style, tone, 1.0, lane(automatic_mask.skin_structure_strength),
+                lane(automatic_mask.automatic_mask_structure_strength))
+    return (style, tone, float(half(local_structure_strength)), -1.0, -1.0)
 
 # `DLSSNR.MaskBlendMode`, new in 310.9.16: how a control mask's structure meets the automatic
 # mask's skin and automatic-mask strengths. 0 is 310.8's behaviour, a control mask switching
@@ -258,7 +290,7 @@ def blend_scale_of(weights):
 
 def build_features(colour, *, geometry, history=None, frame_index=0,
                    normalized_style=0.0, local_tone_strength=1.0,
-                   local_structure_strength=1.0, out=None):
+                   local_structure_strength=1.0, automatic_mask=None, out=None):
     """`make_features` with the history folded in, natively where that is available.
 
     The two steps are one pass in C: the mirror onto the network extent, the three FP16
@@ -266,19 +298,20 @@ def build_features(colour, *, geometry, history=None, frame_index=0,
     while each pixel is in a register. In NumPy they are a full-frame gather each, and
     feature assembly was the largest single host pass in the frame (`notes/phase57`).
 
-    Only the plain recipe goes native — no control mask and no automatic mask — which is
-    the one a game uses; anything else falls back and is bit-identical either way.
+    The native pass takes the five conditioning lanes as they are, so the automatic mask, a
+    profile's or the caller's, goes native too (`feature_lanes`); a control mask has no place
+    here. Either way the bits are the same.
 
     `out`, when given, is where the features are written — the graph's own mapped input
     (`ResidentBackend.input_view`), float32 or half — and is returned.
     """
     values = dict(normalized_style=normalized_style,
                   local_tone_strength=local_tone_strength,
-                  local_structure_strength=local_structure_strength)
+                  local_structure_strength=local_structure_strength,
+                  automatic_mask=automatic_mask)
     native = None
     if nr_image is not None:
-        controls = np.array([half(normalized_style), half(local_tone_strength),
-                             half(local_structure_strength), -1.0, -1.0], np.float32)
+        controls = np.array(feature_lanes(**values), np.float32)
         native = nr_image.features(
             colour, geometry.source_rows(), geometry.source_columns(),
             deterministic_noise(geometry.network_height, geometry.network_width,
@@ -588,6 +621,10 @@ def run_head(model, color, *, profile="standard", frame_index=0, style_index=Non
     height, width = color.shape[:2]
     geometry = network_geometry(width, height)
     values = controls(profile, style_index, local_tone, local_structure)
+    # A profile's own automatic mask, unless the caller gave one.
+    profile_mask = values.pop("automatic_mask", None)
+    if automatic_mask is None:
+        automatic_mask = profile_mask
     features = make_features(color, frame_index=frame_index, geometry=geometry,
                              automatic_mask=automatic_mask, control_mask=control_mask,
                              mask_blend_mode=mask_blend_mode, **values)

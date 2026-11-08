@@ -436,8 +436,31 @@ static void start_daemon(void)
 	    "is loaded\n", config.pipe, pi.dwProcessId);
 }
 
+/* The panel's frame counter (nr_xess_panel.h): the frames the daemon answered, on the GPU through
+ * the cut or on the CPU through the copy - what the "NR: N frames" lines count - and the network's
+ * time the daemon gave with the cut's answers (its FRAME reply's `detail`, microseconds). Totals,
+ * written by the workers and read on the presenting thread, so through Interlocked. */
+static volatile LONG64 panel_frames, panel_network_us, panel_network_reported;
+
+static void panel_count_answer(uint32_t network_us)
+{
+	InterlockedIncrement64(&panel_frames);
+	if (network_us) {
+		InterlockedExchangeAdd64(&panel_network_us, (LONG64)network_us);
+		InterlockedIncrement64(&panel_network_reported);
+	}
+}
+
 #ifndef NR_XESS_TEST
 /* ---- The in-game panel (nr_xess_panel.cpp), INS, as in a Vulkan game ---- */
+
+static void panel_nr_counts(void *user, uint64_t *frames, uint64_t *network_us, uint64_t *reported)
+{
+	(void)user;
+	*frames = (uint64_t)InterlockedCompareExchange64(&panel_frames, 0, 0);
+	*network_us = (uint64_t)InterlockedCompareExchange64(&panel_network_us, 0, 0);
+	*reported = (uint64_t)InterlockedCompareExchange64(&panel_network_reported, 0, 0);
+}
 
 /* The trigger, for the panel: the file the setup window's Enable NR makes, which the Home key and the
  * panel's checkbox move as well. A change made here is taken up at once, not at the next look a
@@ -496,6 +519,7 @@ static void start_panel(void)
 	host.say = panel_said;
 	host.trigger_get = panel_trigger_get;
 	host.trigger_set = panel_trigger_set;
+	host.nr_counts = panel_nr_counts;
 	const wchar_t *root = env_value(L"NR_ROOT");
 	if (root) _snwprintf(host.probe, 1024, L"%ls\\nr_present_probe.exe", root);
 	else _snwprintf(host.probe, 1024, L"%lsnr_present_probe.exe", here);
@@ -997,6 +1021,7 @@ static DWORD WINAPI worker(LPVOID unused)
 		}
 		if (ok) {
 			publish(epoch, sequence, jitter);
+			panel_count_answer(0);   /* the CPU exchange reports no network time */
 			if (answers_dir) write_answer(sequence);
 			if (++nr.answered == 30 && config.dump) dump_frames();
 			QueryPerformanceCounter(&t1);
@@ -2084,6 +2109,7 @@ static void hand_over(struct handover *h)
 	int ok = exchange_gpu(&packet, &reply);
 	if (ok && reply.status == NR_GPU_SUCCESS) {
 		cut.answered++;
+		panel_count_answer(reply.detail);
 		LARGE_INTEGER now, f;
 		QueryPerformanceCounter(&now);
 		QueryPerformanceFrequency(&f);
