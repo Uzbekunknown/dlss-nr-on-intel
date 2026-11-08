@@ -54,6 +54,17 @@
 #  define NR_PARALLEL_FOR(clause) _Pragma(clause)
 #endif
 
+/* `GCC ivdep` before the composition's loops over pixels, which GCC vectorises across pixels.
+ *
+ * MSVC knows no such pragma and warned at each (C4068). Its own `loop(ivdep)` would buy nothing
+ * here: it vectorises only innermost loops, and inside each pixel loop is a loop over three
+ * channels, too short for it (`/Qvec-report:2` gives reasons 1106 and 1303 for every one). */
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define NR_IVDEP
+#else
+#  define NR_IVDEP _Pragma("GCC ivdep")
+#endif
+
 /* How a float becomes a half and comes back.
  *
  * GCC and Clang give us `_Float16`, which is the hardware conversion and one
@@ -691,7 +702,7 @@ static inline NR_ALWAYS_INLINE void
 grade_blend_row(const float *restrict rgb, const float *restrict graded, float blend,
                 int width, float *restrict out, uint8_t *restrict pixel, const int bgra)
 {
-    _Pragma("GCC ivdep")
+    NR_IVDEP
     for (int x = 0; x < width; ++x)
         for (int c = 0; c < 3; ++c) {
             float source = rgb[3 * x + c];
@@ -714,7 +725,7 @@ grade_blend_row(const float *restrict rgb, const float *restrict graded, float b
  * same (`test_native_image.py`). The general loop spent 22.7 ms of one core on a 1080p
  * frame, all of it arithmetic. */
 #define COMPOSE_ROW(temporal, moving, releasing, grading, bgra)                              \
-    _Pragma("GCC ivdep")                                                                     \
+    NR_IVDEP                                                                                 \
     for (int x = 0; x < width; ++x)                                                          \
         compose_encode_pixel(rows, rgb, was, before, table, confidence, intensity,           \
                              still, scale, hold, slope, release, out, kept, pixel, x,        \
