@@ -95,6 +95,9 @@ class FakeStats:
     def region(self,raw,width,height,fmt): return self.crop or (0,height,0,width)
     def delta(self,*args,**kwargs): return self.cut
     def nonfinite(self,*args): return self.bad
+    # the pipeline records these into its own submits and reads them after
+    def record_delta(self,*args,**kwargs): return lambda decision_threshold=None: self.cut
+    def record_nonfinite(self,*args,**kwargs): return lambda: self.bad
     def close(self): pass
 
 

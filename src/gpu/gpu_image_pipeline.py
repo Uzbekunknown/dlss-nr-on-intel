@@ -146,25 +146,29 @@ class GPUImagePipeline:
         started=time.perf_counter()
         crop=self.stats.region(raw,width,height,fmt)
         ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
+        follow=motion is not None and live.temporal>0 and self.history_frames>0
+        follower=self._follower(width,height,crop,ih,iw) if follow else None
+        # One submit for the decode and what reads it before the CPU decides anything: the cut
+        # test, or with motion the follower. They ran as separate submits in this order, and
+        # each image pass is still recorded behind a barrier (`xmx_rec_image_pipeline`).
         self.rt.begin()
         self.decode.record(raw,self.active)
         self.inner_decode.record(raw,self.inner)
-        self.rt.submit()
-        follow=motion is not None and live.temporal>0 and self.history_frames>0
+        cut_of=None
         if follow:
-            follower=self._follower(width,height,crop,ih,iw)
-            self.rt.begin()
             self.history_resize.record(self.previous_neural,follower.resampled)
             follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
                             active=self.active,previous_inner=self.previous_inner,inner=self.inner)
-            self.rt.submit()
+        elif self.history_frames:
+            cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
+        self.rt.submit()
+        if follow:
             # Known nowhere, or a cut even against the last frame moved here: no history.
             cut=follower.cut(self.stats,self.inner,live.cut_limit)
             history=cut is not None and cut<=live.cut_limit
             cut=0.0 if cut is None else cut
         else:
-            cut=self.stats.delta(self.inner,self.previous_inner,iw,ih,
-                                 decision_threshold=live.cut_limit) if self.history_frames else 0.0
+            cut=cut_of(live.cut_limit) if cut_of is not None else 0.0
             history=live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
         if not history: self.history_frames=0
         self.rt.begin()
@@ -176,19 +180,25 @@ class GPUImagePipeline:
         prepared=time.perf_counter()
         head=self.frame.run_device()
         ran=time.perf_counter()
-        if self.stats.nonfinite(head,self.geometry.network_width,self.geometry.network_height,
-                                4 if self.rt.compact_head else 16):
-            self.history_frames=0
-            raise ValueError("GPU network head contains nonfinite values; original frame retained")
+        # The head's check, the composition and the change it made, in one submit. The
+        # composition now runs before the check is read; when the head is not finite its answer
+        # is dropped as before (the transport copies it out only on success), the history
+        # restarts, and the buffers do not trade places, so the neural it kept is never read.
         self.rt.begin()
+        nonfinite_of=self.stats.record_nonfinite(head,self.geometry.network_width,
+            self.geometry.network_height,4 if self.rt.compact_head else 16,slot="head")
         if history and follow:
             result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels)
         else:
             result=self.compose.record(raw,head,history=self.previous_neural if history else None,
                                        previous=self.previous_active if history else None)
+        change_of=self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
         self.rt.submit()
+        if nonfinite_of():
+            self.history_frames=0
+            raise ValueError("GPU network head contains nonfinite values; original frame retained")
         composed=time.perf_counter()
-        change=self.stats.delta(self.compose.composed,self.active,aw,ah)
+        change=change_of()
         if live.temporal>0 and not HISTORY_SWAP:
             self.rt.begin()
             self.rt.copy(self.compose.neural,self.previous_neural,aw*ah*3*4)
