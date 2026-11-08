@@ -89,7 +89,9 @@ class GPUImageStats:
                    width,height,mode,channels,(ctypes.c_uint32*4)(*(bounds or (0,0,0,0))))
         self.rt.begin()
         try:
-            self.pipeline.record(push,(count+255)//256 if mode in (0,3) else count)
+            # One workgroup per output word: a line in modes 0 and 3 (image_stats.comp), a
+            # partial sum in modes 1 and 2.
+            self.pipeline.record(push,count)
             self.rt.recorded+=1
             if mode in (1,2):
                 final=_Push(out.address,0,self.scalars.address,width,height,

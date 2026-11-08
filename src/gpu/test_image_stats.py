@@ -162,9 +162,10 @@ class HostChecks(unittest.TestCase):
             source=self.rt.buffer(raw.size,np.uint8).upload(raw)
             try: self.assertEqual(self.stats.region(source,width,height,fmt),expected)
             finally: source.free()
-        self.assertIn((3,1),self.rt.calls)
-        self.assertEqual(self.rt.calls[0],(0,1))
-        self.assertEqual(self.rt.calls[1],(3,1))
+        # a workgroup a line: all 41 + 73 of the first frame's, then the cached check's eight
+        self.assertIn((3,8),self.rt.calls)
+        self.assertEqual(self.rt.calls[0],(0,41+73))
+        self.assertEqual(self.rt.calls[1],(3,8))
 
     def test_dark_alpha_and_asymmetric_lines(self):
         rng=np.random.default_rng(338)
