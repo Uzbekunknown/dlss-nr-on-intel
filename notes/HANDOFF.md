@@ -175,6 +175,9 @@ under that date. When an item is done, strike it through here and name the commi
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
 **Linux** (what to pull and run, in order: below, 11-04)
+- **PR #39, branch `cleanup` at `297e13a`** (on GitHub since 11-08: `newnr` merged in, Windows
+  green): `make test` in both memory modes and CTest at that head (below, 11-09). Then the owner's
+  word on merging #39 into `newnr`.
 - `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
   11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
   and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
@@ -369,6 +372,28 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## PR #39 waits for Linux (2026-11-09, branches `master`, `newnr`, `alchemist`)
+
+The owner, 11-09: leave the Linux side a message on #39. Its branch `cleanup` is on GitHub at
+`297e13a` since 11-08, pushed at the owner's word: `newnr` (`5836d29`) merged in, three tests fixed,
+Windows green. That branch's entry "Checked on Windows: `cleanup` with `newnr` merged in" was
+written before the push, so its "nothing is pushed" is out of date. The PR is MERGEABLE, still a
+draft.
+
+**Next on Linux:**
+1. `git fetch origin`, then `git switch cleanup` (`git switch -c cleanup --track origin/cleanup`
+   where there is no local branch) and `git merge --ff-only origin/cleanup`.
+2. Stop the daemon. On this branch `make test` runs through `src/tools/run_tests.py`, in parallel;
+   `make test TEST_ARGS=--serial` is the old order one check at a time, if memory or timing
+   misbehaves. Then `XMX_STAGING=1 make test` (or `make test-gpu`), then CTest (69 entries).
+3. What changed for Linux: `attention.comp`, libxmx (no `xmx_rec_qkv`), `nr_resident.py`, the test
+   runner, and the three tests of `4cd720f` (`test_ui_resize.py`, `test_windows_setup.py`,
+   `test_windows_wizard.py`), which run on Linux too.
+4. Write the result on `cleanup` as an entry "Checked on Linux: `cleanup`" and commit. Pushing it,
+   and merging #39 into `newnr`, are the owner's word.
+
+**Next on Windows:** nothing for #39.
 
 ## The daemon keeps the panel's unsaved edits; the Reddit media; a Ko-fi link (2026-11-06, later, branch `game-tuning`)
 
