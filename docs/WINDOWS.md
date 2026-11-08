@@ -19,6 +19,13 @@ remain pending. This is not a released game-FPS claim.
 See [the continuation evidence](../notes/gpu-frame-path-20261013.md) and
 [the benchmark scopes](../notes/gpu-frame-stages-20261013.md).
 
+Around the network that path spends four submits a frame since 2026-11-08, where it spent eight:
+the letterbox check is a workgroup a line, the history's buffers trade places instead of being
+copied, the passes the CPU decides nothing between share a submit, and the composition writes the
+answer into the transport's shared output. The same bytes; about 9 % off a whole frame at render
+scale 0.4, 1280x720 and 1920x1080 (`notes/HANDOFF.md`, 2026-11-08). `NR_HISTORY_SWAP=0` brings
+back the three history copies, to compare.
+
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the
 layer and the daemon do too, from an MSVC build (`docs/WINDOWS-PORT.md`). What
