@@ -4,6 +4,7 @@ The host transport wrapper uploads raw bytes and downloads final bytes once. pro
 is the same image algorithm for external GPU buffers; its pixels never cross the CPU.
 """
 from __future__ import annotations
+import os
 import time
 import numpy as np
 import xmxres as X
@@ -12,6 +13,10 @@ from gpu_image_preprocess import GPUImagePreprocessor, GPUImageResampler
 from gpu_image_compose import GPUImageComposer, fallback_reason
 from gpu_image_history import GPUImageFollower
 from gpu_image_stats import GPUImageStats
+
+# The history's buffers trade places at the end of a frame instead of being copied (see
+# `_process_device`); NR_HISTORY_SWAP=0 is the comparison, the three copies as before.
+HISTORY_SWAP = os.environ.get("NR_HISTORY_SWAP", "1") != "0"
 
 
 class GPUImagePipeline:
@@ -101,6 +106,10 @@ class GPUImagePipeline:
             self.compose=GPUImageComposer(self.rt,frame_size=(height,width),head_size=(ih,iw),
                 vk_format=fmt,crop=crop,head_row_width=geometry.network_width,
                 head_channels=4 if self.rt.compact_head else 16)
+            # The composer's neural target trades places with `previous_neural` every frame
+            # (the end of `_process_device`), so either may be the composer's when this
+            # pipeline is cleared: both are freed with the pipeline's own buffers.
+            self.buffers.append(self.compose.neural)
             self.key=key
         self.geometry=geometry
         hkey=(width,height,fmt,crop,live.profile,ih,iw)
@@ -180,12 +189,21 @@ class GPUImagePipeline:
         self.rt.submit()
         composed=time.perf_counter()
         change=self.stats.delta(self.compose.composed,self.active,aw,ah)
-        if live.temporal>0:
+        if live.temporal>0 and not HISTORY_SWAP:
             self.rt.begin()
             self.rt.copy(self.compose.neural,self.previous_neural,aw*ah*3*4)
             self.rt.copy(self.inner,self.previous_inner,iw*ih*3*4)
             self.rt.copy(self.active,self.previous_active,aw*ah*3*4)
             self.rt.submit()
+        elif live.temporal>0:
+            # This frame's buffers become the previous ones by trading places, not by copies:
+            # three full-frame copies were 0.7 ms of a 1280x720 frame and 1.4 at 1920x1080.
+            # Every submit above has been waited for, so nothing still reads either side, and
+            # each buffer the next frame writes into is one whose contents no one needs: the
+            # frame before this one's. Each target is handed to its pass at recording time.
+            self.compose.neural,self.previous_neural=self.previous_neural,self.compose.neural
+            self.inner,self.previous_inner=self.previous_inner,self.inner
+            self.active,self.previous_active=self.previous_active,self.active
         self.history_frames=self.history_frames+1 if live.temporal>0 else 0
         self.last={"preprocess_ms":1000*(prepared-started),"network_ms":1000*(ran-prepared),
                    "compose_ms":1000*(composed-ran),"metadata_history_ms":1000*(time.perf_counter()-composed),

@@ -152,9 +152,12 @@ class HostChecks(unittest.TestCase):
         pipe.process_device(self.raw,256,192,37,live,motion=8192)
         self.assertEqual((pipe.last["history"],pipe.last["cut"]),(False,0.0))
         follower.share=1                                # without motion, the identity history
+        previous,target=pipe.previous_neural,pipe.compose.neural
         pipe.process_device(self.raw,256,192,37,live)
         self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
-        self.assertIs(pipe.compose.calls[-1]["history"],pipe.previous_neural)
+        self.assertIs(pipe.compose.calls[-1]["history"],previous)
+        # and the two traded places for the next frame, with no copy between them
+        self.assertIs(pipe.previous_neural,target);self.assertIs(pipe.compose.neural,previous)
         self.assertEqual(len(follower.motions),3)
         pipe.process_device(self.raw,256,192,37,settings(temporal=0.),motion=8192)
         self.assertFalse(pipe.last["motion"])
