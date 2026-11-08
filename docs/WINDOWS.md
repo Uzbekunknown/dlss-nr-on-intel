@@ -26,6 +26,12 @@ answer into the transport's shared output. The same bytes; about 9 % off a whole
 scale 0.4, 1280x720 and 1920x1080 (`notes/HANDOFF.md`, 2026-11-08). `NR_HISTORY_SWAP=0` brings
 back the three history copies, to compare.
 
+`change` in the daemon's frame lines, how far the answer moved the game's frame, is a figure for
+the log alone, and on this path the composition writes a float32 copy of itself for it.
+`NR_CHANGE_METRIC=0`, in `dlss-nr\nr-env.txt` or the daemon's environment, leaves both out on
+every path: about 0.7 ms of a 1280x720 frame at render scale 0.4 on Arc 140V, the answer and the
+history the same bytes, and the frame lines read `change off`. It is on by default.
+
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the
 layer and the daemon do too, from an MSVC build (`docs/WINDOWS-PORT.md`). What

@@ -17,11 +17,17 @@ from gpu_image_stats import GPUImageStats
 # The history's buffers trade places at the end of a frame instead of being copied (see
 # `_process_device`); NR_HISTORY_SWAP=0 is the comparison, the three copies as before.
 HISTORY_SWAP = os.environ.get("NR_HISTORY_SWAP", "1") != "0"
+# The change a frame's answer made (`change` in the daemon's frame line): a number for the log,
+# and the composition's float32 copy exists only for it. NR_CHANGE_METRIC=0 records neither
+# (0.2-0.4 ms of a 1280x720 frame, more at 1920x1080), and the line reads `change off`; the
+# answer and the history are the same bytes either way.
+CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
 
 
 class GPUImagePipeline:
     def __init__(self, backend):
         self.backend, self.rt = backend, backend.runtime
+        self.change_metric = CHANGE_METRIC
         self.stats = GPUImageStats(self.rt)
         self.key = None
         self.history_key = None
@@ -192,18 +198,19 @@ class GPUImagePipeline:
             self.geometry.network_height,4 if self.rt.compact_head else 16,slot="head")
         if history and follow:
             result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels,
-                                       target=output)
+                                       target=output,composed=self.change_metric)
         else:
             result=self.compose.record(raw,head,history=self.previous_neural if history else None,
                                        previous=self.previous_active if history else None,
-                                       target=output)
-        change_of=self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
+                                       target=output,composed=self.change_metric)
+        change_of=(self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
+                   if self.change_metric else None)
         self.rt.submit()
         if nonfinite_of():
             self.history_frames=0
             raise ValueError("GPU network head contains nonfinite values; original frame retained")
         composed=time.perf_counter()
-        change=change_of()
+        change=change_of() if change_of is not None else None
         if live.temporal>0 and not HISTORY_SWAP:
             self.rt.begin()
             self.rt.copy(self.compose.neural,self.previous_neural,aw*ah*3*4)

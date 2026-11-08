@@ -20,7 +20,8 @@ layout(push_constant, scalar) uniform Push {
  * scale, hold, hold slope, release slope, exposure, contrast, saturation,
  * x ratio,y ratio (FP32), then padding through element 15, byte decode LUT256,
  * then the 65536-entry
- * exact NumPy gate table. Flags: BGRA=1 HISTORY=2 PREVIOUS=4 KEEP=8 GRADE=16. */
+ * exact NumPy gate table. Flags: BGRA=1 HISTORY=2 PREVIOUS=4 KEEP=8 GRADE=16 COMPOSED=32,
+ * the last the float32 composition into g, which only the change metric reads. */
 float unit(float v) { return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v; }
 /* Intel's native FDiv is approximate. One residual correction recovers the
  * correctly-rounded scalar division used by the CPU colour grade. Explicit fma
@@ -164,7 +165,7 @@ void main() {
     uint packed = raw & 0xff000000u;
     for (uint c = 0u; c < 3u; ++c) {
         precise float v = unit(rgb[c] + blend * (predicted[c] - rgb[c]));
-        composition.v[3u * pixel + c] = v;
+        if ((flags & 32u) != 0u) composition.v[3u * pixel + c] = v;
         float safe = isnan(v) ? 0.0 : unit(v);
         uint byte_value = uint(safe * 255.0 + 0.5);
         packed |= byte_value << ((bgra ? 2u - c : c) * 8u);

@@ -186,6 +186,26 @@ class HostChecks(unittest.TestCase):
         self.pipe.process_device(self.raw,256,192,37,live)
         self.assertEqual(self.pipe.history_frames,0)
 
+    def test_change_metric_off_records_neither_the_copy_nor_its_reduction(self):
+        # NR_CHANGE_METRIC=0: the composition is asked for no float32 copy, the change's
+        # reduction is never recorded, and the frame line's figure reads "off"
+        slots=[]
+        original=self.pipe.stats.record_delta
+        def record_delta(*args,**kwargs):
+            slots.append(kwargs.get("slot"));return original(*args,**kwargs)
+        self.pipe.stats.record_delta=record_delta
+        live=settings()
+        for metric in (True,False):
+            self.pipe.change_metric=metric;slots.clear()
+            for _ in range(2):    # the second with a history: the cut test records too
+                self.pipe.process_device(self.raw,256,192,37,live)
+            self.assertEqual("change" in slots,metric)
+            self.assertIn("cut",slots)
+            self.assertEqual(self.pipe.compose.calls[-1]["composed"],metric)
+            self.assertEqual(self.pipe.last["change"] is None,not metric)
+        self.assertEqual(nr_daemon.change_text(None),"off")
+        self.assertEqual(nr_daemon.change_text(.25),"0.25000")
+
     def test_profile_crop_scale_layout_and_closed_frame_rebuild(self):
         live=settings()
         self.pipe.process_device(self.raw,256,192,37,live)
@@ -340,6 +360,12 @@ class FullModelChecks(unittest.TestCase):
         self.assertTrue(readbacks)
         self.assertLessEqual(max(readbacks),max(176+112,((192*128*4)+1023)//1024))
         print(f"full model: {len(sequence)} exact wire/history frames; device calls read only reduced metadata")
+
+    def test_exact_wire_and_history_with_the_change_metric_off(self):
+        """The same frames with NR_CHANGE_METRIC=0: the composition's float32 copy and the
+        change's reduction left out, the wire and the history the same bytes."""
+        with patch.object(G,"CHANGE_METRIC",False):
+            self.test_exact_wire_and_history_while_forbidding_image_readbacks()
 
     def test_exact_wire_and_history_along_motion(self):
         """The D3D12 transport's frames, each with its pixels' offsets to where they were: the

@@ -21,7 +21,7 @@ import nr_frame
 import xmxres
 
 SDR_FORMATS = {37: False, 43: False, 44: True, 50: True}
-BGRA, HISTORY, PREVIOUS, KEEP, GRADE = 1, 2, 4, 8, 16
+BGRA, HISTORY, PREVIOUS, KEEP, GRADE, COMPOSED = 1, 2, 4, 8, 16, 32
 
 
 class _Push(ctypes.Structure):
@@ -81,7 +81,9 @@ class GPUImageComposer:
         self.pipeline = xmxres.ImagePipeline(str(path))
         self.encoded = runtime.buffer(self.frame_width * self.frame_height, np.uint32, kind=xmxres.DEVICE)
         self.neural = runtime.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)
-        self.composed = runtime.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)
+        # the float32 composition, for the change metric alone: made at the first `record`
+        # that asks for it (`composed`), so a daemon with the metric off never holds it
+        self.composed = None
         self.settings = runtime.buffer(16 + 256 + 65536, kind=xmxres.DEVICE)
         self._blend_scale = None
         self._settings = np.zeros(16, np.float32)
@@ -146,11 +148,14 @@ class GPUImageComposer:
         if buffer is None or buffer.nbytes < nbytes or buffer.id < 0:
             raise ValueError(f"{name} buffer is missing, freed or too small")
 
-    def record(self, raw, head, *, history=None, previous=None, target=None):
+    def record(self, raw, head, *, history=None, previous=None, target=None, composed=True):
         """Record one dispatch; buffers/commands must outlive submit completion.
 
         `target`: where the encoded frame goes, every pixel of it, instead of this composer's
-        own buffer - the transport's shared output, which then needs no copy. Returned."""
+        own buffer - the transport's shared output, which then needs no copy. Returned.
+        `composed`: also store the float32 composition in `self.composed`, which only the
+        change metric reads (gpu_image_pipeline, NR_CHANGE_METRIC); without it the encoded
+        frame and the neural output are the same bytes."""
         if self._closed:
             raise RuntimeError("GPUImageComposer is closed")
         self._check_buffer(raw, self.frame_width * self.frame_height * 4, "raw")
@@ -168,11 +173,13 @@ class GPUImageComposer:
                    for buf in (raw, head, history, previous, self.neural, self.composed)):
                 raise ValueError("the encoded target must not alias an operand")
         encoded = self.encoded if target is None else target
+        if composed and self.composed is None:
+            self.composed = self.rt.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)
         flags = ((BGRA if self.bgra else 0) | (HISTORY if history is not None else 0)
                  | (PREVIOUS if previous is not None else 0) | (KEEP if self.keep_neural else 0)
-                 | (GRADE if self.has_grade else 0))
+                 | (GRADE if self.has_grade else 0) | (COMPOSED if composed else 0))
         operands = (raw, head, history, previous, encoded, self.neural,
-                    self.composed, self.settings)
+                    self.composed if composed else None, self.settings)
         push = _Push()
         push.buffers[:] = [b.address if b is not None else 0 for b in operands]
         top, bottom, left, right = self.crop
@@ -185,7 +192,8 @@ class GPUImageComposer:
     def close(self):
         if not self._closed:
             for buffer in (self.encoded, self.neural, self.composed, self.settings):
-                buffer.free()
+                if buffer is not None:
+                    buffer.free()
             self._closed = True
 
     def __del__(self):

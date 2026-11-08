@@ -358,6 +358,8 @@ under that date. When an item is done, strike it through here and name the commi
 - The bottleneck's weights as E4M3 bytes, `e4m3-weights` on `perf-1108` (below, 11-08, evening):
   the same game check, and whether it stays on by default for every GPU on Intel's Windows
   driver; desktop Arc cards and the B580 have not run it.
+- `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
+  default, or a row in the panel or the setup window, is the owner's call.
 - ~~`tools\build_win.bat` run from a folder other than the checkout stops at the layer's link
   (`LNK1181`): the layer's C objects are compiled with no `/Fo` and land in that folder~~: fixed
   in `2c04f2f`, with `/Fo:"%REPO%\\"` as the x86 step has. Below, 11-04 night, latest.
@@ -393,6 +395,27 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The change metric as a switch, `NR_CHANGE_METRIC` (2026-11-08, evening, later, branch `e4m3-weights`)
+
+The owner, on the change figure the entry below found costs a frame time: "сделаем возможность
+включения и отключения такого параметра". `change` in the daemon's frame lines (how far the answer
+moved the game's frame) is read by nobody but a person reading the log; the tools and tests only
+carry example lines.
+- `NR_CHANGE_METRIC=0`, in the daemon's environment or the release's `dlss-nr\nr-env.txt` (the
+  proxies set its lines, and the panel's and the setup window's writes keep lines that are not
+  theirs), leaves the figure out on every path, and the line reads `change off`. On by default.
+- The GPU image path (`gpu_image_pipeline.CHANGE_METRIC`, `GPUImagePipeline.change_metric`): the
+  composition is asked for no float32 copy (`image_compose.comp` flag `COMPOSED`, 32;
+  `GPUImageComposer.record(composed=)`, the buffer made only when first asked for) and the
+  reduction is not recorded. The CPU path skips its quarter-row mean (`nr_daemon.CHANGE_METRIC`).
+- **The same bytes:** `test_image_pipeline.py --full-model` runs its eight-frame sequence with the
+  metric off as well (wire and history exact); `test_image_compose.py` composes every case of its
+  table again without the copy (wire bytes and history equal, the copy's buffer untouched); a host
+  check holds that neither the copy nor the reduction is recorded.
+- **Measured** (B at 0.4, 1280x720, the pipeline on a device buffer, three processes each,
+  alternating, with the E4M3 weights): the composition's submit 2.00-2.11 -> 1.38-1.41 ms, the
+  frame 21.70-22.06 -> 20.70-21.70.
 
 ## The bottleneck's weights as their E4M3 bytes (2026-11-08, evening, branch `e4m3-weights`)
 

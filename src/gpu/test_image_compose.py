@@ -111,22 +111,27 @@ class HostChecks(unittest.TestCase):
         raw = FakeBuffer(12 * 17, np.uint32)
         head = FakeBuffer(6 * 9 * 4)
         composer.record(raw, head)
-        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.KEEP)
+        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.KEEP | G.COMPOSED)
+        # without the float32 composition (the change metric off) the flag and its buffer go
+        composer.record(raw, head, composed=False)
+        push = pipeline.record.call_args.args[0]
+        self.assertEqual(push.params[10], G.KEEP)
+        self.assertEqual(push.buffers[6], 0)
         # The identity grade has the same three scalar bits as no grade, but
         # enables grading and pre-grade half truncation through its push flag.
         composer.configure(grade=(1, 0, 1), keep_neural=False)
         self.assertEqual(len(composer.settings.uploads), 1)
         composer.record(raw, head)
-        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.GRADE)
+        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.GRADE | G.COMPOSED)
         composer.configure(keep_neural=False)
         self.assertEqual(len(composer.settings.uploads), 1)
         composer.record(raw, head)
-        self.assertEqual(pipeline.record.call_args.args[0].params[10], 0)
+        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.COMPOSED)
         composer.configure(keep_neural=True, history_confidence=2)
         # Confidence 2 is clipped to the already-stored 1 before comparison.
         self.assertEqual(len(composer.settings.uploads), 1)
         composer.record(raw, head)
-        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.KEEP)
+        self.assertEqual(pipeline.record.call_args.args[0].params[10], G.KEEP | G.COMPOSED)
 
     def test_failed_transfer_is_retried_and_signed_zero_is_not_lost(self):
         composer, _ = self.composer()
@@ -179,7 +184,8 @@ class HostChecks(unittest.TestCase):
             composer.record(raw, head, history=history, previous=previous)
             push = pipeline.return_value.record.call_args.args[0]
             self.assertEqual(ctypes.sizeof(push), 128)
-            self.assertEqual(push.params[10], G.BGRA | G.HISTORY | G.PREVIOUS | G.KEEP | G.GRADE)
+            self.assertEqual(push.params[10],
+                             G.BGRA | G.HISTORY | G.PREVIOUS | G.KEEP | G.GRADE | G.COMPOSED)
             self.assertEqual(list(push.buffers)[:4], [v.address for v in (raw, head, history, previous)])
             with self.assertRaises(ValueError):
                 composer.record(raw, head, previous=previous)
@@ -259,6 +265,25 @@ class DeviceChecks(unittest.TestCase):
                     if keep:
                         np.testing.assert_array_equal(composer.neural.download().reshape(neural.shape),
                                                       neural, err_msg=label + " pre-grade history")
+                    # The same frame without the float32 composition (NR_CHANGE_METRIC=0): the same
+                    # wire bytes and history, and the composition's buffer left as it was.
+                    sentinel = np.full(expected.size, -7.0, np.float32)
+                    composer.composed.upload(sentinel)
+                    composer.encoded.upload(np.zeros(raw.size, np.uint8))
+                    if keep:
+                        composer.neural.upload(np.full(neural.size, -3.0, np.float32))
+                    rt.begin()
+                    composer.record(raw_device, head_device,
+                                    history=history_device if temporal else None,
+                                    previous=previous_device if temporal else None, composed=False)
+                    rt.submit()
+                    np.testing.assert_array_equal(composer.encoded.download(np.uint8).reshape(raw.shape),
+                                                  encoded, err_msg=label + " wire bytes, no composition")
+                    np.testing.assert_array_equal(composer.composed.download(), sentinel,
+                                                  err_msg=label + " composition written unasked")
+                    if keep:
+                        np.testing.assert_array_equal(composer.neural.download().reshape(neural.shape),
+                                                      neural, err_msg=label + " history, no composition")
                     checks += 1
                 for buf in (raw_device, head_device, previous_device, history_device):
                     buf.free()
