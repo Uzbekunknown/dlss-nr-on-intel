@@ -21,6 +21,13 @@ extern "C" {
  * moves with the picture AND with that. Zero when the size is unknown. */
 float nr_panel_lowest_scale(uint32_t width, uint32_t height, uint32_t minimum, float step);
 
+/* The network field's area for a picture run at `scale` - the quantity `nr_panel_lowest_scale`
+ * watches, exported so `test_menu_pacing` can assert what the floor is for: that the floor sits on
+ * the cheapest field and the step above it is the first that costs more. Comparing the published
+ * scale with itself cannot see either, which is how a first version of that assertion passed while
+ * proving nothing. */
+uint32_t nr_panel_scale_area(uint32_t width, uint32_t height, float scale, uint32_t minimum);
+
 #ifdef __cplusplus
 }
 #endif

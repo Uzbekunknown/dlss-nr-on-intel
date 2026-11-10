@@ -231,7 +231,7 @@ rem The layer's own pacing - asynchronous mode, the GPU path and the cadence - a
 rem the setup window states: the path requires the other two off, so each of the three clears the
 rem others. Also checks that rewriting the proxy environment file leaves every line it does not
 rem own byte for byte, because those lines are the installation.
-link /nologo /OUT:"%WORK%\test_menu_pacing.exe" "%REPO%\test_menu_pacing.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_menu_floor.obj" "%REPO%\nr_menu_floor.obj" user32.lib gdi32.lib
+link /nologo /OUT:"%WORK%\test_menu_pacing.exe" "%REPO%\test_menu_pacing.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_menu_floor.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_menu_pacing.exe failed & exit /b 1 )
 echo   test_menu_pacing.exe
 rem A choice list is only as long as its count: the cadence row declared four options with a

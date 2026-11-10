@@ -67,9 +67,10 @@ static uint32_t panel_field_area(uint32_t width, uint32_t height, uint32_t minim
  * floor computed from `width * scale` alone would say 0.35 buys something on that window, and it
  * does not.
  *
- * The walk stops at the first size that costs more than the best so far, which is what the Python
- * side does: it takes every candidate at or below the running cheapest, and the last of those wins,
- * so the search runs to the widest frame that is still no more expensive. */
+ * The walk runs the full width rather than stopping early, which is what the Python side does: it
+ * takes every candidate at or below the running cheapest and the last of those wins, so the search
+ * must reach the widest frame that is still no more expensive - stopping at the first price rise
+ * would miss a cheaper size further along, because the alignment makes the price non-monotonic. */
 static uint32_t panel_extent_area(uint32_t width, uint32_t height, float scale, uint32_t minimum)
 {
 	uint32_t w = (uint32_t)((float)width * scale + 0.5f);
@@ -77,7 +78,6 @@ static uint32_t panel_extent_area(uint32_t width, uint32_t height, float scale, 
 	if (w < 64) w = 64;
 	if (h < 64) h = 64;
 	uint32_t cheapest = panel_field_area(w, h, minimum);
-	uint32_t widest = w;
 	/* One pixel at a time, as the reference does: the field's alignment makes a jump of a few
 	 * pixels change the price, so stepping coarser would miss the cheaper sizes. Bounded by the
 	 * frame's width, and the caller only asks once per present. */
@@ -85,48 +85,69 @@ static uint32_t panel_extent_area(uint32_t width, uint32_t height, float scale, 
 		uint32_t ch = (uint32_t)((float)height * (float)candidate / (float)width + 0.5f);
 		if (ch < 64) ch = 64;
 		uint32_t price = panel_field_area(candidate, ch, minimum);
-		if (price <= cheapest) {
-			cheapest = price;
-			widest = candidate;
-		}
+		if (price <= cheapest) cheapest = price;
 	}
-	(void)widest;
 	return cheapest;
 }
 
-/* The lowest `render_scale`, on the knob's own step, that gives the network a smaller field than
- * the setting below it. A scale at or under this runs the same field as the one above, which is
- * why the knob must not offer it. */
+/* The lowest `render_scale`, on the knob's own step, that still runs on the cheapest network field.
+ *
+ * **The last step on that field, not the first step off it.** `render_extent` already maps every
+ * scale at or below a point to the widest frame on the cheapest field, so at 1280x720 the scales
+ * 0.05 through 0.25 all give 320x180 on 320x320 and render the same frame at the same cost. 0.25
+ * is the last of them and the lowest worth offering; returning the step after it would drop the
+ * cheapest field from the knob entirely and hand the user a floor that costs 1.2x the work
+ * (384x320) for nothing. */
 float nr_panel_lowest_scale(uint32_t width, uint32_t height, uint32_t minimum, float step)
 {
 	if (width == 0 || height == 0 || step <= 0.0f) return 0.0f;
 	/* **Cached, because the walk is per pixel.** The answer depends only on these four numbers, and
 	 * the row builder asks every present while the size changes on a resize and almost never
-	 * otherwise. A hit is four comparisons; a miss is the same few thousand as before. */
-	static uint32_t cached_width, cached_height, cached_minimum;
-	static float cached_step, cached_answer;
+	 * otherwise. A hit is four comparisons; a miss is the same few thousand as before.
+	 *
+	 * **Thread-local, not a plain static.** The panel runs under `device_data.present_lock`, and
+	 * that lock is per DEVICE - so two Vulkan devices presenting at once in one process reach this
+	 * function concurrently, and a shared cache would be a data race on five words. `_Thread_local`
+	 * keeps the hit for the thread that fills it (the panel always asks from the same thread) and
+	 * makes the miss case merely repeat work rather than read a half-written answer. `__declspec`
+	 * on MSVC, which has no C11 `_Thread_local` under /TC, and the standard spelling elsewhere. */
+#if defined(_MSC_VER)
+	__declspec(thread) static uint32_t cached_width, cached_height, cached_minimum;
+	__declspec(thread) static float cached_step, cached_answer;
+#else
+	static _Thread_local uint32_t cached_width, cached_height, cached_minimum;
+	static _Thread_local float cached_step, cached_answer;
+#endif
 	if (width == cached_width && height == cached_height
 	    && minimum == cached_minimum && step == cached_step)
 		return cached_answer;
-	uint32_t previous = 0;
+	uint32_t cheapest = 0;
+	float last_on_cheapest = 0.0f;
 	for (int i = 1; (float)i * step <= 1.0f + 1e-6f; ++i) {
 		float scale = (float)i * step;
 		if (scale > 1.0f) scale = 1.0f;
 		uint32_t area = panel_extent_area(width, height, scale, minimum);
-		if (previous != 0 && area > previous) {
-			cached_width = width;
-			cached_height = height;
-			cached_minimum = minimum;
-			cached_step = step;
-			cached_answer = scale;
-			return scale;
+		if (cheapest == 0 || area < cheapest) {
+			cheapest = area;
+			last_on_cheapest = scale;
+		} else if (area == cheapest) {
+			last_on_cheapest = scale;
 		}
-		previous = area;
 	}
 	cached_width = width;
 	cached_height = height;
 	cached_minimum = minimum;
 	cached_step = step;
-	cached_answer = 1.0f;
-	return 1.0f;
+	cached_answer = last_on_cheapest > 0.0f ? last_on_cheapest : 1.0f;
+	return cached_answer;
+}
+
+/* The published name for the field's area, so a fixture can check what the floor is for rather
+ * than only the numbers that come out of it. See nr_menu_floor.h. */
+uint32_t nr_panel_scale_area(uint32_t width, uint32_t height, float scale, uint32_t minimum)
+{
+	if (width == 0 || height == 0) return 0;
+	if (scale < 0.0f) scale = 0.0f;
+	if (scale > 1.0f) scale = 1.0f;
+	return panel_extent_area(width, height, scale, minimum);
 }
