@@ -71,7 +71,8 @@ such move; what it still leaves open becomes a line of its own.
     fast-forwarded in (below, 11-06, morning), and again to `game-tuning` with the daemon's fix
     (below, 11-06, later);
   - `cleanup`: from `newnr` at `0456e99`, the shorter brief, `make test` in parallel and the
-    leftovers removed; PR #39 into `newnr`, a draft until it has run on a GPU (below, 11-05);
+    leftovers removed; PR #39 into `newnr`, run on a GPU on both systems (below, 11-05 and 11-11,
+    later);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (archive,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -169,11 +170,16 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
+- **PR #39, branch `cleanup`**: green on Linux at `dff4ad5` and on Windows at `4cd720f`, with this
+  file cut and `make test` quiet since, and pushed (below, 11-11, later). Windows builds and runs
+  CTest at that head once more; then the owner's word on merging it into `newnr`.
+
 **Linux**
-- **PR #39, branch `cleanup`** (on GitHub since 11-08: `newnr` merged in, Windows green):
+- ~~**PR #39, branch `cleanup`** (on GitHub since 11-08: `newnr` merged in, Windows green):
   `make test` in both memory modes and CTest at its head, the code of `297e13a`: the first run on a
   GPU of its runner, `attention.comp`, libxmx and `nr_resident`, and three tests changed (below,
-  11-09 and 11-08; 11-05). Then the owner's word on merging #39 into `newnr`.
+  11-09 and 11-08; 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
+  later).
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
   staged GEMM's walk (`6ef670e`), are not started. Archive, 11-04 evening.
@@ -264,6 +270,47 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## PR #39 on Linux: green on a GPU, this file cut to 91 KB, and `make test` printing 5 KB (2026-11-11, later, branch `cleanup`)
+
+The owner, 11-11: #39 is there so that tests and records nobody needs stop filling a session's
+context, and two more things were to be done for that. `newnr` (`c22f798`, with #40 and #41) was
+merged into `cleanup` first, `f69ee5d`: only this file conflicted, and both sides' lines are kept.
+
+**What a session pays for, before and after.**
+- The brief: 31 KB to 9 KB, in this PR since 11-05.
+- This file: 138 KB to 91 KB (`827d7eb`). The dated entries of 11-01 to 11-04 went word for word
+  to `archive/HANDOFF-2026-11-01-to-2026-11-04.md`, 37 KB, and with them the 40 open items that
+  were struck through, 11 KB. What six of those still left open is a line of its own now, under
+  Linux and Windows. The pointers to the moved entries say "archive".
+- `make test` in the terminal: 122 KB to 5 KB (`dff4ad5`). `run_tests.py` prints one line a check,
+  the last 40 lines of a failing check's output with its log's path, and the summary, which now
+  names every skip. `make test TEST_ARGS=--verbose` prints every check whole, as before; `--quiet`
+  is gone. Tried on stand-ins: a pass, a skip (exit 77) and a failure of 100 lines.
+
+**Checked on Linux, the branch's first run on a GPU.** No daemon, swap empty, a quiet CPU; Mesa
+26.2.6.
+- Before the two changes, on `cleanup` with `newnr` merged: `make test` 70 of 70 in 1 min 39 s,
+  where the old recipe took 2 min 50 s on `newnr` the same night; `XMX_STAGING=1 make test-gpu`
+  40 of 40, the seven suites that print the mode saying `staging=True`; CMake with no warning;
+  CTest 69 of 69. So `attention.comp`, libxmx without `xmx_rec_qkv` and `nr_resident` hold on Mesa.
+- At `dff4ad5`, the same again: 70 of 70 in 1 min 29 s, 40 of 40, CTest 69 of 69. Between the two
+  runs only the runner, its two descriptions and the notes differ.
+- The parallel run needed neither `--serial` nor `NR_TEST_JOBS=1` here.
+
+**Not run:** Windows since `4cd720f`. What changed for it since is `newnr`'s #40 and #41, which
+Windows built at their heads, and the runner's output.
+
+**Left for a later cut, not done:** "Where things stand" carries each branch's history, 9 KB; the
+reference sections 0-7 are 18 KB, the traps half of that.
+
+**Pushed at the owner's word**, with the PR's description brought up to date. The owner, 11-11:
+the merge waits for Windows.
+
+**Next on Windows:** `git fetch`, then `cleanup` at GitHub's head; `build_win.bat` and CTest once
+are enough, since nothing Windows compiles changed after its own check but #40 and #41. Write the
+result here on `cleanup`. **Then** the owner's word on merging #39 into `newnr`.
+**Next on Linux:** nothing for #39.
 
 ## Checked on Linux: PR #40 and #41 together, and `newnr` at `127f6dc` (2026-11-11, branch `alchemist`)
 
