@@ -71,8 +71,8 @@ such move; what it still leaves open becomes a line of its own.
     fast-forwarded in (below, 11-06, morning), and again to `game-tuning` with the daemon's fix
     (below, 11-06, later);
   - `cleanup`: from `newnr` at `0456e99`, the shorter brief, `make test` in parallel and the
-    leftovers removed; PR #39 into `newnr`, run on a GPU on both systems (below, 11-05 and 11-11,
-    later);
+    leftovers removed; PR #39, run on a GPU on both systems and merged into `newnr` on 11-11
+    (`3d933b0`; below, 11-11, latest);
   - ~~`claude/weights-only-quantization-w0o2wh`: one HANDOFF commit (`f06277d`) that reached GitHub
     by accident on 11-01~~: gone from GitHub by 11-04, 08:07 UTC. Its text is carried here (archive,
     11-01, latest), and the branch is saved in a bundle in `D:\NRonWindows\backups` on Windows
@@ -170,9 +170,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
-- **PR #39, branch `cleanup`**: green on Linux at `dff4ad5` and on Windows at `4cd720f`, with this
+- ~~**PR #39, branch `cleanup`**: green on Linux at `dff4ad5` and on Windows at `4cd720f`, with this
   file cut and `make test` quiet since, and pushed (below, 11-11, later). Windows builds and runs
-  CTest at that head once more; then the owner's word on merging it into `newnr`.
+  CTest at that head once more; then the owner's word on merging it into `newnr`~~: green on
+  Windows at `fe2c33c` too, and merged into `newnr` as `3d933b0` (below, 11-11, latest).
 
 **Linux**
 - ~~**PR #39, branch `cleanup`** (on GitHub since 11-08: `newnr` merged in, Windows green):
@@ -270,6 +271,33 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Checked on Windows: PR #39 at `fe2c33c`, then merged (2026-11-11, latest, branch `newnr`)
+
+The owner, 11-11, back from the Linux run: #39 can be merged once Windows has run it. The Linux
+session had merged #40 and #41 already (`d0a4f65`, `7d37976`), so `newnr` (`c22f798`) was inside
+`cleanup` and the PR's tree is the one that merges. Tested in a scratch worktree at `fe2c33c`, on
+the Arc 140V on AC power; no timing was taken.
+- MinGW (gcc 16, layer off): the build, with the 198 warnings `e41d2b3` has, and CTest 68 of 68, two
+  of them skipped until the MSVC libraries exist.
+- MSVC `build_win.bat`: the three known C4068 and nothing else. CTest on its libraries: 68 of 68.
+- The seven menu fixtures. Under the native Python, `test_windows_setup.py` 14 of 14 and
+  `test_windows_wizard.py` 100, 1 skipped.
+- `frame_replay.py`, network A, on the MSVC libxmx: the heads and changed heads are October's,
+  `e62005b8…`/`e7c72789…` at 320x320 and `c217fd2f…`/`95f46f67…` at 1280x720, as on 11-08. So
+  with #40 and #41 in, removing `xmx_rec_qkv`, `gemm_smallm.comp` and the two switches still changes
+  no byte the network writes on Intel's driver.
+- `build_xess.bat` and `test_nr_xess` pass, with `nr_menu_floor.c` linked; `deploy.bat --release`
+  builds a release of `fe2c33c`.
+- vkcube under the validation layer with the panel open and shut: 0 errors and no leak line.
+  `test_gpu_present --panel open|corner --sync-validation`: 0 errors.
+
+**Merged** from the Windows session at the owner's word, 11-11 03:39 +0900, as a merge commit
+`3d933b0` (parents `c22f798` and `fe2c33c`): `newnr`'s tree is the tested one, byte for byte.
+`master` and `alchemist` are level with `newnr` from this entry on.
+
+**Next on Linux:** fetch; nothing is owed for #39. **Next on Windows:** nothing. `build_win.bat`
+and `build_xess.bat` run from `newnr` before the next game.
 
 ## PR #39 on Linux: green on a GPU, this file cut to 91 KB, and `make test` printing 5 KB (2026-11-11, later, branch `cleanup`)
 
