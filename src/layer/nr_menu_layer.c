@@ -171,20 +171,23 @@ static void menu_build(struct device_data *data, struct swapchain_data *chain)
 	 * no feature of the application's to inspect, no extension to enable. It is built at
 	 * `--target-env vulkan1.0` for exactly that reason.
 	 *
-	 * Two requirements were removed here after refusing real games, and both were reported as
-	 * hardware facts that were really leftovers:
+	 * Two requirements were removed here, and they are not the same kind of thing:
 	 *
-	 *   - a Vulkan version test, on the theory that a SPIR-V 1.6 module needed a 1.3 device. It
-	 *     compared the version the GAME DECLARED, which is not a ceiling on the device - a game on
-	 *     1.0 still creates a device at the hardware's version. The module is 1.0 now anyway.
-	 *   - `bufferDeviceAddress`, on the theory that the blend pass took both buffers by address.
-	 *     The pass moved to storage buffers and the usage flag stayed behind, where it made
-	 *     `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` illegal on a device without the feature
-	 *     (VUID-VkMemoryAllocateInfo-flags-03331) and so demanded a 1.2 feature nothing used.
+	 *   - `bufferDeviceAddress` was imaginary. The blend pass moved to storage buffers, and the
+	 *     usage flag stayed behind, where it made `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` illegal
+	 *     on a device without the feature (VUID-VkMemoryAllocateInfo-flags-03331) and so demanded
+	 *     a 1.2 feature nothing used.
 	 *
-	 * Measured, not argued: with both gone the panel builds and draws on vkcube's device, which
-	 * enables no features at all. `menu_device_reason` is what is left of the device test and
-	 * answers NULL; the surface's own `storage_ok` above is the only real gate. */
+	 *   - the Vulkan version test was right for the module it guarded (SPIR-V 1.6), and the
+	 *     module is what changed. Device-level functionality added by a core version may be used
+	 *     only where BOTH the device's `apiVersion` and the application's allow it, and the
+	 *     SPIR-V version a module may use is part of that - so a 1.6 module on a game declaring
+	 *     1.0 or 1.1 is invalid (VUID-VkShaderModuleCreateInfo-pCode-08737), whatever the driver
+	 *     does with it. The panel is built at vulkan1.0 now, so there is no version to compare.
+	 *
+	 * Measured: with both gone the panel builds and draws on vkcube's device, which declares
+	 * Vulkan 1.0 and enables no features at all. `menu_device_reason` is what is left of the
+	 * device test and answers NULL; the surface's own `storage_ok` above is the only real gate. */
 	if (data->menu_device_reason) {
 		data->menu_reason = data->menu_device_reason;
 		fprintf(stderr, "[nr_layer] no settings menu: %s\n", data->menu_reason);

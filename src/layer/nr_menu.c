@@ -53,8 +53,13 @@
  *
  *     vec4 rect; vec4 uv; vec4 colour; uint flags; uint _pad0..2;
  *
- * which is 64 bytes, read through a `scalar` buffer_reference - so the layout is exactly as written
- * with no padding inserted anywhere.
+ * which is 64 bytes, read from a `std430` storage buffer - NOT through a `scalar`
+ * buffer_reference, which is what this comment used to say. Scalar layout is
+ * VK_EXT_scalar_block_layout, an extension this layer does not enable on the game's device, and a
+ * block that asks for it without the extension has an undefined layout (see the note in
+ * `menu.comp`). std430 needs nothing and pads only where its own rules say: vec4 members are
+ * 16-byte aligned, which is why the five words after the three vec4s take 16 bytes as a group.
+ * The layout is exactly as written, with no padding inserted anywhere.
  *
  * The first version of this struct used `uint32_t colour` where the shader has a `vec4`, making it
  * 48 bytes. Two things followed, and the second is why the panel never appeared:
