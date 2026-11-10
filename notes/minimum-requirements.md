@@ -42,7 +42,7 @@ Measured (`notes/players-20261103.md`, eleven cards):
 | Requirement | Enforced at | When missing |
 | --- | --- | --- |
 | Surface caps AND format support STORAGE | `nr_layer.c:1083-1085` (`VUID-VkSwapchainCreateInfoKHR-imageFormat-01778`) | degrades: no panel, game runs |
-| Format in the five compiled variants | `nr_menu.c` `menu_formats` | same (BGRA8/RGBA8 unorm+srgb, A2B10G10R10) |
+| Format among the five the panel knows | `nr_menu.c` `menu_formats` | same (BGRA8/RGBA8 unorm+srgb with `menu.spv`, A2B10G10R10 with `menu_rgb10a2.spv`) |
 | HOST_VISIBLE\|HOST_COHERENT memory | `nr_menu.c` `find_memory_type` | same (every real device has it) |
 | A graphics queue family (ImGui draws) | `nr_menu_ui_vk.cpp` | same |
 | Windows (font via `GetGlyphOutlineW`, `GetAsyncKeyState`) | `nr_menu_font.c` | no panel off Windows; `nr-panel` covers Linux |
@@ -90,14 +90,16 @@ to catch it, because `menu_device_reason` answers NULL now.
   (observed in the vkcube log).
 - D3D8-11 goes through DXVK (installed by setup); D3D12 through the game's own XeSS or
   OptiScaler. Compatibility requirements, not hardware ones.
-- cv2/PIL are imported only for optical flow or a render scale other than 1
-  (`nr_frame.py:46`) - optional.
+- cv2/PIL are optional. NR calls none of the MLX-DLSS functions that need them (optical
+  flow, motion quality, resizing a guide), and MLX-DLSS's `blur` takes `cv2.sepFilter2D`
+  only as a faster path when cv2 is installed (`nr-ctl` reports which). NR's render scale
+  does not bring them in.
 
 ## 6. Software and resources, measured
 
 | Item | Value |
 | --- | --- |
-| Python | 3.11.9 + numpy (the only hard dependency) |
+| Python | 3.11.9 + numpy here (the daemon's only hard dependency); a Windows release brings its own Python with numpy and safetensors, so a player installs none |
 | Daemon memory | ~1.4-1.7 GB private |
 | Disk | weights 216 MB (B) / 278 MB (A), plus the release |
 | Drivers verified | 101.8864 (this machine), 101.9150 (player reports) |
