@@ -546,8 +546,10 @@ and a skip is not a pass.
 pool beside the GPU's queue, which keeps one process on the device at a time, as `make test`
 always did; the ones that load the whole network have the device to themselves, and the two
 that need a quiet machine, a timing gate and a check that reads the process list, run last and
-alone. Each check's output is printed whole when it ends and kept in `work/test-logs/`, a
-failure does not stop the run, and the summary names every failure and the slowest checks.
+alone. Each check's output is kept in `work/test-logs/`. The terminal gets one line a check, the
+last 40 lines of a failing check's output, and a summary that names every failure, every skip and
+the slowest checks; `make test TEST_ARGS=--verbose` prints every check's output whole, as `make
+test` used to. A failure does not stop the run.
 `make test TEST_ARGS=--list` shows each check's kind and its last time, `-k TEXT` runs some of
 them, and `--serial` runs them one at a time in the list's order. The memory mode changes only
 what opens the device, so `make test-gpu` runs just those.

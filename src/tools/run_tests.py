@@ -19,9 +19,11 @@ A check that is not sure of its kind is `gpu` or `alone`, never `cpu`. The GPU q
 the order below, which is the order `make test` had; the pool starts the longest first, by
 the times the last run left in work/test-times.json.
 
-Each check's output goes to work/test-logs/, and is printed whole when it ends, so a run reads
-as before, only grouped by check. A failure does not stop the run (--fail-fast does); the
-summary names every failure and the slowest checks.
+Each check's output goes to work/test-logs/. The terminal gets one line a check, the end of a
+failing check's output, and a summary that names every failure, every skip and the slowest
+checks: a run used to print 100 KB, which whoever ran it, a person or an agent, had to take in
+to learn that everything passed. --verbose prints every check's output whole when it ends, as
+`make test` did. A failure does not stop the run (--fail-fast does).
 
 The second memory mode changes only what opens the device: `XMX_STAGING=1 make test-gpu`
 runs the `gpu` and `heavy` checks and nothing else.
@@ -48,6 +50,7 @@ TIMES = WORK / "test-times.json"
 WINDOWS = os.name == "nt"
 KINDS = ("cpu", "gpu", "heavy", "alone")
 SKIPPED = 77            # the exit code CTest's SKIP_RETURN_CODE also reads as a skip
+FAILURE_TAIL = 40       # lines of a failing check's output the terminal gets without --verbose
 
 
 @dataclass
@@ -226,9 +229,15 @@ class Run:
         with self.lock:
             self.results.append((check, status, seconds, log))
             self.times[check.name] = round(seconds, 2)
-            if not self.args.quiet or status == "FAIL":
+            if self.args.verbose or status == "FAIL":
+                lines = text.splitlines()
+                cut = 0 if self.args.verbose else max(0, len(lines) - FAILURE_TAIL)
                 print(f"\n----- {check.name} ({check.kind}) -----", flush=True)
-                sys.stdout.write(text if not text or text.endswith("\n") else text + "\n")
+                if cut:
+                    print(f"... the last {FAILURE_TAIL} of {len(lines)} lines; "
+                          f"the whole log: {shown(log)}")
+                if lines:
+                    print("\n".join(lines[cut:]), flush=True)
             exit_note = f"   (exit {code})" if status == "FAIL" and code is not None else ""
             print(f"[{len(self.results)}/{self.total}] {status} {seconds:6.1f} s  "
                   f"{check.kind:5}  {check.name}{exit_note}", flush=True)
@@ -340,8 +349,10 @@ def main():
     parser.add_argument("--fail-fast", action="store_true", help="start nothing after a failure")
     parser.add_argument("--timeout", type=float, default=None, help="seconds a check may take")
     parser.add_argument("--list", action="store_true", help="print the checks and their kinds")
-    parser.add_argument("--quiet", action="store_true",
-                        help="print a failing check's output only; every log is in work/test-logs")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="print every check's output whole when it ends; without it, one "
+                             "line a check and the end of a failing one's output. Every log is "
+                             "in work/test-logs either way")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
@@ -399,6 +410,9 @@ def main():
           + (f", {not_run} not started" if not_run else "") + " =====")
     slowest = sorted(run.results, key=lambda r: -r[2])[:5]
     print("slowest: " + ", ".join(f"{c.name} {s:.0f} s" for c, _, s, _ in slowest))
+    for c, status, _, log in run.results:
+        if status == "SKIP":
+            print(f"SKIPPED {c.name}   log: {shown(log)}")
     for c, status, _, log in run.results:
         if status == "FAIL":
             print(f"FAILED  {c.name}   log: {shown(log)}")

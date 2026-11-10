@@ -321,8 +321,9 @@ bench: all work/half_probe.spv
 # Every check once. src/tools/run_tests.py holds the list and each check's kind: the ones that
 # open no device run in a pool beside the GPU's queue, which keeps one process on the device at
 # a time, as this target always did. TEST_ARGS passes options through (--serial for the old
-# one-at-a-time order, -k TEXT for some checks only, --list for the kinds). The logs and the
-# times are in work/test-logs and work/test-times.json.
+# one-at-a-time order, -k TEXT for some checks only, --list for the kinds, --verbose for every
+# check's output in the terminal). The terminal gets a line a check and the end of a failing
+# one's output; the whole logs and the times are in work/test-logs and work/test-times.json.
 TEST_PREREQUISITES := all work/attention_ab.spv work/test_exchange work/test_settled work/test_present work/test_surface_policy work/test_transfer_resources $(MENU_TESTS) $(FOCUS_GATE)
 test: $(TEST_PREREQUISITES)
 	python3 src/tools/run_tests.py $(TEST_ARGS)
