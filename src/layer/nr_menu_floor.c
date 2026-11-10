@@ -21,9 +21,9 @@
  * does not follow fails the fixtures rather than the user seeing a slider that lies.
  */
 
-/* The graph's own minimum, and the vendor's field minimum. Same numbers as `nr_frame.py`. */
+/* The graph's own minimum. `min_extent` is the knob that moves the vendor's field minimum, and it
+ * arrives as `minimum`; the graph's 128 is the hard lower bound `network_geometry` applies. */
 #define PANEL_GRAPH_MIN_EXTENT 128
-#define PANEL_VENDOR_MIN_EXTENT 320
 
 /* Two to the number of times the graph reduces an axis of `extent` pixels - the same six halvings,
  * each rounded up to 4, that `_field_alignment` walks. */

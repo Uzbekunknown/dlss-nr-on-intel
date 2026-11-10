@@ -325,8 +325,13 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 					low = floor_scale;
 					float shown_value = (float)atof(r->value ? r->value : "0");
 					if (shown_value < low) {
+						/* `%g`, the same spelling the bridge uses (`nr_menu_bridge.c`'s
+						 * `snprintf(..., "%g", values[i])`), so the number a user reads is the
+						 * number they would have read at that setting. `atof` in
+						 * `nr_menu_ui.cpp` parses either spelling; matching it is for the reader,
+						 * not the parser. */
 						snprintf(data->floor_text[n], sizeof data->floor_text[n],
-							 "%.3f", (double)low);
+							 "%g", (double)low);
 						r->value = data->floor_text[n];
 					}
 				}
