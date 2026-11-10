@@ -123,7 +123,7 @@ IMGUI_SOURCES :=
 ifeq ($(OS),Windows_NT)
 MENU_SOURCES := src/layer/nr_menu_layer.c src/layer/nr_menu.c src/layer/nr_menu_font.c \
                 src/layer/nr_menu_strings.c src/layer/nr_menu_strings_lookup.c \
-                src/layer/nr_menu_bridge.c src/layer/nr_raw_mouse.c src/layer/nr_panel.c \
+                src/layer/nr_menu_bridge.c src/layer/nr_raw_mouse.c src/layer/nr_panel.c src/layer/nr_menu_floor.c \
                 src/layer/nr_input_guard.c
 # The ImGui panel behind it, including the C++ translation unit behind a plain-C interface. The
 # vendored sources want IMGUI_DEFINE_MATH_OPERATORS and nothing else defines it.

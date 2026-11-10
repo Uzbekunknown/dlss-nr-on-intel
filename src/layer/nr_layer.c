@@ -877,37 +877,57 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateInstance(const VkInstanceCreateInfo *inf
 }
 
 #ifdef _WIN32
-/* Why the in-game panel cannot be built on the device `info` made, or NULL when it can.
+/* **Why the in-game panel cannot be built on the device `info` made - and it answers NULL now,
+ * because nothing is left to test.**
  *
- * The panel's blend pass takes its two buffers by device address and is a SPIR-V 1.6 module, so
- * the device must run Vulkan 1.3 and have bufferDeviceAddress ENABLED. What the GPU supports is
- * not the question: the Arc supports the feature, vkcube's device enables nothing, and building
- * the panel there was invalid usage. The feature is on when the GPU path's patch put it there
- * (`gpu_enabled`), or when the game asked for it itself, as DXVK does. Decided here because only
- * vkCreateDevice sees what was enabled. */
-static const char *menu_device_reason(VkPhysicalDevice physical, const VkDeviceCreateInfo *info,
+ * Two requirements were removed, and the reason for each is different. Only the second was
+ * imaginary; the first was real, and was satisfied by changing the build rather than the test.
+ *
+ *   - **`bufferDeviceAddress` was an imaginary requirement.** The check demanded the feature be
+ *     ENABLED because the blend pass once took its two buffers by device address. Those buffers
+ *     became plain storage buffers, but the usage flag and its
+ *     `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` allocation survived the change, and
+ *     `VUID-VkMemoryAllocateInfo-flags-03331` makes that flag illegal without the feature - so
+ *     the panel went on requiring a Vulkan 1.2 device feature no shader of it ever used. Every
+ *     game that enabled nothing, vkcube included, got "no settings menu". Removed where it was
+ *     created (`nr_menu.c`), and with it the last thing this function had to look at.
+ *
+ *   - **The Vulkan version test was CORRECT for the module it guarded, and the module changed.**
+ *     It refused when `min(application_version, props.apiVersion)` was below 1.3, because the
+ *     module was built at `--target-env vulkan1.3` (SPIR-V 1.6). That was not a conservative
+ *     guess: device-level functionality added by a core version may be used only where BOTH the
+ *     device's `VkPhysicalDeviceProperties::apiVersion` AND the application's
+ *     `VkApplicationInfo::apiVersion` allow it, and the SPIR-V version a module may use is part
+ *     of that rule. Validation says so directly:
+ *
+ *         VUID-VkShaderModuleCreateInfo-pCode-08737
+ *         Invalid SPIR-V binary version 1.6 for target environment SPIR-V 1.0
+ *         (under Vulkan 1.0 semantics).
+ *
+ *     The module was therefore invalid for a game declaring 1.0 or 1.1, and Intel's driver ran it
+ *     anyway. A driver accepting a module does not make the module valid - that distinction is
+ *     the whole point of this note, because "the driver tolerates it" invites a workaround while
+ *     "the rule forbids it" says fix the cause. The cause was fixed: the panel is built at
+ *     `--target-env vulkan1.0` (SPIR-V 1.0), so there is no version to compare and the test is
+ *     unnecessary rather than wrong.
+ *
+ * **What is left.** The panel is a compute pass over storage images and storage buffers, and its
+ * remaining Vulkan use is 1.0 core: render passes, `vkCmdPipelineBarrier`, binary semaphores, and
+ * ImGui with `UseDynamicRendering = false`. The 10-bit build's `rgb10_a2` declares
+ * `StorageImageExtendedFormats`, which the registry enables at `VK_VERSION_1_0` with no feature.
+ * So nothing remains to inspect here, and `chain->storage_ok` - the surface's own answer, checked
+ * in `nr_menu_layer.c` - is the only gate.
+ *
+ * **Kept, with both parameters unused, as the one place a real device requirement would go.**
+ * Deleting it would scatter the next such test back into the creation path. It is not dead code
+ * in the sense that invites removal: the call site and the field are the structure that keeps a
+ * future requirement in one place. */
+static const char *menu_device_reason(const VkDeviceCreateInfo *info,
 				      int gpu_enabled)
 {
-	PFN_vkGetPhysicalDeviceProperties properties = (PFN_vkGetPhysicalDeviceProperties)
-		next_instance_proc(layer_instance, "vkGetPhysicalDeviceProperties");
-	VkPhysicalDeviceProperties props;
-	memset(&props, 0, sizeof props);
-	if (properties) properties(physical, &props);
-	uint32_t version = layer_api_version < props.apiVersion ? layer_api_version : props.apiVersion;
-	if (version < VK_API_VERSION_1_3)
-		return "the device runs Vulkan below 1.3, and the panel's shader needs 1.3";
-	if (gpu_enabled) return NULL;
-	int steps = 0;
-	for (const VkBaseInStructure *p = (const VkBaseInStructure *)info->pNext;
-	     p && ++steps <= 128; p = p->pNext) {
-		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
-		    && ((const VkPhysicalDeviceVulkan12Features *)p)->bufferDeviceAddress)
-			return NULL;
-		if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
-		    && ((const VkPhysicalDeviceBufferDeviceAddressFeatures *)p)->bufferDeviceAddress)
-			return NULL;
-	}
-	return "the game's device does not enable bufferDeviceAddress, which the panel needs";
+	(void)info;
+	(void)gpu_enabled;
+	return NULL;
 }
 #endif
 
@@ -982,7 +1002,7 @@ VKAPI_ATTR VkResult VKAPI_CALL nr_CreateDevice(VkPhysicalDevice physical,
 #ifdef _WIN32
 		data->gpu_enabled = gpu_enabled;
 		memcpy(data->gpu_note, gpu_note, sizeof data->gpu_note);
-		data->menu_device_reason = menu_device_reason(physical, info, gpu_enabled);
+		data->menu_device_reason = menu_device_reason(info, gpu_enabled);
 #endif
 		data->present = (PFN_vkQueuePresentKHR)next_device(*device, "vkQueuePresentKHR");
 		data->get_device_queue =

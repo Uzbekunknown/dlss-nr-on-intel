@@ -53,8 +53,13 @@
  *
  *     vec4 rect; vec4 uv; vec4 colour; uint flags; uint _pad0..2;
  *
- * which is 64 bytes, read through a `scalar` buffer_reference - so the layout is exactly as written
- * with no padding inserted anywhere.
+ * which is 64 bytes, read from a `std430` storage buffer - NOT through a `scalar`
+ * buffer_reference, which is what this comment used to say. Scalar layout is
+ * VK_EXT_scalar_block_layout, an extension this layer does not enable on the game's device, and a
+ * block that asks for it without the extension has an undefined layout (see the note in
+ * `menu.comp`). std430 needs nothing and pads only where its own rules say: vec4 members are
+ * 16-byte aligned, which is why the five words after the three vec4s take 16 bytes as a group.
+ * The layout is exactly as written, with no padding inserted anywhere.
  *
  * The first version of this struct used `uint32_t colour` where the shader has a `vec4`, making it
  * 48 bytes. Two things followed, and the second is why the panel never appeared:
@@ -375,16 +380,19 @@ static int make_host_buffer(nr_menu *m, VkDeviceSize size, VkBufferUsageFlags us
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = type;
-    /* The two host buffers are created with SHADER_DEVICE_ADDRESS_BIT because the shader takes
-     * their address in a push constant, and the spec then requires the memory to be allocated with
-     * the matching flag: VUID-vkBindBufferMemory-bufferDeviceAddress-03339, which named both of
-     * them. Bound on the buffer's own usage, so a buffer without the address bit is unaffected. */
-    VkMemoryAllocateFlagsInfo address_flags = {0};
-    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
-        address_flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-        address_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-        mai.pNext = &address_flags;
-    }
+    /* **No `VkMemoryAllocateFlagsInfo` here, and no address bit on the buffers.**
+     *
+     * There used to be one, chained on `VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT` because the
+     * original shader took both buffers as addresses in a push constant
+     * (VUID-vkBindBufferMemory-bufferDeviceAddress-03339 named them when the memory was not
+     * flagged). The descriptors replaced that - see the note in `menu.comp` - and the usage flag
+     * was left behind, where it was not harmless: `VUID-VkMemoryAllocateInfo-flags-03331` makes
+     * `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` require `bufferDeviceAddress` ENABLED, so the panel
+     * silently required a Vulkan 1.2 device feature it never uses, and a game that did not enable
+     * one got no menu at all.
+     *
+     * Measured, not reasoned: with the flags gone the panel builds and draws on vkcube's device,
+     * which enables no features whatsoever. Plain storage buffers need nothing. */
     if (m->allocate_memory(m->device, &mai, NULL, memory) != VK_SUCCESS) {
         *why = "no memory for the menu";
         return 0;
@@ -522,8 +530,7 @@ static int build_atlas(nr_menu *m, const char **why)
     VkDeviceSize bytes = (VkDeviceSize)m->font.width * m->font.height;
     VkDeviceSize padded = (bytes + 3u) & ~(VkDeviceSize)3u;
 
-    if (!make_host_buffer(m, padded, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    if (!make_host_buffer(m, padded, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                           &m->atlas_buffer, &m->atlas_memory, &m->atlas_mapped, why))
         return 0;
     memcpy(m->atlas_mapped, m->font.pixels, (size_t)bytes);
@@ -534,8 +541,7 @@ static int build_atlas(nr_menu *m, const char **why)
 static int build_quads(nr_menu *m, const char **why)
 {
     VkDeviceSize bytes = sizeof(nr_menu_quad) * NR_QUAD_CAPACITY;
-    if (!make_host_buffer(m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+    if (!make_host_buffer(m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                           &m->quad_buffer, &m->quad_memory, &m->quad_mapped, why))
         return 0;
     m->quad_capacity = NR_QUAD_CAPACITY;

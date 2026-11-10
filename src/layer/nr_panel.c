@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "nr_panel.h"
+#include "nr_menu_floor.h"
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_ui.h"
@@ -47,6 +48,12 @@ struct nr_panel {
 
 	/* This frame's keyboard, swept once in `nr_panel_input`, and the window the frames go to. */
 	unsigned char keys[256];
+
+	/* The picture the panel is drawn over, as `nr_panel_frame` was told. The row builder needs it
+	 * for `render_scale`'s floor, and it runs before the rest of that function, so the size is
+	 * stored on entry rather than read later. Zero until the first frame. */
+	uint32_t frame_width;
+	uint32_t frame_height;
 	nr_ui_window window;
 	nr_ui_window window_hint;       /* the host's, when it knows: a DXGI swap chain's window */
 
@@ -112,6 +119,12 @@ struct nr_panel {
 	 * always came first; a DirectX 12 panel shows the network row alone, at the place the first
 	 * pacing row had, so the row now says what it is. */
 	int row_what[MENU_UI_MAX_ROWS];
+
+	/* The `render_scale` row's number, when the saved value is under the floor the current picture
+	 * computes. `r->value` is the bridge's own string and its lifetime is the bridge's, so a row
+	 * whose shown value has to be the floor gets its text from here instead. One buffer per row,
+	 * because `r->value` points into it for as long as the row is drawn. */
+	char floor_text[MENU_UI_MAX_ROWS][16];
 
 	/* The frame counter (nr_frame_rate.h): the rates from the host's counts, sampled once a
 	 * present, and the two lines built from them - the panel's, and the corner's, which is the
@@ -287,6 +300,41 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 			float low = 0.0f, high = 1.0f, step = 0.01f;
 			if (nr_menu_bridge_knob_range(i, &low, &high, &step, NULL) == 0) {
 				low = 0.0f; high = 1.0f; step = 0.01f;
+			}
+			/* **`render_scale`'s floor moves with the picture.** See `nr_panel_lowest_scale`: below the
+			 * point where the frame clears `min_extent`, the field has already stopped shrinking, so
+			 * every setting under the floor runs the same 320x320 field as the floor does while the
+			 * panel names a different number.
+			 *
+			 * Only the slider's minimum: the value the file holds, what the daemon reads, and every
+			 * setting above the floor are untouched. A frame whose size is not known yet leaves the
+			 * knob's own minimum alone rather than guessing.
+			 *
+			 * **And when the saved value is already below it, the shown number is the floor's.** The
+			 * installer writes `render_scale` 0.4, which is under the floor at 800x450 and 640x360;
+			 * the slider itself is drawn inside its range and the first arrow press lands on `min`,
+			 * so a value left alone would show 0.4 beside a slider sitting at 0.5 and then jump when
+			 * touched. The floor is what runs, so the floor is what is read. `r->value` is the
+			 * bridge's string and not ours to edit, which is why the number is built here. */
+			if (strcmp(nr_menu_bridge_knob_name(i), "render_scale") == 0
+			    && data->frame_width && data->frame_height) {
+				int minimum = nr_menu_bridge_knob_min_extent(data->menu_bridge);
+				float floor_scale = nr_panel_lowest_scale(data->frame_width, data->frame_height,
+								       (uint32_t)minimum, step);
+				if (floor_scale > low && floor_scale <= high) {
+					low = floor_scale;
+					float shown_value = (float)atof(r->value ? r->value : "0");
+					if (shown_value < low) {
+						/* `%g`, the same spelling the bridge uses (`nr_menu_bridge.c`'s
+						 * `snprintf(..., "%g", values[i])`), so the number a user reads is the
+						 * number they would have read at that setting. `atof` in
+						 * `nr_menu_ui.cpp` parses either spelling; matching it is for the reader,
+						 * not the parser. */
+						snprintf(data->floor_text[n], sizeof data->floor_text[n],
+							 "%g", (double)low);
+						r->value = data->floor_text[n];
+					}
+				}
 			}
 			r->kind = NREX_KIND_FLOAT;
 			r->min = low;
@@ -1309,6 +1357,9 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 
 	/* The ImGui path: build the frame, convert the bridge's rows, and let the host render it -
 	 * into the UI's own image and onto the game's in Vulkan, over the back buffer in DirectX 12. */
+	/* Before the rows: `render_scale`'s floor is computed from the picture's size. */
+	data->frame_width = width;
+	data->frame_height = height;
 	nrex_row rows[MENU_UI_MAX_ROWS];
 	int count = menu_ui_rows(data, rows, MENU_UI_MAX_ROWS);
 

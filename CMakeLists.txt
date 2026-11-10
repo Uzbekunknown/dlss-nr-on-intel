@@ -183,6 +183,7 @@ if(WIN32)
       src/layer/nr_menu_bridge.c
       src/layer/nr_raw_mouse.c
       src/layer/nr_panel.c
+      src/layer/nr_menu_floor.c
       src/layer/nr_input_guard.c)
   set(NR_IMGUI_SOURCES
       third_party/imgui/imgui.cpp

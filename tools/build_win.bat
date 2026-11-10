@@ -103,7 +103,27 @@ rem The menu, twice: a storage image's declared format has to match the image's,
 rem surface Aperture Desk Job presents (A2B10G10R10) cannot be written with the rgba8 build. The
 rem loop above already produced menu.spv without the define; this is the 10-bit one. A game on a
 rem BGRA8 surface gets the first, and `nr_menu_create` picks by the swapchain's format.
-call :shader_def menu_rgb10a2 menu "-DNR_MENU_TARGET_RGB10A2"
+rem
+rem **Menu shaders are built at vulkan1.0, and that is a REQUIREMENT, not a preference.**
+rem Everything else here targets vulkan1.3 because the graph's shaders use cooperative matrix and
+rem 1.3 features. The panel uses none of them - it is storage images, storage buffers and a push
+rem constant, all Vulkan 1.0 - and building it at 1.3 stamps SPIR-V 1.6 on the module, which is
+rem then INVALID for any game that declares less than 1.3:
+rem
+rem     VUID-VkShaderModuleCreateInfo-pCode-08737
+rem     Invalid SPIR-V binary version 1.6 for target environment SPIR-V 1.0
+rem     (under Vulkan 1.0 semantics).
+rem
+rem Device-level functionality added by a core version may be used only where BOTH the device's
+rem apiVersion and the application's allow it, and the SPIR-V version is part of that rule. Intel's
+rem driver runs such a module anyway - which is why the panel appeared to work in games that
+rem declare 1.0 and 1.1 - but a driver accepting it does not make it valid.
+rem
+rem So `:menu_shader` exists to keep this at vulkan1.0, and raising it back to vulkan1.3 would
+rem reinstate the requirement with no check left to catch it: `menu_device_reason` answers NULL
+rem now. `glslangValidator` accepts target-env vulkan1.0 for this source unchanged.
+call :menu_shader menu ""
+call :menu_shader menu_rgb10a2 "-DNR_MENU_TARGET_RGB10A2"
 call :shader_def attention_rows     attention   "-DROW_LANES=256"
 call :shader_def attention_ab       attention   "-DSOFTMAX_AB"
 rem The daemon's start-up probe, whose source is a bench tool rather than a graph shader.
@@ -183,18 +203,18 @@ rem
 rem /Fo puts these objects in the checkout, where the links below read them, whatever folder the
 rem script runs from. Without it they landed in the caller's folder, and run from anywhere but the
 rem checkout the layer's link stopped at LNK1181 on nr_layer.obj (2026-11-04).
-cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%REPO%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
+cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%REPO%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu_floor.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
 if errorlevel 1 ( echo ERROR: layer C objects failed & exit /b 1 )
 rem link.exe, not cl, for the mixed C/C++ link: cl with /TC recompiles .obj inputs it is handed
 rem on the same command line (C2018, reading the binary as source), which is not a link at all.
-link /nologo /DLL /OUT:"%WORK%\nr_layer.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%REPO%\nr_layer.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
+link /nologo /DLL /OUT:"%WORK%\nr_layer.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%REPO%\nr_layer.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_menu_floor.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: nr_layer.dll failed & exit /b 1 )
 rem The layer's own exchange(), as a fixture: `test_exchange.c` INCLUDES nr_layer.c, so nr_layer.obj
 rem is left out of THIS link - its symbols are already in test_exchange.obj. The masked case in
 rem src/layer/test_daemon.py exists nowhere else: the request carries a mask plane the answer does
 rem not, so send and receive have different sizes. CMake builds this on the Linux line and nothing
 rem built it on Windows, which is why the daemon's exchange tests could not run here at all.
-link /nologo /OUT:"%WORK%\test_exchange.exe" "%REPO%\test_exchange.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
+link /nologo /OUT:"%WORK%\test_exchange.exe" "%REPO%\test_exchange.obj" "%REPO%\nr_menu_layer.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" "%REPO%\nr_panel.obj" "%REPO%\nr_menu_floor.obj" "%REPO%\nr_input_guard.obj" "%REPO%\imgui.obj" "%REPO%\imgui_draw.obj" "%REPO%\imgui_tables.obj" "%REPO%\imgui_widgets.obj" "%REPO%\imgui_impl_vulkan.obj" "%REPO%\nr_menu_ui.obj" "%REPO%\nr_menu_ui_vk.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_exchange.exe failed & exit /b 1 )
 echo   test_exchange.exe
 rem The menu's own two fixtures, headless. Same object set as the DLL's link, with nr_layer.obj left
@@ -231,7 +251,7 @@ rem The layer's own pacing - asynchronous mode, the GPU path and the cadence - a
 rem the setup window states: the path requires the other two off, so each of the three clears the
 rem others. Also checks that rewriting the proxy environment file leaves every line it does not
 rem own byte for byte, because those lines are the installation.
-link /nologo /OUT:"%WORK%\test_menu_pacing.exe" "%REPO%\test_menu_pacing.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" user32.lib gdi32.lib
+link /nologo /OUT:"%WORK%\test_menu_pacing.exe" "%REPO%\test_menu_pacing.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_menu_floor.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_menu_pacing.exe failed & exit /b 1 )
 echo   test_menu_pacing.exe
 rem A choice list is only as long as its count: the cadence row declared four options with a
@@ -312,9 +332,9 @@ set "X86OBJ=%WORK%\obj32"
 if not exist "%X86OBJ%" mkdir "%X86OBJ%"
 cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /DVK_NO_PROTOTYPES /D_WIN32 /D_IMGUI_DEFINE_MATH_OPERATORS /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\third_party\imgui\imgui.cpp" "%REPO%\third_party\imgui\imgui_draw.cpp" "%REPO%\third_party\imgui\imgui_tables.cpp" "%REPO%\third_party\imgui\imgui_widgets.cpp" "%REPO%\third_party\imgui\imgui_impl_vulkan.cpp" "%REPO%\src\layer\nr_menu_ui.cpp" "%REPO%\src\layer\nr_menu_ui_vk.cpp""
 if errorlevel 1 ( echo ERROR: imgui x86 objects failed & exit /b 1 )
-cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /utf-8 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c""
+cmd /c ""%VCX86%" >nul && cl /nologo /O2 /TC /utf-8 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\src\layer" /Fo:"%X86OBJ%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu_floor.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c""
 if errorlevel 1 ( echo ERROR: layer x86 C objects failed & exit /b 1 )
-cmd /c ""%VCX86%" >nul && link /nologo /DLL /MACHINE:X86 /OUT:"%WORK%\nr_layer32.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%X86OBJ%\nr_layer.obj" "%X86OBJ%\nr_menu_layer.obj" "%X86OBJ%\nr_menu.obj" "%X86OBJ%\nr_menu_font.obj" "%X86OBJ%\nr_menu_strings.obj" "%X86OBJ%\nr_menu_strings_lookup.obj" "%X86OBJ%\nr_menu_bridge.obj" "%X86OBJ%\nr_file.obj" "%X86OBJ%\nr_focus.obj" "%X86OBJ%\nr_raw_mouse.obj" "%X86OBJ%\nr_panel.obj" "%X86OBJ%\nr_input_guard.obj" "%X86OBJ%\imgui.obj" "%X86OBJ%\imgui_draw.obj" "%X86OBJ%\imgui_tables.obj" "%X86OBJ%\imgui_widgets.obj" "%X86OBJ%\imgui_impl_vulkan.obj" "%X86OBJ%\nr_menu_ui.obj" "%X86OBJ%\nr_menu_ui_vk.obj" user32.lib gdi32.lib"
+cmd /c ""%VCX86%" >nul && link /nologo /DLL /MACHINE:X86 /OUT:"%WORK%\nr_layer32.dll" /DEF:"%REPO%\src\layer\nr_layer.def" "%X86OBJ%\nr_layer.obj" "%X86OBJ%\nr_menu_layer.obj" "%X86OBJ%\nr_menu.obj" "%X86OBJ%\nr_menu_font.obj" "%X86OBJ%\nr_menu_strings.obj" "%X86OBJ%\nr_menu_strings_lookup.obj" "%X86OBJ%\nr_menu_bridge.obj" "%X86OBJ%\nr_file.obj" "%X86OBJ%\nr_focus.obj" "%X86OBJ%\nr_raw_mouse.obj" "%X86OBJ%\nr_panel.obj" "%X86OBJ%\nr_menu_floor.obj" "%X86OBJ%\nr_input_guard.obj" "%X86OBJ%\imgui.obj" "%X86OBJ%\imgui_draw.obj" "%X86OBJ%\imgui_tables.obj" "%X86OBJ%\imgui_widgets.obj" "%X86OBJ%\imgui_impl_vulkan.obj" "%X86OBJ%\nr_menu_ui.obj" "%X86OBJ%\nr_menu_ui_vk.obj" user32.lib gdi32.lib"
 if errorlevel 1 ( echo ERROR: nr_layer32.dll failed & exit /b 1 )
 echo   nr_layer32.dll
 echo   nr_layer32.dll  (with the INS settings menu)
@@ -406,6 +426,10 @@ rem and the Makefile builds both. A missing source is an error here rather than 
 rem skip - looking only in src/gpu once made `call :shader half_probe` fall through in
 rem silence, and a daemon spawned by the layer then died on the next thing that assumed it.
 :shader
+rem The menu is not in this loop's business: it targets vulkan1.0 and is built by
+rem `:menu_shader` below. Letting the loop take it too would overwrite menu.spv with a 1.6
+rem module and put back the version requirement this build exists to remove.
+if /i "%1"=="menu" goto :eof
 set "SRC=%GPU%\%1.comp"
 if not exist "%SRC%" set "SRC=%REPO%\src\bench\%1.comp"
 if not exist "%SRC%" (echo ERROR: no source for %1.comp & exit /b 1)
@@ -422,5 +446,22 @@ set "DEFARGS="
 if not "%~3"=="" set "DEFARGS=%~3"
 if not "%~4"=="" set "DEFARGS=%DEFARGS% %~4"
 "%GLSL%" --target-env vulkan1.3 %DEFARGS% -I"%GPU%" -o "%WORK%\%1.spv" "%GPU%\%2.comp" >nul 2>&1
+if exist "%WORK%\%1.spv" (echo   %1.spv) else (echo   %1.spv FAILED)
+goto :eof
+
+rem ---- :menu_shader <out-name> <defines> ----
+rem The panel's two builds, at vulkan1.0. Separate from `:shader_def` because the target-env is
+rem the whole difference: the same source, the same includes, but a SPIR-V 1.0 module.
+rem
+rem **The target is a requirement, not a preference.** Raising it to vulkan1.3 makes the module
+rem SPIR-V 1.6, which is invalid under Vulkan 1.0 semantics (VUID-VkShaderModuleCreateInfo-pCode-08737)
+rem and would leave the panel relying on Intel's driver tolerating it, with `menu_device_reason`
+rem answering NULL and so nothing left to catch a game that declares less. See the note at the
+rem call site for the full rule.
+:menu_shader
+if not exist "%GPU%\menu.comp" goto :eof
+set "DEFARGS="
+if not "%~2"=="" set "DEFARGS=%~2"
+"%GLSL%" --target-env vulkan1.0 %DEFARGS% -I"%GPU%" -o "%WORK%\%1.spv" "%GPU%\menu.comp" >nul 2>&1
 if exist "%WORK%\%1.spv" (echo   %1.spv) else (echo   %1.spv FAILED)
 goto :eof

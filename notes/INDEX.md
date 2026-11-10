@@ -73,6 +73,7 @@ disproved.
 | `phase27-pipeline-specialization.md` | specialize before believing a register ceiling |
 | `phase32-scratch-and-qk.md` | the scratch arena: 720p from 5041 to 2303 MiB |
 | `improve-large-grf.md` | Xe2's 256-register mode, reached with a three-place Mesa patch: correct at every size, and 13-26 % slower in a frame with kernels tuned for full occupancy; what a win would take |
+| `minimum-requirements.md` | what the system actually needs, by layer, and which line enforces it: the only hard gate is the cooperative-matrix shape on the daemon side, and everything else - GPU transport, the panel, the effect's trigger - degrades instead of refusing. Also the SPIR-V version rule that the panel's build depends on, `VUID-VkShaderModuleCreateInfo-pCode-08737` |
 
 ## Performance, and the levers that are closed
 

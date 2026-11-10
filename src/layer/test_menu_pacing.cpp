@@ -15,6 +15,7 @@
 #include "nr_menu_bridge.h"
 #include "nr_menu_strings.h"   /* nr_menu_text: the table the pacing rows are read from */
 #include "nr_layer_cadence.h"  /* CADENCE_NAME_STORE: the same number nr_layer.c sizes its store with */
+#include "nr_menu_floor.h"    /* nr_panel_lowest_scale: render_scale is not below what buys anything */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1015,6 +1016,94 @@ int main(void)
     wipe_tree("nr-pacing-test");
     wipe_tree("nr-pacing-test-odd");
     wipe_tree("nr-pacing-test-bare");
+    /* ---- `render_scale`'s floor: the lowest setting that still buys something ---- */
+    {
+        /* **The knob used to offer 0.05, and everything from 0.25 down ran the same field.** Measured
+         * in the game at 1280x720: 0.25, 0.2, 0.15, 0.1 and 0.05 all produced 320x180 on a 320x320
+         * field, and the log named the requested value beside them - a slider promising a speedup it
+         * did not deliver.
+         *
+         * **The floor is the LAST of those steps, not the first after them.** That distinction was
+         * the first version's error: it returned 0.30 for 1280x720, which is the first step onto a
+         * larger field (384x320, 1.2x the work) and so threw the cheapest field off the knob while
+         * keeping it reachable through the setup window. The rule is the last scale whose field is
+         * still the cheapest one.
+         *
+         * The floor is not a constant: the field has `min_extent` as its smallest side and is
+         * aligned to the graph's reductions, so where the cheapest field ends depends on the
+         * picture.
+         *
+         * **These expectations are the rule, written out**, and `test_menu_rows.py` runs
+         * `lowest_effective_scale` from `src/ref/nr_frame.py` at each of these sizes and compares
+         * its answers with this table - so a change to either side that the other does not follow
+         * fails a test rather than reaching a player. `nr_frame.py` is the only executable
+         * statement of the rule; this file is the panel's copy of it, and the panel runs in the
+         * game's process where Python is not available. */
+        struct { uint32_t w, h; float want; } cases[] = {
+            { 1280,  720, 0.25f },
+            { 1920, 1080, 0.15f },
+            {  800,  450, 0.40f },
+            {  640,  360, 0.50f },
+            { 2560, 1440, 0.10f },
+            { 3840, 2160, 0.05f },
+            { 1600,  900, 0.20f },
+            { 1024,  768, 0.30f },
+            { 1366,  768, 0.20f },
+            {  320,  180, 1.00f },
+        };
+        for (int i = 0; i < (int)(sizeof cases / sizeof cases[0]); ++i) {
+            float got = nr_panel_lowest_scale(cases[i].w, cases[i].h, 320, 0.05f);
+            snprintf(detail, sizeof detail, "%ux%u -> %.2f, want %.2f",
+                     cases[i].w, cases[i].h, got, cases[i].want);
+            check(got > cases[i].want - 0.001f && got < cases[i].want + 0.001f,
+                  "the render-scale floor matches the rule in nr_frame.py", detail);
+        }
+
+        /* **And the property the floor is for**, checked against the field rather than against the
+         * scale, because the scale alone cannot see it: the floor must sit on the cheapest field,
+         * and the step above it must be the first that costs more. Both directions matter - a floor
+         * one step too high throws away the cheapest field (the first version's bug), and one too
+         * low offers settings that change nothing.
+         *
+         * `nr_panel_scale_area` is exported for this. Without it a first version compared the
+         * published scale with itself and passed while proving nothing. */
+        int property_checked = 0;
+        for (int i = 0; i < (int)(sizeof cases / sizeof cases[0]); ++i) {
+            float floor_scale = nr_panel_lowest_scale(cases[i].w, cases[i].h, 320, 0.05f);
+            if (floor_scale <= 0.05f || floor_scale >= 1.0f) continue;
+            uint32_t at_floor = nr_panel_scale_area(cases[i].w, cases[i].h, floor_scale, 320);
+            uint32_t at_above = nr_panel_scale_area(cases[i].w, cases[i].h, floor_scale + 0.05f, 320);
+            uint32_t at_below = nr_panel_scale_area(cases[i].w, cases[i].h, floor_scale - 0.05f, 320);
+            snprintf(detail, sizeof detail,
+                     "%ux%u floor %.2f: area %u, one above %u, one below %u",
+                     cases[i].w, cases[i].h, floor_scale, at_floor, at_above, at_below);
+            /* The floor is on the cheapest field, and the step below it is too - so the floor is
+             * the last of them rather than the first after them. */
+            check(at_below == at_floor,
+                  "the floor and the step below it share the cheapest field", detail);
+            /* And the floor is the last such step: one more up costs more. */
+            check(at_above > at_floor,
+                  "the step above the floor is the first that costs more", detail);
+            property_checked++;
+        }
+        snprintf(detail, sizeof detail, "%d sizes checked", property_checked);
+        check(property_checked >= 6,
+              "the floor property is exercised on enough sizes to mean something", detail);
+
+        /* A size the panel has not seen leaves the knob alone rather than inventing a floor. */
+        snprintf(detail, sizeof detail, "0x0 -> %.2f", (double)nr_panel_lowest_scale(0, 0, 320, 0.05f));
+        check(nr_panel_lowest_scale(0, 0, 320, 0.05f) == 0.0f,
+              "an unknown picture size leaves the floor at zero", detail);
+
+        /* `min_extent` moves the floor: a larger field minimum is reached sooner, so the floor can
+         * only rise. */
+        float small_min = nr_panel_lowest_scale(1280, 720, 128, 0.05f);
+        float large_min = nr_panel_lowest_scale(1280, 720, 320, 0.05f);
+        snprintf(detail, sizeof detail, "min_extent 128 -> %.2f, 320 -> %.2f", small_min, large_min);
+        check(small_min <= large_min,
+              "a larger min_extent never lowers the floor", detail);
+    }
+
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
 }

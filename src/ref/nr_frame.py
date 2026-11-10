@@ -162,6 +162,47 @@ def render_extent(width, height, scale, minimum=VENDOR_MINIMUM_EXTENT):
                 best, cheapest = candidate, price
     _EXTENTS[key] = best
     return best
+
+
+def lowest_effective_scale(width, height, minimum=VENDOR_MINIMUM_EXTENT, step=0.05):
+    """The lowest scale, on `step`, that still runs on the cheapest network field.
+
+    **The last step on that field, not the first step off it.** `render_extent` already maps every
+    scale at or below a point to the widest frame on the cheapest field, so at 1280x720 the scales
+    0.05 through 0.25 all give 320x180 on 320x320 and render the same frame at the same cost. 0.25
+    is the last of them and the lowest worth offering; returning the step after it would drop the
+    cheapest field from the knob entirely and hand the user a floor costing 1.2x the work
+    (384x320) for nothing.
+
+    So this walks the knob's own steps and returns the last scale whose field still equals the
+    smallest one seen. The step after it is the first that costs more, which is what "below this
+    the knob buys nothing" means. `None` when the picture's size is unknown, so a caller with no
+    frame yet leaves its knob alone.
+
+    The search walks the steps rather than solving for a threshold because the field is aligned and
+    its price is not monotonic in the picture's size: `render_extent` picks the cheapest field at or
+    above each scale, and a step that starts smaller can land on a cheaper, larger field.
+
+    `src/layer/nr_menu_floor.c` is the panel's copy of this rule - the panel runs in the game's
+    process and cannot call Python - and `src/layer/test_menu_pacing.cpp` holds the two together.
+    """
+    if not width or not height or step <= 0:
+        return None
+    cheapest = None
+    last_on_cheapest = None
+    scale = step
+    while scale <= 1.0 + 1e-9:
+        extent = render_extent(width, height, min(scale, 1.0), minimum)
+        geometry = network_geometry(*extent, minimum=minimum)
+        area = geometry.network_width * geometry.network_height
+        if cheapest is None or area < cheapest:
+            cheapest = area
+            last_on_cheapest = scale
+        elif area == cheapest:
+            last_on_cheapest = scale
+        scale = round(scale + step, 4)
+    return round(last_on_cheapest if last_on_cheapest is not None else 1.0, 4)
+
 # The three noise channels depend on the extent and the frame index and on nothing else,
 # and both callers copy the result into a slice rather than writing through it. In a live
 # mode the frame index does not move — the daemon never sets one — so the same array was

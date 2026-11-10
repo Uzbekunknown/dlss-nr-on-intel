@@ -262,6 +262,13 @@ int nr_menu_bridge_knob_choice_index(const nr_menu_bridge *bridge, int index);
 int nr_menu_bridge_knob_range(int index, float *low, float *high, float *step,
                               float *default_value);
 
+/* The current `min_extent`, as the integer the panel's `render_scale` floor is computed from.
+ *
+ * That floor is where the network's field stops shrinking, and the field's smallest side IS
+ * `min_extent` - so a user who moved this knob moves the other one's floor with it. Falls back to
+ * the knob's default if the row cannot be found. */
+int nr_menu_bridge_knob_min_extent(const nr_menu_bridge *bridge);
+
 #ifdef __cplusplus
 }
 #endif

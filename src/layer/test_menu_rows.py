@@ -53,6 +53,77 @@ SOURCES = ("src/layer/nr_menu_bridge.c", "src/layer/nr_menu_strings.c",
            "src/layer/nr_menu_strings_lookup.c", "src/layer/nr_menu.c",
            "src/layer/nr_menu_font.c", "src/layer/nr_file.c")
 
+# The render-scale floor, the same way: a second probe over `nr_menu_floor.c`, so the C answer is
+# asked of the compiled object rather than read out of the fixture's table.
+#
+# **This is what makes `nr_frame.lowest_effective_scale` a live rule rather than a paragraph.**
+# The floor exists twice - once in Python, where the geometry lives, and once in C, because the
+# panel runs inside the game's process and cannot call Python. Until this probe existed, nothing
+# executed the Python side at all: the C fixture compares against a hand-written table, so a change
+# to `render_extent` that C did not follow would pass every test. Here both are run over the same
+# sizes and their answers compared.
+FLOOR_SIZES = ((1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (800, 450),
+               (640, 360), (1600, 900), (1366, 768), (1024, 768), (320, 180),
+               (2560, 480), (3840, 720), (1080, 1920), (997, 601), (1601, 901),
+               (1279, 719), (1023, 767), (64, 64), (1, 1))
+
+FLOOR_PROBE = r"""
+#include "nr_menu_floor.h"
+#include <stdio.h>
+int main(void)
+{
+    static const unsigned sizes[][2] = {
+%s
+    };
+    for (unsigned i = 0; i < sizeof sizes / sizeof sizes[0]; ++i)
+        printf("%%ux%%u|%%.4f\n", sizes[i][0], sizes[i][1],
+               nr_panel_lowest_scale(sizes[i][0], sizes[i][1], 320, 0.05f));
+    return 0;
+}
+"""
+
+
+def read_c_floor():
+    """Compile the floor probe and read what C answers, or None without a compiler."""
+    if sys.platform != "win32":
+        return None
+    vc = vcvars()
+    if vc is None:
+        return None
+    include = REPO / "src" / "layer"
+    body = "\n".join(f"        {{ {w}u, {h}u }}," for w, h in FLOOR_SIZES)
+    with tempfile.TemporaryDirectory(prefix="menu_floor_") as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        probe = tmp / "probe.c"
+        probe.write_text(FLOOR_PROBE % body, encoding="utf-8")
+        exe = tmp / "probe.exe"
+        lines = [
+            "@echo off",
+            f'call "{vc}" >nul 2>&1',
+            f'cd /d "{REPO}"',
+            "cl /nologo /O2 /TC /utf-8 /D_WIN32 "
+            f'/I"{include}" /Fe:"{exe}" "{probe}" "{REPO / "src/layer/nr_menu_floor.c"}"',
+            "echo CL_EXIT=%errorlevel%",
+        ]
+        bat = tmp / "build.bat"
+        bat.write_text("\r\n".join(lines) + "\r\n", encoding="ascii")
+        built = subprocess.run(["cmd", "/c", str(bat)], capture_output=True, text=True,
+                               timeout=600)
+        if not exe.exists():
+            print("  the floor probe did not build:")
+            print(built.stdout[-2000:])
+            print(built.stderr[-2000:])
+            return None
+        ran = subprocess.run([str(exe)], capture_output=True, text=True, timeout=120)
+        out = {}
+        for line in ran.stdout.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) != 2:
+                continue
+            w, h = parts[0].split("x")
+            out[(int(w), int(h))] = float(parts[1])
+        return out
+
 
 def vcvars():
     """The Visual Studio environment script, or None when this is not a Windows build."""
@@ -191,6 +262,33 @@ def main():
         return 1
 
     print(f"  ok: {len(rows)} knobs agree on name, kind, range, step and default")
+
+    # The render-scale floor, C against the Python rule it mirrors.
+    print()
+    print("  render_scale's floor: nr_menu_floor.c against nr_frame.lowest_effective_scale")
+    sys.path.insert(0, str(REPO / "src" / "ref"))
+    import nr_frame  # noqa: E402
+
+    c_floor = read_c_floor()
+    if c_floor is None:
+        print("  SKIP: no compiler available to read the C floor")
+        print("        (a check that cannot run is not a check that passed)")
+        return 1
+    floor_failures = []
+    for (w, h) in FLOOR_SIZES:
+        want = nr_frame.lowest_effective_scale(w, h, 320, 0.05)
+        want = 0.0 if want is None else float(want)
+        got = c_floor.get((w, h))
+        if got is None:
+            floor_failures.append(f"{w}x{h}: the C probe printed nothing")
+        elif abs(got - want) > 1e-4:
+            floor_failures.append(f"{w}x{h}: C says {got:.2f}, nr_frame.py says {want:.2f}")
+    if floor_failures:
+        print("  FAIL")
+        for line in floor_failures:
+            print("    - " + line)
+        return 1
+    print(f"  ok: the floor agrees at {len(FLOOR_SIZES)} picture sizes")
     return 0
 
 
