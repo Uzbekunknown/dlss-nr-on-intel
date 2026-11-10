@@ -120,6 +120,12 @@ struct nr_panel {
 	 * pacing row had, so the row now says what it is. */
 	int row_what[MENU_UI_MAX_ROWS];
 
+	/* The `render_scale` row's number, when the saved value is under the floor the current picture
+	 * computes. `r->value` is the bridge's own string and its lifetime is the bridge's, so a row
+	 * whose shown value has to be the floor gets its text from here instead. One buffer per row,
+	 * because `r->value` points into it for as long as the row is drawn. */
+	char floor_text[MENU_UI_MAX_ROWS][16];
+
 	/* The frame counter (nr_frame_rate.h): the rates from the host's counts, sampled once a
 	 * present, and the two lines built from them - the panel's, and the corner's, which is the
 	 * same text closer together. `trigger_live` is the trigger as the keys last read it, so the
@@ -296,19 +302,34 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 				low = 0.0f; high = 1.0f; step = 0.01f;
 			}
 			/* **`render_scale`'s floor moves with the picture.** See `nr_panel_lowest_scale`: below the
-			 * point where the frame clears `min_extent`, the network's field stops shrinking, so
-			 * five different settings ran the same 320x320 field and the row named a speedup that
-			 * was not there. The floor is the first step that does change the field.
+			 * point where the frame clears `min_extent`, the field has already stopped shrinking, so
+			 * every setting under the floor runs the same 320x320 field as the floor does while the
+			 * panel names a different number.
 			 *
 			 * Only the slider's minimum: the value the file holds, what the daemon reads, and every
 			 * setting above the floor are untouched. A frame whose size is not known yet leaves the
-			 * knob's own minimum alone rather than guessing. */
+			 * knob's own minimum alone rather than guessing.
+			 *
+			 * **And when the saved value is already below it, the shown number is the floor's.** The
+			 * installer writes `render_scale` 0.4, which is under the floor at 800x450 and 640x360;
+			 * the slider itself is drawn inside its range and the first arrow press lands on `min`,
+			 * so a value left alone would show 0.4 beside a slider sitting at 0.5 and then jump when
+			 * touched. The floor is what runs, so the floor is what is read. `r->value` is the
+			 * bridge's string and not ours to edit, which is why the number is built here. */
 			if (strcmp(nr_menu_bridge_knob_name(i), "render_scale") == 0
 			    && data->frame_width && data->frame_height) {
 				int minimum = nr_menu_bridge_knob_min_extent(data->menu_bridge);
 				float floor_scale = nr_panel_lowest_scale(data->frame_width, data->frame_height,
 								       (uint32_t)minimum, step);
-				if (floor_scale > low && floor_scale <= high) low = floor_scale;
+				if (floor_scale > low && floor_scale <= high) {
+					low = floor_scale;
+					float shown_value = (float)atof(r->value ? r->value : "0");
+					if (shown_value < low) {
+						snprintf(data->floor_text[n], sizeof data->floor_text[n],
+							 "%.3f", (double)low);
+						r->value = data->floor_text[n];
+					}
+				}
 			}
 			r->kind = NREX_KIND_FLOAT;
 			r->min = low;
