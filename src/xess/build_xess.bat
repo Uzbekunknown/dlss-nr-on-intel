@@ -47,10 +47,10 @@ cl /nologo /O2 /TP /utf-8 /EHsc /DNDEBUG /D_WIN32 /DIMGUI_DEFINE_MATH_OPERATORS 
 if errorlevel 1 ( echo ERROR: the panel's ImGui objects failed & exit /b 1 )
 cl /nologo /O2 /W4 /std:c++17 /utf-8 /EHsc /DNDEBUG /DIMGUI_DEFINE_MATH_OPERATORS /I"%IMGUI%." /I"%LAYER%." /I"%OUT%" /Fo"%OUT%\\" /c "%LAYER%nr_menu_ui_d3d12.cpp" "%HERE%nr_xess_panel.cpp"
 if errorlevel 1 ( echo ERROR: the panel's Direct3D 12 objects failed & exit /b 1 )
-cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%LAYER%." /Fo"%OUT%\\" /c "%LAYER%nr_panel.c" "%LAYER%nr_menu.c" "%LAYER%nr_menu_font.c" "%LAYER%nr_menu_strings.c" "%LAYER%nr_menu_strings_lookup.c" "%LAYER%nr_menu_bridge.c" "%LAYER%nr_file.c" "%LAYER%nr_focus.c" "%LAYER%nr_raw_mouse.c" "%LAYER%nr_input_guard.c"
+cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%LAYER%." /Fo"%OUT%\\" /c "%LAYER%nr_panel.c" "%LAYER%nr_menu.c" "%LAYER%nr_menu_font.c" "%LAYER%nr_menu_strings.c" "%LAYER%nr_menu_strings_lookup.c" "%LAYER%nr_menu_bridge.c" "%LAYER%nr_file.c" "%LAYER%nr_focus.c" "%LAYER%nr_raw_mouse.c" "%LAYER%nr_input_guard.c" "%LAYER%nr_menu_floor.c"
 if errorlevel 1 ( echo ERROR: the panel's C objects failed & exit /b 1 )
 set PANEL=
-for %%O in (nr_xess_panel nr_menu_ui_d3d12 nr_menu_ui imgui imgui_draw imgui_tables imgui_widgets nr_panel nr_menu nr_menu_font nr_menu_strings nr_menu_strings_lookup nr_menu_bridge nr_file nr_focus nr_raw_mouse nr_input_guard) do call :panel_object %%O
+for %%O in (nr_xess_panel nr_menu_ui_d3d12 nr_menu_ui imgui imgui_draw imgui_tables imgui_widgets nr_panel nr_menu nr_menu_font nr_menu_strings nr_menu_strings_lookup nr_menu_bridge nr_file nr_focus nr_raw_mouse nr_input_guard nr_menu_floor) do call :panel_object %%O
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_xess.obj" /Fe:"%OUT%\libxess.dll" /LD "%HERE%nr_xess.c" /link /DEF:"%HERE%nr_xess.def" "%OUT%\nr_xess_thunks.obj" "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: libxess.dll failed & exit /b 1 )
 rem The probe that finds DXGI's Present in a process of its own; a release carries it beside nr_xess.dll.
