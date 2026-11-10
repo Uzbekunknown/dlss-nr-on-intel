@@ -103,7 +103,27 @@ rem The menu, twice: a storage image's declared format has to match the image's,
 rem surface Aperture Desk Job presents (A2B10G10R10) cannot be written with the rgba8 build. The
 rem loop above already produced menu.spv without the define; this is the 10-bit one. A game on a
 rem BGRA8 surface gets the first, and `nr_menu_create` picks by the swapchain's format.
-call :shader_def menu_rgb10a2 menu "-DNR_MENU_TARGET_RGB10A2"
+rem
+rem **Menu shaders are built at vulkan1.0, and that is a REQUIREMENT, not a preference.**
+rem Everything else here targets vulkan1.3 because the graph's shaders use cooperative matrix and
+rem 1.3 features. The panel uses none of them - it is storage images, storage buffers and a push
+rem constant, all Vulkan 1.0 - and building it at 1.3 stamps SPIR-V 1.6 on the module, which is
+rem then INVALID for any game that declares less than 1.3:
+rem
+rem     VUID-VkShaderModuleCreateInfo-pCode-08737
+rem     Invalid SPIR-V binary version 1.6 for target environment SPIR-V 1.0
+rem     (under Vulkan 1.0 semantics).
+rem
+rem Device-level functionality added by a core version may be used only where BOTH the device's
+rem apiVersion and the application's allow it, and the SPIR-V version is part of that rule. Intel's
+rem driver runs such a module anyway - which is why the panel appeared to work in games that
+rem declare 1.0 and 1.1 - but a driver accepting it does not make it valid.
+rem
+rem So `:menu_shader` exists to keep this at vulkan1.0, and raising it back to vulkan1.3 would
+rem reinstate the requirement with no check left to catch it: `menu_device_reason` answers NULL
+rem now. `glslangValidator` accepts target-env vulkan1.0 for this source unchanged.
+call :menu_shader menu ""
+call :menu_shader menu_rgb10a2 "-DNR_MENU_TARGET_RGB10A2"
 call :shader_def attention_rows     attention   "-DROW_LANES=256"
 call :shader_def attention_ab       attention   "-DSOFTMAX_AB"
 rem The daemon's start-up probe, whose source is a bench tool rather than a graph shader.
@@ -406,6 +426,10 @@ rem and the Makefile builds both. A missing source is an error here rather than 
 rem skip - looking only in src/gpu once made `call :shader half_probe` fall through in
 rem silence, and a daemon spawned by the layer then died on the next thing that assumed it.
 :shader
+rem The menu is not in this loop's business: it targets vulkan1.0 and is built by
+rem `:menu_shader` below. Letting the loop take it too would overwrite menu.spv with a 1.6
+rem module and put back the version requirement this build exists to remove.
+if /i "%1"=="menu" goto :eof
 set "SRC=%GPU%\%1.comp"
 if not exist "%SRC%" set "SRC=%REPO%\src\bench\%1.comp"
 if not exist "%SRC%" (echo ERROR: no source for %1.comp & exit /b 1)
@@ -422,5 +446,22 @@ set "DEFARGS="
 if not "%~3"=="" set "DEFARGS=%~3"
 if not "%~4"=="" set "DEFARGS=%DEFARGS% %~4"
 "%GLSL%" --target-env vulkan1.3 %DEFARGS% -I"%GPU%" -o "%WORK%\%1.spv" "%GPU%\%2.comp" >nul 2>&1
+if exist "%WORK%\%1.spv" (echo   %1.spv) else (echo   %1.spv FAILED)
+goto :eof
+
+rem ---- :menu_shader <out-name> <defines> ----
+rem The panel's two builds, at vulkan1.0. Separate from `:shader_def` because the target-env is
+rem the whole difference: the same source, the same includes, but a SPIR-V 1.0 module.
+rem
+rem **The target is a requirement, not a preference.** Raising it to vulkan1.3 makes the module
+rem SPIR-V 1.6, which is invalid under Vulkan 1.0 semantics (VUID-VkShaderModuleCreateInfo-pCode-08737)
+rem and would leave the panel relying on Intel's driver tolerating it, with `menu_device_reason`
+rem answering NULL and so nothing left to catch a game that declares less. See the note at the
+rem call site for the full rule.
+:menu_shader
+if not exist "%GPU%\menu.comp" goto :eof
+set "DEFARGS="
+if not "%~2"=="" set "DEFARGS=%~2"
+"%GLSL%" --target-env vulkan1.0 %DEFARGS% -I"%GPU%" -o "%WORK%\%1.spv" "%GPU%\menu.comp" >nul 2>&1
 if exist "%WORK%\%1.spv" (echo   %1.spv) else (echo   %1.spv FAILED)
 goto :eof
