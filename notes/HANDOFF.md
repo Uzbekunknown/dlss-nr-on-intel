@@ -174,27 +174,31 @@ under that date. When an item is done, strike it through here and name the commi
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
 
+- ~~**PR #40 and #41** (Paimonshen, the panel's `render_scale` floor and its shader at SPIR-V 1.0):
+  ready on both systems, and the owner's merge into `newnr` is what is left~~: merged on 11-11,
+  `7d37976` and `d0a4f65` (below, 11-11). In no release yet.
+
 **Linux** (what to pull and run, in order: below, 11-04)
 - **PR #39, branch `cleanup` at `297e13a`** (on GitHub since 11-08: `newnr` merged in, Windows
   green): `make test` in both memory modes and CTest at that head (below, 11-09). Then the owner's
   word on merging #39 into `newnr`.
-- `669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
+- ~~`669135b`, the daemon keeping the panel's unsaved edits under a write of the saved file (below,
   11-06, later): `make test` in both memory modes and CTest. `nr_daemon.py`'s `Settings` changed,
-  and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases.
-- `3d8292a`, the `hogwarts` profile (below, 11-06, early morning), in 0.0.5: `make test` in both
+  and `test_settings_live.py` (CTest `layer_settings_live`) gained three cases~~: green at `127f6dc` with #40 and #41 merged (below, 11-11).
+- ~~`3d8292a`, the `hogwarts` profile (below, 11-06, early morning), in 0.0.5: `make test` in both
   memory modes and CTest at GitHub's `alchemist`. The GPU image path's push block grew to 104 bytes
   (`image_preprocess.comp`), `nr_frame` builds the automatic mask's lanes, and the panel's profile
-  row is 0..3.
-- `7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
+  row is 0..3~~: green at `127f6dc` with #40 and #41 merged (below, 11-11).
+- ~~`7d70ff1`, `489ee1f` and `476d5f0`, the panel's frame counter and its present on a semaphore
   (below, 11-05 night and 11-06): `make test` in both memory modes and CTest once `fps-counter` is on
   GitHub. `nr_layer.c` and `nr_layer_state.h` gained the counts, the present waiting on the panel's
   semaphore and a swapchain hook that is empty off Windows; the daemon's FRAME reply carries the
-  network's time; the rest is Windows-only code.
-- `e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
+  network's time; the rest is Windows-only code~~: green at `127f6dc` with #40 and #41 merged (below, 11-11).
+- ~~`e72be76`, the Windows release's own Python (below, 11-05), and `8232603`, 0.0.4's README and
   `players.json` (below, 11-05 later): `make test` in both memory modes and CTest, at GitHub's
   `alchemist` since 0.0.4 went out. `nr_daemon.py` puts its own folder on sys.path,
   `test_release.py` and `test_windows_wizard.py` gained cases, and `test_toggle.py`'s page check
-  reads the new README; nothing Linux runs otherwise changed.
+  reads the new README; nothing Linux runs otherwise changed~~: green at `127f6dc` with #40 and #41 merged (below, 11-11).
 - ~~`6ef670e`, the staged GEMM's blocks read from a Y-major walk where the driver walks so (below,
   11-04 night): `make test` in both memory modes and CTest~~: green at `c744581`, and Mesa's own
   order is the right one for it, by 2-3 % of the frame (below, 11-04 night, later).
@@ -372,6 +376,50 @@ under that date. When an item is done, strike it through here and name the commi
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## Checked on Linux: PR #40 and #41 together, and `newnr` at `127f6dc` (2026-11-11, branch `alchemist`)
+
+The owner, 11-11: the work is on #40 and #41, Paimonshen's two against `newnr`. #40 (`e41d2b3`)
+keeps the panel's `render_scale` from going below the last step on the cheapest network field;
+#41 (`ca6b020`) builds the panel's shader as SPIR-V 1.0 and drops its two device requirements.
+Windows found both ready on 11-10, with one commit of ours pushed to each branch (the comments in
+the PRs; this file had no word of either). The Linux branches were fast-forwarded to GitHub's
+`127f6dc`.
+
+**Tested:** `newnr` (`127f6dc`) with both heads merged, a local merge never pushed. They overlap
+only in `tools/build_win.bat` and merge with no conflict. No daemon, swap empty, a quiet CPU;
+Mesa 26.2.6.
+- `make test` passes, in 2 min 50 s. `XMX_STAGING=1 make test` passes, in 2 min 11 s, the seven
+  GPU suites that print the mode saying `staging=True`. Skipped as before: the Windows-only cases,
+  and the GPU image path's parity tests on Mesa. No compiler warning.
+- CMake builds with no warning, and CTest passes 68 of 68.
+
+**That run exercises little of either PR**, so each was checked apart.
+- #40: `MENU_TESTS` is empty off Windows, CTest's `layer_menu_rows` is Windows-only, and no Linux
+  test calls `nr_frame.lowest_effective_scale`. So `nr_menu_floor.c` was built with gcc (`-Wall
+  -Wextra`, no warning) through `test_menu_rows.py`'s own probe and set against the Python rule:
+  no difference at the test's 19 sizes and at 400 more, 20 widths from 320 to 7680 by 20 heights
+  from 180 to 4320. The floor is 0.25 at 1280x720, 0.15 at 1920x1080 and 0.30 at 1024x768.
+- #41: every change to `nr_layer.c` is inside `_WIN32`. The panel's shader was built here as
+  `:menu_shader` does (glslang 16.6.0, `--target-env vulkan1.0`): `menu.spv` is SPIR-V 1.0 with
+  `Shader` alone, `menu_rgb10a2.spv` adds `StorageImageExtendedFormats`, and both pass `spirv-val
+  --target-env vulkan1.0`.
+
+**Not run:** either PR alone on `newnr`.
+
+**The same run is Linux's first of what `newnr` gained since `c744581`**, so four items under
+Open items, Linux, are struck: the daemon keeping the panel's unsaved edits, the `hogwarts`
+profile, the frame counter, and the release's own Python.
+
+Both results are in the PRs as comments, at the owner's word.
+
+**Then, at the owner's word.** #41 was merged into `newnr` as `d0a4f65` and #40 as `7d37976`, from
+the Linux session. The tree of `7d37976` is the tested one, byte for byte. This entry went on top,
+and `master` and `alchemist` were fast-forwarded to `newnr`, on GitHub and here.
+
+**Next on Linux:** PR #39 (below, 11-09), whose branch now needs `newnr` merged in again.
+**Next on Windows:** `git fetch`, then fast-forward `master`, `newnr` and `alchemist` to GitHub's.
+`build_win.bat` and `build_xess.bat` changed, so build again before the next game.
 
 ## PR #39 waits for Linux (2026-11-09, branches `master`, `newnr`, `alchemist`)
 
