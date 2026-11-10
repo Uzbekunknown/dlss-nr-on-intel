@@ -18,8 +18,8 @@ That is stated here rather than left to be noticed, because it changes how you s
 everything else. What it means in practice:
 
 - **Nothing is asserted that was not measured.** Every number in the notes has a program
-  behind it in `src/bench/`, and `make test` is about 570 checks, including the native
-  passes against the NumPy they replace byte for byte.
+  behind it in `src/bench/`, and `make test` runs 70 programs of checks, including the
+  native passes against the NumPy they replace byte for byte.
 - **The wrong turns are in the notes too**, deliberately. A hypothesis about shared-memory
   bank conflicts that measured 1.11x instead of the textbook 32x. A "driver bug" that
   shaped three phases and does not exist. A profile recommended from one frame and
@@ -155,7 +155,7 @@ every CPU since Haswell and Zen 1 — and `NR_IMAGE_ARCH` changes that. Everythi
 without it; `NR_HOST_NATIVE=0` selects the NumPy path for a paired measurement.
 
 ```sh
-make test                                        # about 570 checks, fewer without weights
+make test                                        # every check; fewer without weights
 python3 src/ref/nr_frame.py IN.png OUT.png --resident   # one still, no game
 ```
 
@@ -167,12 +167,6 @@ in the daemon's environment, not only the game's, to compare. On a discrete card
 compact head should matter more, since the read crosses PCIe; B570/B580 results are
 still needed. For exact checks and paired benchmarks, see
 [the I/O experiment notes](../notes/improve-compact-io.md).
-
-`NR_JOINT_QKV=1` is another optional experiment: it combines preparation of Q, K
-and V into one dispatch, removing 140 passes per frame. It is **off by default**:
-on 140V at network extent 448x320 it increased warm frame time from 79.1 to 83.2 ms.
-See [the QKV experiment and diagnostic notes](../notes/improve-joint-qkv.md) for exact
-checks, the paired benchmark and profiling commands for B570/B580.
 
 ## Run it in a game
 
@@ -533,10 +527,11 @@ work/         builds, checkouts and your weights. Ignored, and stays that way.
 ## Tests
 
 ```sh
-make test
+make test                      # every check, once
+XMX_STAGING=1 make test-gpu    # the ones that open the device, with its buffers unmapped
 ```
 
-About 570 checks, including the layer's wire protocol, the native host passes
+70 programs on Linux, including the layer's wire protocol, the native host passes
 against the NumPy they replace byte for byte, the interface mask down to the
 byte, the temporal path against MLX-DLSS's own composition, and the panel driven through
 a pseudo-terminal. The pages are checked too: the knob and frame-time tables in
@@ -546,6 +541,22 @@ in the README, these docs and NOTICE has to exist, and
 `src/tools/claims_check.py` fails the suite if a withdrawn claim — a number this project
 published and then corrected — turns up anywhere but the notes that withdrew it. They skip the weight-dependent parts if you have not supplied weights,
 and a skip is not a pass.
+
+`src/tools/run_tests.py` holds the list and runs it. The checks that open no device run in a
+pool beside the GPU's queue, which keeps one process on the device at a time, as `make test`
+always did; the ones that load the whole network have the device to themselves, and the two
+that need a quiet machine, a timing gate and a check that reads the process list, run last and
+alone. Each check's output is kept in `work/test-logs/`. The terminal gets one line a check, the
+last 40 lines of a failing check's output, and a summary that names every failure, every skip and
+the slowest checks; `make test TEST_ARGS=--verbose` prints every check's output whole, as `make
+test` used to. A failure does not stop the run.
+`make test TEST_ARGS=--list` shows each check's kind and its last time, `-k TEXT` runs some of
+them, and `--serial` runs them one at a time in the list's order. The memory mode changes only
+what opens the device, so `make test-gpu` runs just those.
+
+CTest registers the same scripts for the CMake build above, and on Windows, where there is no
+`make`, it is the runner, with the Windows-only checks besides. `src/tools/build_check.py`
+fails the suite when a script `make test` runs is missing from it.
 
 `src/tools/publish_check.py` keeps NVIDIA's binaries and weights out of the repository: it checks
 the tracked tree on every `make test`, and `make publish-check` walks the whole history as well,

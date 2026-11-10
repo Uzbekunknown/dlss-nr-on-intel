@@ -1738,13 +1738,13 @@ def run_owned(args):
     print("runtime options " + " ".join(
         f"{name}={int(getattr(rt, attr))}" for name, attr in (
             ("NR_BATCH_FFN", "batch_ffn"), ("NR_FUSE_QK", "fuse_qk"),
-            ("NR_JOINT_QKV", "joint_qkv"), ("NR_INPUT_FP16", "input_fp16"),
+            ("NR_INPUT_FP16", "input_fp16"),
             ("NR_COMPACT_HEAD", "compact_head"), ("NR_FUSE_RESIDUAL", "fuse_residual"),
             ("NR_FUSE_WINDOW_RESIDUAL", "fuse_window_residual"),
             ("NR_FUSE_WINDOW_ATTENTION", "fuse_window_attention"),
             ("NR_FUSE_ATTENTION_MERGE", "fuse_attention_merge"),
             ("NR_QKV_EPILOGUE", "qkv_epilogue"), ("NR_FUSE_GLUE", "fuse_glue"),
-            ("NR_FUSE_FFN", "fuse_ffn"), ("NR_FUSE_BRANCHED_FFN", "fuse_branched_ffn"),
+            ("NR_FUSE_FFN", "fuse_ffn"),
             ("NR_FUSE_PARTITION", "fuse_partition"),
             ("NR_FUSE_TRANSITION", "fuse_transition"),
             ("NR_FUSE_MERGE_FFN", "fuse_merge_ffn"), ("NR_FUSE_STEM_FFN", "fuse_stem_ffn"),

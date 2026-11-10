@@ -139,7 +139,8 @@ is *bits*, not values.
   generated from source), `nr_layer.dll`, `libnr_image.dll`, **20 shaders** — 0 errors.
 - Loader: `vulkaninfo --summary` lists `VK_LAYER_dlssnr_intel`;
   `test_layer_loader.c` creates an instance through the layer (exit 0).
-- Transport: `test_nr_link_win.c` ↔ `nr_pipe` round trip, bytes matching.
+- Transport: `test_nr_link_win.c` ↔ `nr_pipe` round trip, bytes matching (a one-off: no
+  build compiled the file again, and it was removed on 2026-11-04).
 - Unit: `test_native_image.py` **197/197 byte-identical**; `test_gemm_contract.py`
   **all checks pass** (after #6); `test_resident.py` **711 passes / 0 fail** — the whole
   graph tracks the host reference on the B580; `test_input_fp16.py` exact across

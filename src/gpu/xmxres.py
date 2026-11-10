@@ -155,7 +155,6 @@ def _load():
              + [ctypes.c_uint, ctypes.c_uint, ctypes.c_float] + [ctypes.c_uint] * 5),
             ("xmx_rec_row", [ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_uint] * 5
              + [ctypes.c_float]),
-            ("xmx_rec_qkv", [ctypes.c_int] * 5 + [ctypes.c_uint] * 4),
             ("xmx_profile", [ctypes.c_int]),
             ("xmx_rec_history", [ctypes.c_int] * 3 + [ctypes.c_uint] * 5),
             ("xmx_device_lost", []),
@@ -700,7 +699,6 @@ class Runtime:
         # the host reads 4 of 16 — 3.6 -> 0.75 ms at 1280x720, 4 ms of the frame, the same
         # bytes (notes/improve-compact-io.md). NR_COMPACT_HEAD=0 is the old sixteen.
         self.compact_head = os.environ.get("NR_COMPACT_HEAD", "1") != "0"
-        self.joint_qkv = os.environ.get("NR_JOINT_QKV", "0") != "0"
         # ProjectsCodex's fusions (notes/improve-fusions.md). On by default where they
         # were measured exact; each keeps its two-pass path behind a switch.
         self.fuse_residual = os.environ.get("NR_FUSE_RESIDUAL", "1") != "0"
@@ -736,8 +734,6 @@ class Runtime:
         self.fuse_glue = os.environ.get("NR_FUSE_GLUE", "1") != "0"
         # A 32-channel block's feed-forward in one pass, the hidden layer on chip.
         self.fuse_ffn = os.environ.get("NR_FUSE_FFN", "1") != "0"
-        # The branched blocks' per-group expand and projection, the same way.
-        self.fuse_branched_ffn = os.environ.get("NR_FUSE_BRANCHED_FFN", "0") != "0"
         # The window partition folded into the QKV projection's own loads.
         self.fuse_partition = os.environ.get("NR_FUSE_PARTITION", "1") != "0"
         # A decoder transition's upsample, scaled skip and add in one pass.
@@ -760,18 +756,19 @@ class Runtime:
     def graph_key(self):
         return (self.lib.xmx_specialization() | (int(self.fuse_qk) << 3)
                 | (int(self.batch_ffn) << 4) | (int(self.input_fp16) << 5)
-                | (int(self.compact_head) << 6) | (int(self.joint_qkv) << 7)
-                # Bits 8 and up. ProjectsCodex keys these at 5-7, which here are
-                # input_fp16, compact_head and joint_qkv: carried over as they were, a
-                # graph captured with one setting would replay for the other, and the
-                # picture would be wrong without an error anywhere.
+                | (int(self.compact_head) << 6)
+                # Bit 7 was the joint Q/K/V preparation's, removed on 2026-11-04, and is
+                # left free. Bits 8 and up: ProjectsCodex keys these at 5-7, which here
+                # are input_fp16, compact_head and that free bit: carried over as they
+                # were, a graph captured with one setting would replay for the other, and
+                # the picture would be wrong without an error anywhere.
                 | (int(self.fuse_residual) << 8) | (int(self.fuse_window_residual) << 9)
                 | (int(self.fuse_window_attention) << 10)
                 | (int(self.fuse_attention_merge) << 11)
                 | (int(self.qkv_epilogue) << 12)
                 | (int(self.fuse_glue) << 13)
                 | (int(self.fuse_ffn) << 14)
-                | (int(self.fuse_branched_ffn) << 15)
+                # bit 15 was NR_FUSE_BRANCHED_FFN's, measured and not kept: left free
                 | (int(self.fuse_partition) << 16)
                 | (int(self.fuse_transition) << 17)
                 | (int(self.fuse_merge_ffn) << 18)
@@ -833,23 +830,6 @@ class Runtime:
         if self.lib.xmx_begin() != 0:
             raise RuntimeError("xmx_begin: " + self.lib.xmx_error().decode())
         self.recorded = 0
-        return self
-
-    def prepare_qkv(self, source, q, k, v, scale, windows, tokens, heads, *, vit=False):
-        if min(windows, tokens, heads) <= 0:
-            raise ValueError('QKV extents must be positive')
-        if (len({q.id, k.id, v.id}) != 3 or source.id in (q.id, k.id, v.id)
-                or scale.id in (q.id, k.id, v.id)):
-            raise ValueError('QKV outputs must be separate from each other and the input')
-        rows = windows * tokens * heads
-        if source.nbytes < rows * 3 * 32 * 4 or scale.nbytes < heads * 4:
-            raise ValueError('QKV input or scale buffer is too small')
-        if any(buf.nbytes < rows * 32 * 2 for buf in (q, k, v)):
-            raise ValueError('QKV output buffer is too small')
-        if self.lib.xmx_rec_qkv(source.id, q.id, k.id, v.id, scale.id, rows, tokens, heads,
-                                int(vit)):
-            raise failure(self.lib, 'xmx_rec_qkv')
-        self.recorded += 1
         return self
 
     def independent(self):

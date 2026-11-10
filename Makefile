@@ -269,7 +269,7 @@ work/global_attention.spv: src/gpu/global_attention.comp src/gpu/publish.glsl \
                            src/gpu/specialize.glsl src/gpu/cosine_tree.glsl
 	$(GLSL) -o $@ $<
 
-# The one-shot runner behind test_gemm.py and test_gemm_int8.py: its own
+# The one-shot runner behind test_gemm_int8.py and test_int8_quant.py: its own
 # instance and device per call, and the operand width read from the files.
 work/gemm_runner: src/gpu/gemm_runner.c | work
 	$(CC) $(CFLAGS) -o $@ $< -lvulkan
@@ -318,81 +318,20 @@ bench: all work/half_probe.spv
 	python3 src/bench/half_probe.py
 	python3 src/bench/split_cost.py
 
-test: all work/attention_ab.spv work/test_exchange work/test_settled work/test_present work/test_surface_policy work/test_transfer_resources $(MENU_TESTS) $(FOCUS_GATE)
-	python3 src/gpu/test_ffn_batch.py --gpu
-	python3 src/gpu/test_device_pick.py
-	python3 src/gpu/test_gemm_contract.py
-	python3 src/gpu/test_denorm.py
-	python3 src/gpu/test_input_fp16.py
-	python3 src/gpu/test_compact_head.py
-	python3 src/gpu/test_joint_qkv.py
-	cd work && ./coopmat_probe | grep -q "NR's kernels (float16 8x16x16 at subgroup 32): run here"
-ifeq ($(OS),Windows_NT)
-	work/test_soft_cursor
-	work/test_focus_gate
-	work/test_settings_writer
-	work/test_menu_hints
-	work/test_input_guard
-endif
-	python3 src/layer/test_daemon.py
-	python3 src/layer/test_daemon_owner.py
-	python3 src/layer/test_gpu_only.py
-	python3 src/layer/test_gpu_transport.py
-	work/test_surface_policy
-	work/test_transfer_resources
-	work/test_settled
-ifeq ($(OS),Windows_NT)
-	work/test_menu_rows
-	python3 src/layer/test_menu_rows.py
-	work/test_menu_persist
-endif
-	python3 src/layer/test_ui_mask.py
-	python3 src/layer/test_present.py
-	python3 src/layer/test_temporal.py
-	python3 src/layer/test_toggle.py
-	python3 src/layer/test_panel.py
-	python3 src/layer/test_spawn_exit.py
-	python3 src/tools/publish_check.py
-	python3 src/tools/claims_check.py
-	python3 src/tools/build_check.py
-	python3 src/tools/test_release.py
-	python3 src/tools/test_setup_proxy.py
-	python3 src/tools/test_player_reports.py
-	python3 src/bench/frame_profile.py --tables
-	python3 src/gpu/test_gemm_int8.py
-	python3 src/gpu/test_gemm_int8_staged.py
-	python3 src/gpu/test_window_block.py
-	python3 src/gpu/test_global_attention.py
-	python3 src/gpu/test_int8_quant.py
-	python3 src/gpu/test_gemm_residual.py
-	python3 src/gpu/test_window_residual.py
-	python3 src/gpu/test_window_attention.py
-	python3 src/gpu/test_gemm_qkv.py
-	python3 src/gpu/test_glue.py
-	python3 src/gpu/test_ffn_fused.py
-	python3 src/gpu/test_staged_partial.py
-	python3 src/gpu/test_staged32.py
-	python3 src/gpu/test_staged_packed.py
-	python3 src/gpu/test_epilogue.py
-	python3 src/gpu/test_specialization.py
-	python3 src/gpu/test_softmax_pack.py
-	python3 src/gpu/test_qkv_fusion.py
-	python3 src/gpu/test_scratch_arena.py
-	python3 src/gpu/test_graph.py
-	python3 src/gpu/test_frame_execution.py
-	python3 src/gpu/test_image_preprocess.py
-	python3 src/gpu/test_image_compose.py
-	python3 src/gpu/test_image_stats.py
-	python3 src/gpu/test_image_history.py
-	python3 src/gpu/test_image_pipeline.py --full-model
-	python3 src/gpu/test_resident.py
-	python3 src/ref/test_frame_cache.py
-	python3 src/ref/test_native_image.py
-	python3 src/ref/test_topology.py
-	python3 src/ref/test_nr_model.py
-	python3 src/ref/test_temporal_controls.py
-	python3 src/ref/test_dump_raw.py
-	python3 src/ref/test_dump_geometry.py
+# Every check once. src/tools/run_tests.py holds the list and each check's kind: the ones that
+# open no device run in a pool beside the GPU's queue, which keeps one process on the device at
+# a time, as this target always did. TEST_ARGS passes options through (--serial for the old
+# one-at-a-time order, -k TEXT for some checks only, --list for the kinds, --verbose for every
+# check's output in the terminal). The terminal gets a line a check and the end of a failing
+# one's output; the whole logs and the times are in work/test-logs and work/test-times.json.
+TEST_PREREQUISITES := all work/attention_ab.spv work/test_exchange work/test_settled work/test_present work/test_surface_policy work/test_transfer_resources $(MENU_TESTS) $(FOCUS_GATE)
+test: $(TEST_PREREQUISITES)
+	python3 src/tools/run_tests.py $(TEST_ARGS)
+
+# The second memory mode changes only what opens the device: XMX_STAGING=1 make test-gpu runs
+# those checks, and leaves out the ones the mode cannot reach.
+test-gpu: $(TEST_PREREQUISITES)
+	python3 src/tools/run_tests.py --only gpu $(TEST_ARGS)
 
 # Small GPU image checks can be run independently of the full matrix suite.
 test-image: all
@@ -427,4 +366,4 @@ test-proton: all work/libnr_layer32.so work/test_layer_loader work/test_layer_lo
 publish-check:
 	python3 src/tools/publish_check.py --history
 
-.PHONY: all test test-image test-image-host test-ffn test-proton bench publish-check
+.PHONY: all test test-gpu test-image test-image-host test-ffn test-proton bench publish-check

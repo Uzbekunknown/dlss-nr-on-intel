@@ -28,7 +28,6 @@ class Recorder:
         self.fuse_residual = False
         # likewise the fused narrow feed-forward, one pass where this counts two GEMMs
         self.fuse_ffn = False
-        self.fuse_branched_ffn = False
         self.fuse_partition = False
         self.fuse_transition = False
         self.fuse_merge_ffn = False
@@ -90,12 +89,12 @@ def host_checks():
     # and Q/K fusion combination, not reuse commands from the other FFN mode. Every
     # combination is walked, one switch a level, and each key marked in a bitmap: a set
     # of 2^24 Python ints was a gigabyte.
-    switches = ("fuse_qk", "batch_ffn", "input_fp16", "compact_head", "joint_qkv",
+    switches = ("fuse_qk", "batch_ffn", "input_fp16", "compact_head",
                 # the fusions take bits 8 and up. ProjectsCodex's own 5-9 would land on
-                # input_fp16, compact_head, joint_qkv and the residuals
+                # input_fp16, compact_head, the free bit 7 and the residuals
                 "fuse_residual", "fuse_window_residual", "fuse_window_attention",
                 "fuse_attention_merge", "qkv_epilogue", "fuse_glue", "fuse_ffn",
-                "fuse_branched_ffn", "fuse_partition", "fuse_transition", "fuse_merge_ffn",
+                "fuse_partition", "fuse_transition", "fuse_merge_ffn",
                 "fuse_stem_ffn", "fuse_pool", "fuse_window_block", "fuse_head",
                 "fuse_global_attention")
     rt = object.__new__(xmxres.Runtime)
