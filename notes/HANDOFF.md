@@ -148,6 +148,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   and `renodx-dlss.addon64`, in the Windows Downloads). The owner says, as their source claims,
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
+- `newnr` holds `perf-1108` and `e4m3-weights` since 11-11, locally, green on Windows and run in
+  Mortal Kombat 11 (below, 11-11, morning): the owner's look, then the word on pushing it, with
+  `master` and `alchemist` after it.
 - From the `cleanup` branch (PR #39, merged 11-11), proposed and not done: INT8 out of the main
   line (it is in libxmx, the shader lists and the release's file lists) and one build system
   instead of three; the Configure/Restore Steam buttons are a line under Windows. Archive, 11-05.
@@ -166,13 +169,13 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   11-09 and 11-08; archive, 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
   later).
 - `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
-  in both memory modes and CTest once it is on GitHub. It is off on Mesa unless
+  in both memory modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. It is off on Mesa unless
   `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
   it is off; run it once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values, B's
   320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both ways.
   `gemm_staged.comp`, `libxmx.c`, `xmxres.py` and `nr_resident.py` changed.
 - `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
-  modes and CTest once it is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
+  modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
   `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
@@ -243,13 +246,16 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc): MSVC vectorises innermost
   loops only, and inside each pixel loop is a three-channel one (`/Qvec-report:2`, reasons 1106
   and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
-- The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
-  there, then the owner's word on merging it into `alchemist` and pushing.
-- The bottleneck's weights as E4M3 bytes, `e4m3-weights` on `perf-1108` (below, 11-08, evening):
-  the same game check, and whether it stays on by default for every GPU on Intel's Windows
-  driver; desktop Arc cards and the B580 have not run it.
+- ~~The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
+  there, then the owner's word on merging it~~: merged into `newnr` at the owner's word and run in
+  Mortal Kombat 11, B 5.5-10 % and A 3 % more frames (below, 11-11, morning). Hogwarts Legacy, for
+  the D3D12 transport in a game, has not run it.
+- The bottleneck's weights as E4M3 bytes (below, 11-08, evening), in `newnr` and on in Mortal
+  Kombat 11's runs (below, 11-11, morning): whether it stays on by default for every GPU on
+  Intel's Windows driver; desktop Arc cards and the B580 have not run it.
 - `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
-  default, or a row in the panel or the setup window, is the owner's call.
+  default, or a row in the panel or the setup window, is the owner's call. Off, it is 0.3 ms of
+  B's frame at 1280x720 and 1.0-1.5 at 1920x1080 on the merge (below, 11-11, morning).
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -288,6 +294,82 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## `perf-1108` and `e4m3-weights` on `newnr`: merged, green on Windows, and what they give today (2026-11-11, morning, branch `newnr`)
+
+The owner, 11-11, before sleeping: move the two branches of 11-08 onto `newnr` and see how they do
+there. Merged in a scratch worktree as `e1be49f` (parents `c0660f2` and `9aefe63`). `newnr` is
+local and ahead of GitHub; nothing is pushed, and `master` and `alchemist` stay at `c0660f2`.
+
+**The merge.** Two files conflicted. `Makefile`: the branch had added `test_gemm_e4m3.py` to
+`make test`'s list, which #39 moved into `src/tools/run_tests.py`; the check is in the runner's
+list now, and in CTest as `gpu_gemm_e4m3`. This file: `newnr`'s, with the branch's open items and
+its three entries of 11-08 word for word (below). The merged code names nothing #39 removed.
+
+**Checked on Windows** (Arc 140V, Intel 101.9150, on AC):
+- MinGW (gcc 16, layer off): the build, with the 198 warnings `newnr` has, and CTest 69 of 69.
+- MSVC `build_win.bat`: no warning at all, the three C4068 gone with `NR_IVDEP`. CTest on its
+  libraries: 69 of 69. The seven menu fixtures. Under the native Python, `test_windows_setup.py`
+  14 of 14 and `test_windows_wizard.py` 100, 1 skipped.
+- `frame_replay.py` on the MSVC libxmx: A's heads at 320x320 and 1280x720 are October's, with the
+  E4M3 weights on (this driver's default) and with `XMX_E4M3_WEIGHTS=0`; A's and B's at 320x512
+  and 768x1344, on and off, are 11-08's. `test_gemm_e4m3.py`: its 82 cases, by default and forced.
+- `test_image_*`, `test_image_pipeline.py --full-model` (8 frames, 5 of them along motion, and
+  again with the metric off), `test_gpu_transport` (50), `test_daemon`, `test_settings_live` (17),
+  `test_gpu_d3d12.py` with and without `--network`.
+- `build_xess.bat` and `test_nr_xess`. `deploy.bat --release`, and that release through
+  `nr-game\standin-release-check.ps1`: 726 frames, none rejected, the speed test A/71 and B/31,
+  Save report 19 checks, none failing, the folder as before.
+- vkcube under the validation layer with the panel open and shut: 0 errors, no leak line.
+  `test_gpu_present.py --run --sync-validation`, the panel shut, open and in a corner: 0 errors.
+
+**Whole frames on the GPU path** (the daemon's pipeline on a device buffer, render scale 0.4;
+`newnr` from `fe2c33c`'s build, the same code; each run a process of its own, three rounds, the
+second in reverse order; `quiet-check.ps1` quiet before and after):
+
+| ms a frame | `newnr` before | the merge | with `XMX_E4M3_WEIGHTS=0` | with `NR_CHANGE_METRIC=0` |
+| --- | --- | --- | --- | --- |
+| B, 1280x720 | 19.78-19.91 | 18.75-19.00 | 18.63-18.80 | 18.41-18.85 |
+| B, 1920x1080 | 36.77-37.12 | 33.43-33.83 | 34.59-34.84 | 32.32-32.42 |
+| A, 1280x720 | 35.65-37.66 | 34.17-36.59 | 34.54-35.74 | 34.01-34.14 |
+
+By round, 0.8-1.2 ms of B's frame at 1280x720 (5 %) and 2.9-3.6 ms at 1920x1080 (9 %), 4.4-4.7
+(12 %) with the metric off. The E4M3 weights are 1.0-1.2 ms of that at 1920x1080 and nothing at
+1280x720; the metric off is 1.0-1.5 ms at 1920x1080 and 0.3 at 1280x720, where the bands overlap.
+A's bands overlap too: its second round was disturbed for both builds.
+
+**11-08's 2 ms at 1280x720 was partly the day.** The same four builds side by side, B at 1280x720,
+three rounds: `5836d29` as built on 11-08 19.85-19.90 ms, `newnr` 19.79-19.97, `9aefe63` as built
+on 11-08 18.18-18.94, the merge 18.64-18.86. So #39 changed nothing in this frame, the merge runs
+as the branch did, and the base that read 23.17-24.13 ms on 11-08 reads 19.9 today, on the same
+driver and a quiet system both days. Why is not established.
+
+**Where the merge's frame goes** (B, 1280x720, 18.8 ms): the network 15.1-15.4; the four submits
+around it 0.15 (the letterbox check), 0.53 (the decode and the cut test), 0.53 (the history's
+resize and the features) and 1.3 (the finite check, the composition and the metric; 1.0 without
+the metric), 2.5 together; Python
+between libxmx's calls 0.6-0.8. At 1920x1080 the four are 0.4, 1.25, 1.14 and 3.1 (1.8 without
+the metric) around a network of 28.2. The network is 81-84 % of a frame now.
+
+**In Mortal Kombat 11** (Steam, DXVK through the proxy, 1280x720 at render scale 0.4, network
+512x320, frames on the GPU path; a release built at `fe2c33c` against one built at the merge;
+`nr-game\perf1108-series.ps1`, two rounds, the second in reverse order; the screen on and the
+session unlocked, the owner asleep):
+
+| frames processed a second (the daemon's median frame) | `newnr` before | the merge |
+| --- | --- | --- |
+| B | 37.16 and 38.71 (23 and 22 ms) | 40.95 and 40.84 (21 and 21 ms) |
+| A | 23.42 and 24.39 (39 and 38 ms) | 24.17 and 25.12 (38 and 36 ms) |
+
+B gains 5.5 and 10 % by pair, A 3 %. All eight runs kept every frame on `gpu-shared`, refused
+none, closed the game through its window, ended their daemon with it and left the game's folder
+as before. Part of the first merged B run's window shared the disk with a `du` of this session's.
+
+**Not run:** Hogwarts Legacy, so the D3D12 transport in a game; Linux.
+
+**Next on Linux:** nothing until `newnr` is on GitHub; then Open items, Linux. **Next on
+Windows:** the owner's look in a game, then the word on pushing `newnr`, with `master` and
+`alchemist` after it.
 
 ## Checked on Windows: PR #39 at `fe2c33c`, then merged (2026-11-11, latest, branch `newnr`)
 

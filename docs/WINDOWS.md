@@ -22,9 +22,9 @@ See [the continuation evidence](../notes/gpu-frame-path-20261013.md) and
 Around the network that path spends four submits a frame since 2026-11-08, where it spent eight:
 the letterbox check is a workgroup a line, the history's buffers trade places instead of being
 copied, the passes the CPU decides nothing between share a submit, and the composition writes the
-answer into the transport's shared output. The same bytes; about 9 % off a whole frame at render
-scale 0.4, 1280x720 and 1920x1080 (`notes/HANDOFF.md`, 2026-11-08). `NR_HISTORY_SWAP=0` brings
-back the three history copies, to compare.
+answer into the transport's shared output. The same bytes; at render scale 0.4, 5 to 9 % off a
+whole frame at 1280x720 and 9 % at 1920x1080 (`notes/HANDOFF.md`, 2026-11-08 and 2026-11-11).
+`NR_HISTORY_SWAP=0` brings back the three history copies, to compare.
 
 `change` in the daemon's frame lines, how far the answer moved the game's frame, is a figure for
 the log alone, and on this path the composition writes a float32 copy of itself for it.
