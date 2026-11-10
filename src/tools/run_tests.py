@@ -143,6 +143,7 @@ CHECKS = [
     py("src/gpu/test_staged_partial.py", kind="gpu"),
     py("src/gpu/test_staged32.py", kind="gpu"),
     py("src/gpu/test_staged_packed.py", kind="gpu"),
+    py("src/gpu/test_gemm_e4m3.py", kind="gpu"),
     py("src/gpu/test_epilogue.py", kind="gpu"),
     py("src/gpu/test_specialization.py", kind="gpu"),
     py("src/gpu/test_softmax_pack.py", kind="gpu"),

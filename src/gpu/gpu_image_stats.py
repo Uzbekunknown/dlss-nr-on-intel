@@ -29,6 +29,10 @@ class GPUImageStats:
         self._closed=False
         self.last_delta_error_bound=0.0
         self.last_delta_fallback=False
+        # Reductions recorded into a caller's commands (`record_delta`, `record_nonfinite`)
+        # each keep partials and scalars of their own, by slot, so that two in one submit do
+        # not share a scratch; the calls that submit for themselves use the attributes above.
+        self.slots={}
 
     def _storage(self,count):
         if self.output is None or self.output.nbytes<count*4:
@@ -36,7 +40,16 @@ class GPUImageStats:
             self.output=self.rt.buffer(count,np.uint32,kind=X.HOST_READ)
         return self.output
 
-    def _reduction_storage(self,count):
+    def _reduction_storage(self,count,slot=None):
+        if slot is not None:
+            partials,scalars=self.slots.get(slot,(None,None))
+            if partials is None or partials.nbytes<count*4:
+                if partials is not None: partials.free()
+                partials=self.rt.buffer(count,np.uint32,kind=X.DEVICE)
+            if scalars is None:
+                scalars=self.rt.buffer(3,np.uint32,kind=X.HOST_READ)
+            self.slots[slot]=(partials,scalars)
+            return partials,scalars
         if self.partials is None or self.partials.nbytes<count*4:
             if self.partials is not None: self.partials.free()
             self.partials=self.rt.buffer(count,np.uint32,kind=X.DEVICE)
@@ -44,12 +57,12 @@ class GPUImageStats:
             self.scalars=self.rt.buffer(3,np.uint32,kind=X.HOST_READ)
         return self.partials,self.scalars
 
-    def _exact_delta(self,elements,count):
+    def _exact_delta(self,elements,count,partials=None):
         """Old FP64 sum, reading only reduced metadata through HOST_READ scratch."""
         metadata=self._storage(count)
         self.rt.begin()
         try:
-            self.rt.copy(self.partials,metadata,count*4)
+            self.rt.copy(self.partials if partials is None else partials,metadata,count*4)
             self.rt.submit()
         except Exception:
             self.rt.abort()
@@ -57,6 +70,25 @@ class GPUImageStats:
         return float(metadata.download(np.float32,count).sum(dtype=np.float64)/elements)
 
     def _run(self,a,b,width,height,mode,channels=3,bounds=None):
+        """Record one reduction, submit it and wait, and return its words."""
+        plan=self._plan(a,b,width,height,mode,channels,bounds)
+        self.rt.begin()
+        try:
+            read=self._emit(plan)
+            self.rt.submit()
+        except Exception:
+            self.rt.abort()
+            raise
+        return read()
+
+    def _record(self,a,b,width,height,mode,channels=3,bounds=None,slot=None):
+        """Record one reduction into the commands the caller is recording, and return the call
+        that reads its words once the caller has submitted them. `slot` gives modes 1 and 2 a
+        scratch of their own, so that two reductions can share a submit."""
+        return self._emit(self._plan(a,b,width,height,mode,channels,bounds,slot))
+
+    def _plan(self,a,b,width,height,mode,channels=3,bounds=None,slot=None):
+        """Check a reduction's operands and find its scratch, before anything is recorded."""
         if self._closed:
             raise RuntimeError("GPUImageStats is closed")
         if any(not isinstance(v,(int,np.integer)) or isinstance(v,(bool,np.bool_))
@@ -82,27 +114,30 @@ class GPUImageStats:
             if getattr(buffer,"_lib",self.rt.lib) is not self.rt.lib:
                 raise ValueError(f"{name} belongs to another Vulkan runtime")
         count=width+height if mode==0 else 8 if mode==3 else (elements+1023)//1024
-        out=self._storage(count) if mode in (0,3) else self._reduction_storage(count)[0]
+        if mode in (0,3):
+            out,scalars=self._storage(count),None
+        else:
+            out,scalars=self._reduction_storage(count,slot)
         if any(buffer is not None and buffer.id==out.id for buffer in (a,b)):
             raise ValueError("metadata output must not alias its inputs")
         push=_Push(a.address,b.address if b is not None else 0,out.address,
                    width,height,mode,channels,(ctypes.c_uint32*4)(*(bounds or (0,0,0,0))))
-        self.rt.begin()
-        try:
-            self.pipeline.record(push,(count+255)//256 if mode in (0,3) else count)
-            self.rt.recorded+=1
-            if mode in (1,2):
-                final=_Push(out.address,0,self.scalars.address,width,height,
-                            5 if mode==1 else 4,channels,(ctypes.c_uint32*4)(0,0,0,0))
-                self.pipeline.record(final,1)
-                self.rt.recorded+=1
-            self.rt.submit()
-        except Exception:
-            self.rt.abort()
-            raise
+        return push,count,out,scalars,mode,width,height,channels
+
+    def _emit(self,plan):
+        push,count,out,scalars,mode,width,height,channels=plan
+        # One workgroup per output word: a line in modes 0 and 3 (image_stats.comp), a
+        # partial sum in modes 1 and 2. Each image dispatch is recorded behind a barrier
+        # (`xmx_rec_image_pipeline`), so a reduction sees what the passes before it wrote.
+        self.pipeline.record(push,count)
+        self.rt.recorded+=1
         if mode in (1,2):
-            return self.scalars.download(np.uint32,3 if mode==1 else 1)
-        return out.download(np.uint32,count)
+            final=_Push(out.address,0,scalars.address,width,height,
+                        5 if mode==1 else 4,channels,(ctypes.c_uint32*4)(0,0,0,0))
+            self.pipeline.record(final,1)
+            self.rt.recorded+=1
+            return lambda: scalars.download(np.uint32,3 if mode==1 else 1)
+        return lambda: out.download(np.uint32,count)
 
     def delta(self,a,b,width,height,channels=3,*,decision_threshold=None):
         """Mean delta from three scalar words: FP32 high/low sum and status.
@@ -116,6 +151,26 @@ class GPUImageStats:
         if decision_threshold is not None and not np.isfinite(decision_threshold):
             raise ValueError("delta decision threshold must be finite")
         words=self._run(a,b,width,height,1,channels)
+        return self._delta_value(words,width,height,channels,decision_threshold,self.partials)
+
+    def record_delta(self,a,b,width,height,channels=3,*,slot):
+        """`delta`, recorded into the commands the caller is recording, on a scratch of its own.
+        Returns the call that gives the value, given the same optional decision threshold, once
+        the caller has submitted those commands and waited for them."""
+        read=self._record(a,b,width,height,1,channels,slot=slot)
+        def finish(decision_threshold=None):
+            if decision_threshold is not None and not np.isfinite(decision_threshold):
+                raise ValueError("delta decision threshold must be finite")
+            return self._delta_value(read(),width,height,channels,decision_threshold,
+                                     self.slots[slot][0])
+        return finish
+
+    def record_nonfinite(self,a,width,height,channels=4,*,slot):
+        """`nonfinite`, recorded into the caller's commands; returns the call that gives it."""
+        read=self._record(a,None,width,height,2,channels,slot=slot)
+        return lambda: int(read()[0])
+
+    def _delta_value(self,words,width,height,channels,decision_threshold,partials):
         elements=int(width)*int(height)*int(channels)
         count=(elements+1023)//1024
         status=int(words[2])
@@ -142,7 +197,7 @@ class GPUImageStats:
         self.last_delta_error_bound=bound
         uncertain=(decision_threshold is not None and abs(value-float(decision_threshold))<=bound)
         if status==3 or uncertain:
-            value=self._exact_delta(elements,count)
+            value=self._exact_delta(elements,count,partials)
             self.last_delta_error_bound=0.0
             self.last_delta_fallback=True
         return value
@@ -176,5 +231,8 @@ class GPUImageStats:
         if self.output is not None: self.output.free();self.output=None
         if self.partials is not None: self.partials.free();self.partials=None
         if self.scalars is not None: self.scalars.free();self.scalars=None
+        for partials,scalars in self.slots.values():
+            partials.free();scalars.free()
+        self.slots={}
         self.key=self.bounds=None
         self._closed=True

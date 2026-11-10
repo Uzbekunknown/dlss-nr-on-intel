@@ -72,6 +72,15 @@ MAGIC_MASKED = 0x314E524E     # the same, with a one-byte-per-pixel interface ma
 # motion vectors (src/xess/nr_xess.c); the history then follows them (`History.follow`).
 MAGIC_MOTION = 0x324E524E
 MAGIC_GPU = 0x3147524E       # control metadata for same-device external GPU resources
+# `change` in a frame's line: how far the answer moved the game's frame, a figure for the log
+# alone. NR_CHANGE_METRIC=0 leaves it out on every path (the GPU image path's float copy of the
+# composition with it, gpu_image_pipeline.CHANGE_METRIC), and the line reads `change off`.
+CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
+
+
+def change_text(value):
+    """A frame line's change figure: five places, or `off` where it was not measured."""
+    return "off" if value is None else f"{value:.5f}"
 
 # The swapchain formats a compositor or VKD3D actually hands out. A game writes
 # sRGB-encoded values into a UNORM swapchain just as it does into an SRGB one, so both
@@ -1253,7 +1262,7 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     # places, and a quarter of the rows moves it by about a part in five hundred. Taken
     # after the answer has gone where nothing writes into `composed` before then.
     changed = None
-    if held is not None:
+    if held is not None and CHANGE_METRIC:
         if full is None:
             # the restore below writes into the composition itself
             changed = float(np.abs(composed[::4] - colour[::4]).mean())
@@ -1276,7 +1285,7 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
         # so a --dump shows what was actually sent
         (full[top:bottom, left:right] if full is not None else composed)[held] = colour[held]
     connection.sendall(encoded)
-    if changed is None:
+    if changed is None and CHANGE_METRIC:
         changed = float(np.abs(composed[::4] - colour[::4]).mean())
     # What the game was handed at the active region, for the dump below.
     active = full[top:bottom, left:right] if full is not None else composed
@@ -1376,7 +1385,7 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     split = f"  gpu {1000 * carried:.0f}+{1000 * ran:.0f}+{1000 * read:.0f}ms" if ran else ""
     print(f"{width}x{height} {FORMATS[vk_format][1]} in "
           f"{time.perf_counter() - clock:.2f}s  "
-          f"change {changed:.5f}{note}{split}{box}"
+          f"change {change_text(changed)}{note}{split}{box}"
           f"  network {geometry.network_width}x{geometry.network_height}"
           f" scale {live.render_scale:g}"
           + (f" (runs as {inner.shape[1] / active_width:.3g})"
@@ -1542,7 +1551,7 @@ def end_with_game():
 def print_gpu_frame(width, height, vk_format, live, metrics, transport):
     nw, nh = metrics["network"]
     print(f"{width}x{height} {FORMATS[vk_format][1]} in {metrics['total_seconds']:.3f}s  "
-          f"change {metrics['change']:.5f}  cut {metrics['cut']:.4f}  "
+          f"change {change_text(metrics.get('change'))}  cut {metrics['cut']:.4f}  "
           f"gpu 0+{metrics['network_ms']:.0f}+0ms  network {nw}x{nh} scale {live.render_scale:g} "
           f"transport={transport} image prep={metrics['preprocess_ms']:.3f}ms "
           f"compose={metrics['compose_ms']:.3f}ms "
@@ -1750,8 +1759,13 @@ def run_owned(args):
             ("NR_FUSE_MERGE_FFN", "fuse_merge_ffn"), ("NR_FUSE_STEM_FFN", "fuse_stem_ffn"),
             ("NR_FUSE_POOL", "fuse_pool"), ("NR_FUSE_WINDOW_BLOCK", "fuse_window_block"),
             ("NR_FUSE_HEAD", "fuse_head"),
-            ("NR_FUSE_GLOBAL_ATTENTION", "fuse_global_attention"))),
+            ("NR_FUSE_GLOBAL_ATTENTION", "fuse_global_attention"),
+            # the bottleneck's weights as E4M3 bytes: libxmx's choice for this driver and
+            # the runtime's check that it decodes them exactly (xmxres.Runtime.e4m3_weights)
+            ("XMX_E4M3_WEIGHTS", "e4m3_weights"))),
           flush=True)
+    if not CHANGE_METRIC:
+        print("change metric off (NR_CHANGE_METRIC=0): frame lines read `change off`", flush=True)
 
     if os.name == "nt":
         # Windows has no AF_UNIX in CPython, so the layer and the daemon meet on a

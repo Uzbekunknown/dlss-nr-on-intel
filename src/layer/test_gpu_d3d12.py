@@ -47,8 +47,8 @@ class Frame:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None):
-        return raw
+    def process_device(self, raw, *_args, motion=None, output=None):
+        return raw   # not the output, so the transport copies it there
 
     def reset_history(self):
         pass

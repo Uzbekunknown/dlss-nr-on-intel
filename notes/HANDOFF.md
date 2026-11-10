@@ -165,6 +165,15 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   GPU of its runner, `attention.comp`, libxmx and `nr_resident`, and three tests changed (below,
   11-09 and 11-08; archive, 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
   later).
+- `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
+  in both memory modes and CTest once it is on GitHub. It is off on Mesa unless
+  `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
+  it is off; run it once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values, B's
+  320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both ways.
+  `gemm_staged.comp`, `libxmx.c`, `xmxres.py` and `nr_resident.py` changed.
+- `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
+  modes and CTest once it is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
+  `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
   staged GEMM's walk (`6ef670e`), are not started. Archive, 11-04 evening.
@@ -201,12 +210,21 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   them. It is half of a frame at 1280x720 there. Archive, 11-03.
 - The speed test measures the CPU path (no `NR_` setting reaches its daemon), while the Windows
   release keeps a game's frames on the GPU since 0.0.2. At 1920x1080 its round trip reads 10-20 ms
-  worse than a game waits for. Archive, 11-03.
+  worse than a game waits for. Archive, 11-03. Measured on 11-08 at `perf-1108`, network B: with
+  `NR_GPU_IMAGE=1` in its daemon's environment (one line, `gpu-image-host`: frames still cross the
+  pipe, the passes around the network on the GPU) the round trips are 29.0 -> 24.3 ms at 1280x720
+  and 0.4, 57.0 -> 43.1 at 1920x1080 and 0.4, 108.9 -> 92.4 and 219.3 -> 196.2 at 1.0, the network
+  the same; a whole GPU-path frame there is ~21 and ~38 ms. The owner's call, since the window's
+  numbers move; not changed.
 - The GPU's clock: whether Intel's Windows driver also clocks a light network down between
   frames, as Linux's governor did (archive, 10-18). The power mode moved the host passes there
   already (10-15). libxmx's hint is Mesa's alone and does nothing on Windows.
 - Holding the GPU's clock up on Windows, as libxmx does on Linux: no per-process hint found.
-  Archive, 10-18, Windows.
+  Archive, 10-18, Windows. On 11-08 (`perf-1108`, B at 0.4, 1280x720, the pipeline on a device
+  buffer, 120 frames, two rounds): a 15 ms gap before each frame makes it 22.9-24.2 ms against
+  21.5-21.7 back to back, the network 17.2-18.0 against 16.2-17.1; a second process submitting a
+  tiny pass every millisecond through the gaps does not take it back (22.9-24.0, the network
+  18.1-19.0), so keeping the GPU busy from outside is not the hint.
 - The staged GEMM's loop on Intel's compiler takes 1.2-1.5x Mesa's time where the graph is large,
   and took 1.6-2.1x at the vendor's 1080p and 1440p fields (archive, 11-04 evening). Most of that
   was the driver's walk order, read since `6ef670e`: the GEMM is 1.2-1.3x Mesa's time there now,
@@ -222,8 +240,16 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
   out as 2.0's. Archive, 10-30 evening.
-- MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc), and `_Pragma("GCC ivdep")`
-  gives three C4068 warnings that an `NR_IVDEP` macro would silence. Archive, 10-02 and 10-07.
+- MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc): MSVC vectorises innermost
+  loops only, and inside each pixel loop is a three-channel one (`/Qvec-report:2`, reasons 1106
+  and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
+- The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
+  there, then the owner's word on merging it into `alchemist` and pushing.
+- The bottleneck's weights as E4M3 bytes, `e4m3-weights` on `perf-1108` (below, 11-08, evening):
+  the same game check, and whether it stays on by default for every GPU on Intel's Windows
+  driver; desktop Arc cards and the B580 have not run it.
+- `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
+  default, or a row in the panel or the setup window, is the owner's call.
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -397,6 +423,193 @@ draft.
    and merging #39 into `newnr`, are the owner's word.
 
 **Next on Windows:** nothing for #39.
+
+## The change metric as a switch, `NR_CHANGE_METRIC` (2026-11-08, evening, later, branch `e4m3-weights`)
+
+The owner, on the change figure the entry below found costs a frame time: "сделаем возможность
+включения и отключения такого параметра". `change` in the daemon's frame lines (how far the answer
+moved the game's frame) is read by nobody but a person reading the log; the tools and tests only
+carry example lines.
+- `NR_CHANGE_METRIC=0`, in the daemon's environment or the release's `dlss-nr\nr-env.txt` (the
+  proxies set its lines, and the panel's and the setup window's writes keep lines that are not
+  theirs), leaves the figure out on every path, and the line reads `change off`. On by default.
+- The GPU image path (`gpu_image_pipeline.CHANGE_METRIC`, `GPUImagePipeline.change_metric`): the
+  composition is asked for no float32 copy (`image_compose.comp` flag `COMPOSED`, 32;
+  `GPUImageComposer.record(composed=)`, the buffer made only when first asked for) and the
+  reduction is not recorded. The CPU path skips its quarter-row mean (`nr_daemon.CHANGE_METRIC`).
+- **The same bytes:** `test_image_pipeline.py --full-model` runs its eight-frame sequence with the
+  metric off as well (wire and history exact); `test_image_compose.py` composes every case of its
+  table again without the copy (wire bytes and history equal, the copy's buffer untouched); a host
+  check holds that neither the copy nor the reduction is recorded.
+- **Measured** (B at 0.4, 1280x720, the pipeline on a device buffer, three processes each,
+  alternating, with the E4M3 weights): the composition's submit 2.00-2.11 -> 1.38-1.41 ms, the
+  frame 21.70-22.06 -> 20.70-21.70.
+
+## The bottleneck's weights as their E4M3 bytes (2026-11-08, evening, branch `e4m3-weights`)
+
+After the entry below, still at the owner's "look for speed": on `e4m3-weights`, a local branch
+on `perf-1108`, in the same worktree; nothing pushed.
+
+**Why.** Network B at 512x320, 1280x720 at render scale 0.4: the bottleneck's eight blocks are
+4.5-5.0 ms of 15.6-16.6 on the device, four GEMMs at 64 tokens streaming 25 MB of half weights
+a block. Reading half of B's bytes (a timing proxy, every B row read twice) took them to 3.9-4.1 ms
+on Intel's driver, where `improve-b.md` found 7 % on Mesa: here they wait on those bytes. Every
+value of the 84 large matrices of A and B but the four attention-bias tables is an E4M3 value
+(the DLL ships them as E4M3), so the bytes are the weights, exactly.
+
+**The change** (all bit-identical):
+- `gemm_staged.comp`, bit 0x4000000: B is E4M3 bytes, read by the packed loader (eight bytes a
+  thread where it took sixteen) and decoded to halves before the shared-memory store. A byte's
+  sign and magnitude go to a half's places, the half reading the value times 2^-8 (an E4M3
+  subnormal a half subnormal), and a multiply by 256 gives the value: exact with float16
+  subnormals kept. Each four columns' bytes are stored 0 2 1 3, so one shift and two masks
+  make a pair of halves from a word and no byte moves alone (`e4m3x4_halves`); the first
+  version, which moved each byte, took 0.3 ms off the bottleneck where this takes 0.4-0.75.
+- `libxmx.c`: `xmx_buf_mark_e4m3` marks a buffer as E4M3 bytes, `record_gemm` sets the bit for
+  such a B, takes its offsets in bytes, sends it to the staged kernel at any M, and refuses it
+  where the packed loader cannot read it (transposed, gathered, a batch, unaligned).
+  `xmx_e4m3_weights` is on for Intel's Windows driver, where float16 subnormals are kept and the
+  packed loader is on; `XMX_E4M3_WEIGHTS=0|1` sets it.
+- `xmxres.py`: `Runtime.buffer_e4m3` (the bytes in that order, `e4m3_codes`, or None where a
+  value is no E4M3 one), and a check at each runtime's start, 7 ms: an identity times all 254
+  values on each staged build the bottleneck uses, bytes against half, or the weights stay half.
+- `nr_resident.GlobalBlockWeights` keeps the four GEMMs' weights that way where the runtime may,
+  and the daemon's `runtime options` line names `XMX_E4M3_WEIGHTS=0|1`, so a Save report says
+  which ran.
+
+**The same bytes:** `test_gemm_e4m3.py` (new; 82 cases: the bottleneck's shapes and a partial and
+a 32-row block, plain, published, the gate, the residual with both skips and the ViT's QKV
+epilogue, specialised and not, B holding every E4M3 value); the heads of A and B at 320x512 and
+768x1344, original and changed input, with `XMX_E4M3_WEIGHTS=0` and `=1`; the 30 GPU suites of
+CTest's list, `test_image_pipeline.py --full-model`, `test_gpu_transport`, `test_gpu_d3d12.py
+--network`, `test_daemon`. MSVC `build_win.bat` with no warning.
+
+**Measured** (Intel 101.9150, quiet, each in a process of its own, alternating):
+
+| | half | E4M3 |
+| --- | --- | --- |
+| B 512x320, the bottleneck's four GEMMs (`frame_profile`, 6 processes each) | 4.5-5.0 ms | 4.1-4.4 |
+| B 512x320, the device's total | 15.6-16.6 | 15.3-16.1 |
+| B 768x448 (1920x1080 at 0.4), the bottleneck / the device | 7.0 / 29.5-30.4 | 5.5-5.7 / 28.2-28.3 |
+| A 512x320, the bottleneck / the device | 5.1-5.2 / 30.8-32.0 | 4.3 / 28.8-29.2 |
+| B, the pipeline's frame at 1280x720, network (4 processes) | 15.95-16.59 | 15.91-16.13 |
+| A, the same (3 processes) | 30.30-30.61 | 29.79-30.10 |
+
+So 0.3-0.5 ms of the network at 1280x720 and 0.4, more at 1920x1080, and 96 MiB less on the
+device (294 -> 198 MiB for B at 320x512). The 32-row deep build stays the right one for the
+contract with E4M3 too (1.81-1.88 ms against 1.98-2.09 on 64-row blocks).
+
+**Not run:** a game; Linux; Arc A-series and Battlemage cards, which take it by default on the
+same driver, and whose start-up check is the only thing between them and a wrong decode.
+
+**Next on Linux:** Open items. **Next on Windows:** a game with the owner, with `perf-1108`.
+
+## The GPU path's frame around the network, 9 % less; what the other ports do (2026-11-08, branch `perf-1108`)
+
+The owner, away for the afternoon: finish what is left, then look for speed, and see what the AMD
+ports do. Everything here is local, on `perf-1108` from `newnr` at `5836d29`, in a worktree of the
+session's; nothing is pushed.
+
+**What the other ports do.** mochizuki's DLSSNR-AMD left GitHub with its author's account and is
+on GitLab (`gitlab.com/mochizuki0323/DLSSNR-AMD`, MIT, 0.0.8.3 of 11-06). Its fast networks are
+not the vendor's: `*_OPTIMIZED` and `CC_SMALL_FP8_EXPERIMENTAL` refit the MLPs to ReLU, replace some
+decoder attention with fixed tables and put layers in int4, so the picture moves; not for this
+project. Its one exact trick, heads whose attention is the same for every input skipping Q and K,
+finds nothing here: no head of A or B has a scale of 0 (the smallest are 0.0145 and 0.21), and
+after the E4M3 publish no query is all zero. `chuanloop/dlssnr-b390` (MIT, 11-06) is an AMD port
+moved to an Arc B390 (Xe3): per-level fused kernels (QKV, norms, attention and projection in one
+workgroup at C = 64 and 128, where our `window_block` stops at 32), a fixed ladder of 37
+resolutions, and 39 of its shaders derived from NVIDIA's runtime, which it does not ship. It
+publishes no timings. `improve-b.md` already tried the nearest thing (a level-1 block whole,
+no faster).
+
+**Where a played frame's time goes** (network B at 512x320, 1280x720 at 0.4; `frame_profile.py
+--warm 25 --runs 5`, Intel 101.9150, quiet): 15.4-17.3 ms on the device, the staged GEMM 60 %;
+the bottleneck's four GEMMs at 64 tokens are 28-31 % of the frame and stream their weights at
+26-55 GB/s. The rule `improve-b.md` set on Mesa for those M = 64 GEMMs holds on Intel's driver
+too: every other routing, tried through a local switch (all of them on 32-row blocks, the 64-deep
+step everywhere or nowhere, none on 32 rows), made a call slower (the contract 0.23-0.25 -> 0.32
+ms off the 32-row deep build; the expand 0.14-0.16 -> 0.21-0.26 and the QKV 0.12-0.13 ->
+0.16-0.19 on 32-row blocks) and the frame 0.5-1 ms slower; the switch is not kept.
+`XMX_STAGED_WALK_Y` makes no difference at this field.
+
+**Around the network the GPU path spent 5.5 ms of a 1280x720 frame, in eight submits** (B at 0.4,
+the daemon's pipeline on a device buffer, timed submit by submit). Four exact changes, all bytes
+the same:
+- `268d6d7`: the cached letterbox check (`image_stats.comp` mode 3) ran eight working threads, each
+  reading a line a pixel at a time: 0.87 ms. A workgroup a line now, 0.21 ms; modes 0 and 3 word for
+  word the old ones on 18 frames from 1x1 to 2560x1440.
+- `71d21ad`: the history's three buffers trade places instead of three full-frame copies (0.74 ms
+  at 720p, 1.42 at 1080p). `NR_HISTORY_SWAP=0` is the comparison.
+- `61c3de9`: three submits fewer, where the CPU decides nothing between them: the cut test (or the
+  follower) with the decode, and the head's finite check, the composition and the change metric in
+  one. `GPUImageStats.record_delta`/`record_nonfinite` record into the caller's commands on scratch
+  of their own.
+- `95bb757`: the composition writes the answer straight into the transport's shared output; the
+  transport copied it there in a submit of its own, on both GPU transports.
+
+Results, against `5836d29`, three processes each alternating, quiet:
+
+| | before | after |
+| --- | --- | --- |
+| pipeline frame, B 0.4, 1280x720 (mean of 150) | 23.17-24.13 ms | 21.14-21.92 |
+| pipeline frame, B 0.4, 1920x1080 | 42.15-43.47 | 38.25-38.75 |
+| layer present, `test_gpu_present.py --run`, 1280x720 (median) | 41.08-44.08 | 37.95-39.41 |
+| the same at 1920x1080 | 70.59-74.04 | 67.15-68.01 |
+
+**The same bytes:** `test_image_pipeline.py --full-model` (8 frames against the CPU path, the history
+read after each); ten 1280x720 frames with motion through `1c49d04`'s pipeline and through these
+(answers and the three history buffers byte for byte; history, motion, cut and change the same to
+the last digit); `test_gpu_d3d12.py --network` (the client's frames changed the same channels by
+the same levels). Also `test_image_*`, `test_gpu_transport` (50), `test_daemon`,
+`test_settings_live`, `test_gpu_d3d12.py`, and `test_gpu_present.py --run` under synchronization
+validation, the panel shut, open and in a corner (0 errors, every frame on the GPU path). The
+release built from this branch passes `nr-game\standin-release-check.ps1` (723 frames, none
+rejected; the speed test A/71 and B/31; Save report 19 checks, none failing; the folder as before).
+`test_image_pipeline.py --full-model` gains the motion case (`efd4a6d`): eight frames, five along
+motion, byte for byte against the CPU path. MinGW (gcc 16): the build and CTest 67 of 67; MSVC `build_win.bat` with no
+warning at all, and CTest 67 of 67 on its libraries.
+
+**Left, for the owner:** the change metric (`stats.delta(composed, active)`) is a number in the
+frame log, and the composer's float `composed` buffer exists only for it. In whole frames the
+reduction alone costs 0.2 ms at 720p and 0.3-1.0 at 1080p (three processes each, without it against
+with it), and the reduction and the buffer's write together 0.4 ms at 720p (21.57-21.74 ms against
+20.99-21.58, four processes each) and ~0.3 at 1080p, where the bands overlap; keeping its last bits needs the reduction as it is, so
+computing it elsewhere, less often, or not at all changes the log, not the picture. The
+bytes-for-the-previous-frame lead (Leads left untried) would touch three shaders. The acquire and
+release waits are the transports' own synchronisation, and the layer's own capture and return are
+0.07 and 0.4 ms at 720p (`layer-timing.jsonl`).
+
+**The structural lead, for the owner** (days of work, exact if each fused kernel keeps its passes'
+order). `Ashley-QwQ/GlassBox-NR-Anatomy-public` (Apache-2.0, a dissection of the 310.8 DLL)
+lists NVIDIA's launches: every Swin block of the C = 32, 64, 128 and 256 tiers is one launch
+(`cc_tinlayout_fused_swin_{1h_32,2h_64,4h_128,8h_256}`, a first, chained and last-with-downsample
+variant each), the block's tokens kept on chip. Here a C = 32 block is two passes (`window_block`,
+`ffn_fused`) and a C >= 64 block about five (the QKV GEMM with the window gather, window attention,
+the projection with its residual, the gate and the contract). Of B's 15.2 ms at 512x320 listed by
+call site, the bottleneck is 4.7, the C >= 64 levels 4.7, the C = 32 window blocks 2.7 and their
+feed-forward 2.3. Fused C = 64-256 blocks, as the Xe3 port has per level, are where 1-2 ms of a
+played frame could come from; `improve-b.md`'s level-1 attempt (the C = 32 feed-forward inside the
+window block, no faster) is the warning: the feed-forward's weights shared over 256 tokens cost
+less than over a window's 64.
+
+**Tried and not kept** (all exact):
+- **A pass timed alone misleads here.** The features pass from the inner image the decode already
+  made, in two 16-byte stores a pixel, read 0.45 -> 0.23 ms at 720p and 0.87 -> 0.52 at 1080p
+  submitted alone, and nothing in whole frames: 1080p 37.4-37.7 ms before against 37.5-38.3 after
+  over two sets of three processes. Four pixels an invocation for the RGB32 decodes, three 16-byte
+  stores, no better either, and slower where they resample. A lone submit lets the GPU's clock
+  fall between dispatches; whole frames in separate processes are what count.
+- **The barrier between passes costs 0.4-2.6 us** on Intel's driver (200 dispatches in a submit,
+  with and without), and synchronization2's barrier on storage accesses alone is the same; B's frame
+  at 512x320 15.4-16.0 ms either way. A pass's fixed cost at small fields is the dispatch's own.
+- The M = 64 routings and `XMX_STAGED_WALK_Y` (above).
+
+Also: `1c49d04`, `NR_IVDEP` (Open items).
+
+**Next on Linux:** `make test` in both memory modes and CTest, once `perf-1108` is on GitHub (Open
+items). **Next on Windows:** a game with the owner, Mortal Kombat 11 at 0.4 before and after (and
+Hogwarts for the D3D12 transport); then the owner's word on merging and pushing.
 
 ## Checked on Windows: `cleanup` with `newnr` merged in (2026-11-08, PR #39)
 

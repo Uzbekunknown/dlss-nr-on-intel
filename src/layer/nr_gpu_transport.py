@@ -157,6 +157,22 @@ def network_us(last):
     return min(int(round(ms * 1000.0)), 0xFFFFFFFF)
 
 
+def _direct(context, p, width, height):
+    """The shared output, for the pipeline to compose straight into, when it holds exactly the
+    frame's bytes where the answer goes; None otherwise, and the answer is copied as before."""
+    return context.output if p["bytes"] == width * height * 4 else None
+
+
+def _copy_unless_direct(runtime, result, context, p):
+    """The answer into the shared output, unless the pipeline composed it there already: a
+    full-frame copy and a submit of its own each frame, before 2026-11-08."""
+    if result is context.output:
+        return
+    runtime.begin()
+    runtime.copy(result, context.output, p["bytes"])
+    runtime.submit()
+
+
 class _Context:
     def __init__(self, lib, packet, process):
         self.lib, self.packet, self.process = lib, packet, process
@@ -382,10 +398,9 @@ class GPUSharedTransport:
             if self.lib.xmx_external_acquire(context.input.id, context.output.id, context.ready):
                 raise X.failure(self.lib, "GPU input ownership acquire")
             acquired = True
-            result = self.images.process_device(context.input, width, height, fmt, live)
-            self.backend.runtime.begin()
-            self.backend.runtime.copy(result, context.output, p["bytes"])
-            self.backend.runtime.submit()
+            result = self.images.process_device(context.input, width, height, fmt, live,
+                                                output=_direct(context, p, width, height))
+            _copy_unless_direct(self.backend.runtime, result, context, p)
             if self.lib.xmx_external_release(context.input.id, context.output.id, context.done):
                 raise X.failure(self.lib, "GPU output ownership release")
             acquired = False
@@ -445,10 +460,9 @@ class GPUSharedTransport:
             before = motion_from(p)
             motion = (context.input.address + p["bytes"]
                       if context.motion and before and before == context.answered else None)
-            result = self.images.process_device(context.input, width, height, fmt, live, motion=motion)
-            self.backend.runtime.begin()
-            self.backend.runtime.copy(result, context.output, p["bytes"])
-            self.backend.runtime.submit()
+            result = self.images.process_device(context.input, width, height, fmt, live, motion=motion,
+                                                output=_direct(context, p, width, height))
+            _copy_unless_direct(self.backend.runtime, result, context, p)
             stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
             if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,
                                                 value + 1, p["bytes"], stamp, STAMP.size):

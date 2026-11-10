@@ -95,6 +95,9 @@ class FakeStats:
     def region(self,raw,width,height,fmt): return self.crop or (0,height,0,width)
     def delta(self,*args,**kwargs): return self.cut
     def nonfinite(self,*args): return self.bad
+    # the pipeline records these into its own submits and reads them after
+    def record_delta(self,*args,**kwargs): return lambda decision_threshold=None: self.cut
+    def record_nonfinite(self,*args,**kwargs): return lambda: self.bad
     def close(self): pass
 
 
@@ -152,9 +155,12 @@ class HostChecks(unittest.TestCase):
         pipe.process_device(self.raw,256,192,37,live,motion=8192)
         self.assertEqual((pipe.last["history"],pipe.last["cut"]),(False,0.0))
         follower.share=1                                # without motion, the identity history
+        previous,target=pipe.previous_neural,pipe.compose.neural
         pipe.process_device(self.raw,256,192,37,live)
         self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
-        self.assertIs(pipe.compose.calls[-1]["history"],pipe.previous_neural)
+        self.assertIs(pipe.compose.calls[-1]["history"],previous)
+        # and the two traded places for the next frame, with no copy between them
+        self.assertIs(pipe.previous_neural,target);self.assertIs(pipe.compose.neural,previous)
         self.assertEqual(len(follower.motions),3)
         pipe.process_device(self.raw,256,192,37,settings(temporal=0.),motion=8192)
         self.assertFalse(pipe.last["motion"])
@@ -179,6 +185,26 @@ class HostChecks(unittest.TestCase):
         live.temporal=0.
         self.pipe.process_device(self.raw,256,192,37,live)
         self.assertEqual(self.pipe.history_frames,0)
+
+    def test_change_metric_off_records_neither_the_copy_nor_its_reduction(self):
+        # NR_CHANGE_METRIC=0: the composition is asked for no float32 copy, the change's
+        # reduction is never recorded, and the frame line's figure reads "off"
+        slots=[]
+        original=self.pipe.stats.record_delta
+        def record_delta(*args,**kwargs):
+            slots.append(kwargs.get("slot"));return original(*args,**kwargs)
+        self.pipe.stats.record_delta=record_delta
+        live=settings()
+        for metric in (True,False):
+            self.pipe.change_metric=metric;slots.clear()
+            for _ in range(2):    # the second with a history: the cut test records too
+                self.pipe.process_device(self.raw,256,192,37,live)
+            self.assertEqual("change" in slots,metric)
+            self.assertIn("cut",slots)
+            self.assertEqual(self.pipe.compose.calls[-1]["composed"],metric)
+            self.assertEqual(self.pipe.last["change"] is None,not metric)
+        self.assertEqual(nr_daemon.change_text(None),"off")
+        self.assertEqual(nr_daemon.change_text(.25),"0.25000")
 
     def test_profile_crop_scale_layout_and_closed_frame_rebuild(self):
         live=settings()
@@ -229,8 +255,9 @@ class HostChecks(unittest.TestCase):
             self.pipe.process_device(self.raw,256,192,37,live)
 
 
-def cpu_image_step(backend,letterbox,history,payload,width,height,fmt,live):
-    """Same preparation/history/native composition used in process_connection."""
+def cpu_image_step(backend,letterbox,history,payload,width,height,fmt,live,motion=None):
+    """Same preparation/history/native composition used in process_connection. `motion`: the
+    frame's offsets, (height, width, 2) float32, cropped to the active region as `process` does."""
     whole=nr_daemon.decode(payload,width,height,fmt)
     crop=letterbox.region(whole,(width,height,fmt))
     top,bottom,left,right=crop
@@ -240,7 +267,8 @@ def cpu_image_step(backend,letterbox,history,payload,width,height,fmt,live):
     inner=nr_daemon.resample(colour,(extent[1],extent[0]))
     geometry=nr_frame.network_geometry(inner.shape[1],inner.shape[0],minimum=live.min_extent)
     shot=(width,height,fmt,top,bottom,left,right,live.profile)
-    old_inner,old_neural,previous=history.take(shot,inner,live.cut_limit if live.temporal>0 else -1.)
+    old_inner,old_neural,previous=history.take(shot,inner,live.cut_limit if live.temporal>0 else -1.,
+        motion=None if motion is None else motion[top:bottom,left:right],colour=colour)
     features=nr_frame.build_features(inner,geometry=geometry,history=old_inner,
                                      **nr_frame.PROFILES[live.profile])
     head=geometry.crop(backend.run_features(features))
@@ -332,6 +360,52 @@ class FullModelChecks(unittest.TestCase):
         self.assertTrue(readbacks)
         self.assertLessEqual(max(readbacks),max(176+112,((192*128*4)+1023)//1024))
         print(f"full model: {len(sequence)} exact wire/history frames; device calls read only reduced metadata")
+
+    def test_exact_wire_and_history_with_the_change_metric_off(self):
+        """The same frames with NR_CHANGE_METRIC=0: the composition's float32 copy and the
+        change's reduction left out, the wire and the history the same bytes."""
+        with patch.object(G,"CHANGE_METRIC",False):
+            self.test_exact_wire_and_history_while_forbidding_image_readbacks()
+
+    def test_exact_wire_and_history_along_motion(self):
+        """The D3D12 transport's frames, each with its pixels' offsets to where they were: the
+        pipeline's follower against the daemon's `History.follow`, byte for byte, frames that
+        follow motion between ones that carry none."""
+        rng=np.random.default_rng(1108)
+        pipe=G.GPUImagePipeline(self.backend)
+        self.addCleanup(pipe.close)
+        box,history=nr_daemon.Letterbox(),nr_daemon.History()
+        live=settings(render_scale=.5)
+        height,width,fmt=96,160,44
+        base=rng.integers(3,250,(height,width,4),dtype=np.uint8)
+        offsets=np.zeros((height,width,2),np.float32)
+        offsets[...,0]=-2.0                       # every pixel was two to the left
+        offsets[:,:2]=np.nan                      # and these were not on screen
+        motion=self.backend.runtime.buffer(offsets.size,np.float32,kind=X.DEVICE).upload(offsets)
+        self.addCleanup(motion.free)
+        followed=0
+        for turn in range(8):
+            raw=np.roll(base,2*turn,axis=1).copy()
+            raw[20:30,30+5*turn:50+5*turn,:3]=250  # and a block faster than the scene
+            moving=turn%3!=2
+            payload=raw.tobytes()
+            expected,neural,crop,cut,used=cpu_image_step(self.backend,box,history,payload,width,
+                height,fmt,live,motion=offsets if moving else None)
+            device=self.backend.runtime.buffer(raw.size,np.uint8,kind=X.DEVICE).upload(raw)
+            try:
+                answer=pipe.process_device(device,width,height,fmt,live,
+                                           motion=motion.address if moving else None)
+                self.assertEqual(answer.download(np.uint8).tobytes(),expected,
+                                 f"wire parity along motion, frame {turn}: {pipe.last}")
+                self.assertEqual(pipe.last["history"],used)
+                followed+=bool(pipe.last["motion"])
+                if neural is not None:
+                    got=pipe.previous_neural.download().reshape(neural.shape)
+                    np.testing.assert_array_equal(got.view(np.uint32),neural.view(np.uint32),
+                                                  err_msg=f"history parity along motion, frame {turn}")
+            finally: device.free()
+        self.assertGreaterEqual(followed,3)
+        print(f"full model: 8 exact wire/history frames, {followed} of them along motion")
 
 
 if __name__=="__main__":

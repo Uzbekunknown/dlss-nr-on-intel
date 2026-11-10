@@ -4,6 +4,7 @@ The host transport wrapper uploads raw bytes and downloads final bytes once. pro
 is the same image algorithm for external GPU buffers; its pixels never cross the CPU.
 """
 from __future__ import annotations
+import os
 import time
 import numpy as np
 import xmxres as X
@@ -13,10 +14,20 @@ from gpu_image_compose import GPUImageComposer, fallback_reason
 from gpu_image_history import GPUImageFollower
 from gpu_image_stats import GPUImageStats
 
+# The history's buffers trade places at the end of a frame instead of being copied (see
+# `_process_device`); NR_HISTORY_SWAP=0 is the comparison, the three copies as before.
+HISTORY_SWAP = os.environ.get("NR_HISTORY_SWAP", "1") != "0"
+# The change a frame's answer made (`change` in the daemon's frame line): a number for the log,
+# and the composition's float32 copy exists only for it. NR_CHANGE_METRIC=0 records neither
+# (0.2-0.4 ms of a 1280x720 frame, more at 1920x1080), and the line reads `change off`; the
+# answer and the history are the same bytes either way.
+CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
+
 
 class GPUImagePipeline:
     def __init__(self, backend):
         self.backend, self.rt = backend, backend.runtime
+        self.change_metric = CHANGE_METRIC
         self.stats = GPUImageStats(self.rt)
         self.key = None
         self.history_key = None
@@ -101,6 +112,10 @@ class GPUImagePipeline:
             self.compose=GPUImageComposer(self.rt,frame_size=(height,width),head_size=(ih,iw),
                 vk_format=fmt,crop=crop,head_row_width=geometry.network_width,
                 head_channels=4 if self.rt.compact_head else 16)
+            # The composer's neural target trades places with `previous_neural` every frame
+            # (the end of `_process_device`), so either may be the composer's when this
+            # pipeline is cleared: both are freed with the pipeline's own buffers.
+            self.buffers.append(self.compose.neural)
             self.key=key
         self.geometry=geometry
         hkey=(width,height,fmt,crop,live.profile,ih,iw)
@@ -113,16 +128,19 @@ class GPUImagePipeline:
             grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
         return ih,iw,ah,aw
 
-    def process_device(self, raw, width, height, fmt, live, motion=None):
+    def process_device(self, raw, width, height, fmt, live, motion=None, output=None):
         """Return a device wire-image buffer. Only line maxima and scalar reductions are read.
 
         ``motion``: the device address of each pixel's offset to where its surface was on the
         frame before this pipeline was last given, two float32 a pixel at the frame's extent,
-        NaN where it was not on screen; the history then follows it (`History.follow`)."""
+        NaN where it was not on screen; the history then follows it (`History.follow`).
+        ``output``: a buffer of the frame's bytes for the composition to write the answer into,
+        which is then what is returned - the transport's shared output, saving its copy. On a
+        refused frame it may hold part of an answer; the transport hands it on only on success."""
         reason=self.supported(width,height,fmt,live)
         if reason: raise ValueError(reason)
         try:
-            return self._process_device(raw,width,height,fmt,live,motion)
+            return self._process_device(raw,width,height,fmt,live,motion,output)
         except Exception:
             self.rt.abort()
             self.reset_history()
@@ -133,29 +151,33 @@ class GPUImagePipeline:
             self.follower=GPUImageFollower(self.rt,frame_size=(height,width),crop=crop,inner_size=(ih,iw))
         return self.follower
 
-    def _process_device(self, raw, width, height, fmt, live, motion=None):
+    def _process_device(self, raw, width, height, fmt, live, motion=None, output=None):
         started=time.perf_counter()
         crop=self.stats.region(raw,width,height,fmt)
         ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
+        follow=motion is not None and live.temporal>0 and self.history_frames>0
+        follower=self._follower(width,height,crop,ih,iw) if follow else None
+        # One submit for the decode and what reads it before the CPU decides anything: the cut
+        # test, or with motion the follower. They ran as separate submits in this order, and
+        # each image pass is still recorded behind a barrier (`xmx_rec_image_pipeline`).
         self.rt.begin()
         self.decode.record(raw,self.active)
         self.inner_decode.record(raw,self.inner)
-        self.rt.submit()
-        follow=motion is not None and live.temporal>0 and self.history_frames>0
+        cut_of=None
         if follow:
-            follower=self._follower(width,height,crop,ih,iw)
-            self.rt.begin()
             self.history_resize.record(self.previous_neural,follower.resampled)
             follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
                             active=self.active,previous_inner=self.previous_inner,inner=self.inner)
-            self.rt.submit()
+        elif self.history_frames:
+            cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
+        self.rt.submit()
+        if follow:
             # Known nowhere, or a cut even against the last frame moved here: no history.
             cut=follower.cut(self.stats,self.inner,live.cut_limit)
             history=cut is not None and cut<=live.cut_limit
             cut=0.0 if cut is None else cut
         else:
-            cut=self.stats.delta(self.inner,self.previous_inner,iw,ih,
-                                 decision_threshold=live.cut_limit) if self.history_frames else 0.0
+            cut=cut_of(live.cut_limit) if cut_of is not None else 0.0
             history=live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
         if not history: self.history_frames=0
         self.rt.begin()
@@ -167,25 +189,43 @@ class GPUImagePipeline:
         prepared=time.perf_counter()
         head=self.frame.run_device()
         ran=time.perf_counter()
-        if self.stats.nonfinite(head,self.geometry.network_width,self.geometry.network_height,
-                                4 if self.rt.compact_head else 16):
-            self.history_frames=0
-            raise ValueError("GPU network head contains nonfinite values; original frame retained")
+        # The head's check, the composition and the change it made, in one submit. The
+        # composition now runs before the check is read; when the head is not finite its answer
+        # is dropped as before (the transport copies it out only on success), the history
+        # restarts, and the buffers do not trade places, so the neural it kept is never read.
         self.rt.begin()
+        nonfinite_of=self.stats.record_nonfinite(head,self.geometry.network_width,
+            self.geometry.network_height,4 if self.rt.compact_head else 16,slot="head")
         if history and follow:
-            result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels)
+            result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels,
+                                       target=output,composed=self.change_metric)
         else:
             result=self.compose.record(raw,head,history=self.previous_neural if history else None,
-                                       previous=self.previous_active if history else None)
+                                       previous=self.previous_active if history else None,
+                                       target=output,composed=self.change_metric)
+        change_of=(self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
+                   if self.change_metric else None)
         self.rt.submit()
+        if nonfinite_of():
+            self.history_frames=0
+            raise ValueError("GPU network head contains nonfinite values; original frame retained")
         composed=time.perf_counter()
-        change=self.stats.delta(self.compose.composed,self.active,aw,ah)
-        if live.temporal>0:
+        change=change_of() if change_of is not None else None
+        if live.temporal>0 and not HISTORY_SWAP:
             self.rt.begin()
             self.rt.copy(self.compose.neural,self.previous_neural,aw*ah*3*4)
             self.rt.copy(self.inner,self.previous_inner,iw*ih*3*4)
             self.rt.copy(self.active,self.previous_active,aw*ah*3*4)
             self.rt.submit()
+        elif live.temporal>0:
+            # This frame's buffers become the previous ones by trading places, not by copies:
+            # three full-frame copies were 0.7 ms of a 1280x720 frame and 1.4 at 1920x1080.
+            # Every submit above has been waited for, so nothing still reads either side, and
+            # each buffer the next frame writes into is one whose contents no one needs: the
+            # frame before this one's. Each target is handed to its pass at recording time.
+            self.compose.neural,self.previous_neural=self.previous_neural,self.compose.neural
+            self.inner,self.previous_inner=self.previous_inner,self.inner
+            self.active,self.previous_active=self.previous_active,self.active
         self.history_frames=self.history_frames+1 if live.temporal>0 else 0
         self.last={"preprocess_ms":1000*(prepared-started),"network_ms":1000*(ran-prepared),
                    "compose_ms":1000*(composed-ran),"metadata_history_ms":1000*(time.perf_counter()-composed),
