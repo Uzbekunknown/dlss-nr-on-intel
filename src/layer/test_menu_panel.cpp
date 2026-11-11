@@ -549,6 +549,76 @@ int main(void)
         check(r.ready && r.network_ms < 0.0 && !strstr(line, "network"),
               "no time reported, none shown", detail);
 
+        /* ---- the two graphs: the shape behind the numbers ---- */
+        {
+            /* A ring, oldest first, and it drops the oldest rather than refusing the newest: the
+             * right edge has to be now. A sample the ring never used must not be drawn as zero -
+             * that would read as a perfect frame. */
+            nr_frame_graph g;
+            nr_frame_graph_reset(&g);
+            float out[NR_GRAPH_SAMPLES];
+            check(nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES) == 0,
+                  "a fresh graph has no points to draw", "");
+
+            nr_frame_graph_add(&g, 16.0f, 8.0f);
+            nr_frame_graph_add(&g, 20.0f, -1.0f);   /* no network time for this one */
+            int n = nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "n=%d first=%.1f second=%.1f", n,
+                     (double)out[0], (double)out[1]);
+            check(n == 2 && out[0] > 15.9f && out[0] < 16.1f && out[1] > 19.9f && out[1] < 20.1f,
+                  "the graph keeps frames in the order they arrived", detail);
+
+            /* The net series carries the gap as -1, which the drawing side skips rather than
+             * plotting at zero. */
+            int nn = nr_frame_graph_net(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "net n=%d second=%.1f", nn, (double)out[1]);
+            check(nn == 2 && out[0] > 7.9f && out[0] < 8.1f && out[1] < 0.0f,
+                  "a frame without a network time leaves a gap, not a zero", detail);
+
+            /* Filled past its depth: the count stops at the ring's size and the oldest go. */
+            for (int i = 0; i < NR_GRAPH_SAMPLES + 40; ++i)
+                nr_frame_graph_add(&g, (float)(i % 30) + 1.0f, -1.0f);
+            n = nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "n=%d (ring %d)", n, NR_GRAPH_SAMPLES);
+            check(n == NR_GRAPH_SAMPLES,
+                  "the graph holds its depth and drops the oldest", detail);
+
+            /* A frame slower than the ceiling is clamped, not allowed to flatten the rest. */
+            nr_frame_graph_reset(&g);
+            nr_frame_graph_add(&g, 5000.0f, -1.0f);
+            nr_frame_graph_frame(&g, out, 1);
+            snprintf(detail, sizeof detail, "%.1f ms for a 5 s frame", (double)out[0]);
+            check(out[0] > (float)NR_GRAPH_CEIL_MS - 0.5f,
+                  "a frame past the ceiling is drawn at it", detail);
+
+            /* **The rates feed it.** A present a frame at 60 Hz is 16.7 ms a point, and the panel
+             * hands the same ring to the counter; this is the join between the counter's
+             * arithmetic and the graph's. */
+            nr_frame_rates rg;
+            nr_frame_rates_reset(&rg);
+            nr_frame_counts rc = {0, 0, 0, 0};
+            for (int i = 0; i <= 30; ++i) {
+                rc.presented++;
+                rc.nr_frames++;
+                nr_frame_rates_sample(&rg, i / 60.0, &rc);
+            }
+            float frames[NR_GRAPH_SAMPLES];
+            int got = nr_frame_graph_frame(&rg.graph, frames, NR_GRAPH_SAMPLES);
+            /* The first present has no previous, so it contributes no point; the rest are one
+             * frame each. */
+            snprintf(detail, sizeof detail, "%d points from 30 presents", got);
+            check(got >= 28 && got <= 30,
+                  "the counter's sampling fills the graph, one point a present", detail);
+            if (got > 0) {
+                float sum = 0.0f;
+                for (int i = 0; i < got; ++i) sum += frames[i];
+                const float mean = sum / (float)got;
+                snprintf(detail, sizeof detail, "mean %.2f ms, want ~16.7", (double)mean);
+                check(mean > 15.0f && mean < 18.5f,
+                      "a 60 Hz present stream reads as ~16.7 ms a frame", detail);
+            }
+        }
+
         /* The corner, as the shut panel draws it: no panel window, the counter alone, and no
          * pointer handed to ImGui. AlwaysAutoResize hides a window its first frame, so two. */
         static nrex_ui drawn;
@@ -558,7 +628,7 @@ int main(void)
             dio.DisplaySize = ImVec2(800.0f, 600.0f);
             dio.DeltaTime = 1.0f / 60.0f;
             ImGui::NewFrame();
-            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms");
+            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms", nullptr, 0, nullptr, 0);
             ImGui::Render();
         }
         int any = nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600);
@@ -581,7 +651,7 @@ int main(void)
             int captured = 0, hovered = 0;
             for (int i = 0; i < 2; ++i) {
                 ImGui::NewFrame();
-                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps");
+                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps", nullptr, 0, nullptr, 0);
                 captured |= mio.WantCaptureMouse ? 1 : 0;
                 hovered |= ImGui::GetCurrentContext()->HoveredWindow == corner ? 1 : 0;
                 ImGui::Render();
@@ -596,7 +666,7 @@ int main(void)
 
         /* In the panel's place the counter's place is nowhere: nothing is drawn. */
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps");
+        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps", nullptr, 0, nullptr, 0);
         ImGui::Render();
         check(!nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600),
               "with the counter in the panel, a shut panel draws nothing");
@@ -608,7 +678,7 @@ int main(void)
         pio.DeltaTime = 1.0f / 60.0f;
         ImGui::NewFrame();
         nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps    network 24.5 ms", "what they are", 0,
-                     nullptr);
+                     nullptr, nullptr, 0, nullptr, 0);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         int with_line = nrex_end_panel(nullptr);
@@ -618,7 +688,7 @@ int main(void)
         if (dd)
             for (int i = 0; i < dd->CmdListsCount; ++i) verts_line += dd->CmdLists[i]->VtxBuffer.Size;
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr);
+        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         nrex_end_panel(nullptr);

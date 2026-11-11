@@ -133,6 +133,13 @@ struct nr_panel {
 	nr_frame_rates rates;
 	char rates_line[192];
 	char rates_corner[192];
+	/* The graphs' points in drawing order, filled from `rates.graph` just before the counter is
+	 * drawn. Kept here rather than built on the call's stack because both call sites - the panel
+	 * open and shut - pass them, and a static in this file would be shared by every device. */
+	float graph_frame[NR_GRAPH_SAMPLES];
+	float graph_net[NR_GRAPH_SAMPLES];
+	int graph_frame_count;
+	int graph_net_count;
 	int trigger_live;
 };
 
@@ -1301,6 +1308,13 @@ static void panel_rates_text(struct nr_panel *data)
 			    sizeof data->rates_line);
 	nr_frame_rates_line(&data->rates, language, data->trigger_live, "   ", data->rates_corner,
 			    sizeof data->rates_corner);
+	/* The graphs' points, in the order `PlotLines` wants. The ring keeps them; this flattens it.
+	 * Both series are the same length by construction (`nr_frame_graph_add` writes both), so the
+	 * two counts agree and the shorter one never decides the x axis. */
+	data->graph_frame_count = nr_frame_graph_frame(&data->rates.graph, data->graph_frame,
+						       NR_GRAPH_SAMPLES);
+	data->graph_net_count = nr_frame_graph_net(&data->rates.graph, data->graph_net,
+						   NR_GRAPH_SAMPLES);
 }
 
 /* Seconds since THIS panel was last drawn, not a fixed step.
@@ -1348,7 +1362,9 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 		nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
 		nrex_set_software_cursor(data->menu_ui, 0);
 		nrex_new_frame(data->menu_ui, (float)width, (float)height, panel_step(data));
-		nrex_counter(data->menu_ui, NULL, NULL, corner, data->rates_corner);
+		nrex_counter(data->menu_ui, NULL, NULL, corner, data->rates_corner,
+			     data->graph_frame, data->graph_frame_count,
+			     data->graph_net, data->graph_net_count);
 		return;
 	}
 
@@ -1370,7 +1386,8 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 	 * corner too when one is chosen, so choosing it shows where it goes. */
 	nrex_counter(data->menu_ui, data->host.counts ? data->rates_line : NULL,
 		     nr_menu_text(nr_menu_language(data->menu), NR_STR_FPS_HINT), corner,
-		     data->rates_corner);
+		     data->rates_corner, data->graph_frame, data->graph_frame_count,
+		     data->graph_net, data->graph_net_count);
 	/* The menu's CURRENT language, not the one this device started with.
 	 *
 	 * The language the bridge was created with is read once and never updated - so passing it

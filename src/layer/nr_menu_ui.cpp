@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>    /* ceilf, for the graphs' axis */
 #include <cstring>
 #ifndef _WIN32
 #include <time.h>    /* CLOCK_MONOTONIC, for nrex_now_seconds */
@@ -218,10 +219,55 @@ static int g_nr_request = -1;
  * that lost copy is why a dragged slider changed nothing. */
 static nrex_row *g_rows = nullptr;
 
+/* The top of a graph's axis: the highest point, floored, capped and rounded up to a readable step.
+ *
+ * Rounded rather than exact so the axis number is one a reader can hold - 20, 40, 60, 100 - and so
+ * a series that moves by a tenth of a millisecond does not make the whole picture breathe. A point
+ * below zero is a gap (a frame with no network time) and is ignored, not treated as the smallest
+ * value: including it would pin the axis to the floor forever. */
+static float graph_axis_top(const float *series, int count)
+{
+    float highest = 0.0f;
+    for (int i = 0; i < count; ++i)
+        if (series[i] > highest) highest = series[i];
+    if (highest < NREX_GRAPH_FLOOR_MS) highest = NREX_GRAPH_FLOOR_MS;
+    if (highest > NREX_GRAPH_CAP_MS) highest = NREX_GRAPH_CAP_MS;
+    /* Up to the next 10 below 100, the next 50 to 500, the next 100 above - the steps a person
+     * reads off an axis without doing arithmetic. */
+    const float step = highest <= 100.0f ? 10.0f : (highest <= 500.0f ? 50.0f : 100.0f);
+    return ceilf(highest / step) * step;
+}
+
 /* The frame counter's line for the top of the panel, and what it means, as `nrex_counter` was last
  * handed them. Copied, like the footer's hint. 1024 for the hint: its Russian is over 500 bytes. */
 static char g_counter_line[192] = "";
 static char g_counter_hint[1024] = "";
+
+/* **The two graphs, after OptiScaler's.** The counter's numbers say what the last second averaged;
+ * these say whether it was steady, which is the difference a player actually feels.
+ *
+ *   frame  green - milliseconds between presents, so frame generation's extra frames are the
+ *                  short ones and a stall is a spike;
+ *   NR     blue  - the network's milliseconds, the cost NR adds to those frames.
+ *
+ * Both, because a player deciding whether NR is the cause needs the pair: a high frame time with a
+ * low NR time is the game, and both high is the network.
+ *
+ * Copied from the caller's array rather than pointed at: the counter is drawn once a frame from a
+ * frame's stack, and the samples live in the panel's struct, which outlives this call. The C side
+ * fills a ring once a present (`nr_frame_rate.h`'s `nr_frame_graph`) and hands the run here; this
+ * file only draws it, which is what keeps the arithmetic testable without ImGui. */
+static float g_graph_frame[NREX_GRAPH_SAMPLES];
+static float g_graph_net[NREX_GRAPH_SAMPLES];
+static int   g_graph_frame_count = 0;
+static int   g_graph_net_count = 0;
+
+/* Wide enough to read a two-second trend at a glance, narrow enough not to cover a corner of a 720p
+ * picture: 180x34 each, stacked, so the counter box grows by about 70 pixels. */
+static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
+static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
+static const float kGraphWidth = 180.0f;
+static const float kGraphHeight = 34.0f;
 
 /* The knob's explanation, shown while the pointer rests on the row just submitted.
  *
@@ -750,11 +796,25 @@ extern "C" NREX_API void nrex_set_nr_enabled(nrex_ui *ui, int on)
  * its text - grows away from the edge. Drawn before the panel's window, which takes the focus and
  * so stays on top of it. */
 extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint,
-                                      int corner, const char *corner_line)
+                                      int corner, const char *corner_line,
+                                      const float *frame_ms, int frame_count,
+                                      const float *net_ms, int net_count)
 {
     (void)ui;
     snprintf(g_counter_line, sizeof g_counter_line, "%s", panel_line ? panel_line : "");
     snprintf(g_counter_hint, sizeof g_counter_hint, "%s", hint ? hint : "");
+    /* Copied and clamped: the caller's arrays are a frame's scratch, and the ring is
+     * NREX_GRAPH_SAMPLES deep whatever it hands over. */
+    g_graph_frame_count = 0;
+    g_graph_net_count = 0;
+    if (frame_ms && frame_count > 0) {
+        g_graph_frame_count = frame_count < NREX_GRAPH_SAMPLES ? frame_count : NREX_GRAPH_SAMPLES;
+        for (int i = 0; i < g_graph_frame_count; ++i) g_graph_frame[i] = frame_ms[i];
+    }
+    if (net_ms && net_count > 0) {
+        g_graph_net_count = net_count < NREX_GRAPH_SAMPLES ? net_count : NREX_GRAPH_SAMPLES;
+        for (int i = 0; i < g_graph_net_count; ++i) g_graph_net[i] = net_ms[i];
+    }
     if (corner < 1 || corner > 4 || !corner_line || !corner_line[0]) return;
 
     ImGuiIO &io = ImGui::GetIO();
@@ -772,8 +832,37 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
                                    ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 3));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    if (ImGui::Begin("##nr_frame_counter", nullptr, flags))
+    if (ImGui::Begin("##nr_frame_counter", nullptr, flags)) {
         ImGui::TextUnformatted(corner_line);
+        /* The graphs, under the numbers they are the shape of.
+         *
+         * **Scaled to the data, with a floor and a cap.** A fixed axis makes a steady stream and a
+         * stuttering one draw the same flat line at 70 fps - 14 ms against 100 ms is a sixth of the
+         * height - which is the one thing the picture exists to tell apart. Each series gets
+         * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
+         * the reader knows what the height means. */
+        if (g_graph_frame_count > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
+            char axis[32];
+            const float frame_top = graph_axis_top(g_graph_frame, g_graph_frame_count);
+            snprintf(axis, sizeof axis, "frame  %.0f ms", (double)frame_top);
+            ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphFrameColour);
+            ImGui::PlotLines("##nr_frame_ms", g_graph_frame, g_graph_frame_count, 0,
+                             axis, 0.0f, frame_top,
+                             ImVec2(kGraphWidth, kGraphHeight));
+            ImGui::PopStyleColor();
+            if (g_graph_net_count > 0) {
+                const float net_top = graph_axis_top(g_graph_net, g_graph_net_count);
+                snprintf(axis, sizeof axis, "NR  %.0f ms", (double)net_top);
+                ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphNetColour);
+                ImGui::PlotLines("##nr_net_ms", g_graph_net, g_graph_net_count, 0,
+                                 axis, 0.0f, net_top,
+                                 ImVec2(kGraphWidth, kGraphHeight));
+                ImGui::PopStyleColor();
+            }
+            ImGui::PopStyleVar();
+        }
+    }
     ImGui::End();
     ImGui::PopStyleVar(2);
 }
