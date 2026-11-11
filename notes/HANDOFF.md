@@ -295,6 +295,44 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## The network on Intel's Windows driver: three leads measured, none kept (2026-11-11, afternoon, branch `newnr`)
+
+The owner, 11-11: on to the network's speed. Nothing changed in the code; `newnr` is as the entry
+below left it. Arc 140V, Intel 101.9150, on AC, quiet before and after; B at 512x320,
+`frame_profile.py`, each case a process of its own, two or three rounds.
+
+- **The half accumulator, again** (`gemm_staged.comp` with a float16 accumulator, converted on
+  its way to the stage; a timing proxy): whole frames, B at 0.4 and 1280x720, 19.27-19.68 ms
+  against 18.81-19.21, inside the day's spread. `phase31`'s verdict holds on this driver.
+- **Where the bottleneck's GEMMs stand**, a call: the contract 64x1024x4096 0.235 ms
+  (2.2 TFLOP/s), the projection 64x1024x1024 0.063, the expand 64x4096x1024 0.127 (4.4), QKV
+  0.108. The feed-forward GEMMs of the C = 128 and 256 levels reach 4.4-4.7 TFLOP/s, so the
+  machine's peak here is above the 3.8 the notes carry.
+- **The two N = 1024 GEMMs wait on their weights coming cold.** With B read from a footprint
+  that stays in the cache (a proxy, wrong values) the contract is 0.153 ms and the projection
+  0.045; dispatched twice, the second runs at that speed, so the 4 MB stay cached. That is 0.8 ms
+  of a frame, and no exact way took it:
+  - the next step's E4M3 bytes loaded into registers before this step's multiply-adds: nothing;
+  - reader workgroups as a second layer of the dispatch, a word of each line: nothing on the
+    64-deep build, whose 16 KB of shared memory leave them no place beside the 64 blocks that
+    multiply; 0.015-0.02 ms a call on the 32-deep build;
+  - a dispatch that only reads B, before the GEMM: 0.05 ms for the 4 MB, the GEMM then 0.165,
+    0.015 ms a call gained.
+  About 0.15 ms of a frame at best. Not kept.
+- **A trap for proxies:** a shader that changes what an E4M3 GEMM computes fails `xmxres`'s
+  start-up decode check, which turns the E4M3 weights off for the run without a word; the
+  expand at 0.147 ms and QKV at 0.125 are its mark. A proxy keyed on `pc.n >= 1024` leaves the
+  check's narrow GEMMs right.
+
+**What is left**, each the owner's call: the fused C >= 64 blocks (below, 11-08), by this profile
+0.5-1 ms on the 140V, those passes running near 3.3 TFLOP/s already; a split-K for the two
+N = 1024 GEMMs, which changes the order of summation and gained nothing on Linux (archive);
+INT8 in the bottleneck (Planned, not started), the one lever that cuts the stream of weights
+itself. The scripts, the logs and the experiment's patch: `D:\NRonWindows\nr-game\perf-1111\opt`
+on the Windows laptop.
+
+**Next on Linux:** nothing from this entry. **Next on Windows:** as the entry below.
+
 ## `perf-1108` and `e4m3-weights` on `newnr`: merged, green on Windows, and what they give today (2026-11-11, morning, branch `newnr`)
 
 The owner, 11-11, before sleeping: move the two branches of 11-08 onto `newnr` and see how they do
