@@ -144,7 +144,16 @@ Its GEMMs wait on those bytes: on Arc 140V the network takes 0.3-0.5 ms less at 
 render scale 0.4, the bottleneck 1.4 ms less at 1920x1080 and 0.4, and the device holds 96 MiB
 less. The decode needs float16 subnormals kept, and each runtime first checks that this driver
 decodes all 254 values exactly, or keeps the weights as half. `XMX_E4M3_WEIGHTS=0` keeps them
-as half, `=1` takes the bytes on any driver that keeps float16 subnormals. Rebuild both
+as half, `=1` takes the bytes on any driver that keeps float16 subnormals. Since 2026-11-12
+the same driver also keeps by column, N x K, every weight matrix wider than 32 columns that
+only GEMMs read: the staged GEMM then reads a column's K as consecutive bytes, where by row
+each K row of a block's 32 columns was a cache line of its own. The values and the order of
+every sum are the same, so the output bytes are (`test_gemm_by_column.py`), and each runtime
+first checks that this driver reads a matrix both ways to the same bytes, or keeps its weights
+by row. On Arc 140V with driver 101.9150 a frame at render scale 0.4 went from 19.1-19.4 to
+15.7-16.1 ms at 1280x720 with network B and from 32.7-33.8 to 27.7-28.8 ms with A, and at
+1920x1080 from 34.0-34.2 to 31.3 ms and from 62.1-62.5 to 55.0-55.3 ms.
+`XMX_WEIGHTS_BY_COLUMN=0` keeps them by row, `=1` takes them by column on any driver. Rebuild both
 `libxmx` and the three staged shaders
 in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
 an already running daemon or a separate MSVC build.

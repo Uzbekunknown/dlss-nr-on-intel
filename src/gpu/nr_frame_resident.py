@@ -82,7 +82,7 @@ class Edge:
     """A transition's weights: a projection and, for the decoder, a skip scale."""
 
     def __init__(self, runtime, weight, sine=None):
-        self.weight0 = runtime.buffer_from(weight, np.float16)
+        self.weight0 = runtime.weight(weight)    # a GEMM's B and nothing else
         self.out_channels = weight.shape[1]
         self.sine = None if sine is None else runtime.buffer_from(sine)
 

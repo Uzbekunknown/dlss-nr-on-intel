@@ -50,8 +50,10 @@ const uint KC = BK / 32;                   // 32-column chunks of an A row per K
 const uint WM = BM / WARPS, WN = BN;       // and the slice one subgroup takes
 const uint RM = WM / TM, RN = WN / TN;
 
-/* A pad of eight halves keeps successive rows off the same shared-memory banks. */
-const uint SA = BK + 8, SB = BN + 8;
+/* A pad of eight halves keeps successive rows off the same shared-memory banks. SC is the
+ * B tile's stride when it is kept by column (0x8000000): BN columns of BK halves and the pad,
+ * which is no more than the BK rows of SB it takes otherwise. */
+const uint SA = BK + 8, SB = BN + 8, SC = BK + 8;
 
 layout(local_size_x = 32 * WARPS) in;
 
@@ -146,7 +148,18 @@ void main() {
     uint ao = batch * pc.sa, bo = batch * pc.sb, co = batch * pc.sc;
     uint lda = pc.lda != 0u ? pc.lda : pc.k;
     bool transposed = (operation_flags() & 1u) != 0u;
-    uint ldb = pc.ldb != 0u ? pc.ldb : (transposed ? pc.k : pc.n);
+    /* Bit 0x8000000: B is kept by column, N x K — a weight matrix stored transposed, so that
+     * the K values of one column are consecutive bytes. By row, the 32 columns a block takes
+     * of each K row are a cache line of their own, and at N = 4096 a page of their own; a
+     * GEMM that waits on its weights, as the bottleneck's do on Intel's Windows driver, waits
+     * on that. By column a block's weights are 32 streams, a thread reading eight consecutive
+     * K of one column, as the integer kernel's do (gemm_staged_int8.comp). The tile is kept
+     * by column too and the fragments loaded column-major: the same values in the same
+     * fragments, K in the same order, so the sums are the same bit for bit. Not bit 1, whose
+     * loader keeps the tile by row and takes any alignment: libxmx sets this one only where
+     * B is aligned for the packed loads (record_gemm), on any A. */
+    bool by_column = (operation_flags() & 0x8000000u) != 0u;
+    uint ldb = pc.ldb != 0u ? pc.ldb : ((transposed || by_column) ? pc.k : pc.n);
     uint ldc = pc.ldc != 0u ? pc.ldc : pc.n;
 
     uint thread = gl_LocalInvocationID.x, warp = thread / 32u;
@@ -169,7 +182,7 @@ void main() {
     Packed8Buf a8 = Packed8Buf(uint64_t(pc.a)), b8 = Packed8Buf(uint64_t(pc.b));
     Byte8Buf b1 = Byte8Buf(uint64_t(pc.b));
     /* E4M3 B (0x4000000) is read by the packed loader alone; libxmx sets the bit only
-     * where that loader takes both operands (record_gemm). */
+     * where that loader takes both operands (record_gemm), by row or by column. */
     bool b_e4m3 = (operation_flags() & 0x4000000u) != 0u;
     bool packed_a_ok = (uint(uint64_t(pc.a)) & 15u) == 0u && (lda & 7u) == 0u && (ao & 7u) == 0u;
     bool packed_b_ok = (uint(uint64_t(pc.b)) & (b_e4m3 ? 7u : 15u)) == 0u
@@ -213,7 +226,8 @@ void main() {
                     ra[p * KC + q] = a8.v8[at >> 3];
                 }
             for (uint p = 0u; p < B_PER; p++) {
-                uint at = bo + (k0 + lr + p * STEP) * ldb + col + lc;
+                uint at = by_column ? bo + (col + lr) * ldb + k0 + p * STEP + lc
+                                    : bo + (k0 + lr + p * STEP) * ldb + col + lc;
                 if (b_e4m3) rb1[p] = b1.v2[at >> 3];
                 else rb[p] = b8.v8[at >> 3];
             }
@@ -223,8 +237,8 @@ void main() {
                     packed_a[(r * SA + c) >> 3] = ra[p * KC + q];
                 }
             for (uint p = 0u; p < B_PER; p++) {
-                uint kk = lr + p * STEP;
-                packed_b[(kk * SB + lc) >> 3] = b_e4m3 ? e4m3x8_halves(rb1[p]) : rb[p];
+                uint to = by_column ? lr * SC + p * STEP + lc : (lr + p * STEP) * SB + lc;
+                packed_b[to >> 3] = b_e4m3 ? e4m3x8_halves(rb1[p]) : rb[p];
             }
         } else if (!window_a && wide_a && wide_b && !transposed) {
             const uint STEP = (32u * WARPS) / 4u;
@@ -289,7 +303,14 @@ void main() {
                     for (uint e = 0; e < 8u; e++) buf_a[r * SA + lc + e] = pc.a.v[at + e];
                 }
             }
-            if (transposed) {
+            if (by_column) {
+                /* thread lr's column, eight K a load, into the tile by column */
+                for (uint q = 0u; q < KC; q++) {
+                    uint at = bo + (col + lr) * ldb + k0 + q * 32u + lc;
+                    packed_b[(lr * SC + q * 32u + lc) >> 3] =
+                        b_e4m3 ? e4m3x8_halves(b1.v2[at >> 3]) : b8.v8[at >> 3];
+                }
+            } else if (transposed) {
                 for (uint q = 0u; q < KC; q++)
                 for (uint nn = lr; nn < BN; nn += (32u * WARPS) / 4u) {
                     uint lc = q * 32u + (thread % 4u) * 8u;
@@ -322,9 +343,14 @@ void main() {
             for (uint i = 0; i < RM; i++)
                 coopMatLoad(fa[i], buf_a, (warp * WM + i * TM) * SA + kk, SA,
                             gl_CooperativeMatrixLayoutRowMajor);
-            for (uint j = 0; j < RN; j++)
-                coopMatLoad(fb[j], buf_b, kk * SB + j * TN, SB,
-                            gl_CooperativeMatrixLayoutRowMajor);
+            for (uint j = 0; j < RN; j++) {
+                if (by_column)
+                    coopMatLoad(fb[j], buf_b, j * TN * SC + kk, SC,
+                                gl_CooperativeMatrixLayoutColumnMajor);
+                else
+                    coopMatLoad(fb[j], buf_b, kk * SB + j * TN, SB,
+                                gl_CooperativeMatrixLayoutRowMajor);
+            }
             for (uint i = 0; i < RM; i++)
                 for (uint j = 0; j < RN; j++)
                     acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);

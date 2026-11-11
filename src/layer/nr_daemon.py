@@ -1762,7 +1762,10 @@ def run_owned(args):
             ("NR_FUSE_GLOBAL_ATTENTION", "fuse_global_attention"),
             # the bottleneck's weights as E4M3 bytes: libxmx's choice for this driver and
             # the runtime's check that it decodes them exactly (xmxres.Runtime.e4m3_weights)
-            ("XMX_E4M3_WEIGHTS", "e4m3_weights"))),
+            ("XMX_E4M3_WEIGHTS", "e4m3_weights"),
+            # the wide weights by column: libxmx's choice for this driver and the runtime's
+            # check that it reads them to the same bytes (xmxres.Runtime.weights_by_column)
+            ("XMX_WEIGHTS_BY_COLUMN", "weights_by_column"))),
           flush=True)
     if not CHANGE_METRIC:
         print("change metric off (NR_CHANGE_METRIC=0): frame lines read `change off`", flush=True)

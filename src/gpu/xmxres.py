@@ -160,7 +160,9 @@ def _load():
             ("xmx_device_lost", []),
             ("xmx_driver", []),
             ("xmx_buf_mark_e4m3", [ctypes.c_int]),
-            ("xmx_e4m3_weights", [])):
+            ("xmx_e4m3_weights", []),
+            ("xmx_buf_mark_by_column", [ctypes.c_int]),
+            ("xmx_weights_by_column", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -247,7 +249,7 @@ class Buffer:
     says so.
     """
 
-    __slots__ = ("id", "nbytes", "kind", "_lib", "e4m3")
+    __slots__ = ("id", "nbytes", "kind", "_lib", "e4m3", "by_column")
 
     def __init__(self, nbytes, kind=GRAPH):
         self._lib = _load()
@@ -257,6 +259,7 @@ class Buffer:
         self.nbytes = int(nbytes)
         self.kind = int(kind)
         self.e4m3 = False   # E4M3 bytes, a GEMM's B only (Runtime.buffer_e4m3)
+        self.by_column = False   # cols x inner, a GEMM's B only (Runtime.weight)
 
     @property
     def mapped(self):
@@ -267,7 +270,7 @@ class Buffer:
         """Import a same-device dedicated GPU allocation; ownership stays explicit."""
         obj=cls.__new__(cls)
         obj._lib=_load()
-        obj.nbytes,obj.kind,obj.e4m3=int(nbytes),DEVICE,False
+        obj.nbytes,obj.kind,obj.e4m3,obj.by_column=int(nbytes),DEVICE,False,False
         obj.id=obj._lib.xmx_buf_import_win32(int(pid),int(handle),int(nbytes),
                                             int(allocation_size),int(memory_type))
         if obj.id<0: raise failure(obj._lib,"xmx_buf_import_win32")
@@ -278,7 +281,7 @@ class Buffer:
         """Import the first `nbytes` of a shared committed D3D12 buffer, unmapped."""
         obj=cls.__new__(cls)
         obj._lib=_load()
-        obj.nbytes,obj.kind,obj.e4m3=int(nbytes),DEVICE,False
+        obj.nbytes,obj.kind,obj.e4m3,obj.by_column=int(nbytes),DEVICE,False,False
         obj.id=obj._lib.xmx_buf_import_d3d12(int(pid),int(handle),int(nbytes))
         if obj.id<0: raise failure(obj._lib,"xmx_buf_import_d3d12")
         return obj
@@ -802,6 +805,9 @@ class Runtime:
         # The bottleneck's weights as their E4M3 bytes where libxmx allows it, once this
         # driver has decoded every byte to its half in each staged build (_e4m3_decodes).
         self._e4m3 = bool(self.lib.xmx_e4m3_weights()) and self._e4m3_decodes()
+        # The wide weights by column where libxmx says this driver reads them faster so, once
+        # it has read one both ways to the same bytes in each staged build (_by_column_reads).
+        self._by_column = bool(self.lib.xmx_weights_by_column()) and self._by_column_reads()
 
     def graph_key(self):
         return (self.lib.xmx_specialization() | (int(self.fuse_qk) << 3)
@@ -932,6 +938,76 @@ class Runtime:
             raise failure(self.lib, "xmx_buf_mark_e4m3")
         buffer.e4m3 = True
         return buffer
+
+    @property
+    def weights_by_column(self):
+        """Whether `weight` keeps a wide matrix by column on this device
+        (`xmx_weights_by_column`, `XMX_WEIGHTS_BY_COLUMN`)."""
+        return self._by_column
+
+    def weight(self, array, *, e4m3=False, by_column=None):
+        """A weight matrix as a GEMM's B, and nothing else's operand: `array` is
+        (..., inner, cols), a matrix a batch item.
+
+        Where the device reads its weights faster by column (`weights_by_column`) and the
+        matrix is wider than one 32-column block, it is kept transposed, (..., cols, inner),
+        and marked: every GEMM kernel then reads the same values out of it
+        (`xmx_buf_mark_by_column`; the staged one a column's `inner` as consecutive bytes,
+        gemm_staged.comp 0x8000000), so the GEMM's output is the by-row B's bit for bit
+        (`test_gemm_by_column.py`), and any other pass handed the buffer is refused. `e4m3`
+        keeps the values as E4M3 bytes where the device takes them and each is one
+        (`buffer_e4m3`), else as half. `by_column` overrides the choice, for a test."""
+        array = np.asarray(array)
+        if by_column is None:
+            by_column = (self._by_column and array.ndim >= 2 and array.shape[-1] > 32
+                         and array.shape[-1] % 32 == 0 and array.shape[-2] % 32 == 0)
+        stored = np.swapaxes(array, -1, -2) if by_column else array
+        buffer = self.buffer_e4m3(stored) if e4m3 else None
+        if buffer is None:
+            buffer = self.buffer_from(stored, np.float16)
+        if by_column:
+            if self.lib.xmx_buf_mark_by_column(buffer.id) != 0:
+                buffer.free()
+                raise failure(self.lib, "xmx_buf_mark_by_column")
+            buffer.by_column = True
+        return buffer
+
+    def _by_column_reads(self):
+        """Whether this driver reads a B kept by column to the bytes it reads by row: one
+        GEMM both ways, bit for bit, on each staged build that takes the graph's GEMMs (64
+        rows; 32 rows, a 64-deep step and not), as half and, where the device takes them, as
+        E4M3 bytes. Once a runtime; a driver that failed it keeps its weights by row."""
+        global _E4M3_LOOKUP
+        if _E4M3_LOOKUP is None:
+            _E4M3_LOOKUP = _e4m3_lookup()
+        values = np.flatnonzero(_E4M3_LOOKUP >= 0).astype(np.uint16).view(np.float16)
+        rng = np.random.default_rng(1211)
+        buffers = []
+        try:
+            for rows, inner in ((64, 64), (64, 1024), (32, 96)):
+                cols = 64
+                b = values[rng.integers(0, values.size, inner * cols)].reshape(inner, cols)
+                a = rng.integers(-8, 9, (rows, inner)).astype(np.float16)
+                a_buf = self.buffer_from(a, np.float16)
+                operands = [self.buffer_from(b, np.float16), self.weight(b, by_column=True)]
+                buffers += [a_buf] + operands
+                if self._e4m3:
+                    operands.append(self.weight(b, e4m3=True, by_column=True))
+                    buffers.append(operands[-1])
+                outs = []
+                for operand in operands:
+                    out = Buffer(rows * cols * 4, kind=HOST_READ)
+                    buffers.append(out)
+                    self.begin()
+                    self.gemm(a_buf, operand, out, rows, cols, inner)
+                    self.submit()
+                    outs.append(host_view(out, np.uint32, count=rows * cols).copy())
+                if not all(np.array_equal(outs[0], other) for other in outs[1:]):
+                    return False
+            return True
+        finally:
+            for buffer in buffers:
+                buffer.free()
 
     # -- recording -----------------------------------------------------
 

@@ -39,18 +39,18 @@ class SplitBlockWeights:
         bias = weights[f"block{index}.layer2.attn_bias"]
         if nr_model.uses_fragment_swizzle(index, 16):
             bias = nr_model.recover_attention_bias_layout(bias)
-        self.first = runtime.buffer_from(weights[f"block{index}.layer0.first_projection_weight"],
-                                         np.float16)
-        self.expand = runtime.buffer_from(weights[f"block{index}.layer0.group_expand_weight"],
-                                          np.float16)
-        self.project = runtime.buffer_from(weights[f"block{index}.layer0.group_project_weight"],
-                                           np.float16)
-        self.weight3 = runtime.buffer_from(weights[f"block{index}.layer1.weight3"], np.float16)
+        # Every reader of this family's matrices is a GEMM (512 channels: no fused kernel
+        # takes them), so they are kept as the device reads a GEMM's B fastest
+        # (xmxres.Runtime.weight).
+        self.first = runtime.weight(weights[f"block{index}.layer0.first_projection_weight"])
+        self.expand = runtime.weight(weights[f"block{index}.layer0.group_expand_weight"])
+        self.project = runtime.weight(weights[f"block{index}.layer0.group_project_weight"])
+        self.weight3 = runtime.weight(weights[f"block{index}.layer1.weight3"])
         self.ffn_cos = runtime.buffer_from(weights[f"block{index}.layer1.ffn_cos_skip"])
-        self.qkv = runtime.buffer_from(weights[f"block{index}.layer2.qkv_weight"], np.float16)
+        self.qkv = runtime.weight(weights[f"block{index}.layer2.qkv_weight"])
         self.scale = runtime.buffer_from(weights[f"block{index}.layer2.attn_scale"])
         self.bias = runtime.buffer_from(bias)
-        self.out = runtime.buffer_from(self.projection, np.float16)
+        self.out = runtime.weight(self.projection)
         self.attn_cos = runtime.buffer_from(weights[f"block{index}.layer3.attn_cos_skip"])
         self.branched = False
         self.split = True
@@ -71,8 +71,14 @@ class BlockWeights:
         if nr_model.uses_fragment_swizzle(index, heads):
             bias = nr_model.recover_attention_bias_layout(bias)
 
-        take = lambda name, dtype=np.float16: runtime.buffer_from(
-            weights[f"{prefix}.{name}"], dtype)
+        # A block wider than 32 channels gives its matrices to GEMMs alone, so they are kept
+        # as the device reads a GEMM's B fastest (xmxres.Runtime.weight). A 32-channel
+        # block's go to the fused kernels too (ffn_fused.comp, window_block.comp), which
+        # read them by row, as half.
+        gemm_only = self.channels > 32
+        upload = runtime.weight if gemm_only else (
+            lambda array: runtime.buffer_from(array, np.float16))
+        take = lambda name: upload(weights[f"{prefix}.{name}"])
         self.qkv = take("qkv_weight")
         self.out = take("projection_weight")
         self.bias = runtime.buffer_from(bias, np.float32)
@@ -86,8 +92,8 @@ class BlockWeights:
                 weights[f"{prefix}.ffn_expand_weight"],
                 weights[f"{prefix}.ffn_branch_projection_weight"])
             self.groups = expansion.shape[0]
-            self.expand = runtime.buffer_from(expansion, np.float16)
-            self.branch = runtime.buffer_from(branch, np.float16)
+            self.expand = upload(expansion)
+            self.branch = upload(branch)
             self.ffn_out = take("ffn_output_projection_weight")
         else:
             self.groups = 0
@@ -107,12 +113,10 @@ class GlobalBlockWeights:
         # those bytes on Intel's Windows driver, so where the device takes it they are kept as
         # their E4M3 bytes, which the vendor's are to the last value, and the staged loader
         # decodes each to the same half (xmxres.Runtime.buffer_e4m3; HANDOFF 2026-11-08).
+        # And by column where the device reads them faster so: every reader is a GEMM
+        # (xmxres.Runtime.weight; HANDOFF 2026-11-12).
         def weight(array):
-            if getattr(runtime, "e4m3_weights", False):
-                kept = runtime.buffer_e4m3(array)
-                if kept is not None:
-                    return kept
-            return runtime.buffer_from(array, np.float16)
+            return runtime.weight(array, e4m3=True)
         self.expand = weight(weights[f"block{index}.layer0.weight"])
         self.ffn_proj = weight(weights[f"block{index}.layer1.weight"])
         self.hidden_width = weights[f"block{index}.layer0.weight"].shape[1]
@@ -682,7 +686,7 @@ class Transition:
         self.kind = kind
         prefix = f"block{index}.layer0"
         if kind in ("down", "up"):
-            self.weight0 = runtime.buffer_from(weights[f"{prefix}.weight0"], np.float16)
+            self.weight0 = runtime.weight(weights[f"{prefix}.weight0"])
             self.out_channels = weights[f"{prefix}.weight0"].shape[1]
         if kind == "up":
             self.sine = runtime.buffer_from(weights[f"{prefix}.sin"])

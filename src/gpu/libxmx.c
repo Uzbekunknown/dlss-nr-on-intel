@@ -77,6 +77,7 @@ static struct {
 	int staged_walk_y;        /* the staged GEMM's blocks read from a Y-major walk, constant 3 */
 	int preserve16;           /* float16 subnormals kept: DenormPreserve 16 on every module (xmx_init) */
 	int e4m3_weights;         /* the bottleneck's weights kept as E4M3 bytes (xmx_init) */
+	int weights_by_column;    /* the graph keeps its wide weights by column, N x K (xmx_init) */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -123,7 +124,8 @@ static unsigned prof_each_n;
 #define MAX_RBUF 8192
 struct rbuf { VkBuffer b; VkDeviceMemory m; void *p; VkDeviceAddress addr;
 		 VkDeviceSize size; int live, mapped;
-		 int e4m3;   /* E4M3 bytes, a GEMM's B only (xmx_buf_mark_e4m3) */ };
+		 int e4m3;   /* E4M3 bytes, a GEMM's B only (xmx_buf_mark_e4m3) */
+		 int by_column;   /* N x K, a GEMM's B only (xmx_buf_mark_by_column) */ };
 static struct rbuf rbufs[MAX_RBUF];
 
 struct push {
@@ -645,6 +647,11 @@ int xmx_staged_walk_y(void) { return g.staged_walk_y; }
  * 0x4000000), and so whether the graph keeps the bottleneck's weights that way (xmx_init). */
 int xmx_e4m3_weights(void) { return g.e4m3_weights; }
 
+/* Whether the graph keeps its wide weights by column, N x K, for the staged loader to read
+ * a column's K as consecutive bytes (gemm_staged.comp, 0x8000000; xmx_init). Any device
+ * reads such a B (xmx_buf_mark_by_column); this says where it is the faster way. */
+int xmx_weights_by_column(void) { return g.weights_by_column; }
+
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
 int xmx_driver(void) { return g.driver; }
@@ -1025,6 +1032,23 @@ int xmx_init(const char *spv_path)
 		if (e4m3_weights && !strcmp(e4m3_weights, "1"))
 			FAIL("XMX_E4M3_WEIGHTS=1 needs float16 subnormals kept and the packed staged loader", 0);
 		g.e4m3_weights = 0;
+	}
+	/* The weights by column, N x K where they were K x N. A staged GEMM reads the 32 columns
+	 * of its block out of every K row: by row that is a cache line of its own a row, and at
+	 * N = 4096 a page of its own, and on Intel's Windows driver the GEMMs wait on it (the
+	 * same wait the E4M3 bytes halve). By column a block's weights are 32 streams of
+	 * consecutive bytes. B at 512x320 by a timing proxy: the bottleneck's four GEMMs
+	 * 0.53 -> 0.32 ms a block, the device's total 16.1-16.6 -> 13.7 ms with every staged
+	 * weight GEMM read so (HANDOFF 2026-11-11). The values and the order of every sum are
+	 * the same, so the bytes of the graph are. Mesa keeps its weights by row: a by-column
+	 * tile spilt there and its bottleneck does not wait on weights (notes/improve-b.md).
+	 * `XMX_WEIGHTS_BY_COLUMN=0|1` sets it either way, on any driver, to compare. */
+	g.weights_by_column = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+	const char *by_column = getenv("XMX_WEIGHTS_BY_COLUMN");
+	if (by_column) {
+		if (!strcmp(by_column, "1")) g.weights_by_column = 1;
+		else if (!strcmp(by_column, "0")) g.weights_by_column = 0;
+		else FAIL("XMX_WEIGHTS_BY_COLUMN must be 0 or 1", 0);
 	}
 	VkPhysicalDeviceVulkan13Features v13 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &cm,
@@ -1452,6 +1476,17 @@ int xmx_buf_mark_e4m3(int id)
 	return 0;
 }
 
+/* Mark a buffer as a GEMM's B kept by column: N x K, the weight matrix transposed, each
+ * batch item its own. record_gemm reads it so, the staged kernel by its packed loads
+ * (gemm_staged.comp, 0x8000000) and any other as a transposed B, and no other pass may take
+ * the buffer: to them it is not an operand (addr_of). */
+int xmx_buf_mark_by_column(int id)
+{
+	if (id < 0 || id >= MAX_RBUF || !rbufs[id].live) FAIL("buffer is not live", 0);
+	rbufs[id].by_column = 1;
+	return 0;
+}
+
 int xmx_buf_host_visible(int id)
 {
 	return (id >= 0 && id < MAX_RBUF && rbufs[id].live && rbufs[id].mapped) ? 1 : 0;
@@ -1621,9 +1656,18 @@ int xmx_buf_destroy(int id)
 	return 0;
 }
 
-static VkDeviceAddress addr_of(int id)
+static VkDeviceAddress addr_any(int id)
 {
 	return (id >= 0 && id < MAX_RBUF && rbufs[id].live) ? rbufs[id].addr : 0;
+}
+
+/* A pass's operand. A buffer kept by column is a GEMM's B and nothing else
+ * (xmx_buf_mark_by_column): to every other pass it is no operand, so one handed it fails
+ * where it is recorded rather than read a transposed matrix as the matrix. */
+static VkDeviceAddress addr_of(int id)
+{
+	return (id >= 0 && id < MAX_RBUF && rbufs[id].live && !rbufs[id].by_column)
+	       ? rbufs[id].addr : 0;
 }
 
 /* Close a pass with a timestamp. Bottom-of-pipe, so it lands after the dispatch has
@@ -1684,7 +1728,7 @@ static void barrier(void)
 
 unsigned long long xmx_buf_address(int id)
 {
-	return (unsigned long long)addr_of(id);
+	return (unsigned long long)addr_any(id);
 }
 
 int xmx_image_pipeline_init(const char *path)
@@ -1734,7 +1778,7 @@ int xmx_rec_copy(int source, int target, unsigned long long bytes,
 		 unsigned long long source_offset, unsigned long long target_offset)
 {
 	if (!g.recording) FAIL("not recording", 0);
-	if (!addr_of(source) || !addr_of(target)) FAIL("copy buffer is not live", 0);
+	if (!addr_any(source) || !addr_any(target)) FAIL("copy buffer is not live", 0);
 	struct rbuf *a = &rbufs[source], *b = &rbufs[target];
 	if (!bytes || ((bytes | source_offset | target_offset) & 3) ||
 	    source_offset > a->size || bytes > a->size - source_offset ||
@@ -1788,7 +1832,12 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	/* B as E4M3 bytes (xmx_buf_mark_e4m3): bit 0x4000000 of gemm_staged.comp */
 	int e4m3_b = b >= 0 && b < MAX_RBUF && rbufs[b].live && rbufs[b].e4m3;
 	if (e4m3_b) bt |= 0x4000000u;
-	struct push p = { .a = addr_of(a), .b = addr_of(b), .c = addr_of(c),
+	/* B kept by column (xmx_buf_mark_by_column): N x K. Which bit says so is decided below,
+	 * once the kernel is known. */
+	int column_b = b >= 0 && b < MAX_RBUF && rbufs[b].live && rbufs[b].by_column;
+	if (column_b && (bt & 1u)) FAIL("a B kept by column is not transposed again", 0);
+	if (column_b && ldb) FAIL("a B kept by column takes no row stride of its own", 0);
+	struct push p = { .a = addr_of(a), .b = addr_any(b), .c = addr_of(c),
 			  .m = M, .n = N, .k = K, .batch = batch,
 			  .sa = sa, .sb = sb, .sc = sc, .flags = bt,
 			  .lda = lda, .ldb = ldb, .ldc = ldc };
@@ -1888,10 +1937,24 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 			FAIL("compact head requires N=16, ldc=4 and plain FP32 output", 0);
 		staged = tiled = 0;  /* its shared-memory scatter is one 8x16 tile */
 	}
+	/* A B kept by column: the staged kernel reads it by its packed loads, a column's K
+	 * eight to a load, where B is aligned for them (0x8000000); any other kernel, and the
+	 * staged one on a B it cannot load so, takes the same bytes as a transposed B (bit 1).
+	 * The staged kernel's by-column loader is beside both of its A loaders, so a gathered
+	 * or unaligned A does not matter here. */
+	if (column_b) {
+		if (staged && !(p.b & (e4m3_b ? 7u : 15u)) && !(K & 7u)
+		    && (batch <= 1 || !(sb & 7u)))
+			bt |= 0x8000000u;
+		else
+			bt |= 1u;
+		p.flags = bt;
+	}
 	/* The QKV epilogue normalises a head inside one workgroup, so the column block must
 	 * be one head exactly: 32 wide, which the staged block always is and the tiled one
-	 * is unless XMX_TILE_N moved it. The 8x16 kernel never qualifies. */
-	if ((bt & 0x100000u) && !(qkv && (bt & ~0x440e000u) == 0x100000u
+	 * is unless XMX_TILE_N moved it. The 8x16 kernel never qualifies. A B kept by column
+	 * is the same projection, whichever bit says so. */
+	if ((bt & 0x100000u) && !(qkv && (bt & ~(0x440e000u | (column_b ? 0x8000001u : 0u))) == 0x100000u
 				  && (staged || (tiled && g.tilen == 32))))
 		FAIL("QKV epilogue needs its targets, no other flag, and a 32-column block", 0);
 	if ((bt & 0x4000u) && !(bt & 0x400000u))
@@ -1903,10 +1966,11 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 		FAIL("a pooled window residual runs on the 64-row staged kernel", 0);
 	small = small && staged;
 	/* An E4M3 B is read by the staged kernel's packed loader alone, which needs both operands
-	 * aligned, one batch, B not transposed and A not gathered (gemm_staged.comp). */
+	 * aligned, one batch, B not transposed and A not gathered (gemm_staged.comp). Kept by
+	 * column its row stride is K. */
 	if (e4m3_b && !(staged && g.staged_packed && !(bt & 0x400001u) && batch <= 1
 			&& !(p.a & 15u) && !(p.b & 7u) && !((lda ? lda : K) & 7u)
-			&& !((ldb ? ldb : N) & 7u)))
+			&& !((ldb ? ldb : (column_b ? K : N)) & 7u)))
 		FAIL("an E4M3 B needs the staged kernel's packed loads: aligned, one batch, "
 		     "not transposed or gathered", 0);
 	int deep = small && N <= 1024 && K % 64 == 0;
