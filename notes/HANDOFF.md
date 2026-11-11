@@ -270,9 +270,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 **Planned, not started** (parked by the owner: do not start unasked)
 - A FAQ in the README. Later.
 - INT8 on the bottleneck: the exact kernel exists (`gemm_staged_int8.comp`) and stays out of the
-  graph by the owner's decision; `improve-int8` keeps the branch. Archive, 09-26.
+  graph by the owner's decision; `improve-int8` keeps the branch. Archive, 09-26. Measured
+  again on 11-11 (the evening's entry): most of its speed is its weights by column, which the half
+  kernel can have exactly.
 - The asynchronous live mode exists (`NR_LAYER_ASYNC=1`) and stays off: a frame of latency, over
-  the owner's ~15 ms. Archive, 09-25.
+  the owner's ~15 ms. Archive, 09-25. On 11-11 it is also 6-9 frames a second behind in
+  step in Mortal Kombat 11, kept off the shared transport (the evening's entry).
 - The DLSS-SR (upscaler) reading is on the local branch `upscaler`, dropped on 2026-09-22.
 - llama.cpp issue #13530 keeps cooperative matrices off for every Intel GPU, and this project has
   measurements of an Xe2 iGPU to post there. Put off by the owner, 10-14.
@@ -294,6 +297,93 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## INT8 in the bottleneck measured again; most of its speed is how it reads the weights, and that is exact; the asynchronous mode in a game (2026-11-11, evening, branch `newnr`)
+
+The owner, 11-11: check what is on `newnr`, whether part of the computation can go to INT8, and
+then how the asynchronous mode does. Nothing changed in the code: `newnr` is as the entries below
+left it, and every figure here is from timing proxies and scripts kept outside the repository
+(`D:\NRonWindows\nr-game\perf-1111\int8` on the Windows laptop). Arc 140V, Intel 101.9150, on
+AC, quiet before and after; each case a process of its own, two or three rounds, alternating.
+
+**`newnr` (`b354198`) built from scratch in a new worktree:** MinGW (198 warnings, as before) and
+CTest 69 of 69; MSVC `build_win.bat` with no warning and CTest 69 of 69; the seven menu fixtures,
+`test_windows_setup.py` 14 and `test_windows_wizard.py` 100 (1 skipped); `frame_replay.py` heads
+of A at 320x320 and 1280x720 and of A and B at 320x512 and 768x1344, with the E4M3 weights on and
+off, all the morning's; `test_gemm_e4m3.py` both ways, the image suites, the transports, the
+daemon, `test_gpu_d3d12.py` with and without the network, `build_xess.bat` and `test_nr_xess`.
+B at 0.4 and 1280x720 reads 18.9-19.1 ms a frame today.
+
+**INT8, the bottleneck's four weight GEMMs** (`gemm_staged_int8.comp`, bit-exact against numpy on
+this driver too, `test_gemm_int8_staged.py`). A timing proxy in the real frame: each bottleneck
+block records the integer kernel four times with its shapes on int8 stand-ins, weights of its own
+a block so they come cold, where the graph records its four half GEMMs; the epilogues and the
+operands' conversion are left out, so this is the most it could give. B at 512x320, a call:
+
+| ms a call | the graph (E4M3 bytes) | E4M3 bytes by column | INT8 |
+| --- | --- | --- | --- |
+| contract 64x1024x4096 | 0.229-0.245 | 0.119-0.128 | 0.077-0.084 |
+| expand 64x4096x1024 | 0.120-0.139 | 0.085-0.098 | 0.063-0.070 |
+| QKV 64x3072x1024 | 0.106-0.118 | 0.069-0.080 | 0.049-0.054 |
+| projection 64x1024x1024 | 0.061-0.062 | 0.035-0.037 | 0.021 |
+| the device's total | 16.1-17.1 | 14.1-14.9 | 13.4-13.6 |
+| a whole frame, 1280x720 at 0.4 | 18.9-19.1 | 17.05-17.4 | 15.8-16.8 |
+
+The frames are two series of three rounds (one base run of 20.4 ms left out; the second series
+read 0.3-0.8 ms higher for INT8). A conversion pass before each integer GEMM, the dearest way to
+put its operand on a grid, made the INT8 frame 16.2-16.6 ms where it read 15.8-16.0 without.
+
+**What INT8 does to the picture** (`int8_bottleneck.py` with the preset's own blocks, B at
+512x288, weights and operands, six frames of Dead or Alive 5, Tekken 7 and Mortal Kombat 1): 6.8
+to 13.6 % of the network's effect, 0.46-0.73 levels of 255 on average, a p99 of 2.3-3.8 and a worst
+pixel of 6-10, the same on a grid of max/127 and on a power-of-two one. On the power-of-two grid
+99.85 % of the bottleneck's weights are exact (they are E4M3 values, four bits of significand
+within four binades of their column's largest), so the damage is the operands': 41 % of their
+elements are rounded. Two int8 planes an operand would hold them, at two GEMMs for one: no faster
+than half.
+
+**Most of INT8's speed is not the integers.** Its kernel keeps the weights by column (N x K) and a
+thread reads consecutive K bytes of one column; the half kernel reads K x N by row, where each K
+row of a block's 32 columns is a cache line of its own and, at N = 4096, a page of its own. The
+half kernel given the same reads (a timing proxy, values wrong: the packed loader reads an E4M3
+B's bytes by column, keeps the tile by column in shared memory and loads it column-major) is the
+middle column above: 1.7-2.0 ms of the frame, and INT8 0.9 ms beyond it. The same reads for every
+staged weight GEMM, half ones too (N > 32): the device's total 13.7 ms against 16.1-16.6, the
+staged GEMMs 9.6 -> 7.5 ms.
+
+Built for real it changes no byte: the fragments hold the same values and K runs in the same
+order. The kernel has the case already as `transposed` (bit 1), on its scalar loader; what is
+missing is the packed loader's version of it, libxmx taking an E4M3 B that way, and the weights
+stored transposed. `improve-b.md` found a by-column tile spilling on Mesa and its bottleneck not
+waiting on weights, so this is likely Intel's Windows driver's alone, as the E4M3 bytes are.
+
+**The asynchronous mode in a game, as it stands.** Mortal Kombat 11 through DXVK, B at 0.4 and
+1280x720 (network 512x320), a release built at this branch's code, the screen on; seven runs of
+40 s, the first three cases in both orders, all clean: no refusal or fallback, no daemon left,
+the game's folder as before (`async-series.ps1`, `release-tests\async1111-summary.txt`).
+
+| the case | frame path | processed a second | median frame, ms | network, ms |
+| --- | --- | --- | --- | --- |
+| in step, as a player runs it | `gpu-shared` | 35.5, 39.3 | 25, 23 | 17, 16 |
+| `NR_LAYER_ASYNC=1` by hand | `gpu-image-host` | 29.84, 29.84 | 30, 28 | 17, 16 |
+| in step on that path (`NR_GPU_TRANSPORT=0`) | `gpu-image-host` | 26.2, 29.3 | 31, 21 | 20, 16 |
+| asynchronous as the setup window writes it | `host` | 32.0 | 30 | 19 |
+
+Asynchronous is 6-9 frames a second behind in step today; on 10-12 the two were level at 19-20,
+and `docs/RELEASE-QUICKSTART.md` and `docs/WINDOWS.md` still quote that. The mode did not get
+slower, in step got faster: `process_frame_gpu` takes only a synchronous frame ("requires
+synchronous live every frame"), so an asynchronous frame crosses the pipe as pixels, and the
+shared transport is where in step gained since. Like for like on the pipe asynchronous is level
+with in step or ahead of it (29.8 against 26.2 and 29.3). Its two runs counted the same 1194
+frames, which reads as a ceiling somewhere other than NR's speed; not looked into, and one run a
+case is too few to say more. An asynchronous frame on the shared transport does not exist: it
+would be new work in the layer and the daemon (a frame in flight on the shared images, its answer
+taken a present later), and it would still show a frame late, which is why the mode stays off.
+The two pages' figures are not changed here: they are 0.0.5's, and these are a branch's.
+
+**Next on Linux:** nothing from this entry. **Next on Windows:** the owner's word on building the
+by-column weights (exact; INT8 stays parked, as on 09-26, unless the owner wants its further 5 %
+for a changed picture), and on the asynchronous mode above.
 
 ## The network on Intel's Windows driver: three leads measured, none kept (2026-11-11, afternoon, branch `newnr`)
 
