@@ -357,6 +357,25 @@ missing is the packed loader's version of it, libxmx taking an E4M3 B that way, 
 stored transposed. `improve-b.md` found a by-column tile spilling on Mesa and its bottleneck not
 waiting on weights, so this is likely Intel's Windows driver's alone, as the E4M3 bytes are.
 
+**A and 1920x1080 by the same proxies** (a later series the same night, `logs\int8\frames4`: whole
+frames at 0.4, 150 a run, three rounds alternating, 48 runs, every exit 0; Windows' power mode
+"best performance" on the Acer scheme, on AC, a load of 4-7 % before and after, a reboot pending
+by then):
+
+| a whole frame, ms | the graph | INT8 in the bottleneck | by column in the bottleneck | by column in every staged weight GEMM |
+| --- | --- | --- | --- | --- |
+| B, 1280x720 | 19.2-19.4 | 16.1-16.7 | 16.6-17.1 | 16.2-16.3 |
+| A, 1280x720 | 33.6-33.8 | 31.7-34.2 | 31.8-33.1 | 28.1-30.2 |
+| B, 1920x1080 | 33.3-34.2 | 30.3-30.8 | 31.8-32.3 | 31.1-31.6 |
+| A, 1920x1080 | 62.1-62.6 | 57.4-58.4 | 59.4-60.1 | 56.3-57.0 |
+
+The first run of the graph at each 1280x720 set read 20.95 and 37.65 ms and is left out. By column
+in every staged weight GEMM is 16 % of B's frame and 10-17 % of A's at 1280x720, and 7-8 % of B's
+and 9 % of A's at 1920x1080; the integers in the bottleneck alone are 14-17 % and 0-6 %, then 9-11 %
+and 6-8 %. So the exact lead is level with INT8 for B at 1280x720, ahead of it for A at both
+sizes, and behind it by about a millisecond for B at 1920x1080. Still a timing proxy with wrong
+values: what the real loader gives is known only when it is built.
+
 **The asynchronous mode in a game, as it stands.** Mortal Kombat 11 through DXVK, B at 0.4 and
 1280x720 (network 512x320), a release built at this branch's code, the screen on; seven runs of
 40 s, the first three cases in both orders, all clean: no refusal or fallback, no daemon left,
