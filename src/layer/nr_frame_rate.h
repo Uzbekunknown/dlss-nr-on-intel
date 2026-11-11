@@ -50,6 +50,80 @@ typedef struct nr_frame_counts {
 #define NR_RATE_SAMPLES 3     /* readings kept: the rates are over the last two steps, a second */
 #define NR_RATE_GAP 2.0       /* no present for this long - a load, an alt-tab - and it starts over */
 
+/* **The two graphs, after OptiScaler's.** A rate is one number for the last second; a graph is the
+ * shape of that second, which is what tells a steady 40 from a 60 that stalls every fourth frame.
+ * Two series, because they answer different questions and a player blaming NR needs to know which
+ * one moved:
+ *
+ *   frame   the milliseconds between presents - what the screen actually did, frame generation
+ *           included, so a generator's frames are the short ones;
+ *   net     the network's milliseconds for the frames NR answered, which is the cost NR adds.
+ *
+ * One sample a present, in a ring: the panel draws its whole width from these and never keeps
+ * anything else, so a lost frame costs one point rather than the graph.
+ *
+ * 120 samples is two seconds at 60 and four at 30 - long enough to see a hitch travel, short
+ * enough that the right edge is now. The ring can hold the value up to `NR_GRAPH_CEIL_MS`, which
+ * the drawing side scales against; a frame slower than that is drawn at the ceiling rather than
+ * making every other point invisible. */
+#define NR_GRAPH_SAMPLES 120
+#define NR_GRAPH_CEIL_MS 100.0
+
+typedef struct nr_frame_graph {
+	/* Milliseconds between presents, oldest first in the ring. A slot is `-1` until it is used, so
+	 * a graph starts empty rather than at zero - a zero would draw as a perfect frame. */
+	float frame_ms[NR_GRAPH_SAMPLES];
+	float net_ms[NR_GRAPH_SAMPLES];
+	int count;      /* how many slots hold a sample, up to NR_GRAPH_SAMPLES */
+	int next;       /* where the next sample goes */
+} nr_frame_graph;
+
+static inline void nr_frame_graph_reset(nr_frame_graph *g)
+{
+	if (!g) return;
+	memset(g, 0, sizeof *g);
+	for (int i = 0; i < NR_GRAPH_SAMPLES; ++i) {
+		g->frame_ms[i] = -1.0f;
+		g->net_ms[i] = -1.0f;
+	}
+}
+
+/* One present: the milliseconds since the last one, and the network's time for it when the answer
+ * carried one (`net_ms` below 0 appends no net point, which is every frame on the CPU path). */
+static inline void nr_frame_graph_add(nr_frame_graph *g, float frame_ms, float net_ms)
+{
+	if (!g) return;
+	if (frame_ms < 0.0f) frame_ms = 0.0f;
+	if (frame_ms > (float)NR_GRAPH_CEIL_MS) frame_ms = (float)NR_GRAPH_CEIL_MS;
+	g->frame_ms[g->next] = frame_ms;
+	if (net_ms < 0.0f || net_ms > (float)NR_GRAPH_CEIL_MS) net_ms = -1.0f;
+	g->net_ms[g->next] = net_ms;
+	g->next = (g->next + 1) % NR_GRAPH_SAMPLES;
+	if (g->count < NR_GRAPH_SAMPLES) g->count++;
+}
+
+/* The ring in drawing order, oldest first, as ImGui's `PlotLines` wants it: one contiguous run of
+ * `float`. Returns how many points were written, which is the ring's `count`; a caller with a
+ * scratch array of `NR_GRAPH_SAMPLES` floats and no gap. A sample the ring never used is left out
+ * rather than drawn as zero. */
+static inline int nr_frame_graph_frame(const nr_frame_graph *g, float *out, int capacity)
+{
+	if (!g || !out || capacity <= 0) return 0;
+	const int n = g->count < capacity ? g->count : capacity;
+	const int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	for (int i = 0; i < n; ++i) out[i] = g->frame_ms[(start + i) % NR_GRAPH_SAMPLES];
+	return n;
+}
+
+static inline int nr_frame_graph_net(const nr_frame_graph *g, float *out, int capacity)
+{
+	if (!g || !out || capacity <= 0) return 0;
+	const int n = g->count < capacity ? g->count : capacity;
+	const int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	for (int i = 0; i < n; ++i) out[i] = g->net_ms[(start + i) % NR_GRAPH_SAMPLES];
+	return n;
+}
+
 typedef struct nr_frame_rates {
 	int ready;                /* a reading has been made, so the numbers below mean something */
 	double screen_fps;
@@ -60,12 +134,20 @@ typedef struct nr_frame_rates {
 	double at[NR_RATE_SAMPLES];
 	nr_frame_counts seen[NR_RATE_SAMPLES];
 	double last;
+	/* The last second's shape, one point a present. See `nr_frame_graph`. */
+	nr_frame_graph graph;
+	/* The present before this one, so a frame's own milliseconds are a difference rather than a
+	 * rate over half a second: the graph wants the frame, the counter wants the second. */
+	double previous;
 } nr_frame_rates;
 
 static inline void nr_frame_rates_reset(nr_frame_rates *r)
 {
+	if (!r) return;
 	memset(r, 0, sizeof *r);
 	r->network_ms = -1.0;
+	nr_frame_graph_reset(&r->graph);
+	r->previous = -1.0;
 }
 
 static inline int nr_frame_counts_behind(const nr_frame_counts *now, const nr_frame_counts *then)
@@ -90,7 +172,30 @@ static inline void nr_frame_rates_sample(nr_frame_rates *r, double now, const nr
 		r->at[0] = now;
 		r->seen[0] = *counts;
 		r->last = now;
+		r->previous = now;
 		return;
+	}
+	/* **One graph point a present, before the half-second gate below.** The gate belongs to the
+	 * rates, which average over a second; the graph is the shape inside that second and gets every
+	 * frame. `previous` is what makes it a frame's own time rather than a rate: the difference
+	 * between two presents is that frame, whatever else the last second did.
+	 *
+	 * A sample whose total did not move is a repeat of a held frame, not a new one - the panel runs
+	 * every present and so does this, but only a present that the screen counted is a frame. The
+	 * network's time is taken from the mean the rates would report, because the host's counters
+	 * carry a sum, not a per-frame figure. */
+	const int presented_now = counts->presented > r->seen[r->kept - 1].presented;
+	if (presented_now) {
+		const double frame_ms = (r->previous > 0.0 && now > r->previous)
+			? (now - r->previous) * 1000.0 : -1.0;
+		const uint64_t net_frames_now = counts->network_frames - r->seen[r->kept - 1].network_frames;
+		const double net_ms = net_frames_now
+			? (double)(counts->network_us - r->seen[r->kept - 1].network_us)
+			  / (double)net_frames_now / 1000.0 : -1.0;
+		if (frame_ms >= 0.0) nr_frame_graph_add(&r->graph, (float)frame_ms, (float)net_ms);
+		r->previous = now;
+	} else {
+		r->previous = now;
 	}
 	r->last = now;
 	if (now - r->at[r->kept - 1] < NR_RATE_STEP) return;
