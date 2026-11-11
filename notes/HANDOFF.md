@@ -272,7 +272,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - INT8 on the bottleneck: the exact kernel exists (`gemm_staged_int8.comp`) and stays out of the
   graph by the owner's decision; `improve-int8` keeps the branch. Archive, 09-26. Measured
   again on 11-11 (the evening's entry): most of its speed is its weights by column, which the half
-  kernel can have exactly.
+  kernel has exactly since 11-12 (branch `weights-by-column`).
 - The asynchronous live mode exists (`NR_LAYER_ASYNC=1`) and stays off: a frame of latency, over
   the owner's ~15 ms. Archive, 09-25. On 11-11 it is also 6-9 frames a second behind in
   step in Mortal Kombat 11, kept off the shared transport (the evening's entry).
@@ -297,6 +297,69 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The wide weights by column, built: 15-17 % of a frame at 1280x720, 8-12 % at 1920x1080, the same bytes (2026-11-12, branch `weights-by-column`)
+
+The owner, 11-12: build the exact lead of the entry below. It is the local branch
+`weights-by-column`, one code commit (`7376056`) on `newnr` (`c3e750d`); not merged into `newnr`
+yet and nothing pushed. Arc 140V, Intel 101.9150, on AC, a load of 4-7 %, a reboot pending.
+
+**What changed.** A weight matrix that only GEMMs read is kept transposed, N x K, where the
+driver reads it faster so, and the staged kernel reads it by column.
+- `gemm_staged.comp`, bit `0x8000000`: a thread loads eight consecutive K of one column (half or
+  E4M3 bytes), the B tile is kept by column in shared memory (32 columns of BK + 8, no larger than
+  the tile by row) and the fragments are loaded column-major. The loader is beside both A
+  loaders, so a window-gathered A takes it too. The values in every fragment and the order of
+  every sum are the by-row B's.
+- `libxmx.c`: `xmx_buf_mark_by_column` marks the buffer. `record_gemm` sets the bit where the
+  staged kernel takes the GEMM and B is aligned for the packed loads, and gives any other kernel
+  the same bytes as a transposed B (bit 1), so a marked B is right on every kernel. A marked
+  buffer is no other pass's operand (`addr_of` refuses it), so a fused kernel handed one fails
+  where it is recorded. `xmx_weights_by_column` is on for Intel's Windows driver;
+  `XMX_WEIGHTS_BY_COLUMN=0|1` sets it on any driver.
+- `xmxres.py`: `Runtime.weight(array, e4m3=False)` keeps a matrix wider than 32 columns by
+  column, each batch item its own, after a start-up check that this driver reads a B both ways
+  to the same bytes in each staged build (3 ms); the daemon's `runtime options` line names
+  `XMX_WEIGHTS_BY_COLUMN`.
+- `nr_resident.py`, `nr_frame_resident.py`: the bottleneck's four matrices, the split family's
+  six, the transitions' and the 64-256 channel blocks' go through `Runtime.weight`. The
+  32-channel blocks' stay by row: the fused kernels read them (`ffn_fused.comp`,
+  `window_block.comp`).
+
+**A whole frame at render scale 0.4**, the branch with `XMX_WEIGHTS_BY_COLUMN=0` against its
+default, 150 frames a run, three rounds alternating, every exit 0 (`nr-game\perf-1112`):
+
+| ms | by row | by column | |
+| --- | --- | --- | --- |
+| B, 1280x720 | 19.1-19.4 | 15.7-16.1 | 17 % |
+| A, 1280x720 | 32.7-33.8 | 27.7-28.8 | 15 % |
+| B, 1920x1080 | 34.0-34.2 | 31.3 | 8.5 % |
+| A, 1920x1080 | 62.1-62.5 | 55.0-55.3 | 11.5 % |
+
+That is the timing proxy's figure or better, and for B at 1280x720 what INT8 in the bottleneck
+read (16.1-16.7), with the picture unchanged. A start-up takes 0.4 s longer (2.2 -> 2.6 s for B,
+2.8 -> 3.2 for A, a whole process to its first frame): the matrices are transposed on the host,
+once a backend.
+
+**Checked on Windows.** `test_gemm_by_column.py` (new; CTest `gpu_gemm_by_column`,
+`run_tests.py`): 274 cases bit-identical to the same B by row: plain, published, under the
+gate, both residuals, the ViT's QKV epilogue and the window-gathered one, the group GEMMs as a
+batch and as slices, the bottleneck's and the levels' shapes, a partial block, the 32-row
+builds, K = 16 on the tiled kernel, specialised and not, as half and as E4M3 bytes; a second
+transposition and a pass that is no GEMM refused. `frame_replay.py` heads of A at 320x320 and
+1280x720 and of A and B at 320x512 and 768x1344, with the E4M3 bytes on and off, by column and
+by row: all 20 are `newnr`'s. MinGW and MSVC (no warning) with CTest 70 of 70 each, and 70 of
+70 again with `XMX_WEIGHTS_BY_COLUMN=0`; `test_gemm_e4m3.py`; the image suites, the transports,
+`test_daemon.py`, `test_settings_live.py`, `test_gpu_d3d12.py` with and without the network.
+
+**Not checked:** a game, Linux, an A-series card or a B580 (on by default there too, as the
+E4M3 bytes are), `build_xess.bat` and the release build (neither touches these files).
+
+**Next on Linux:** once this is pushed, `make test` in both memory modes and CTest.
+`test_gemm_by_column.py` runs there as it is: any device reads a B kept by column, and Mesa
+keeps its weights by row unless `XMX_WEIGHTS_BY_COLUMN=1` says otherwise (worth one timing:
+`improve-b.md` expects no gain). **Next on Windows:** the owner's word on merging into `newnr`;
+Mortal Kombat 11 before and after; then Hogwarts for DirectX 12.
 
 ## INT8 in the bottleneck measured again; most of its speed is how it reads the weights, and that is exact; the asynchronous mode in a game (2026-11-11, evening, branch `newnr`)
 
