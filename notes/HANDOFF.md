@@ -368,6 +368,8 @@ by then):
 | A, 1280x720 | 33.6-33.8 | 31.7-34.2 | 31.8-33.1 | 28.1-30.2 |
 | B, 1920x1080 | 33.3-34.2 | 30.3-30.8 | 31.8-32.3 | 31.1-31.6 |
 | A, 1920x1080 | 62.1-62.6 | 57.4-58.4 | 59.4-60.1 | 56.3-57.0 |
+| B at 1.0, 1280x720 | 86.9-87.4 | 78.4-78.6 | 83.4-84.0 | 80.6-82.2 |
+| B at 1.0, 1920x1080 | 177.5-177.6 | 166.1-169.8 | 171.4-172.7 | 168.1-171.0 |
 
 The first run of the graph at each 1280x720 set read 20.95 and 37.65 ms and is left out. By column
 in every staged weight GEMM is 16 % of B's frame and 10-17 % of A's at 1280x720, and 7-8 % of B's
@@ -375,6 +377,11 @@ and 9 % of A's at 1920x1080; the integers in the bottleneck alone are 14-17 % an
 and 6-8 %. So the exact lead is level with INT8 for B at 1280x720, ahead of it for A at both
 sizes, and behind it by about a millisecond for B at 1920x1080. Still a timing proxy with wrong
 values: what the real loader gives is known only when it is built.
+
+The last two rows are B at a render scale of 1.0 (`logs\int8\frames5-scale1`, networks of
+1344x768 and 1920x1152, 80 and 60 frames a run, a first run of 194 ms left out). There the
+integers are 10 % and 4-6 % of the frame and by column everywhere 6-8 % and 4-5 %: 2-4 ms
+apart at 1280x720 and inside each other's spread at 1920x1080.
 
 **The asynchronous mode in a game, as it stands.** Mortal Kombat 11 through DXVK, B at 0.4 and
 1280x720 (network 512x320), a release built at this branch's code, the screen on; seven runs of
