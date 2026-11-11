@@ -272,7 +272,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - INT8 on the bottleneck: the exact kernel exists (`gemm_staged_int8.comp`) and stays out of the
   graph by the owner's decision; `improve-int8` keeps the branch. Archive, 09-26. Measured
   again on 11-11 (the evening's entry): most of its speed is its weights by column, which the half
-  kernel has exactly since 11-12 (branch `weights-by-column`).
+  kernel has exactly since 11-12 (that day's entry).
 - The asynchronous live mode exists (`NR_LAYER_ASYNC=1`) and stays off: a frame of latency, over
   the owner's ~15 ms. Archive, 09-25. On 11-11 it is also 6-9 frames a second behind in
   step in Mortal Kombat 11, kept off the shared transport (the evening's entry).
@@ -298,11 +298,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## The wide weights by column, built: 15-17 % of a frame at 1280x720, 8-12 % at 1920x1080, the same bytes (2026-11-12, branch `weights-by-column`)
+## The wide weights by column, built: 15-17 % of a frame at 1280x720, 8-12 % at 1920x1080, the same bytes (2026-11-12, branch `newnr`)
 
-The owner, 11-12: build the exact lead of the entry below. It is the local branch
-`weights-by-column`, one code commit (`7376056`) on `newnr` (`c3e750d`); not merged into `newnr`
-yet and nothing pushed. Arc 140V, Intel 101.9150, on AC, a load of 4-7 %, a reboot pending.
+The owner, 11-12: build the exact lead of the entry below, then merge it and check it in
+Mortal Kombat 11. One code commit (`7376056`), made on the local branch `weights-by-column` and
+fast-forwarded into the local `newnr`; nothing pushed. Arc 140V, Intel 101.9150, on AC, a load
+of 4-7 %, a reboot pending.
 
 **What changed.** A weight matrix that only GEMMs read is kept transposed, N x K, where the
 driver reads it faster so, and the staged kernel reads it by column.
@@ -352,14 +353,29 @@ by row: all 20 are `newnr`'s. MinGW and MSVC (no warning) with CTest 70 of 70 ea
 70 again with `XMX_WEIGHTS_BY_COLUMN=0`; `test_gemm_e4m3.py`; the image suites, the transports,
 `test_daemon.py`, `test_settings_live.py`, `test_gpu_d3d12.py` with and without the network.
 
-**Not checked:** a game, Linux, an A-series card or a B580 (on by default there too, as the
-E4M3 bytes are), `build_xess.bat` and the release build (neither touches these files).
+**Mortal Kombat 11** through DXVK, 1280x720 at render scale 0.4 (network 512x320), a release
+built at this code (`D:\NRonWindows\rel\newnr-bycol-5e4563a` on the Windows laptop), the screen
+on; by row is the same release with `XMX_WEIGHTS_BY_COLUMN=0` in `nr-env.txt`, and the daemon's
+`runtime options` line said which each time. Eight runs of 40 s, the pair in both orders, all
+clean: `gpu-shared` every frame, no refusal or fallback, the game closed through its window, no
+daemon left, the game's folder as before (`perf-1112\bycol-series.ps1`,
+`release-tests\bycol1112-summary.txt`).
+
+| processed a second | by row | by column | median frame, ms | network, ms |
+| --- | --- | --- | --- | --- |
+| B | 36.6, 36.9 | 44.5, 45.2 | 24-25 -> 20 | 17 -> 13 |
+| A | 25.4, 23.9 | 28.6, 29.3 | 36-39 -> 31-32 | 30-33 -> 25-26 |
+
+22 % more frames with B and 17 % with A.
+
+**Not checked:** a DirectX 12 game, Linux, an A-series card or a B580 (on by default there too,
+as the E4M3 bytes are), `build_xess.bat` (it does not touch these files).
 
 **Next on Linux:** once this is pushed, `make test` in both memory modes and CTest.
 `test_gemm_by_column.py` runs there as it is: any device reads a B kept by column, and Mesa
 keeps its weights by row unless `XMX_WEIGHTS_BY_COLUMN=1` says otherwise (worth one timing:
-`improve-b.md` expects no gain). **Next on Windows:** the owner's word on merging into `newnr`;
-Mortal Kombat 11 before and after; then Hogwarts for DirectX 12.
+`improve-b.md` expects no gain). **Next on Windows:** the owner's word on pushing `newnr`;
+Hogwarts for DirectX 12.
 
 ## INT8 in the bottleneck measured again; most of its speed is how it reads the weights, and that is exact; the asynchronous mode in a game (2026-11-11, evening, branch `newnr`)
 
