@@ -11,7 +11,8 @@ compatible `nvngx_dlssnr.dll` (Hogwarts Legacy carries one since its DLSS 5 upda
 `Engine\Plugins\Runtime\Nvidia\StreamlineCore\Binaries\ThirdParty\Win64`); on Linux, also **Python 3** with `numpy` and
 `safetensors`. You do not need a compiler or the Vulkan SDK. Arc B570/B580
 and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
-A770) is experimental: NR has computed correctly on six A770s, at speeds that vary. If you
+A770) is experimental: NR has computed correctly on all eleven cards reported so far (A380,
+A750, A770), at speeds that vary. If you
 have one, double-click `nr_gpu_probe.exe` in this folder and post the `nr-gpu-report.txt`
 it writes with the **Arc A-series report** issue template.
 
@@ -48,8 +49,8 @@ interface, so the interface stays as the game drew it. The first frame through X
 NR's daemon, which takes a few seconds to load the network; **Enable NR** and **Disable NR**
 work while the game runs. NR has run in Hogwarts Legacy (XeSS 2.0.2, before and after the game's
 DLSS 5 update): at 1280×720 with network B about 26 frames a second at render scale 0.4 and 21
-at 0.5 on the Arc 140V; with the game's frame generation the screen shows twice as many, about
-52. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
+at 0.5 on the Arc 140V, by 2026-11-06; with the game's frame generation the screen shows twice
+as many, about 52. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
 puts the game's `libxess.dll` back; when a game update has replaced NR's, use **Remove NR**
 and then **Install NR** again.
 
@@ -126,27 +127,28 @@ network work on one frame while the game draws the next: more frames a second, a
 screen is one processed frame behind. **Network on** every 2nd, 3rd or 4th frame repeats the
 last result on the frames between: the game runs faster, and the picture changes only on the
 network's frames. A change is saved at once, into the installed game as well, and takes effect
-when the game starts next. On the Arc 140V neither raised the frame rate much (Mortal Kombat 11
-at 1280×720, render scale 0.4: 19.3 processed frames a second in step, 19.7 asynchronous):
-there the network's own time is most of every frame. Asynchronous should gain more where the
-game's frame and the network's take similar time, as on a discrete card; that is not measured
-yet.
+when the game starts next. Both wait until **Frames on the GPU** (below) is off, and on the Arc
+140V that costs asynchronous mode more than it gives: in Mortal Kombat 11 at 1280×720, render
+scale 0.4 and network B, 46 processed frames a second in step on the GPU against 21–24
+asynchronous (2026-11-12). It may pay where the game's own frame takes as long as the
+network's, as on a discrete card; that is not measured yet.
 
 **Frames on the GPU**, on unless turned off, keeps each frame on the GPU from the game to the
 network and back, with no copy through the CPU: in Mortal Kombat 11 it took network B from 19–20
-processed frames a second to 37–38. Where a game cannot keep its frames there, NR takes its usual
-path, and Save report says why.
+processed frames a second to 37–38 when it came, and B runs there at 46 now (1280×720, render
+scale 0.4, Arc 140V). Where a game cannot keep its frames there, NR takes its usual path, and
+Save report says why.
 
 **Network.** `nvngx_dlssnr.dll` 310.9.16 carries two networks: **A**, the one NR has always
 run, and **B**, a smaller one NVIDIA added. With that DLL, **Install NR** takes B out of it
 beside A and runs B, the faster one; **NR controls** offers both under **Network**, and the
 choice is saved and read when the game starts next, as frame pacing is; the panel in the game
 switches at once. The speed test measures each network the release has. With an older DLL NR runs A. On the
-Arc 140V B's network takes about half of A's time: at 1280×720 and render scale 0.4, 16 ms
-against 32–34, frames sent back to back. With time between frames, as a game leaves, the GPU
-clocks down, and the further for B: with 25 ms between frames B took 37–39 ms a round trip
-there against 22–23 back to back, and A 42–45 against 39–42. B has run in Mortal Kombat 11 and
-Hogwarts Legacy.
+Arc 140V B's network takes about half of A's time: at 1280×720 and render scale 0.4, 13 ms
+against 24–26, frames sent back to back (2026-11-12). With time between frames, as a game
+leaves, the GPU clocks down, and the further for B: on 2026-10-18, with 25 ms between frames, B
+took 37–39 ms a round trip there against 22–23 back to back, and A 42–45 against 39–42. B has
+run in Mortal Kombat 11 and Hogwarts Legacy.
 
 The button beside a control returns it to its default; **Reset all** writes the
 daemon's defaults, including render scale **1.0**. The release starts at **0.4** for

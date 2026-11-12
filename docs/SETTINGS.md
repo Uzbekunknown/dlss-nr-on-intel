@@ -48,8 +48,8 @@ The network's own time a frame, in ms, from the setup window's speed test: the l
 | Arc B580 | A | 8 | 9 | 18 | 88 | 4 + 39 | [#17](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/17), 0.0.1.3, 2026-10-18 |
 | Arc A770 | A, inferred | 32 | 35 | 55 | 229 | 22 + 91 | [#23](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/23), 0.0.2 or 0.0.3, 2026-10-31 |
 | Arc A770 | B | 16 | 19 | 29 | 120 | 11 + 51 | [#25](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/25), 0.0.3.1, 2026-11-01 |
-| Arc 140V | A | 24-27 | 32-34 | 60-64 | 381-404 | 11 + 144 | this project's laptop, Windows, 2026-10-18 |
-| Arc 140V | B | 12 | 16 | 31 | 187-202 | 4 + 76 | this project's laptop, Windows, 2026-10-18 |
+| Arc 140V | A | 19-20 | 24-26 | 51-52 | 279-284 | 5 + 131 | this project's laptop, Windows, 2026-11-12 |
+| Arc 140V | B | 9-10 | 13 | 27 | 156 | 3 + 68 | this project's laptop, Windows, 2026-11-12 |
 
 <!-- players:end -->
 

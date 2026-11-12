@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-11-05",
+  "updated": "2026-11-12",
   "about": "What players' reports on GitHub say about NR's speed, and this project's Arc 140V beside them for comparison. Speed tests and frames are digested by src/tools/player_reports.py from the reports attached to the issues, or typed from an issue's text or screenshot where none was attached (those say so in 'from'); probes are its reading of each nr-gpu-report.txt; games are the players' own words and figures. No folder, user name, process id or attachment is kept here. Times in ms; a [low, high] pair is a range; dates are GitHub's, in UTC. A network named without a record says how it was told (network_how).",
   "notes": "notes/players-20261103.md",
   "probes": [
@@ -338,6 +338,96 @@
           "field": [1920, 1152],
           "network_ms": [187, 202],
           "round_trip_ms": [212, 227]
+        }
+      ]
+    },
+    {
+      "source": "Arc 140V, 0.0.6",
+      "issue": null,
+      "date": "2026-11-12",
+      "release": "0.0.6, built from 5e4563a",
+      "gpu": "Arc 140V",
+      "driver": "101.9150",
+      "cpu": "Lunar Lake (Core Ultra 200V)",
+      "network": "A",
+      "network_how": "speed_test.py --preset A as the setup window runs it, with the release's own Python, two runs; ranges are the two runs",
+      "cases": [
+        {
+          "size": [640, 360],
+          "render_scale": 0.4,
+          "field": [320, 320],
+          "network_ms": [19, 20],
+          "round_trip_ms": [23, 24]
+        },
+        {"size": [800, 450], "render_scale": 0.4, "field": [320, 320], "network_ms": 19, "round_trip_ms": [23, 24]},
+        {
+          "size": [1280, 720],
+          "render_scale": 0.4,
+          "field": [512, 320],
+          "network_ms": [24, 26],
+          "round_trip_ms": [31, 33]
+        },
+        {
+          "size": [1920, 1080],
+          "render_scale": 0.4,
+          "field": [768, 448],
+          "network_ms": [51, 52],
+          "round_trip_ms": [66, 67]
+        },
+        {
+          "size": [640, 360],
+          "render_scale": 1.0,
+          "field": [640, 384],
+          "network_ms": [37, 39],
+          "round_trip_ms": [41, 43]
+        },
+        {
+          "size": [800, 450],
+          "render_scale": 1.0,
+          "field": [832, 512],
+          "network_ms": [59, 62],
+          "round_trip_ms": [65, 68]
+        },
+        {
+          "size": [1280, 720],
+          "render_scale": 1.0,
+          "field": [1344, 768],
+          "network_ms": 140,
+          "round_trip_ms": [152, 153]
+        },
+        {
+          "size": [1920, 1080],
+          "render_scale": 1.0,
+          "field": [1920, 1152],
+          "network_ms": [279, 284],
+          "round_trip_ms": [304, 309]
+        }
+      ]
+    },
+    {
+      "source": "Arc 140V, 0.0.6",
+      "issue": null,
+      "date": "2026-11-12",
+      "release": "0.0.6, built from 5e4563a",
+      "gpu": "Arc 140V",
+      "driver": "101.9150",
+      "cpu": "Lunar Lake (Core Ultra 200V)",
+      "network": "B",
+      "network_how": "speed_test.py --preset B as the setup window runs it, with the release's own Python, two runs; ranges are the two runs",
+      "cases": [
+        {"size": [640, 360], "render_scale": 0.4, "field": [320, 320], "network_ms": [9, 10], "round_trip_ms": 13},
+        {"size": [800, 450], "render_scale": 0.4, "field": [320, 320], "network_ms": 10, "round_trip_ms": 13},
+        {"size": [1280, 720], "render_scale": 0.4, "field": [512, 320], "network_ms": 13, "round_trip_ms": [20, 21]},
+        {"size": [1920, 1080], "render_scale": 0.4, "field": [768, 448], "network_ms": 27, "round_trip_ms": 41},
+        {"size": [640, 360], "render_scale": 1.0, "field": [640, 384], "network_ms": 20, "round_trip_ms": 24},
+        {"size": [800, 450], "render_scale": 1.0, "field": [832, 512], "network_ms": 31, "round_trip_ms": [36, 37]},
+        {"size": [1280, 720], "render_scale": 1.0, "field": [1344, 768], "network_ms": 76, "round_trip_ms": 88},
+        {
+          "size": [1920, 1080],
+          "render_scale": 1.0,
+          "field": [1920, 1152],
+          "network_ms": 156,
+          "round_trip_ms": [180, 181]
         }
       ]
     }

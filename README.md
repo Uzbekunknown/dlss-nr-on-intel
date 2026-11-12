@@ -83,7 +83,7 @@ Linux NR is built from source: [docs/DEVS.md](docs/DEVS.md).
 NR runs a large neural network on every frame, on the same GPU as the game.
 
 - **On an Arc 140V, play at 1280x720 or lower, with render scale 0.4 and network B**: about 20
-  to 40 fps in the games below. At 1080p and full render scale it manages a few frames a second,
+  to 45 fps in the games below. At 1080p and full render scale it manages a few frames a second,
   which is for screenshots.
 - **On a desktop Arc B570 or B580** you can play at 1920x1080 with render scale 0.5: about 50 fps
   with network B on a B580.
@@ -106,7 +106,7 @@ date; a later release can do better or worse.
 | Game | Tested on | How it ran | Result | Checked |
 | --- | --- | --- | --- | --- |
 | Hogwarts Legacy, after its DLSS 5 update | Arc 140V | Windows, DirectX 12 through XeSS, network B | 25-26 fps of NR's at 1280x720 and render scale 0.4, and 51-52 on screen with XeSS frame generation x2; profile `standard` or `hogwarts` | 2026-11-06 |
-| Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 34-38 fps at 1280x720 and render scale 0.4, about 10 at render scale 1.0 | 2026-11-05 |
+| Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 46 fps at 1280x720 and render scale 0.4, about 11.5 at render scale 1.0 | 2026-11-12 |
 | Hogwarts Legacy through OptiScaler 0.9.4 | Arc 140V | Windows, DirectX 12, OptiScaler's XeSS taking the game's XeSS or its FSR 3, network B | about 28 fps of NR's at 1280x720 and render scale 0.4 | 2026-11-05 |
 | Euro Truck Simulator 2 | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 21-22 fps at 1920x1080 and render scale 0.4 with network B; 6 at full render scale | 2026-11-04 |
 | Star Wars Battlefront II (2017) | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | about 22 fps at 1920x1080 and render scale 0.4 with network B, once the player kept the PC's other Vulkan layers out (`VK_LOADER_LAYERS_DISABLE=~implicit~`) | 2026-11-04 |
