@@ -148,9 +148,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   and `renodx-dlss.addon64`, in the Windows Downloads). The owner says, as their source claims,
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
   lets RenoDX pick preset A or B. Untrusted and unopened; they wait until one is needed.
-- `newnr` holds `perf-1108` and `e4m3-weights` since 11-11, locally, green on Windows and run in
+- ~~`newnr` holds `perf-1108` and `e4m3-weights` since 11-11, locally, green on Windows and run in
   Mortal Kombat 11 (below, 11-11, morning): the owner's look, then the word on pushing it, with
-  `master` and `alchemist` after it.
+  `master` and `alchemist` after it~~: pushed at the owner's word with the weights by column,
+  `master`, `newnr` and `alchemist` at `2ae1d82` on 11-12.
+- 0.0.6, built and checked (below, 11-12, evening): the owner's word on publishing it.
 - From the `cleanup` branch (PR #39, merged 11-11), proposed and not done: INT8 out of the main
   line (it is in libxmx, the shader lists and the release's file lists) and one build system
   instead of three; the Configure/Restore Steam buttons are a line under Windows. Archive, 11-05.
@@ -168,6 +170,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   GPU of its runner, `attention.comp`, libxmx and `nr_resident`, and three tests changed (below,
   11-09 and 11-08; archive, 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
   later).
+- The weights by column (below, 11-12): `make test` in both memory modes and CTest, with the two
+  items after this one; `newnr` holds all three on GitHub since 11-12 (`2ae1d82`), and 0.0.6 is
+  built from them. `test_gemm_by_column.py` runs on Mesa as it is; `XMX_WEIGHTS_BY_COLUMN=1` is
+  worth one timing there.
 - `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
   in both memory modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. It is off on Mesa unless
   `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
@@ -249,10 +255,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - ~~The GPU path's frame around the network, `perf-1108` (below, 11-08): a game, with the owner
   there, then the owner's word on merging it~~: merged into `newnr` at the owner's word and run in
   Mortal Kombat 11, B 5.5-10 % and A 3 % more frames (below, 11-11, morning). Hogwarts Legacy, for
-  the D3D12 transport in a game, has not run it.
+  the D3D12 transport in a game, has run it since, at its title screen (below, 11-12, evening).
 - The bottleneck's weights as E4M3 bytes (below, 11-08, evening), in `newnr` and on in Mortal
   Kombat 11's runs (below, 11-11, morning): whether it stays on by default for every GPU on
-  Intel's Windows driver; desktop Arc cards and the B580 have not run it.
+  Intel's Windows driver; desktop Arc cards and the B580 have not run it, nor the weights by
+  column, on by default there too (below, 11-12).
 - `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
   default, or a row in the panel or the setup window, is the owner's call. Off, it is 0.3 ms of
   B's frame at 1280x720 and 1.0-1.5 at 1920x1080 on the merge (below, 11-11, morning).
@@ -297,6 +304,58 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## 0.0.6 built and checked: 20-35 % more frames than 0.0.5 in Mortal Kombat 11, the same picture (2026-11-12, evening, branch `alchemist`)
+
+The owner, 11-12, with `master`, `newnr` and `alchemist` level at `2ae1d82` on GitHub (pushed at
+the owner's word that day; the entry below was written before and says nothing is): get ready for
+a release. The release commit `525db45` (VERSION 0.0.6; the README's Mortal Kombat 11 row and its
+range for the Arc 140V; in the release guide, the ZIP's README, the stale figures for the
+asynchronous mode, the GPU path and the networks; `docs/SETTINGS.md`'s Arc 140V rows from a new
+speed test) is on the local `alchemist`, ahead of GitHub; nothing is pushed. Arc 140V, Intel
+101.9150, on AC, quiet before and after.
+
+**Against 0.0.5, the same day.** Mortal Kombat 11 through DXVK at 1280x720, frames on the GPU,
+profile `standard`: 0.0.5's checked root against a root of `5e4563a` (the code of `2ae1d82`), each
+with its own Python, two rounds, the second in reverse order, then B at 1.0 once each
+(`nr-game\rel006-series.ps1`, `release-tests\rel006-summary.txt`):
+
+| processed a second (median network) | 0.0.5 | 0.0.6 |
+| --- | --- | --- |
+| B at 0.4 | 34.1, 38.3 (16-17 ms) | 45.8, 46.1 (13) |
+| A at 0.4 | 23.5, 24.0 (30-32) | 29.3, 29.0 (25) |
+| B at 1.0 | 10.7 (78) | 11.6 (75) |
+
+All ten runs kept every frame on `gpu-shared`, refused none, closed the game through its window
+and left its folder as before. Asynchronous as the setup window writes it (frames on the GPU off):
+24.3 and 21.4 a second, so the guide no longer says it is level with in step. The speed test as
+the window runs it, two runs a network (`notes/measurements/players.json`): B 9-10, 13, 27 and
+156 ms at 640x360 and 0.4, 1280x720 and 0.4, 1920x1080 and 0.4, and 1920x1080 and 1.0; A 19-20,
+24-26, 51-52 and 279-284.
+
+**Hogwarts Legacy** (XeSS 2.0.2.68, the game's own 310.9.16 DLL, `hogwarts-update-test.ps1` on
+the `5e4563a` root): at its title screen, 1920x1080 and 0.4 as the game is now set, 17-18 frames a
+second on `gpu-shared-d3d12`, each answered on its own frame, none declined or failed, the daemon
+saying `XMX_E4M3_WEIGHTS=1 XMX_WEIGHTS_BY_COLUMN=1`, change 0.0286 (0.029 at that screen on 11-06).
+So `perf-1108`'s D3D12 transport, the E4M3 bytes and the weights by column have run in a DirectX 12
+game; its README rows stay 0.0.5's, 1280x720 in play. A `nr-xess.log` of 11-07 lies in the game's
+XeSS folder (pipe `nr-xess`, a recording into `datasets\nr-rec`, no proxy left); `-Phase install`
+refuses while it is there, so it was set aside for the run and put back byte for byte.
+
+**The ZIP**, `dlss-nr-windows-0.0.6-x64.zip`, 46 773 778 B, SHA-256
+`5d7f8430b8057c7463a5a29569de9db8e269a489e52071606f5750b8f3434274` (on the Windows laptop in
+`%USERPROFILE%\nr-rel\final-0.0.6`): 1367 files under one folder, no weights, NVIDIA DLL or home
+path; against 0.0.5's, only what #39 removed and #40 and the two weight tests added. From its
+unpacked copy: `standin-release-check.ps1` (install in 8 s with both networks, 722 frames, none
+rejected, the speed test A/71 and B/31, Save report 19 checks, none failing, the folder as before);
+the window's self-test (89 controls, 198 keys; it prints part of its own source, as 0.0.5's does);
+Mortal Kombat 11 with B at 0.4, 45.96 a second, every frame on `gpu-shared`. The device-free
+checks (`run_tests.py --only cpu`) 26 of 27: `work/test_settled` is the Makefile's Linux binary.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `525db45` once it is on GitHub
+(Open items, Linux: `perf-1108`, `e4m3-weights` and the weights by column). **Next on Windows:**
+the owner's word on publishing: push `alchemist`, fast-forward `master` and `newnr` to it, tag
+`v0.0.6` at `525db45`, and the release with the ZIP and `work\pr-replies\release-notes-0.0.6.md`.
 
 ## The wide weights by column, built: 15-17 % of a frame at 1280x720, 8-12 % at 1920x1080, the same bytes (2026-11-12, branch `newnr`)
 
