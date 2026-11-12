@@ -30,8 +30,8 @@ if not defined VULKAN_SDK (
   exit /b 1
 )
 rem cs_5_1 carries the root signature written in the shader, so the C side needs no
-rem serialiser; fxc is on PATH once vcvars has run. One source, nine passes.
-for %%P in (clear claim track match reduce apply encode motion compose) do call :pass %%P
+rem serialiser; fxc is on PATH once vcvars has run. One source, eleven passes.
+for %%P in (clear claim track match reduce apply encode motion compose capture depth) do call :pass %%P
 if errorlevel 1 exit /b 1
 rem The panel's two passes, each vertex shader with its pass's root signature (nr_menu_ui_d3d12.hlsl).
 for %%P in (ui_vs ui_ps over_vs over_ps) do call :panel_pass %%P
@@ -75,7 +75,7 @@ rem One pass: nr_xess.hlsl with the pass's name defined, upper-cased, to nr_xess
 :pass
 set "NAME=%~1"
 set "UPPER="
-for %%U in (CLEAR CLAIM TRACK MATCH REDUCE APPLY ENCODE MOTION COMPOSE) do if /i "%%U"=="%NAME%" set "UPPER=%%U"
+for %%U in (CLEAR CLAIM TRACK MATCH REDUCE APPLY ENCODE MOTION COMPOSE CAPTURE DEPTH) do if /i "%%U"=="%NAME%" set "UPPER=%%U"
 if not defined UPPER ( echo ERROR: no define for the pass %NAME% & exit /b 1 )
 fxc /nologo /T cs_5_1 /E main /O3 /D %UPPER% /Fh "%OUT%\nr_xess_%NAME%.h" /Vn nr_xess_%NAME% "%HERE%nr_xess.hlsl" >nul
 if errorlevel 1 ( echo ERROR: nr_xess.hlsl's %UPPER% pass failed & exit /b 1 )

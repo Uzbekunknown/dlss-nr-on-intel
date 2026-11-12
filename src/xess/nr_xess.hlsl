@@ -15,6 +15,15 @@
  *   MOTION  after it in that buffer, each pixel's offset to the frame NR was given before,
  *           which the daemon's history follows;
  *   COMPOSE NR's change to it added to the colour, after the cut, when its answer came.
+ * With mode=after and `cache=N`, NR answers one execute in up to N (a refresh) and its edit is
+ * carried to the others on XeSS's output, which has no jitter (nr_game edit-cache's DESIGN.md):
+ *   CAPTURE in the refresh's continuation, the edit NR made as a log ratio, with the frame's
+ *           depth and what NR was given, into the change MATCH reads;
+ *   DEPTH   each frame's depth at the output's pixels, as log2 of a pseudo-linear depth, and
+ *           how far its pixels moved, a workgroup at a time, for the cadence;
+ * and CLEAR, CLAIM, TRACK, MATCH, REDUCE, APPLY as for mode=carry, MATCH also refusing a change
+ * whose depth is another surface's, APPLY laying it on as a ratio (`flags`), and MOTION handing the
+ * daemon the tracker's offsets to the last refresh instead of one frame's.
  *
  * Everything arrives as buffers — copies of the game's textures laid out in their own
  * formats — because root descriptors reach buffers directly, where a texture would need a
@@ -34,9 +43,21 @@
  * (CLAIM, `contested`): a surface uncovered behind something that moved. There it holds
  * UNKNOWN, which reads as off screen from then on.
  */
-#define RS "RootConstants(num32BitConstants=32, b0), SRV(t0), SRV(t1), SRV(t2), SRV(t3), SRV(t4), UAV(u0)"
+#define RS "RootConstants(num32BitConstants=40, b0), SRV(t0), SRV(t1), SRV(t2), SRV(t3), SRV(t4), " \
+           "SRV(t5), SRV(t6), UAV(u0), UAV(u1)"
 
-#if defined(ENCODE) || defined(COMPOSE) || defined(MOTION)
+/* `flags`, for the edit cache's passes; mode=carry sets none. */
+#define FLAG_RATIO   1u    /* the change is a log ratio of NR's answer to what it was given */
+#define FLAG_DEPTH   2u    /* MATCH refuses a change whose depth is not this frame's there */
+#define FLAG_TRUSTED 4u    /* MATCH's fading takes all of the newest where the older is not trusted */
+#define FLAG_REVERSED 8u   /* DEPTH: the depth is reversed, 1 near and 0 far */
+/* `options`, for the cut's passes. */
+#define OPTION_TRACKED 1u  /* MOTION: the offsets are the tracker's, to the last refresh */
+#define OPTION_DEPTH   2u  /* CAPTURE: t5 holds the frame's depth */
+/* The ratio's floor, in the proxy's linear light, so black has a ratio too (DESIGN.md). */
+#define RATIO_EPS (1.0 / 512)
+
+#if defined(ENCODE) || defined(COMPOSE) || defined(MOTION) || defined(CAPTURE)
 
 /* nr_xess.c `struct cut_constants`, field for field. */
 cbuffer Constants : register(b0)
@@ -55,6 +76,7 @@ cbuffer Constants : register(b0)
     float2 motion_texels;  /* ... motion texels per colour pixel */
     float2 jitter;         /* ... this frame's */
     float2 previous_jitter;/* ... the frame's NR was given before */
+    uint options;          /* OPTION_* */
 };
 
 #else
@@ -86,6 +108,12 @@ cbuffer Constants : register(b0)
     uint2 cells;           /* reduce, apply: the cells' extent */
     float match_from;      /* match: how far outside the neighbourhood a change starts to be refused */
     float match_to;        /* match: ... and where it is refused entirely */
+    uint flags;            /* FLAG_*: the edit cache's */
+    float depth_tolerance; /* match: how far, in log2 of depth, the newest change's depth may lie from this frame's */
+    float old_depth_tolerance; /* ... the older one's */
+    uint depth_pitch;      /* depth: bytes between rows of the depth's copy */
+    uint2 depth_base;      /* ... where the region the upscaler reads starts in it */
+    uint2 depth_size;      /* ... and its extent */
 };
 
 #endif
@@ -101,7 +129,7 @@ cbuffer Constants : register(b0)
  * change for it and the daemon is told nothing of where it was. */
 #define UNKNOWN 1e30
 
-#if defined(CLAIM) || defined(TRACK) || defined(REDUCE) || defined(APPLY) || defined(MOTION)
+#if defined(CLAIM) || defined(TRACK) || defined(REDUCE) || defined(APPLY) || defined(MOTION) || defined(DEPTH)
 
 /* The vector at an unjittered colour position, to where its surface was the frame before, in
  * colour pixels: the nearest texel, because high-resolution vectors are dilated to the
@@ -145,17 +173,24 @@ float4 load_texel(uint at)
     return c;
 }
 
+/* The proxy's linear light: over white and through the knee on luminance, as nr_xess.c
+ * `encode_proxy` has a colour before its sRGB table. */
+float3 proxy_of(float3 c)
+{
+    float3 d = max(c, 0) / white;
+    float lit = dot(d, float3(0.2126, 0.7152, 0.0722));
+    if (lit > 0.75)
+        d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
+    return d;
+}
+
 /* What the match compares: the square root of each of the proxy's channels, over white and
  * through the knee, as the CPU has them for a frame NR was given (nr_xess.c `publish`). Each
  * channel, not the luminance alone: a blue surface and a beige one as bright are different
  * surfaces. The root spreads the darks the way display levels would. */
 float3 likeness(float3 c)
 {
-    float3 d = max(c, 0) / white;
-    float lit = dot(d, float3(0.2126, 0.7152, 0.0722));
-    if (lit > 0.75)
-        d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
-    return sqrt(saturate(d));
+    return sqrt(saturate(proxy_of(c)));
 }
 
 #endif
@@ -344,16 +379,19 @@ ByteAddressBuffer change : register(t1);       /* NR's newest change */
 ByteAddressBuffer tracker : register(t2);      /* where this frame's surfaces were on its frame */
 ByteAddressBuffer old_change : register(t3);   /* the change before it, while it fades out */
 ByteAddressBuffer old_tracker : register(t4);
+ByteAddressBuffer depth_now : register(t5);    /* this frame's DEPTH, with FLAG_DEPTH */
 RWByteAddressBuffer matched : register(u0);
 
 /* A change is NR's answer minus what NR was given, both in the proxy's linear light
  * (src/ref/nr_display.py `encode`), sixteen bytes a pixel of the frame NR was given: the
  * change in three halves, and what NR was given there as `likeness` measures it in three
- * more. */
+ * more. The edit cache's (CAPTURE) is the log ratio of the two instead, with the frame's
+ * depth, as DEPTH measures it, in the half after the change. */
 struct texel
 {
     float3 change;
     float3 given;
+    float depth;
 };
 
 texel change_texel(ByteAddressBuffer changes, int2 i)
@@ -362,6 +400,7 @@ texel change_texel(ByteAddressBuffer changes, int2 i)
     texel t;
     t.change = float3(f16tof32(d.x), f16tof32(d.x >> 16), f16tof32(d.y));
     t.given = float3(f16tof32(d.z), f16tof32(d.z >> 16), f16tof32(d.w));
+    t.depth = f16tof32(d.y >> 16);
     return t;
 }
 
@@ -378,6 +417,7 @@ texel change_at(ByteAddressBuffer changes, float2 g)
     texel t;
     t.change = lerp(lerp(a.change, b.change, f.x), lerp(d.change, e.change, f.x), f.y);
     t.given = lerp(lerp(a.given, b.given, f.x), lerp(d.given, e.given, f.x), f.y);
+    t.depth = lerp(lerp(a.depth, b.depth, f.x), lerp(d.depth, e.depth, f.x), f.y);
     return t;
 }
 
@@ -386,9 +426,10 @@ texel change_at(ByteAddressBuffer changes, float2 g)
  * this frame round here — inside the range of the pixel's 3x3 neighbourhood, as temporal
  * upscalers clamp their history, so a jittered edge still matches itself. A surface come into
  * view, one uncovered behind something that moved, a look the vectors do not carry: not
- * trusted, and APPLY fills it. */
+ * trusted, and APPLY fills it. With FLAG_DEPTH, nor where the depth found there lies further
+ * from this frame's than `tolerance`, in log2 of depth: another surface at the same colour. */
 float4 trusted(ByteAddressBuffer changes, ByteAddressBuffer places, float2 offset, int2 p,
-               float3 low, float3 high)
+               float3 low, float3 high, float tolerance)
 {
     float4 found = float4(0, 0, 0, 0);
     if (!warp) {
@@ -401,6 +442,9 @@ float4 trusted(ByteAddressBuffer changes, ByteAddressBuffer places, float2 offse
             float3 outside3 = max(low - d.given, d.given - high);
             float outside = max(outside3.r, max(outside3.g, outside3.b));
             found = float4(d.change, saturate((match_to - outside) / (match_to - match_from)));
+            if ((flags & FLAG_DEPTH)
+                && !(abs(d.depth - asfloat(depth_now.Load((p.y * width + p.x) * 4))) <= tolerance))
+                found.a = 0;
         }
     }
     return found;
@@ -422,13 +466,17 @@ void main(uint3 id : SV_DispatchThreadID)
             low = min(low, l);
             high = max(high, l);
         }
-    float4 now = trusted(change, tracker, shift, int2(id.xy), low, high);
+    float4 now = trusted(change, tracker, shift, int2(id.xy), low, high, depth_tolerance);
     float3 sum = now.rgb * now.a;
     float trust = now.a;
     if (fading) {  /* the change before, giving way over the frames until the next arrives */
-        float4 then = trusted(old_change, old_tracker, old_shift, int2(id.xy), low, high);
-        sum = lerp(then.rgb * then.a, sum, fade);
-        trust = lerp(then.a, trust, fade);
+        float4 then = trusted(old_change, old_tracker, old_shift, int2(id.xy), low, high,
+                              old_depth_tolerance);
+        /* FLAG_TRUSTED: where the older change is not trusted there is nothing to fade from,
+         * and the newest comes in whole (playback.py `--fade-mode trusted`) */
+        float a = (flags & FLAG_TRUSTED) ? fade + (1 - fade) * (1 - then.a) : fade;
+        sum = lerp(then.rgb * then.a, sum, a);
+        trust = lerp(then.a, trust, a);
     }
     uint at = (id.y * width + id.x) * MATCHED;
     matched.Store4(at, asuint(float4(sum, trust)));
@@ -519,7 +567,8 @@ float3 fill(int2 p, float3 own)
 }
 
 /* Where the proxy's knee compressed a pixel the change is scaled back up by the same ratio
- * (`knee_gain`). */
+ * (`knee_gain`). With FLAG_RATIO the change is a log ratio, laid on this frame's own proxy
+ * value, and what that moves the proxy by goes back the same way. */
 [RootSignature(RS)]
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -533,6 +582,10 @@ void main(uint3 id : SV_DispatchThreadID)
     float3 delta = m.rgb;
     if (m.a < 1)
         delta += (1 - m.a) * fill(int2(id.xy), asfloat(matched.Load3(here + 16)));
+    if (flags & FLAG_RATIO) {
+        float3 p = saturate(proxy_of(c.rgb));
+        delta = (p + RATIO_EPS) * exp2(delta) - RATIO_EPS - p;
+    }
     c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
     store_texel(at, c);
 }
@@ -570,7 +623,7 @@ void main(uint3 id : SV_DispatchThreadID)
 
 #endif
 
-#ifdef COMPOSE
+#if defined(COMPOSE) || defined(CAPTURE)
 
 ByteAddressBuffer given : register(t1);        /* the frame NR was given, R8G8B8A8 */
 ByteAddressBuffer answer : register(t2);       /* its answer, R8G8B8A8, and the daemon's stamp after it */
@@ -584,6 +637,45 @@ float3 linear_of(uint rgba)
                   asfloat(linear8.Load(((rgba >> 16) & 0xFF) * 4)));
 }
 
+/* Whether the stamp after the answer names this frame: the daemon answered it. */
+bool answered()
+{
+    uint4 stamp = answer.Load4(width * height * 4);
+    return stamp.x == STAMP_MAGIC && stamp.y == frame.x && stamp.z == frame.y;
+}
+
+#endif
+
+#ifdef CAPTURE
+
+ByteAddressBuffer depth_now : register(t5);    /* this frame's DEPTH, with OPTION_DEPTH */
+RWByteAddressBuffer change : register(u0);     /* the change MATCH reads, sixteen bytes a pixel */
+
+/* A refresh's edit, for the frames NR does not answer: the log ratio of NR's answer to what it
+ * was given, in the proxy's linear light, each over RATIO_EPS so black has one; the frame's
+ * depth; and what NR was given in `likeness`, the root of its proxy value (MATCH's layout).
+ * Where the daemon did not answer the frame, no edit: the frames after go on without NR until
+ * the next refresh, as this one does. */
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= width || id.y >= height)
+        return;
+    uint p = (id.y * width + id.x) * 4;
+    float3 g = linear_of(given.Load(p));
+    float3 ratio = answered() ? log2((linear_of(answer.Load(p)) + RATIO_EPS) / (g + RATIO_EPS)) : 0;
+    float depth = (options & OPTION_DEPTH) ? asfloat(depth_now.Load(p)) : 0;
+    float3 alike = sqrt(g);
+    change.Store4(p * 4, uint4(f32tof16(ratio.r) | (f32tof16(ratio.g) << 16),
+                               f32tof16(ratio.b) | (f32tof16(depth) << 16),
+                               f32tof16(alike.r) | (f32tof16(alike.g) << 16), f32tof16(alike.b)));
+}
+
+#endif
+
+#ifdef COMPOSE
+
 /* The colour XeSS gets: the game's, with NR's change to this very frame added as APPLY adds a
  * carried one, when the stamp after the answer names this frame; otherwise the game's as it
  * was, the daemon having declined it or not come. */
@@ -595,8 +687,7 @@ void main(uint3 id : SV_DispatchThreadID)
         return;
     uint at = id.y * pitch + id.x * (kind == 0 ? 8 : 4);
     float4 c = load_texel(at);
-    uint4 stamp = answer.Load4(width * height * 4);
-    if (stamp.x == STAMP_MAGIC && stamp.y == frame.x && stamp.z == frame.y && strength > 0) {
+    if (answered() && strength > 0) {
         uint p = (id.y * width + id.x) * 4;
         float3 delta = linear_of(answer.Load(p)) - linear_of(given.Load(p));
         c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
@@ -608,26 +699,72 @@ void main(uint3 id : SV_DispatchThreadID)
 
 #ifdef MOTION
 
-ByteAddressBuffer motion : register(t0);       /* this frame's vectors, R16G16_FLOAT */
+ByteAddressBuffer motion : register(t0);       /* this frame's vectors, R16G16_FLOAT; the tracker with OPTION_TRACKED */
 RWByteAddressBuffer shared_input : register(u0);   /* the frame NR is given, then the offsets */
 
 /* For each pixel of the frame NR is given, the offset in its pixels to where its surface was
  * on the frame NR was given before: TRACK's one step from a fresh tracker, the vector at the
  * unjittered position and the two frames' jitter. NaN where that was off screen, as
  * nr_xess.c `measure_motion` hands the daemon (nr_gpu_wire.h, "Motion"); the daemon tells a
- * surface uncovered behind something that moved by the picture, as its history does. */
+ * surface uncovered behind something that moved by the picture, as its history does. With
+ * OPTION_TRACKED the frames between go uncounted by NR (the edit cache's), and the offset is
+ * the tracker's, chained since that frame; UNKNOWN reads as off screen. */
 [RootSignature(RS)]
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= width || id.y >= height)
         return;
-    float2 m = vector_in(motion, float2(id.xy) - jitter);
+    float2 m = (options & OPTION_TRACKED) ? asfloat(motion.Load2((id.y * width + id.x) * 8))
+                                          : vector_in(motion, float2(id.xy) - jitter);
     float2 d = m + previous_jitter - jitter;
     float2 g = float2(id.xy) + d;
     bool off = g.x < -0.5 || g.y < -0.5 || g.x > width - 0.5 || g.y > height - 0.5;
     float nan = asfloat(0x7FC00000u);
     shared_input.Store2(offsets + (id.y * width + id.x) * 8, asuint(off ? float2(nan, nan) : d));
+}
+
+#endif
+
+#ifdef DEPTH
+
+ByteAddressBuffer depth_copy : register(t0);   /* the game's depth, plane 0, 32-bit floats */
+ByteAddressBuffer motion : register(t1);       /* this frame's vectors, when `vectors` */
+RWByteAddressBuffer depth_now : register(u0);  /* log2 of a pseudo-linear depth, a float a pixel */
+RWByteAddressBuffer moved : register(u1);      /* the vectors' lengths summed, a float a workgroup */
+
+groupshared float lengths[64];
+
+/* With FLAG_DEPTH, each output pixel's depth where the upscaler read it (the nearest texel, as
+ * MATCH wants one surface's, not two blended), as log2 of 1/d for reversed depth or of 1/(1 - d):
+ * a depth over the near plane either way, so two of them compare by their ratio whatever the
+ * near plane is. And, for the cadence, how far the frame's surfaces moved since the frame before,
+ * the vectors' lengths in output pixels summed over each workgroup; nr_xess.c adds the groups. */
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex, uint3 group : SV_GroupID)
+{
+    float length_here = 0;
+    if (id.x < width && id.y < height) {
+        if (flags & FLAG_DEPTH) {
+            uint2 t = min(uint2((float2(id.xy) + 0.5) * float2(depth_size) / float2(width, height)),
+                          depth_size - 1) + depth_base;
+            float d = asfloat(depth_copy.Load(t.y * depth_pitch + t.x * 4));
+            float z = (flags & FLAG_REVERSED) ? 1 / max(d, 1e-9) : 1 / max(1 - d, 1e-9);
+            depth_now.Store((id.y * width + id.x) * 4, asuint(log2(z)));
+        }
+        if (vectors)
+            length_here = length(vector_in(motion, float2(id.xy) - jitter));
+    }
+    lengths[index] = length_here;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint s = 32; s > 0; s >>= 1) {
+        if (index < s)
+            lengths[index] += lengths[index + s];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (index == 0)
+        moved.Store((group.y * ((width + 7) / 8) + group.x) * 4, asuint(lengths[0]));
 }
 
 #endif

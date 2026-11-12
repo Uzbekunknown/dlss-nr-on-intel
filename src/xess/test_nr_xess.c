@@ -994,11 +994,14 @@ static int run_split(void)
 	ID3D12GraphicsCommandList_SetComputeRootSignature(gpu.list, nr.signature);
 	ID3D12GraphicsCommandList_SetPipelineState(gpu.list, nr.encode_pipeline);
 	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(gpu.list, 0, sizeof k / 4, &k, 0);
-	ID3D12Resource *reads[5] = { picture, nr.srgb_table, picture, picture, picture };
-	for (UINT i = 0; i < 5; i++)
+	/* nr_xess.hlsl's root signature: the constants, t0-t6, u0-u1 */
+	ID3D12Resource *reads[7] = { picture, nr.srgb_table, picture, picture, picture, picture, picture };
+	for (UINT i = 0; i < 7; i++)
 		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(gpu.list, 1 + i,
 			ID3D12Resource_GetGPUVirtualAddress(reads[i]));
-	ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(gpu.list, 6, ID3D12Resource_GetGPUVirtualAddress(out));
+	for (UINT i = 0; i < 2; i++)
+		ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(gpu.list, 8 + i,
+			ID3D12Resource_GetGPUVirtualAddress(out));
 	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, marker, 0, one, 0, 4);
 	nr_split_snapshot *state = nr_split_snapshot_take(gpu.list);
 	if (!state || !nr_split_cut(gpu.list, between_run, between_discard, &b, state, why, sizeof why)) {

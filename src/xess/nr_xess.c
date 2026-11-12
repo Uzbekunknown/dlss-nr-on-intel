@@ -64,6 +64,8 @@
 #include "nr_xess_encode.h"
 #include "nr_xess_motion.h"
 #include "nr_xess_compose.h"
+#include "nr_xess_capture.h"
+#include "nr_xess_depth.h"
 #ifndef NR_XESS_TEST
 #ifndef NR_PROXY_FFX            /* nr_ffx.c builds this file into a DLL of FidelityFX's exports */
 #include "nr_xess_exports.h"
@@ -122,6 +124,7 @@ typedef xess_result_t (*execute_fn)(xess_context_handle_t, ID3D12GraphicsCommand
 typedef xess_result_t (*init_fn)(xess_context_handle_t, const xess_d3d12_init_params_t *);
 typedef xess_result_t (*scale_fn)(xess_context_handle_t, float, float);
 #define XESS_INIT_FLAG_HIGH_RES_MV 1u
+#define XESS_INIT_FLAG_INVERTED_DEPTH 2u
 
 static execute_fn real_execute;
 static init_fn real_init;
@@ -168,6 +171,7 @@ static void say(const char *fmt, ...)
 }
 
 enum { CARRY, BEFORE, AFTER };   /* `mode=`, below */
+#define CACHE_LONGEST 8          /* `cache=`'s longest interval */
 
 static struct {
 	char pipe[256];
@@ -196,7 +200,19 @@ static struct {
 	/* `env=`: the nr-env.txt Install NR wrote into the game's dlss-nr folder, from which this
 	 * starts the daemon when none answers, and whose trigger turns NR on and off. Read once. */
 	char env[MAX_PATH * 3];
-} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER, "" };
+	/* `cache=N`, the edit cache (mode=after only; nr-game edit-cache's DESIGN.md): NR answers
+	 * one execute in up to N and its edit is carried to the others along the game's vectors.
+	 * 0 or 1 is off, the default: NR answers every frame. Read as the game runs. */
+	int cache;
+	/* The camera's speed that shortens the interval, as the mean of the vectors' lengths in
+	 * output pixels a frame: past `cache_fast` NR answers every frame, past `cache_slow` every
+	 * other one at most. */
+	float cache_fast, cache_slow;
+	/* 1 fades a refresh's edit in over the interval, the one before it giving way; 0 takes it
+	 * whole, which shows as a pulse at the refresh. */
+	int cache_fade;
+} config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER, "", 0, 60.0f,
+	     20.0f, 1 };
 
 static volatile LONG record_asked;      /* frames to record, set by the settings, taken by the hook */
 
@@ -251,6 +267,14 @@ static void read_settings(int first)
 			snprintf(config.record_dir, sizeof config.record_dir, "%s", value);
 		else if (!strcmp(line, "env") && first)
 			snprintf(config.env, sizeof config.env, "%s", value);
+		else if (!strcmp(line, "cache"))
+			config.cache = atoi(value);
+		else if (!strcmp(line, "cache_fast"))
+			config.cache_fast = (float)atof(value);
+		else if (!strcmp(line, "cache_slow"))
+			config.cache_slow = (float)atof(value);
+		else if (!strcmp(line, "cache_fade"))
+			config.cache_fade = atoi(value);
 	}
 	if (config.record > 0 && config.record_dir[0]) InterlockedExchange(&record_asked, config.record);
 	fclose(file);
@@ -259,11 +283,15 @@ static void read_settings(int first)
 	if (!(config.strength >= 0)) config.strength = 0;
 	if (!(config.match_from >= 0)) config.match_from = 0;
 	if (!(config.match_to > config.match_from)) config.match_to = config.match_from + 0.01f;
+	if (config.cache < 2) config.cache = 0;
+	if (config.cache > CACHE_LONGEST) config.cache = CACHE_LONGEST;
+	if (!(config.cache_fast > 0)) config.cache_fast = 60;
+	if (!(config.cache_slow >= 0) || config.cache_slow > config.cache_fast) config.cache_slow = config.cache_fast;
 	say("settings: mode %s, enabled %d, white %g, strength %g, warp %d, motion history %d, "
-	    "match %g-%g, sync %d, pipe %s\n",
+	    "match %g-%g, sync %d, pipe %s, cache %d (fast %g, slow %g, fade %d)\n",
 	    config.cut == AFTER ? "after" : config.cut == BEFORE ? "before" : "carry", config.enabled, config.white,
 	    config.strength, config.warp, config.motion_history, config.match_from, config.match_to,
-	    config.sync, config.pipe);
+	    config.sync, config.pipe, config.cache, config.cache_fast, config.cache_slow, config.cache_fade);
 }
 
 /* ---- The daemon, which this starts when none answers, as the layer does in a Vulkan game ---- */
@@ -725,9 +753,21 @@ struct constants {
 	uint32_t cell;
 	uint32_t cells[2];
 	float match_from, match_to;
+	uint32_t flags;                  /* NR_FLAG_*: the edit cache's */
+	float depth_tolerance, old_depth_tolerance;
+	uint32_t depth_pitch;
+	uint32_t depth_base[2], depth_size[2];
 };
 
-_Static_assert(sizeof(struct constants) == 32 * 4, "the root signature takes 32 constants");
+_Static_assert(sizeof(struct constants) == 40 * 4, "the root signature takes 40 constants");
+
+/* nr_xess.hlsl's FLAG_* and OPTION_*, bit for bit. */
+#define NR_FLAG_RATIO 1u
+#define NR_FLAG_DEPTH 2u
+#define NR_FLAG_TRUSTED 4u
+#define NR_FLAG_REVERSED 8u
+#define NR_OPTION_TRACKED 1u
+#define NR_OPTION_DEPTH 2u
 
 static struct {
 	SRWLOCK lock;
@@ -741,6 +781,7 @@ static struct {
 	ID3D12PipelineState *clear_pipeline, *claim_pipeline;
 	ID3D12PipelineState *track_pipeline, *match_pipeline, *reduce_pipeline;
 	ID3D12PipelineState *encode_pipeline, *motion_pipeline, *compose_pipeline;     /* mode=cut */
+	ID3D12PipelineState *capture_pipeline, *depth_pipeline;                         /* the edit cache */
 	ID3D12Resource *srgb_table, *linear_table;   /* `srgb8` for ENCODE and `linear8` for COMPOSE */
 	ID3D12Resource *claims;      /* CLAIM's sixteen bytes a pixel, read by TRACK */
 	ID3D12Resource *matched;     /* MATCH's seven floats a pixel */
@@ -1118,10 +1159,11 @@ static void release_motion(void)
 
 static int build_device(ID3D12Device *device)
 {
-	ID3D12PipelineState **pipelines[9] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
-						&nr.match_pipeline, &nr.reduce_pipeline, &nr.pipeline,
-						&nr.encode_pipeline, &nr.motion_pipeline, &nr.compose_pipeline };
-	for (int i = 0; i < 9; i++)
+	ID3D12PipelineState **pipelines[11] = { &nr.clear_pipeline, &nr.claim_pipeline, &nr.track_pipeline,
+						 &nr.match_pipeline, &nr.reduce_pipeline, &nr.pipeline,
+						 &nr.encode_pipeline, &nr.motion_pipeline, &nr.compose_pipeline,
+						 &nr.capture_pipeline, &nr.depth_pipeline };
+	for (int i = 0; i < 11; i++)
 		if (*pipelines[i]) {
 			ID3D12PipelineState_Release(*pipelines[i]);
 			*pipelines[i] = NULL;
@@ -1142,12 +1184,14 @@ static int build_device(ID3D12Device *device)
 		say("the compute passes' root signature was refused\n");
 		return -1;
 	}
-	const void *code[9] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
-				nr_xess_reduce, nr_xess_apply, nr_xess_encode, nr_xess_motion, nr_xess_compose };
-	SIZE_T sizes[9] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
-			    sizeof nr_xess_match, sizeof nr_xess_reduce, sizeof nr_xess_apply,
-			    sizeof nr_xess_encode, sizeof nr_xess_motion, sizeof nr_xess_compose };
-	for (int i = 0; i < 9; i++) {
+	const void *code[11] = { nr_xess_clear, nr_xess_claim, nr_xess_track, nr_xess_match,
+				 nr_xess_reduce, nr_xess_apply, nr_xess_encode, nr_xess_motion, nr_xess_compose,
+				 nr_xess_capture, nr_xess_depth };
+	SIZE_T sizes[11] = { sizeof nr_xess_clear, sizeof nr_xess_claim, sizeof nr_xess_track,
+			     sizeof nr_xess_match, sizeof nr_xess_reduce, sizeof nr_xess_apply,
+			     sizeof nr_xess_encode, sizeof nr_xess_motion, sizeof nr_xess_compose,
+			     sizeof nr_xess_capture, sizeof nr_xess_depth };
+	for (int i = 0; i < 11; i++) {
 		D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {
 			.pRootSignature = nr.signature, .CS = { code[i], sizes[i] },
 		};
@@ -1520,19 +1564,29 @@ static int ensure_motion(UINT width, UINT height)
 	return 0;
 }
 
-/* The five buffers a pass reads, t0-t4 in nr_xess.hlsl, and the one it writes, then the
- * pass over an extent in 8x8 groups. A pass that reads fewer is given a readable buffer for
- * each of the rest. */
+/* The seven buffers a pass may read, t0-t6 in nr_xess.hlsl, and the two it may write, u0-u1,
+ * then the pass over an extent in 8x8 groups. A pass that reads or writes fewer is given a
+ * buffer for each of the rest that it never touches. */
+static void bind_all(ID3D12GraphicsCommandList *list, const void *k, UINT count,
+		     ID3D12Resource *const read[7], ID3D12Resource *const written[2], UINT width, UINT height)
+{
+	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(list, 0, count, k, 0);
+	for (UINT i = 0; i < 7; i++)
+		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(list, 1 + i,
+			ID3D12Resource_GetGPUVirtualAddress(read[i]));
+	for (UINT i = 0; i < 2; i++)
+		ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 8 + i,
+			ID3D12Resource_GetGPUVirtualAddress(written[i]));
+	ID3D12GraphicsCommandList_Dispatch(list, (width + 7) / 8, (height + 7) / 8, 1);
+}
+
+/* mode=carry's passes, which read five and write one. */
 static void bind_extent(ID3D12GraphicsCommandList *list, const struct constants *k,
 			ID3D12Resource *const read[5], ID3D12Resource *written, UINT width, UINT height)
 {
-	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(list, 0, sizeof *k / 4, k, 0);
-	for (UINT i = 0; i < 5; i++)
-		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(list, 1 + i,
-			ID3D12Resource_GetGPUVirtualAddress(read[i]));
-	ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 6,
-		ID3D12Resource_GetGPUVirtualAddress(written));
-	ID3D12GraphicsCommandList_Dispatch(list, (width + 7) / 8, (height + 7) / 8, 1);
+	ID3D12Resource *all[7] = { read[0], read[1], read[2], read[3], read[4], read[0], read[0] };
+	ID3D12Resource *out[2] = { written, written };
+	bind_all(list, k, sizeof *k / 4, all, out, width, height);
 }
 
 /* ... over the colour's extent. */
@@ -1999,10 +2053,11 @@ struct cut_constants {
 	float motion_texels[2];
 	float jitter[2];
 	float previous_jitter[2];
-	uint32_t unused[12];
+	uint32_t options;                /* NR_OPTION_* */
+	uint32_t unused[19];
 };
 
-_Static_assert(sizeof(struct cut_constants) == 32 * 4, "the root signature takes 32 constants");
+_Static_assert(sizeof(struct cut_constants) == 40 * 4, "the root signature takes 40 constants");
 
 /* What one frame's cut hands the daemon: its fence, held, since the session may close before
  * the worker gets to it, the frame's value V, the session it belongs to, and the V of the
@@ -2297,12 +2352,15 @@ static int cut_reopen(void)
 	return 0;
 }
 
+static void cache_release(void);
+
 /* A new device or a new colour: the old session goes, and the buffers come again, the shared
  * ones on the game's own device. Rare, so the game waits here. */
 static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMAT format, int kind,
 		       UINT texel)
 {
 	cut_close();
+	cache_release();
 	release_sized();
 	if (device != nr.device && build_device(device) != 0) return -1;
 	if (build_colour(width, height, format, kind, texel) != 0) {
@@ -2330,13 +2388,430 @@ static int cut_rebuild(ID3D12Device *device, UINT width, UINT height, DXGI_FORMA
 static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants *k,
 		     ID3D12Resource *const read[5], ID3D12Resource *written)
 {
-	ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(list, 0, sizeof *k / 4, k, 0);
-	for (UINT i = 0; i < 5; i++)
-		ID3D12GraphicsCommandList_SetComputeRootShaderResourceView(list, 1 + i,
-			ID3D12Resource_GetGPUVirtualAddress(read[i]));
-	ID3D12GraphicsCommandList_SetComputeRootUnorderedAccessView(list, 6,
-		ID3D12Resource_GetGPUVirtualAddress(written));
-	ID3D12GraphicsCommandList_Dispatch(list, (k->width + 7) / 8, (k->height + 7) / 8, 1);
+	ID3D12Resource *all[7] = { read[0], read[1], read[2], read[3], read[4], read[0], read[0] };
+	ID3D12Resource *out[2] = { written, written };
+	bind_all(list, k, sizeof *k / 4, all, out, k->width, k->height);
+}
+
+/* ---- The edit cache (`cache=N`, mode=after): NR on one execute in up to N, its edit carried on ----
+ *
+ * Measured offline on two Hogwarts recordings before it was built (nr-game edit-cache's
+ * DESIGN.md). A refresh is the cut as mode=after makes it, and its continuation also keeps NR's
+ * edit (CAPTURE) as the newest of two changes. The executes between run mode=carry's passes on
+ * the upscaler's output, in the game's own list, with no cut and no wait: the trackers follow the
+ * game's vectors back to each change's frame, MATCH reads the change there and trusts it as far as
+ * colour and depth say it is the same surface, REDUCE and APPLY fill the rest. The change before
+ * the newest fades out over the interval, the refresh frame included. The daemon's history
+ * follows the newest change's tracker across the gap. The interval shortens as the camera speeds
+ * up: DEPTH sums the vectors' lengths, and the CPU reads them a few frames late. Every buffer of
+ * the cache starts and ends each execute, and each half of a cut, in COMMON. */
+
+#define MOVED_SLOTS 4
+
+/* What one execute gives the cache, worked out by after_upscale. */
+struct cache_frame {
+	UINT motion_width, motion_height;    /* the vectors' region */
+	D3D12_RESOURCE_STATES vectors_at, depth_at;
+	ID3D12Resource *depth;               /* the game's depth to copy and read, or NULL */
+	UINT depth_base[2], depth_size[2];   /* the region of it the upscaler reads */
+	int chained;                         /* the execute before this one ran the cache's passes */
+	uint32_t interval;                   /* the longest the newest change may be carried now */
+};
+
+static struct {
+	int ready;                           /* the buffers below are made, for nr.width x nr.height */
+	ID3D12Resource *change[2];           /* CAPTURE's edits, sixteen bytes a pixel */
+	ID3D12Resource *tracker[2][2];       /* each change's tracker: read one, write the other */
+	int current[2];                      /* which of a change's two holds the last frame's */
+	uint64_t born[2];                    /* `upscales` at each change's refresh */
+	int newest, older;                   /* the changes in use, or -1 */
+	uint32_t interval;                   /* the interval the newest was captured for: its fade's length */
+	uint64_t refresh_value;              /* the fence value the newest's frame was handed over at */
+	uint64_t chain;                      /* `upscales` at the last execute that ran the cache's passes */
+	int motion_next, motion_previous;    /* nr.motion's buffer for this frame's vectors; the other the last's */
+	D3D12_RESOURCE_DESC depth_desc;      /* the texture `depth_copy` was made for */
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT depth_footprint;
+	ID3D12Resource *depth_copy, *depth_now;
+	int reversed;                        /* the upscaler's depth is reversed: 1 near, 0 far */
+	ID3D12Resource *moved;               /* DEPTH's sums of the vectors' lengths, a float a workgroup */
+	ID3D12Resource *moved_readback[MOVED_SLOTS];
+	uint32_t moved_sequence[MOVED_SLOTS];   /* the marker each slot's copy is done at; 0 once read */
+	uint32_t moved_next;
+	UINT groups;                         /* DEPTH's workgroups */
+	float speed;                         /* the last mean motion read, output pixels a frame; -1 none */
+	uint64_t refreshes, carried;         /* for the log */
+	ULONGLONG said;
+} cache = { .newest = -1, .older = -1, .speed = -1 };
+
+static uint64_t upscales;                /* the upscaler's executes, NR or not: the trackers' chain */
+
+/* The cache's buffers go, once the GPU is done with the executes that used them. */
+static void cache_release(void)
+{
+	if (nr.marker && !wait_for(nr.sequence, 1000))
+		say("the GPU had not finished with the edit cache's buffers after 1 s; going on\n");
+	for (int c = 0; c < 2; c++) {
+		drop(&cache.change[c]);
+		drop(&cache.tracker[c][0]);
+		drop(&cache.tracker[c][1]);
+	}
+	drop(&cache.depth_copy);
+	drop(&cache.depth_now);
+	drop(&cache.moved);
+	for (int s = 0; s < MOVED_SLOTS; s++) {
+		drop(&cache.moved_readback[s]);
+		cache.moved_sequence[s] = 0;
+	}
+	memset(&cache.depth_desc, 0, sizeof cache.depth_desc);
+	cache.ready = 0;
+	cache.newest = cache.older = -1;
+	cache.speed = -1;
+}
+
+/* The cache's buffers for the colour the cut has, the first time the cache is wanted for it. */
+static int cache_build(void)
+{
+	UINT64 pixels = (UINT64)nr.width * nr.height;
+	const D3D12_RESOURCE_FLAGS uav = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON;
+	nr.cells_width = (nr.width + CELL - 1) / CELL;
+	nr.cells_height = (nr.height + CELL - 1) / CELL;
+	cache.groups = ((nr.width + 7) / 8) * ((nr.height + 7) / 8);
+	int ok = 1;
+	for (int c = 0; c < 2; c++) {
+		ok &= (cache.change[c] = make_buffer(D3D12_HEAP_TYPE_DEFAULT, pixels * 16, uav, common)) != NULL;
+		for (int t = 0; t < 2; t++)
+			ok &= (cache.tracker[c][t] = make_buffer(D3D12_HEAP_TYPE_DEFAULT, pixels * 8, uav, common)) != NULL;
+	}
+	if (!nr.claims) nr.claims = make_buffer(D3D12_HEAP_TYPE_DEFAULT, pixels * 16, uav, common);
+	if (!nr.matched) nr.matched = make_buffer(D3D12_HEAP_TYPE_DEFAULT, pixels * 28, uav, common);
+	if (!nr.sums)
+		nr.sums = make_buffer(D3D12_HEAP_TYPE_DEFAULT, (UINT64)nr.cells_width * nr.cells_height * 36, uav, common);
+	cache.depth_now = make_buffer(D3D12_HEAP_TYPE_DEFAULT, pixels * 4, uav, common);
+	cache.moved = make_buffer(D3D12_HEAP_TYPE_DEFAULT, (UINT64)cache.groups * 4, uav, common);
+	ok &= nr.claims && nr.matched && nr.sums && cache.depth_now && cache.moved;
+	for (int s = 0; s < MOVED_SLOTS; s++)
+		ok &= (cache.moved_readback[s] = make_buffer(D3D12_HEAP_TYPE_READBACK, (UINT64)cache.groups * 4,
+							     D3D12_RESOURCE_FLAG_NONE,
+							     D3D12_RESOURCE_STATE_COPY_DEST)) != NULL;
+	if (!ok) {
+		say("could not make the edit cache's buffers for %ux%u; NR answers every frame\n", nr.width, nr.height);
+		cache_release();
+		return -1;
+	}
+	cache.ready = 1;
+	cache.newest = cache.older = -1;
+	say("the edit cache: buffers for %ux%u, %.0f MB\n", nr.width, nr.height,
+	    (double)pixels * (2 * 16 + 4 * 8 + 16 + 28 + 4) / 1e6);
+	return 0;
+}
+
+/* A buffer for the game's depth, its plane 0 whole (a depth-stencil subresource is copied only
+ * whole), made again when the texture changes. 0 when the depth cannot be read here (a plane other
+ * than 32-bit floats, more than one sample): the cache then checks the colour alone. */
+static int ensure_depth(ID3D12Resource *depth)
+{
+	static DXGI_FORMAT refused = DXGI_FORMAT_UNKNOWN;
+	D3D12_RESOURCE_DESC desc;
+	ID3D12Resource_GetDesc(depth, &desc);
+	if (cache.depth_copy && desc.Width == cache.depth_desc.Width && desc.Height == cache.depth_desc.Height
+	    && desc.Format == cache.depth_desc.Format)
+		return 1;
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+	UINT rows;
+	UINT64 row_bytes, bytes;
+	ID3D12Device_GetCopyableFootprints(nr.device, &desc, 0, 1, 0, &footprint, &rows, &row_bytes, &bytes);
+	DXGI_FORMAT plane = footprint.Footprint.Format;
+	if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count != 1
+	    || (plane != DXGI_FORMAT_R32_TYPELESS && plane != DXGI_FORMAT_R32_FLOAT && plane != DXGI_FORMAT_D32_FLOAT)) {
+		if (refused != desc.Format) {
+			refused = desc.Format;
+			say("the edit cache does not read a depth of format %d (its plane %d, %u samples): it checks "
+			    "the colour alone\n", desc.Format, plane, desc.SampleDesc.Count);
+		}
+		return 0;
+	}
+	if (cache.depth_copy && nr.marker && !wait_for(nr.sequence, 1000))
+		say("the GPU had not finished with the old depth's copy after 1 s; going on\n");
+	drop(&cache.depth_copy);
+	memset(&cache.depth_desc, 0, sizeof cache.depth_desc);
+	if (!(cache.depth_copy = make_buffer(D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_NONE,
+					     D3D12_RESOURCE_STATE_COMMON)))
+		return 0;
+	cache.depth_desc = desc;
+	cache.depth_footprint = footprint;
+	say("the edit cache reads the depth: %llux%u format %d, its plane copied as format %d, %s\n",
+	    desc.Width, desc.Height, desc.Format, plane, cache.reversed ? "reversed" : "forward");
+	return 1;
+}
+
+/* The newest of DEPTH's sums the GPU has finished copying, as the mean motion of a frame. */
+static void cache_read_speed(void)
+{
+	uint32_t done = completed();
+	int best = -1;
+	for (int s = 0; s < MOVED_SLOTS; s++)
+		if (cache.moved_sequence[s] && cache.moved_sequence[s] <= done
+		    && (best < 0 || cache.moved_sequence[s] > cache.moved_sequence[best]))
+			best = s;
+	if (best < 0) return;
+	float *sums = NULL;
+	D3D12_RANGE range = { 0, (SIZE_T)cache.groups * 4 }, none = { 0, 0 };
+	if (SUCCEEDED(ID3D12Resource_Map(cache.moved_readback[best], 0, &range, (void **)&sums))) {
+		double total = 0;
+		for (UINT g = 0; g < cache.groups; g++) total += sums[g];
+		ID3D12Resource_Unmap(cache.moved_readback[best], 0, &none);
+		cache.speed = (float)(total / ((double)nr.width * nr.height));
+	}
+	uint32_t read = cache.moved_sequence[best];
+	for (int s = 0; s < MOVED_SLOTS; s++)
+		if (cache.moved_sequence[s] <= read) cache.moved_sequence[s] = 0;
+}
+
+/* How far a change's depth may lie from this frame's, in log2 of depth: 5 % a frame of its age,
+ * as playback.py measured it. */
+static float depth_tolerance(uint64_t age)
+{
+	return log2f(1 + 0.05f * (float)(age > 1 ? age : 1));
+}
+
+/* The carry passes' constants for this frame: the output has no jitter. */
+static struct constants cache_constants(const xess_d3d12_execute_params_t *p, const struct cache_frame *f)
+{
+	float white = config.white;
+	if (p->exposureScale > 0) white /= p->exposureScale;
+	struct constants k = {
+		.width = nr.width, .height = nr.height, .pitch = nr.footprint.Footprint.RowPitch,
+		.kind = (uint32_t)nr.kind, .white = white, .strength = config.strength,
+		.change_pitch = nr.width * 16, .warp = 1,
+		.motion_pitch = nr.motion_footprint.Footprint.RowPitch,
+		.motion_size = { f->motion_width, f->motion_height },
+		.motion_scale = { xess.velocity[0] * nr.width / f->motion_width,
+				  xess.velocity[1] * nr.height / f->motion_height },
+		.motion_texels = { (float)f->motion_width / nr.width, (float)f->motion_height / nr.height },
+		.vectors = 1, .cell = CELL, .cells = { nr.cells_width, nr.cells_height },
+		.match_from = config.match_from, .match_to = config.match_to,
+		.flags = NR_FLAG_RATIO | NR_FLAG_TRUSTED | (f->depth ? NR_FLAG_DEPTH : 0u)
+			 | (cache.reversed ? NR_FLAG_REVERSED : 0u),
+		.depth_pitch = cache.depth_footprint.Footprint.RowPitch,
+		.depth_base = { f->depth_base[0], f->depth_base[1] },
+		.depth_size = { f->depth_size[0], f->depth_size[1] },
+	};
+	return k;
+}
+
+/* This frame's vectors and depth, copied beside the frame's own copy: the barriers into the
+ * copies' states, for the caller to flush with its own; the copies; the barriers back, which leave
+ * the copies in NON_PIXEL_SHADER_RESOURCE. */
+static void cache_copy_in(struct batch *b, const xess_d3d12_execute_params_t *p, const struct cache_frame *f)
+{
+	add(b, p->pVelocityTexture, f->vectors_at, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	add(b, nr.motion[cache.motion_next], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+	if (f->depth) {
+		add(b, f->depth, f->depth_at, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		add(b, cache.depth_copy, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+	}
+}
+
+static void cache_copy(ID3D12GraphicsCommandList *l, const xess_d3d12_execute_params_t *p, const struct cache_frame *f)
+{
+	D3D12_BOX region = { p->inputMotionVectorBase.x, p->inputMotionVectorBase.y, 0,
+			     p->inputMotionVectorBase.x + f->motion_width,
+			     p->inputMotionVectorBase.y + f->motion_height, 1 };
+	D3D12_TEXTURE_COPY_LOCATION vectors = { .pResource = p->pVelocityTexture,
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = nr.motion[cache.motion_next],
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.motion_footprint };
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &to, 0, 0, 0, &vectors, &region);
+	if (f->depth) {
+		D3D12_TEXTURE_COPY_LOCATION depth = { .pResource = f->depth,
+			.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+		D3D12_TEXTURE_COPY_LOCATION into = { .pResource = cache.depth_copy,
+			.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = cache.depth_footprint };
+		ID3D12GraphicsCommandList_CopyTextureRegion(l, &into, 0, 0, 0, &depth, NULL);
+	}
+}
+
+static void cache_copy_out(struct batch *b, const xess_d3d12_execute_params_t *p, const struct cache_frame *f)
+{
+	const D3D12_RESOURCE_STATES read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	add(b, p->pVelocityTexture, D3D12_RESOURCE_STATE_COPY_SOURCE, f->vectors_at);
+	add(b, nr.motion[cache.motion_next], D3D12_RESOURCE_STATE_COPY_DEST, read);
+	if (cache.motion_previous) add(b, nr.motion[1 - cache.motion_next], D3D12_RESOURCE_STATE_COMMON, read);
+	if (f->depth) {
+		add(b, f->depth, D3D12_RESOURCE_STATE_COPY_SOURCE, f->depth_at);
+		add(b, cache.depth_copy, D3D12_RESOURCE_STATE_COPY_DEST, read);
+	}
+}
+
+/* The changes a frame follows: 1 the newest, 2 the older. */
+static int cache_tracked(int which, int out[2])
+{
+	int count = 0;
+	if ((which & 1) && cache.newest >= 0) out[count++] = cache.newest;
+	if ((which & 2) && cache.older >= 0) out[count++] = cache.older;
+	return count;
+}
+
+/* DEPTH, then CLEAR, CLAIM and TRACK for the changes followed, on this frame's copies. Leaves both
+ * trackers of each followed change, the depth and the claims in NON_PIXEL_SHADER_RESOURCE, and
+ * `moved` in COPY_SOURCE, for cache_done to put back. */
+static void cache_track(ID3D12GraphicsCommandList *l, struct constants k, int which)
+{
+	struct batch b = { .count = 0 };
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
+		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+	ID3D12Resource *now = nr.motion[cache.motion_next];
+	ID3D12Resource *before = cache.motion_previous ? nr.motion[1 - cache.motion_next] : now;
+	int changes[2], count = cache_tracked(which, changes);
+	add(&b, cache.depth_now, common, write);
+	add(&b, cache.moved, common, write);
+	add(&b, nr.claims, common, write);
+	for (int i = 0; i < count; i++) {
+		int c = changes[i];
+		add(&b, cache.tracker[c][cache.current[c]], common, read);
+		add(&b, cache.tracker[c][1 - cache.current[c]], common, write);
+	}
+	flush(l, &b);
+	ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+	ID3D12Resource *depth_read[7] = { k.flags & NR_FLAG_DEPTH ? cache.depth_copy : now, now, now, now, now, now, now };
+	ID3D12Resource *depth_write[2] = { cache.depth_now, cache.moved };
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.depth_pipeline);
+	bind_all(l, &k, sizeof k / 4, depth_read, depth_write, k.width, k.height);
+	if (count) {
+		/* CLEAR, then CLAIM: which surfaces came from each of the last frame's pixels */
+		k.vectors = 1u | (cache.motion_previous ? 2u : 0u);
+		ID3D12Resource *vectors[5] = { now, now, now, now, now };
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.clear_pipeline);
+		bind(l, &k, vectors, nr.claims);
+		D3D12_RESOURCE_BARRIER cleared = { .Type = D3D12_RESOURCE_BARRIER_TYPE_UAV,
+						   .UAV = { .pResource = nr.claims } };
+		ID3D12GraphicsCommandList_ResourceBarrier(l, 1, &cleared);
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.claim_pipeline);
+		bind(l, &k, vectors, nr.claims);
+		add(&b, nr.claims, write, read);
+		flush(l, &b);
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.track_pipeline);
+		for (int i = 0; i < count; i++) {
+			int c = changes[i];
+			ID3D12Resource *read_by[5] = { now, cache.tracker[c][cache.current[c]], nr.claims, before, now };
+			bind(l, &k, read_by, cache.tracker[c][1 - cache.current[c]]);
+		}
+		for (int i = 0; i < count; i++) {
+			int c = changes[i];
+			add(&b, cache.tracker[c][1 - cache.current[c]], write, read);
+			cache.current[c] ^= 1;
+		}
+	} else {
+		add(&b, nr.claims, write, read);
+	}
+	add(&b, cache.depth_now, write, read);
+	add(&b, cache.moved, write, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	flush(l, &b);
+}
+
+/* MATCH, REDUCE and APPLY: the newest change, and the older one giving way to it, `fade` of the
+ * newest, laid on this frame's copy in nr.staging (in NON_PIXEL_SHADER_RESOURCE, as are the vectors,
+ * the depth and each change's current tracker), into nr.output, left in COPY_SOURCE. `older` is -1
+ * when nothing fades. */
+static void cache_apply(ID3D12GraphicsCommandList *l, struct constants k, int newest, int older, float fade)
+{
+	struct batch b = { .count = 0 };
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
+		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+		source = D3D12_RESOURCE_STATE_COPY_SOURCE;
+	ID3D12Resource *now = nr.motion[cache.motion_next];
+	int fading = older >= 0;
+	add(&b, cache.change[newest], common, read);
+	if (fading) add(&b, cache.change[older], common, read);
+	add(&b, nr.matched, common, write);
+	add(&b, nr.sums, common, write);
+	add(&b, nr.output, common, write);
+	flush(l, &b);
+	k.vectors = 1;
+	k.fading = (uint32_t)fading;
+	k.fade = fading ? fade : 1;
+	k.depth_tolerance = depth_tolerance(upscales - cache.born[newest]);
+	k.old_depth_tolerance = fading ? depth_tolerance(upscales - cache.born[older]) : k.depth_tolerance;
+	ID3D12Resource *matching[7] = {
+		nr.staging, cache.change[newest], cache.tracker[newest][cache.current[newest]],
+		fading ? cache.change[older] : cache.change[newest],
+		fading ? cache.tracker[older][cache.current[older]] : nr.staging,
+		cache.depth_now, nr.staging,
+	};
+	ID3D12Resource *matched[2] = { nr.matched, nr.matched };
+	ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.match_pipeline);
+	bind_all(l, &k, sizeof k / 4, matching, matched, k.width, k.height);
+	add(&b, nr.matched, write, read);
+	flush(l, &b);
+	ID3D12Resource *reducing[5] = { nr.matched, now, nr.matched, nr.matched, nr.matched };
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.reduce_pipeline);
+	bind_extent(l, &k, reducing, nr.sums, nr.cells_width, nr.cells_height);
+	add(&b, nr.sums, write, read);
+	flush(l, &b);
+	ID3D12Resource *applying[5] = { nr.staging, nr.matched, nr.sums, now, nr.staging };
+	ID3D12GraphicsCommandList_SetPipelineState(l, nr.pipeline);
+	bind(l, &k, applying, nr.output);
+	add(&b, nr.output, write, source);
+	add(&b, nr.matched, read, common);
+	add(&b, nr.sums, read, common);
+	add(&b, cache.change[newest], read, common);
+	if (fading) add(&b, cache.change[older], read, common);
+	flush(l, &b);
+}
+
+/* What cache_track left readable back to COMMON; DEPTH's sums copied for the CPU, and the marker
+ * that says when the GPU is done with them. */
+static void cache_done(ID3D12GraphicsCommandList *l, int which, int depth)
+{
+	struct batch b = { .count = 0 };
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
+		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+	int changes[2], count = cache_tracked(which, changes);
+	add(&b, nr.motion[cache.motion_next], read, common);
+	if (cache.motion_previous) add(&b, nr.motion[1 - cache.motion_next], read, common);
+	if (depth) add(&b, cache.depth_copy, read, common);
+	add(&b, cache.depth_now, read, common);
+	add(&b, nr.claims, read, common);
+	for (int i = 0; i < count; i++) {
+		add(&b, cache.tracker[changes[i]][0], read, common);
+		add(&b, cache.tracker[changes[i]][1], read, common);
+	}
+	flush(l, &b);
+	uint32_t slot = cache.moved_next++ % MOVED_SLOTS;
+	ID3D12GraphicsCommandList_CopyBufferRegion(l, cache.moved_readback[slot], 0, cache.moved, 0,
+						   (UINT64)cache.groups * 4);
+	add(&b, cache.moved, D3D12_RESOURCE_STATE_COPY_SOURCE, common);
+	flush(l, &b);
+	ID3D12GraphicsCommandList2 *list2 = NULL;
+	if (SUCCEEDED(ID3D12GraphicsCommandList_QueryInterface(l, &IID_ID3D12GraphicsCommandList2, (void **)&list2))) {
+		D3D12_WRITEBUFFERIMMEDIATE_PARAMETER mark = { ID3D12Resource_GetGPUVirtualAddress(nr.marker),
+							       ++nr.sequence };
+		D3D12_WRITEBUFFERIMMEDIATE_MODE mode = D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_OUT;
+		ID3D12GraphicsCommandList2_WriteBufferImmediate(list2, 1, &mark, &mode);
+		ID3D12GraphicsCommandList2_Release(list2);
+		cache.moved_sequence[slot] = nr.sequence;
+	}
+}
+
+/* The frame done: the next one's vectors go to the other buffer, and the log hears now and then. */
+static void cache_next(int refresh)
+{
+	cache.motion_next ^= 1;
+	cache.motion_previous = 1;
+	cache.chain = upscales;
+	if (refresh) cache.refreshes++;
+	else cache.carried++;
+	ULONGLONG now = GetTickCount64();
+	if (!cache.said) cache.said = now;
+	if (now - cache.said >= 5000) {
+		say("edit cache: %llu refreshes and %llu carried frames in %.1f s; the camera at %.1f px a frame\n",
+		    (unsigned long long)cache.refreshes, (unsigned long long)cache.carried, (now - cache.said) / 1000.0,
+		    cache.speed);
+		cache.refreshes = cache.carried = 0;
+		cache.said = now;
+	}
 }
 
 /* Cuts the game's list at this execute: before the cut, the frame NR is given; after it, NR's
@@ -2348,9 +2823,14 @@ static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants
  * end each half in the state the call found them in: `frame_at` for the frame and `vectors_at`
  * for the motion vectors, which for XeSS are NON_PIXEL_SHADER_RESOURCE for both inputs and
  * UNORDERED_ACCESS for the output, and for FSR 3.1 whatever the game said (nr_ffx.c). Our
- * buffers and the shared ones start and end each half in COMMON, which the daemon's side needs. */
+ * buffers and the shared ones start and end each half in COMMON, which the daemon's side needs.
+ * With `f`, a refresh of the edit cache (mode=after): the first half also follows the newest
+ * change's tracker to this frame and hands the daemon its offsets, and the continuation keeps NR's
+ * edit as the newest change and, while the one before it fades out, lays the two on the frame
+ * through MATCH, REDUCE and APPLY instead of COMPOSE. */
 static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p,
-				  int after, D3D12_RESOURCE_STATES frame_at, D3D12_RESOURCE_STATES vectors_at)
+				  int after, D3D12_RESOURCE_STATES frame_at, D3D12_RESOURCE_STATES vectors_at,
+				  struct cache_frame *f)
 {
 	uint64_t call = ++cut.calls;   /* offsets lead back only to the execute before this one */
 	ID3D12Resource *frame = after ? p->pOutputTexture : p->pColorTexture;
@@ -2419,6 +2899,21 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		cut_said("the command list's state is not known");
 		return NULL;
 	}
+	/* The edit cache's buffers for this colour, the vectors' and the depth's; without them this
+	 * is a plain cut, and the cache starts over at the next refresh. */
+	if (f && after) {
+		UINT had_width = nr.motion_width, had_height = nr.motion_height;
+		if ((!cache.ready && cache_build() != 0) || ensure_motion(f->motion_width, f->motion_height) != 0) {
+			f = NULL;
+		} else if (had_width != nr.motion_width || had_height != nr.motion_height) {
+			cache.newest = cache.older = -1;   /* the vectors' buffers are new: nothing to follow */
+			cache.motion_previous = 0;
+		}
+		if (f && f->depth && !ensure_depth(f->depth)) f->depth = NULL;
+	} else {
+		f = NULL;
+	}
+	if (!f) cache.newest = cache.older = -1;
 	/* XeSS multiplies the colour by the exposure; its output is taken to be in the colour's
 	 * own scale, as other upscalers' is (Hogwarts' exposure is 1, so this is untried). */
 	float white = config.white;
@@ -2427,11 +2922,20 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	float jitter[2] = { after ? 0 : p->jitterOffsetX * xess.jitter[0], after ? 0 : p->jitterOffsetY * xess.jitter[1] };
 	/* Where each pixel's surface was on the frame NR was given before, for the daemon's
 	 * history: only when that frame came from the execute before this one, and the game's
-	 * vectors, and its own history, say where. */
+	 * vectors, and its own history, say where. With the cache, the frame NR was given before is
+	 * the newest change's, and its tracker says where, when every execute since followed it. */
 	UINT motion_width = 0, motion_height = 0;
-	int follow = config.motion_history && cut.last && cut.last_call == call - 1 && !p->resetHistory
-		     && motion_region(p, render_width, render_height, &motion_width, &motion_height)
-		     && ensure_motion(motion_width, motion_height) == 0;
+	int follow;
+	if (f) {
+		motion_width = f->motion_width;
+		motion_height = f->motion_height;
+		follow = config.motion_history && cut.last && cache.newest >= 0 && cut.last == cache.refresh_value
+			 && !p->resetHistory;
+	} else {
+		follow = config.motion_history && cut.last && cut.last_call == call - 1 && !p->resetHistory
+			 && motion_region(p, render_width, render_height, &motion_width, &motion_height)
+			 && ensure_motion(motion_width, motion_height) == 0;
+	}
 	AcquireSRWLockExclusive(&cut.lock);
 	uint64_t value = nr_gpu_d3d12_next(&cut.gpu);
 	ReleaseSRWLockExclusive(&cut.lock);
@@ -2465,7 +2969,9 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	 * in the same buffer, from a copy of the vectors, the offsets when they are to be followed. */
 	add(&b, frame, at, source);
 	add(&b, nr.staging, common, dest);
-	if (follow) {
+	if (f) {
+		cache_copy_in(&b, p, f);
+	} else if (follow) {
 		add(&b, p->pVelocityTexture, vectors_at, source);
 		add(&b, nr.motion[0], common, dest);
 	}
@@ -2476,7 +2982,10 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	D3D12_TEXTURE_COPY_LOCATION into = { .pResource = nr.staging,
 		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
 	ID3D12GraphicsCommandList_CopyTextureRegion(l, &into, 0, 0, 0, &colour, &box);
-	if (follow) {
+	if (f) {
+		cache_copy(l, p, f);
+		cache_copy_out(&b, p, f);
+	} else if (follow) {
 		D3D12_BOX region = { p->inputMotionVectorBase.x, p->inputMotionVectorBase.y, 0,
 				     p->inputMotionVectorBase.x + motion_width,
 				     p->inputMotionVectorBase.y + motion_height, 1 };
@@ -2496,15 +3005,27 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	ID3D12GraphicsCommandList_SetPipelineState(l, nr.encode_pipeline);
 	ID3D12Resource *encoding[5] = { nr.staging, nr.srgb_table, nr.staging, nr.staging, nr.staging };
 	bind_cut(l, &k, encoding, cut.gpu.input);
-	if (follow) {   /* the offsets lie after the frame ENCODE writes, so no barrier between */
+	if (f) {
+		/* the newest change's tracker to this frame, and the depth; then the tracker's offsets
+		 * for the daemon, which lie after the frame ENCODE writes, so no barrier between */
+		cache_track(l, cache_constants(p, f), 1);
+		if (follow) {
+			k.options = NR_OPTION_TRACKED;
+			ID3D12Resource *t = cache.tracker[cache.newest][cache.current[cache.newest]];
+			ID3D12Resource *moving[5] = { t, t, t, t, t };
+			ID3D12GraphicsCommandList_SetPipelineState(l, nr.motion_pipeline);
+			bind_cut(l, &k, moving, cut.gpu.input);
+		}
+	} else if (follow) {   /* the offsets lie after the frame ENCODE writes, so no barrier between */
 		ID3D12GraphicsCommandList_SetPipelineState(l, nr.motion_pipeline);
 		ID3D12Resource *moving[5] = { nr.motion[0], nr.motion[0], nr.motion[0], nr.motion[0], nr.motion[0] };
 		bind_cut(l, &k, moving, cut.gpu.input);
 	}
 	add(&b, cut.gpu.input, write, common);
 	add(&b, nr.staging, read, common);
-	if (follow) add(&b, nr.motion[0], read, common);
+	if (!f && follow) add(&b, nr.motion[0], read, common);
 	flush(l, &b);
+	if (f) cache_done(l, 1, f->depth != NULL);
 
 	struct handover *h = malloc(sizeof *h);
 	if (!h) {
@@ -2538,16 +3059,70 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	add(&b, nr.staging, common, read);
 	add(&b, cut.gpu.input, common, read);
 	add(&b, cut.gpu.output, common, read);
-	add(&b, nr.output, common, write);
-	flush(l, &b);
-	ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
-	ID3D12GraphicsCommandList_SetPipelineState(l, nr.compose_pipeline);
 	ID3D12Resource *composing[5] = { nr.staging, cut.gpu.input, cut.gpu.output, nr.linear_table, nr.staging };
-	bind_cut(l, &k, composing, nr.output);
+	if (f) {
+		/* CAPTURE: this frame's edit becomes the newest change, in the other buffer, and its
+		 * tracker starts afresh, this being its frame */
+		int slot = cache.newest == 0 ? 1 : 0;
+		int older = config.cache_fade && f->interval > 1 ? cache.newest : -1;
+		ID3D12Resource *fresh = cache.tracker[slot][1 - cache.current[slot]];
+		add(&b, cache.depth_now, common, read);
+		add(&b, cache.change[slot], common, write);
+		add(&b, fresh, common, write);
+		flush(l, &b);
+		ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+		k.options = f->depth ? NR_OPTION_DEPTH : 0;
+		ID3D12Resource *capturing[7] = { nr.staging, cut.gpu.input, cut.gpu.output, nr.linear_table,
+						 nr.staging, cache.depth_now, nr.staging };
+		ID3D12Resource *captured[2] = { cache.change[slot], cache.change[slot] };
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.capture_pipeline);
+		bind_all(l, &k, sizeof k / 4, capturing, captured, width, height);
+		struct constants kc = cache_constants(p, f);
+		kc.reset = 1;
+		ID3D12Resource *starting[5] = { nr.staging, nr.staging, nr.staging, nr.staging, nr.staging };
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.track_pipeline);
+		bind(l, &kc, starting, fresh);
+		kc.reset = 0;
+		cache.current[slot] ^= 1;
+		cache.born[slot] = upscales;
+		add(&b, cache.change[slot], write, common);
+		if (older >= 0) {
+			/* the change before it gives way over the interval, from this frame on */
+			ID3D12Resource *motion_now = nr.motion[cache.motion_next];
+			ID3D12Resource *older_tracker = cache.tracker[older][cache.current[older]];
+			add(&b, fresh, write, read);
+			add(&b, older_tracker, common, read);
+			add(&b, motion_now, common, read);
+			flush(l, &b);
+			cache_apply(l, kc, slot, older, 1.0f / (float)f->interval);
+			add(&b, fresh, read, common);
+			add(&b, older_tracker, read, common);
+			add(&b, motion_now, read, common);
+		} else {
+			add(&b, fresh, write, common);
+			add(&b, nr.output, common, write);
+			flush(l, &b);
+			ID3D12GraphicsCommandList_SetPipelineState(l, nr.compose_pipeline);
+			bind_cut(l, &k, composing, nr.output);
+			add(&b, nr.output, write, source);
+		}
+		add(&b, cache.depth_now, read, common);
+		cache.older = older;
+		cache.newest = slot;
+		cache.interval = f->interval;
+		cache.refresh_value = value;
+		cache_next(1);
+	} else {
+		add(&b, nr.output, common, write);
+		flush(l, &b);
+		ID3D12GraphicsCommandList_SetComputeRootSignature(l, nr.signature);
+		ID3D12GraphicsCommandList_SetPipelineState(l, nr.compose_pipeline);
+		bind_cut(l, &k, composing, nr.output);
+		add(&b, nr.output, write, source);
+	}
 	add(&b, nr.staging, read, common);
 	add(&b, cut.gpu.input, read, common);
 	add(&b, cut.gpu.output, read, common);
-	add(&b, nr.output, write, source);
 	/* before XeSS, into the texture XeSS reads instead; after it, back into its output */
 	ID3D12Resource *target = after ? frame : nr.mixed;
 	if (after) add(&b, frame, at, dest);
@@ -2565,6 +3140,146 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	return target;
 }
 
+/* An execute the edit cache carries NR's newest change onto, in the game's own list after the
+ * upscaler's work: the output copied, the trackers followed to it, the changes laid on it, and the
+ * result written back, the list's state as the upscaler left it. 0, with nothing recorded, when it
+ * cannot be: the caller cuts instead. */
+static int record_carry(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p,
+			D3D12_RESOURCE_STATES frame_at, struct cache_frame *f)
+{
+	ID3D12Resource *frame = p->pOutputTexture;
+	xess_2d_t base = p->outputColorBase;
+	D3D12_RESOURCE_DESC desc;
+	ID3D12Resource_GetDesc(frame, &desc);
+	UINT width = xess.output.x ? xess.output.x : (UINT)desc.Width - base.x;
+	UINT height = xess.output.y ? xess.output.y : desc.Height - base.y;
+	ID3D12Device *device = NULL;
+	if (FAILED(ID3D12GraphicsCommandList_GetDevice(list, &IID_ID3D12Device, (void **)&device)))
+		return 0;
+	ID3D12Device_Release(device);
+	/* anything new about the frame or its vectors is the cut's to set up */
+	if (!cache.ready || cache.newest < 0 || device != nr.device || width != nr.width || height != nr.height
+	    || desc.Format != nr.format || (UINT64)base.x + width > desc.Width || (UINT64)base.y + height > desc.Height
+	    || f->motion_width != nr.motion_width || f->motion_height != nr.motion_height)
+		return 0;
+	if (f->depth && !ensure_depth(f->depth)) f->depth = NULL;
+	char why[160];
+	if (!nr_split_prepare(list, why, sizeof why)) return 0;
+	nr_split_snapshot *state = nr_split_snapshot_take(list);
+	if (!state) return 0;
+	++cut.calls;
+	struct constants k = cache_constants(p, f);
+	ID3D12GraphicsCommandList *l = list;
+	struct batch b = { .count = 0 };
+	const D3D12_RESOURCE_STATES common = D3D12_RESOURCE_STATE_COMMON,
+		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST;
+	const D3D12_RESOURCE_STATES at = frame_at;
+
+	/* the output, the vectors and the depth copied */
+	add(&b, frame, at, source);
+	add(&b, nr.staging, common, dest);
+	cache_copy_in(&b, p, f);
+	flush(l, &b);
+	D3D12_BOX box = { base.x, base.y, 0, base.x + width, base.y + height, 1 };
+	D3D12_TEXTURE_COPY_LOCATION colour = { .pResource = frame,
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+	D3D12_TEXTURE_COPY_LOCATION into = { .pResource = nr.staging,
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &into, 0, 0, 0, &colour, &box);
+	cache_copy(l, p, f);
+	add(&b, frame, source, at);
+	add(&b, nr.staging, dest, read);
+	cache_copy_out(&b, p, f);
+	flush(l, &b);
+
+	/* the changes followed to this frame and laid on it: the older one, while it fades, takes
+	 * less of each frame, from (interval - 1) / interval of the refresh's to none */
+	uint32_t since = (uint32_t)(upscales - cache.born[cache.newest]);
+	int fading = cache.older >= 0 && since + 1 < cache.interval;
+	if (!fading) cache.older = -1;
+	int which = fading ? 3 : 1;
+	cache_track(l, k, which);
+	cache_apply(l, k, cache.newest, cache.older, (float)(since + 1) / (float)cache.interval);
+
+	/* the result back into the output */
+	add(&b, frame, at, dest);
+	flush(l, &b);
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = nr.output,
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = frame,
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, .SubresourceIndex = 0 };
+	ID3D12GraphicsCommandList_CopyTextureRegion(l, &to, base.x, base.y, 0, &from, NULL);
+	add(&b, nr.output, source, common);
+	add(&b, frame, dest, at);
+	add(&b, nr.staging, read, common);
+	flush(l, &b);
+	cache_done(l, which, f->depth != NULL);
+	nr_split_restore(list, state);
+	nr_split_snapshot_free(state);
+	cache_next(0);
+	return 1;
+}
+
+/* The longest the cache may carry the newest change now: `cache=`, shortened as the camera speeds
+ * up, from the newest mean motion the GPU has finished measuring. */
+static uint32_t cache_interval(void)
+{
+	cache_read_speed();
+	uint32_t interval = (uint32_t)config.cache;
+	if (cache.speed > config.cache_fast) interval = 1;
+	else if (cache.speed > config.cache_slow && interval > 2) interval = 2;
+	return interval;
+}
+
+/* After the upscaler's work on the list (mode=after): the cut, NR's answer to this very frame; or,
+ * with `cache=N`, the newest change carried onto it, with a refresh every N executes at most and
+ * whenever there is nothing to carry. `vectors_at` and `depth_at` are (D3D12_RESOURCE_STATES)-1 when
+ * the upscaler said a state this file does not know; `reversed`, its depth's convention. */
+static void after_upscale(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p,
+			  D3D12_RESOURCE_STATES frame_at, D3D12_RESOURCE_STATES vectors_at,
+			  D3D12_RESOURCE_STATES depth_at, int reversed)
+{
+	int chained = cache.chain && cache.chain + 1 == upscales;
+	UINT motion_width = 0, motion_height = 0;
+	D3D12_RESOURCE_DESC colour_desc;
+	if (config.cache >= 2 && p->pColorTexture && vectors_at != (D3D12_RESOURCE_STATES)-1) {
+		ID3D12Resource_GetDesc(p->pColorTexture, &colour_desc);
+		UINT render_width = p->inputWidth ? p->inputWidth : (UINT)colour_desc.Width;
+		UINT render_height = p->inputHeight ? p->inputHeight : colour_desc.Height;
+		if (motion_region(p, render_width, render_height, &motion_width, &motion_height)) {
+			struct cache_frame f = {
+				.motion_width = motion_width, .motion_height = motion_height,
+				.vectors_at = vectors_at, .depth_at = depth_at, .chained = chained,
+			};
+			cache.reversed = reversed;
+			if (p->pDepthTexture && depth_at != (D3D12_RESOURCE_STATES)-1) {
+				D3D12_RESOURCE_DESC d;
+				ID3D12Resource_GetDesc(p->pDepthTexture, &d);
+				if ((UINT64)p->inputDepthBase.x + render_width <= d.Width
+				    && (UINT64)p->inputDepthBase.y + render_height <= d.Height) {
+					f.depth = p->pDepthTexture;
+					f.depth_base[0] = p->inputDepthBase.x;
+					f.depth_base[1] = p->inputDepthBase.y;
+					f.depth_size[0] = render_width;
+					f.depth_size[1] = render_height;
+				}
+			}
+			/* a change belongs to the shot, and to an unbroken line of frames */
+			if (!chained || p->resetHistory) cache.newest = cache.older = -1;
+			f.interval = cache_interval();
+			uint32_t since = cache.newest >= 0 ? (uint32_t)(upscales - cache.born[cache.newest]) : 0;
+			int refresh = cache.newest < 0 || since >= f.interval;
+			if (refresh || !record_carry(list, p, frame_at, &f))
+				record_cut(list, p, 1, frame_at, vectors_at, &f);
+			return;
+		}
+	}
+	/* NR on every frame: the cache off, or no vectors to carry it along */
+	cache.newest = cache.older = -1;
+	record_cut(list, p, 1, frame_at, vectors_at, NULL);
+}
+
 /* The setup window's Enable NR, looked at once a second: a file's attributes, on the calling thread */
 static void look_at_trigger(void)
 {
@@ -2580,6 +3295,7 @@ xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsComm
 {
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
 	if (passive) return real_execute(context, list, params);
+	upscales++;
 #ifndef NR_XESS_TEST
 	nr_xess_panel_list(list);
 #endif
@@ -2594,10 +3310,11 @@ xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsComm
 		/* XeSS's work goes into the list first, and the cut after it */
 		xess_result_t result = real_execute(context, list, params);
 		if (result == 0 && params->pOutputTexture)
-			record_cut(list, params, 1, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, read);
+			after_upscale(list, params, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, read, read,
+				      (xess.flags & XESS_INIT_FLAG_INVERTED_DEPTH) != 0);
 		return result;
 	}
-	ID3D12Resource *mixed = config.cut == BEFORE ? record_cut(list, params, 0, read, read) : record(list, params);
+	ID3D12Resource *mixed = config.cut == BEFORE ? record_cut(list, params, 0, read, read, NULL) : record(list, params);
 	if (!mixed) return real_execute(context, list, params);
 	handed = mixed;
 	xess_d3d12_execute_params_t changed = *params;

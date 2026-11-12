@@ -60,6 +60,7 @@ typedef struct {
 #define FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE (1u << 0)
 #define FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS (1u << 1)
 #define FFX_UPSCALE_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION (1u << 2)
+#define FFX_UPSCALE_ENABLE_DEPTH_INVERTED (1u << 3)
 #define FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE (1u << 8)
 
 struct ffx_dimensions { uint32_t width, height; };
@@ -236,7 +237,8 @@ static void cut_after_fsr(ffxContext context, const struct ffx_dispatch_upscale 
 		cut_said("FSR 3.1 dispatched a context this proxy did not see made");
 		return;
 	}
-	D3D12_RESOURCE_STATES output_at = ffx_state(d->output.state), vectors_at = ffx_state(d->motion.state);
+	D3D12_RESOURCE_STATES output_at = ffx_state(d->output.state), vectors_at = ffx_state(d->motion.state),
+		depth_at = ffx_state(d->depth.state);
 	if (made.dispatches == 1)
 		say("FSR 3.1 dispatch on context %p: render %ux%u, output %ux%u, output state 0x%x, vectors state "
 		    "0x%x and scale (%g, %g), pre-exposure %g, sharpening %d (%g)\n", context, d->render_size.width,
@@ -267,13 +269,15 @@ static void cut_after_fsr(ffxContext context, const struct ffx_dispatch_upscale 
 		.pColorTexture = d->colour.resource,
 		/* vectors in a state this file does not know are not followed */
 		.pVelocityTexture = vectors_at == (D3D12_RESOURCE_STATES)-1 ? NULL : d->motion.resource,
+		/* the edit cache's depth check; the cut alone does not read it */
+		.pDepthTexture = depth_at == (D3D12_RESOURCE_STATES)-1 ? NULL : d->depth.resource,
 		.pOutputTexture = d->output.resource,
 		.jitterOffsetX = d->jitter.x, .jitterOffsetY = d->jitter.y,
 		.exposureScale = 1,
 		.resetHistory = d->reset,
 		.inputWidth = d->render_size.width, .inputHeight = d->render_size.height,
 	};
-	record_cut(list, &p, 1, output_at, vectors_at);
+	after_upscale(list, &p, output_at, vectors_at, depth_at, (made.flags & FFX_UPSCALE_ENABLE_DEPTH_INVERTED) != 0);
 }
 
 ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxApiHeader *desc)
@@ -282,6 +286,7 @@ ffxReturnCode_t ffxDispatch(ffxContext *context, const ffxApiHeader *desc)
 	if (passive || !desc || desc->type != FFX_API_DISPATCH_DESC_TYPE_UPSCALE) return ffx.dispatch(context, desc);
 	const struct ffx_dispatch_upscale *d = (const void *)desc;
 	ID3D12GraphicsCommandList *list = d->command_list;
+	upscales++;
 #ifndef NR_XESS_TEST
 	if (list) nr_xess_panel_list(list);
 #endif
