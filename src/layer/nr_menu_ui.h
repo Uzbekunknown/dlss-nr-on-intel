@@ -232,17 +232,10 @@ const char *nrex_language_name(int language);
  * equal - a static assert in the C side would need the include, which is the thing being avoided. */
 #define NREX_GRAPH_SAMPLES 120
 
-/* **The graphs scale to their own data, with a floor.** A fixed ceiling sounds tidier and reads
- * worse: at 70 fps a frame is 14 ms, so against a 100 ms axis every point sits on the floor and a
- * steady stream and a stuttering one draw the same flat line - which is the one thing the picture
- * exists to tell apart. So each series is drawn against `ceil(highest point, NREX_GRAPH_FLOOR_MS)`,
- * rounded up to a step, and the axis label says the number.
- *
- * The floor is what keeps the scale from chasing noise: at 70 fps the frame series is ~14 ms, and
- * the axis settles on 20 ms rather than on whatever the last spike was. The hard cap is where a
- * frame stops being a frame; a slower one is drawn at the top rather than flattening the rest. */
-#define NREX_GRAPH_FLOOR_MS 20.0f
-#define NREX_GRAPH_CAP_MS 200.0f
+/* The axis itself - the percentiles and the span floor - lives in `nr_frame_rate.h` with the ring
+ * that feeds it (`nr_frame_graph_axis`), because it is arithmetic with no ImGui in it and the
+ * fixture can hold it to what it promises. Only the count is here: `nr_menu_ui.cpp` is C++ and
+ * sizes its copy of the samples from it. Keep the two equal. */
 
 /* The frame counter (nr_frame_rate.h builds its text; this file only draws it).
  * Call between nrex_new_frame and the render, before the panel's own calls.
