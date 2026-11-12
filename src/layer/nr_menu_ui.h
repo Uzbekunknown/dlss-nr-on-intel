@@ -253,12 +253,15 @@ const char *nrex_language_name(int language);
  *                bottom left and bottom right of the picture (NR_COUNTER_* in nr_menu_bridge.h)
  *   frame_ms     the frame-time series and its length, oldest first; NULL or 0 draws no graph
  *   net_ms       the network's series, same shape; NULL or 0 omits the second graph
+ *   corner_graphs  whether the CORNER draws the two graphs as well. The panel always draws them;
+ *                this is the user's switch for the corner alone, and 0 leaves the corner as the
+ *                line of numbers it was before the graphs existed.
  *
  * The corner is a small window that takes NO input - no pointer, no keys, no focus, no navigation
  * - so it can stay on screen while the panel is shut and the game has the keyboard and mouse. */
 void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint, int corner,
                   const char *corner_line, const float *frame_ms, int frame_count,
-                  const float *net_ms, int net_count);
+                  const float *net_ms, int net_count, int corner_graphs);
 
 /* The part of the picture the last rendered frame drew into, in image pixels: the bounds of its
  * vertices, a pixel or two wider, inside the image. Valid after the renderer's render call until
