@@ -152,8 +152,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   Mortal Kombat 11 (below, 11-11, morning): the owner's look, then the word on pushing it, with
   `master` and `alchemist` after it~~: pushed at the owner's word with the weights by column,
   `master`, `newnr` and `alchemist` at `2ae1d82` on 11-12.
-- 0.0.6, built and checked (below, 11-12, evening): the owner's word on publishing it, as built or
-  with the GPU report's network and FSR 3.1 (below, 11-12, late evening).
+- 0.0.6, built and checked (below, 11-12, evening), and built again with the GPU report's network
+  and FSR 3.1 at the owner's word (below, 11-12, late evening): the owner's word on publishing it.
 - From the `cleanup` branch (PR #39, merged 11-11), proposed and not done: INT8 out of the main
   line (it is in libxmx, the shader lists and the release's file lists) and one build system
   instead of three; the Configure/Restore Steam buttons are a line under Windows. Archive, 11-05.
@@ -364,9 +364,24 @@ the executable's and XeSS's folders as they were, byte for byte.
 frame generation (no FidelityFX frame-generation context appeared: the x4 was the game's other
 one), the D3D12 debug layer (not installed here) over the new states, Linux.
 
+**0.0.6 built again with both**, at the owner's word, from `c473048` (VERSION still 0.0.6):
+`dlss-nr-windows-0.0.6-x64.zip`, 47 318 471 B, SHA-256
+`0d09b50508cb1dd39e9e14d1b965dc427a1e786201bd3071e943764071636103` (on the Windows laptop in
+`%USERPROFILE%\nr-rel\final-0.0.6b`; the first candidate stays in `final-0.0.6`). Against that one:
+1372 files, five more (`nr_ffx.dll`, the two MIT notices, the GPU report's two Python files), the
+changed ones those the two commits name; no weights, NVIDIA DLL or home path. From its unpacked
+copy (`nr-game\rel006b-zipcheck.ps1`, `release-tests\zipcheck-0.0.6b-summary.txt`): the stand-in
+(install in 9 s with both networks, 708 frames, none rejected, the speed test A/71 and B/31, Save
+report 19 checks, none failing, the folder as before); the window's self-test (89 controls, 198
+keys); Mortal Kombat 11 with B at 0.4, 43.67 a second, every frame on `gpu-shared`, the folder as
+before. That run is a check, not a timing: the machine was not checked quiet, after an hour of
+Hogwarts with the owner at it, and the code it runs is the first candidate's (45.96). The notes,
+`work\pr-replies\release-notes-0.0.6.md`, name FSR 3.1 and the GPU report and this ZIP.
+
 **Next on Linux:** `make test` and CTest with `test_gpu_report_network.py` once this is on GitHub;
-nothing in `src/xess` builds there. **Next on Windows:** the owner's word on 0.0.6: as built
-(`525db45`), or built again with these two.
+nothing in `src/xess` builds there. **Next on Windows:** the owner's word on publishing 0.0.6: push
+`alchemist`, fast-forward `master` and `newnr` to it, tag `v0.0.6` at `c473048`, and the release
+with this ZIP and the notes.
 
 ## 0.0.6 built and checked: 20-35 % more frames than 0.0.5 in Mortal Kombat 11, the same picture (2026-11-12, evening, branch `alchemist`)
 
