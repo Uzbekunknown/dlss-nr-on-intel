@@ -278,4 +278,117 @@ static inline int nr_frame_rates_line(const nr_frame_rates *r, int language, int
 }
 #endif
 
+/* ---------------------------------------------------------------- the graphs' axis
+ *
+ * **The axis follows the window's own 5th and 95th percentiles**, not a fixed ceiling and not the
+ * raw extremes. It lives here rather than beside the drawing because it is arithmetic with no
+ * ImGui in it, and `test_menu_panel` can hold it to what it promises.
+ *
+ * A fixed `0..ceil(max)` axis is what the first version did, and it is wrong in the one case that
+ * matters. A steady 70 fps runs at ~14 ms with a millisecond of jitter; against a 20 ms floor that
+ * variation is 3 of 34 pixels, so a stream that is visibly uneven and one that is not draw the same
+ * flat band, and one startup stall pins the axis to 100 ms for the whole window.
+ *
+ * The raw maximum fails the opposite way: a single 200 ms hitch squashes the other 118 points into
+ * the floor. Percentiles keep the shape. An outlier past the 95th is still DRAWN - `PlotLines`
+ * clamps it to the edge, so the spike reads as the box being hit - and the frames around it keep
+ * their detail.
+ *
+ * `NR_GRAPH_MIN_SPAN_MS` is a floor on the SPAN, not on the value: a genuinely even stream must not
+ * have a tenth of a millisecond of quantisation blown up to the full height. Two milliseconds is
+ * about one frame's worth at 60 Hz. */
+#define NR_GRAPH_MIN_SPAN_MS 2.0f
+#define NR_GRAPH_DEFAULT_MS 20.0f
+
+/* The 5th and 95th percentiles of `series`' valid points (`< 0` is a gap), with the span floor
+ * above applied around their midpoint. Both ends are always written; a series with no valid points
+ * leaves `0..NR_GRAPH_DEFAULT_MS`. */
+static inline void nr_frame_graph_axis(const float *series, int count, float *low, float *high)
+{
+	if (!low || !high) return;
+	float sorted[NR_GRAPH_SAMPLES];
+	int n = 0;
+	for (int i = 0; i < count && n < NR_GRAPH_SAMPLES; ++i)
+		if (series && series[i] >= 0.0f) sorted[n++] = series[i];
+	if (!n) { *low = 0.0f; *high = NR_GRAPH_DEFAULT_MS; return; }
+	/* Insertion sort: 120 values, once a frame, and a stack array with no allocator is less to get
+	 * wrong than anything that would drag a dependency into a header five files include. */
+	for (int i = 1; i < n; ++i) {
+		const float v = sorted[i];
+		int j = i - 1;
+		while (j >= 0 && sorted[j] > v) { sorted[j + 1] = sorted[j]; --j; }
+		sorted[j + 1] = v;
+	}
+	/* Nearest-rank; with 120 samples the 5th and the 114th. */
+	int lo_at = (n * 5) / 100;
+	int hi_at = (n * 95) / 100;
+	if (lo_at >= n) lo_at = n - 1;
+	if (hi_at >= n) hi_at = n - 1;
+	float lo = sorted[lo_at], hi = sorted[hi_at];
+	if (hi < lo) hi = lo;
+	const float mid = (lo + hi) * 0.5f;
+	if (hi - lo < NR_GRAPH_MIN_SPAN_MS) {
+		lo = mid - NR_GRAPH_MIN_SPAN_MS * 0.5f;
+		hi = mid + NR_GRAPH_MIN_SPAN_MS * 0.5f;
+	}
+	if (lo < 0.0f) { hi -= lo; lo = 0.0f; }
+	*low = lo;
+	*high = hi;
+}
+
+/* ---------------------------------------------------------------- smoothing, for the eye
+ *
+ * **The plotted line is smoothed; the axis is not.** A per-frame series on a 17 fps picture is
+ * 120 points of one to three milliseconds of jitter, and drawn raw it is a hedge, not a shape -
+ * the trend the graph exists to show is buried in the noise. A centred weighted average fixes the
+ * line without hiding anything the numbers still say.
+ *
+ * The axis stays on the RAW values (`nr_frame_graph_axis` is called with the unsmoothed series), so
+ * a stall is still drawn at full height. Only its shape softens: the spike spreads over the two
+ * neighbours either side of it, which is what a stall looks like anyway - the frame after a slow
+ * one is usually slow too.
+ *
+ * The weights are [1 2 3 2 1]/9: a triangle, not a box, so a step does not ring and a smooth
+ * stretch comes through unchanged instead of being flattened. The window is five samples - a third
+ * of a second at 15 fps, a twelfth at 60 - which is short enough that the right edge is still now.
+ *
+ * A gap is a gap: `-1` samples take no part in the average and stay `-1` in the output, so the
+ * drawing side still knows where the network had nothing to report. */
+#define NR_GRAPH_SMOOTH_HALF 2   /* samples either side: a 5-wide window */
+
+static inline int nr_frame_graph_smooth(const float *series, int count, float *out, int capacity)
+{
+	if (!series || !out || count <= 0 || capacity <= 0) return 0;
+	static const float weights[NR_GRAPH_SMOOTH_HALF * 2 + 1] = {1.0f, 2.0f, 3.0f, 2.0f, 1.0f};
+	const int n = count < capacity ? count : capacity;
+	for (int i = 0; i < n; ++i) {
+		if (series[i] < 0.0f) { out[i] = -1.0f; continue; }
+		float sum = 0.0f, weighted = 0.0f;
+		for (int k = -NR_GRAPH_SMOOTH_HALF; k <= NR_GRAPH_SMOOTH_HALF; ++k) {
+			const int j = i + k;
+			if (j < 0 || j >= n) continue;
+			if (series[j] < 0.0f) continue;      /* a gap is not a zero */
+			const float w = weights[k + NR_GRAPH_SMOOTH_HALF];
+			sum += series[j] * w;
+			weighted += w;
+		}
+		out[i] = weighted > 0.0f ? sum / weighted : series[i];
+	}
+	return n;
+}
+
+/* The axis as a label prints it: both ends in milliseconds, with a tenth of one when the band is
+ * narrow enough for that to mean something. "-" when the series has no valid points. */
+static inline void nr_frame_graph_axis_text(const float *series, int count, char *out, size_t size)
+{
+	if (!out || !size) return;
+	int any = 0;
+	for (int i = 0; i < count; ++i) if (series && series[i] >= 0.0f) { any = 1; break; }
+	if (!any) { snprintf(out, size, "%s", "-"); return; }
+	float lo = 0.0f, hi = 0.0f;
+	nr_frame_graph_axis(series, count, &lo, &hi);
+	if (hi - lo < 10.0f) snprintf(out, size, "%.1f-%.1f ms", (double)lo, (double)hi);
+	else snprintf(out, size, "%.0f-%.0f ms", (double)lo, (double)hi);
+}
+
 #endif /* NR_FRAME_RATE_H */

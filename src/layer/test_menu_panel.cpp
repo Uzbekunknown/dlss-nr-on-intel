@@ -624,6 +624,119 @@ int main(void)
             }
         }
 
+        /* ---- the graphs' axis: percentiles, not a ceiling and not the maximum ---- */
+        {
+            /* **The case this exists for.** A steady 60 Hz stream with a millisecond of jitter,
+             * and one 200 ms stall in the window. Against a fixed `0..max` the stall pins the axis
+             * at 200 and the other 119 points are a flat line along the floor - the picture shows
+             * nothing about the frame rate it is supposed to describe. The percentiles ignore the
+             * stall and keep the band. */
+            float steady[120];
+            for (int i = 0; i < 120; ++i) steady[i] = 14.0f + (float)(i % 3) * 0.5f;  /* 14.0-15.0 */
+            steady[7] = 200.0f;                     /* one stall, past the 95th percentile */
+
+            float lo = 0.0f, hi = 0.0f;
+            nr_frame_graph_axis(steady, 120, &lo, &hi);
+            snprintf(detail, sizeof detail, "axis %.1f..%.1f over a 14-15 ms band with one 200 ms stall",
+                     (double)lo, (double)hi);
+            /* The band is what the axis must show: inside 14..15 plus the span floor, nowhere near
+             * the 200 ms outlier. */
+            check(hi > 15.0f && hi < 20.0f,
+                  "one stall does not stretch the axis to it", detail);
+            check(lo >= 12.0f && lo < 14.5f,
+                  "and the low end stays on the band", detail);
+
+            /* **And the stall is still visible**: it is past the top of the axis, so `PlotLines`
+             * clamps it to the edge. An axis that hid it would be the other failure. */
+            check(hi < 200.0f, "the stall is outside the axis, so it draws as the edge", detail);
+
+            /* An even stream must not have a tenth of a millisecond amplified to the full height:
+             * the span floor keeps it flat. */
+            float even[60];
+            for (int i = 0; i < 60; ++i) even[i] = 16.66f;
+            nr_frame_graph_axis(even, 60, &lo, &hi);
+            snprintf(detail, sizeof detail, "even stream spans %.2f ms", (double)(hi - lo));
+            check(hi - lo >= NR_GRAPH_MIN_SPAN_MS - 0.01f,
+                  "an even stream keeps the minimum span rather than its own noise", detail);
+
+            /* A gap is not a value: all-gap leaves the default, and a gap in the middle does not
+             * drag the low end to zero. */
+            float gaps[20];
+            for (int i = 0; i < 20; ++i) gaps[i] = -1.0f;
+            nr_frame_graph_axis(gaps, 20, &lo, &hi);
+            snprintf(detail, sizeof detail, "all gaps -> %.1f..%.1f", (double)lo, (double)hi);
+            check(lo == 0.0f && hi > 0.0f, "a series of gaps has no band", detail);
+
+            float mixed[20];
+            for (int i = 0; i < 20; ++i) mixed[i] = (i % 2) ? -1.0f : 14.0f;
+            nr_frame_graph_axis(mixed, 20, &lo, &hi);
+            snprintf(detail, sizeof detail, "half gaps -> %.1f..%.1f", (double)lo, (double)hi);
+            check(lo > 10.0f, "gaps do not pull the low end to zero", detail);
+
+            /* The label carries both ends, and says "-" when there is nothing to draw. */
+            char text[32];
+            nr_frame_graph_axis_text(steady, 120, text, sizeof text);
+            snprintf(detail, sizeof detail, "'%s'", text);
+            check(strchr(text, '-') != nullptr && strstr(text, "200") == nullptr,
+                  "the label shows the band, not the outlier", detail);
+            nr_frame_graph_axis_text(gaps, 20, text, sizeof text);
+            snprintf(detail, sizeof detail, "'%s'", text);
+            check(strcmp(text, "-") == 0, "no points, no numbers", detail);
+        }
+
+        /* ---- smoothing: the line is softened, the axis is not ---- */
+        {
+            /* A per-frame series at 17 fps is a hedge of one-to-three-millisecond jitter; drawn
+             * raw the trend is unreadable. A centred triangle filter fixes the line. What must NOT
+             * change is the axis, which is taken from the raw series - so a stall keeps its full
+             * height and only its width spreads by two samples either side. */
+            float noisy[60];
+            for (int i = 0; i < 60; ++i)
+                noisy[i] = 55.0f + ((i % 2) ? 3.0f : -3.0f);   /* 52, 58, 52, 58 ... */
+            float smooth[60];
+            const int got = nr_frame_graph_smooth(noisy, 60, smooth, 60);
+            snprintf(detail, sizeof detail, "%d points; first %.1f from %.1f, middle %.1f from %.1f",
+                     got, (double)smooth[0], (double)noisy[0], (double)smooth[30], (double)noisy[30]);
+            check(got == 60, "the smoother returns the whole series", detail);
+            /* An alternating 52/58 series averages to its mean 55 in the middle, where the window
+             * is full: that is the whole point. */
+            check(smooth[30] > 54.0f && smooth[30] < 56.0f,
+                  "alternating jitter averages to its mean", detail);
+
+            /* **A step is softened but not moved.** A flat 50 that steps to 70 stays 50 well
+             * before the step and 70 well after it. */
+            float step[40];
+            for (int i = 0; i < 40; ++i) step[i] = i < 20 ? 50.0f : 70.0f;
+            nr_frame_graph_smooth(step, 40, smooth, 40);
+            snprintf(detail, sizeof detail, "before %.2f, after %.2f",
+                     (double)smooth[2], (double)smooth[37]);
+            check(smooth[2] > 49.9f && smooth[2] < 50.1f && smooth[37] > 69.9f && smooth[37] < 70.1f,
+                  "a step keeps its levels away from the edge", detail);
+
+            /* A gap stays a gap: it neither takes part in the average nor gets filled in, so the
+             * drawing side still sees where the network reported nothing. */
+            float holes[10] = {10, 10, -1, -1, 10, 10, 10, 10, 10, 10};
+            nr_frame_graph_smooth(holes, 10, smooth, 10);
+            snprintf(detail, sizeof detail, "%.1f %.1f %.1f", (double)smooth[2], (double)smooth[3],
+                     (double)smooth[4]);
+            check(smooth[2] < 0.0f && smooth[3] < 0.0f,
+                  "a gap stays a gap through the filter", detail);
+            check(smooth[4] > 9.9f && smooth[4] < 10.1f,
+                  "and the values beside it are not dragged down by it", detail);
+
+            /* **The axis is unchanged by smoothing**, which is what keeps a stall at its true
+             * height: it is computed from the raw series and never from the filtered one. */
+            float filtered[60];
+            nr_frame_graph_smooth(noisy, 60, filtered, 60);
+            float lo_raw = 0.0f, hi_raw = 0.0f, lo_sm = 0.0f, hi_sm = 0.0f;
+            nr_frame_graph_axis(noisy, 60, &lo_raw, &hi_raw);
+            nr_frame_graph_axis(filtered, 60, &lo_sm, &hi_sm);
+            snprintf(detail, sizeof detail, "raw %.1f..%.1f, smoothed %.1f..%.1f",
+                     (double)lo_raw, (double)hi_raw, (double)lo_sm, (double)hi_sm);
+            check(hi_sm <= hi_raw + 0.01f,
+                  "smoothing never raises the top of the axis", detail);
+        }
+
         /* The corner, as the shut panel draws it: no panel window, the counter alone, and no
          * pointer handed to ImGui. AlwaysAutoResize hides a window its first frame, so two. */
         static nrex_ui drawn;

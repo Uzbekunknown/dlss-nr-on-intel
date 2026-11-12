@@ -17,6 +17,7 @@
 #include "nr_menu_ui.h"
 #include "nr_menu_ui_backend.h"
 #include "nr_menu_strings.h"   /* nr_menu_text: the graphs' names, in the panel's language */
+#include "nr_frame_rate.h"     /* nr_frame_graph_axis: the graphs' percentile axis */
 
 #include "imgui.h"
 /* For `SetKeyOwner` only.
@@ -242,34 +243,17 @@ static int   g_graph_net_count = 0;
 static int   g_corner_graphs = 1;
 
 /* Wide enough to read a two-second trend at a glance, narrow enough not to cover a corner of a 720p
- * picture: 180x34 each, stacked, so the counter box grows by about 70 pixels. */
+ * picture. 180x44 each, stacked, so the counter box grows by about 90 pixels - which it can afford:
+ * the corner is 8 px from the edge of a 1440p frame, and a graph whose height is a couple of text
+ * lines is a shape you can read rather than a texture you glance at. */
 static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
 static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
 static const float kGraphWidth = 180.0f;
-static const float kGraphHeight = 34.0f;
+static const float kGraphHeight = 44.0f;
 /* The panel's copy is wider: its rows are a table 190+86+210 wide, and a graph narrower than the
  * thing it summarises reads as a decoration rather than a measurement. */
 static const float kPanelGraphWidth = 460.0f;
 
-
-/* The top of a graph's axis: the highest point, floored, capped and rounded up to a readable step.
- *
- * Rounded rather than exact so the axis number is one a reader can hold - 20, 40, 60, 100 - and so
- * a series that moves by a tenth of a millisecond does not make the whole picture breathe. A point
- * below zero is a gap (a frame with no network time) and is ignored, not treated as the smallest
- * value: including it would pin the axis to the floor forever. */
-static float graph_axis_top(const float *series, int count)
-{
-    float highest = 0.0f;
-    for (int i = 0; i < count; ++i)
-        if (series[i] > highest) highest = series[i];
-    if (highest < NREX_GRAPH_FLOOR_MS) highest = NREX_GRAPH_FLOOR_MS;
-    if (highest > NREX_GRAPH_CAP_MS) highest = NREX_GRAPH_CAP_MS;
-    /* Up to the next 10 below 100, the next 50 to 500, the next 100 above - the steps a person
-     * reads off an axis without doing arithmetic. */
-    const float step = highest <= 100.0f ? 10.0f : (highest <= 500.0f ? 50.0f : 100.0f);
-    return ceilf(highest / step) * step;
-}
 
 /* **One graph, with its name and its axis in a column to the LEFT of the plot.**
  *
@@ -291,12 +275,12 @@ static void draw_one_graph(const char *name, const float *series, int count, ImU
                            float width, float label_width)
 {
     char axis[32] = "";
-    float top = 0.0f;
+    float lo = 0.0f, hi = 0.0f;
     int any = 0;
     for (int i = 0; i < count; ++i) if (series[i] >= 0.0f) { any = 1; break; }
     if (any) {
-        top = graph_axis_top(series, count);
-        snprintf(axis, sizeof axis, "%.0f ms", (double)top);
+        nr_frame_graph_axis(series, count, &lo, &hi);
+        nr_frame_graph_axis_text(series, count, axis, sizeof axis);
     } else {
         snprintf(axis, sizeof axis, "%s", "-");
     }
@@ -310,8 +294,14 @@ static void draw_one_graph(const char *name, const float *series, int count, ImU
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + label_width);
     if (any) {
         ImGui::PushStyleColor(ImGuiCol_PlotLines, colour);
-        ImGui::PlotLines("", series, count, 0, nullptr, 0.0f, top,
-                         ImVec2(width, kGraphHeight));
+        /* **The line is smoothed, the axis is not.** `lo`/`hi` came from the raw series above, so
+         * a stall is still drawn at its full height; the smoothing only softens the hedge of
+         * per-frame jitter into the trend the graph is for. A gap stays a gap through the filter,
+         * which is how the network's missing samples keep their shape. */
+        float smooth[NR_GRAPH_SAMPLES];
+        const int smoothed = nr_frame_graph_smooth(series, count, smooth, NR_GRAPH_SAMPLES);
+        ImGui::PlotLines("", smoothed > 0 ? smooth : series, smoothed > 0 ? smoothed : count,
+                         0, nullptr, lo, hi, ImVec2(width, kGraphHeight));
         ImGui::PopStyleColor();
     } else {
         /* An empty box of the same size, with a line of text in it: the row keeps its place and
@@ -341,12 +331,10 @@ static void draw_graphs(const float *frame, int frame_count, const float *net, i
     /* The label column is whatever the two names and the wider axis need, measured rather than
      * guessed: a language may call the frame time something long, and a fixed width would clip it. */
     char widest[32];
-    float top = graph_axis_top(frame, frame_count);
-    snprintf(widest, sizeof widest, "%.0f ms", (double)top);
+    nr_frame_graph_axis_text(frame, frame_count, widest, sizeof widest);
     if (net_count > 0) {
-        float nt = graph_axis_top(net, net_count);
         char other[32];
-        snprintf(other, sizeof other, "%.0f ms", (double)nt);
+        nr_frame_graph_axis_text(net, net_count, other, sizeof other);
         if (ImGui::CalcTextSize(other).x > ImGui::CalcTextSize(widest).x)
             snprintf(widest, sizeof widest, "%s", other);
     }
