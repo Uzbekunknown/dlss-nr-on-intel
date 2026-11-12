@@ -34,8 +34,8 @@ from it, and the separate **Prepare Python** button does the same; neither insta
 packages globally, and neither is needed with the release's own Python.
 
 Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
-**DirectX 12 (games with XeSS or OptiScaler)** for a DirectX 12 game that offers Intel XeSS,
-or one with OptiScaler set to XeSS (below). For Vulkan and
+**DirectX 12 (games with XeSS, FSR 3.1 or OptiScaler)** for a DirectX 12 game that offers
+Intel XeSS or AMD FSR 3.1, or one with OptiScaler set to XeSS (below). For Vulkan and
 DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for DirectX 8–11 DXVK
 3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
 file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
@@ -54,6 +54,18 @@ at 0.5 on the Arc 140V, by 2026-11-06; with the game's frame generation the scre
 as many, about 52. **Check** refuses a game whose XeSS has functions NR's does not carry. **Remove NR**
 puts the game's `libxess.dll` back; when a game update has replaced NR's, use **Remove NR**
 and then **Install NR** again.
+
+**DirectX 12 games with FSR 3.1 and no XeSS.** FSR 3.1 reaches a game through AMD's
+FidelityFX API, one DLL beside its executable, `amd_fidelityfx_dx12.dll` (or, from the
+FidelityFX SDK 2.0, `amd_fidelityfx_loader_dx12.dll`). Where a game has no XeSS, installation
+puts NR's in front of that one, and the game's own stays beside it as
+`amd_fidelityfx_dx12_nr_orig.dll`. In the game, choose **FSR 3** (3.1) as the upscaler: NR then
+runs on FSR's output, before the interface, as after XeSS. A game with both gets NR in front of
+XeSS. FSR 2 and 3.0 are built into their games, with no DLL to stand in front of: for those,
+OptiScaler (below). NR has run this way in Hogwarts Legacy (FidelityFX 1.0.1, set to FSR 3 for
+the test) on the Arc 140V, 2026-11-12: at 1920×1080 with network B about 18 frames of NR's a
+second at render scale 0.4 at the title screen and 15-22 in play, with the game's frame
+generation at x4 too. **Check** refuses a FidelityFX DLL with functions NR's does not carry.
 
 **DirectX 12 games without XeSS, through OptiScaler.** [OptiScaler](https://github.com/optiscaler/OptiScaler)
 takes over a game's DLSS, FSR or XeSS and upscales with XeSS, from the `libxess.dll` that comes

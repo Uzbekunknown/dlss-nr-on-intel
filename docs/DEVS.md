@@ -41,7 +41,7 @@ and since 2026-10-01 Intel's Windows driver and Mesa compute the graph bit for b
 | --- | --- | --- |
 | Install | the release ZIP and its setup window, in English, Chinese, Russian or Spanish | built from source with `make` or CMake |
 | GPU driver | Intel's own | Mesa ANV |
-| Games | native Vulkan, and DirectX 8–11 through the DXVK 3.1.1 that setup puts beside the game, 64- and 32-bit; **DirectX 12 through the game's own XeSS**, NR on XeSS's output (Hogwarts Legacy so far) | whatever Proton runs, since DXVK and VKD3D-Proton come with it: DirectX 12 too (Mortal Kombat 1) |
+| Games | native Vulkan, and DirectX 8–11 through the DXVK 3.1.1 that setup puts beside the game, 64- and 32-bit; **DirectX 12 through the game's own XeSS, or its FSR 3.1 where it has no XeSS**, NR on the upscaler's output (Hogwarts Legacy so far, both ways) | whatever Proton runs, since DXVK and VKD3D-Proton come with it: DirectX 12 too (Mortal Kombat 1) |
 | Starting the game | any way at all — Steam, a shortcut, another launcher: setup puts a `vulkan-1.dll` beside the game that gives it NR | with NR's environment: the Steam launch option `nr-photo --steam` prints, or `nr-photo` itself |
 | Controls | the panel in the game (Insert opens it, Home turns NR on and off), and the setup window's NR controls | `nr-panel`, `nr-ctl`, and `nr-toggle` on a key |
 | Modes | live | live, and the photo mode |
@@ -511,7 +511,8 @@ than a HUD.
 src/ref/      the CPU reference: the graph, features, composition, the temporal path
 src/gpu/      the XMX runtime — compute shaders and the resident Vulkan context
 src/layer/    the Vulkan layer, the daemon, and the three control tools
-src/xess/     the DirectX 12 path on Windows: NR's libxess.dll in front of the game's XeSS
+src/xess/     the DirectX 12 path on Windows: NR's libxess.dll in front of the game's XeSS, and
+              the same built as amd_fidelityfx_dx12.dll in front of its FSR 3.1 (nr_ffx.c)
 src/bench/    measurement programs; every number in the notes came from one
 src/probe/    what your GPU can do, answered before anything else is built
 src/tools/    the DLL and weight-container readers, the players' reports read into data

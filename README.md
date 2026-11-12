@@ -46,7 +46,7 @@ it says where the network's time goes on your card.
 | --- | --- | --- |
 | Vulkan | yes | yes |
 | DirectX 8 to 11, 64- or 32-bit | yes, through DXVK, which setup installs | yes, through Proton |
-| DirectX 12 | games with **Intel XeSS**: choose XeSS as the upscaler; others with [OptiScaler](https://github.com/optiscaler/OptiScaler) set to XeSS ([how](docs/RELEASE-QUICKSTART.md)) | yes, through Proton |
+| DirectX 12 | games with **Intel XeSS**: choose XeSS as the upscaler; with **AMD FSR 3.1** and no XeSS: choose FSR; others with [OptiScaler](https://github.com/optiscaler/OptiScaler) set to XeSS ([how](docs/RELEASE-QUICKSTART.md)) | yes, through Proton |
 
 On Windows a Vulkan or DirectX 8–11 game run as administrator, or with UAC turned off, does not
 get NR. Anti-cheat may refuse NR's files or count them as tampering: use it in single-player
@@ -69,7 +69,7 @@ Then:
 2. Choose your `nvngx_dlssnr.dll`, the game's `.exe` and its graphics API, then press **Check**
    and **Install NR**. The first install also measures NR on your PC, in under a minute.
 3. Start the game the way you always do: Steam, Epic, a shortcut. In a DirectX 12 game, choose
-   **XeSS** as the upscaler.
+   **XeSS** as the upscaler, or **FSR 3** where the game has no XeSS.
 4. In the game, **Home** turns NR on and off, and **Insert** opens its panel: render scale,
    network, profile, strength and the rest, changed as you play, and a frame counter, which can
    also stay in a corner. In Hogwarts Legacy, profile **hogwarts** is the look NVIDIA and the
@@ -109,6 +109,7 @@ date; a later release can do better or worse.
 | --- | --- | --- | --- | --- |
 | Hogwarts Legacy, after its DLSS 5 update | Arc 140V | Windows, DirectX 12 through XeSS, network B | 25-26 fps of NR's at 1280x720 and render scale 0.4, and 51-52 on screen with XeSS frame generation x2; profile `standard` or `hogwarts` | 2026-11-06 |
 | Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 46 fps at 1280x720 and render scale 0.4, about 11.5 at render scale 1.0 | 2026-11-12 |
+| Hogwarts Legacy through FSR 3.1 | Arc 140V | Windows, DirectX 12 through the game's FSR 3.1 (FidelityFX 1.0.1), network B | about 18 fps of NR's at 1920x1080 and render scale 0.4 at the title screen, 15-22 in play, with the game's frame generation x4 too; profile `hogwarts` | 2026-11-12 |
 | Hogwarts Legacy through OptiScaler 0.9.4 | Arc 140V | Windows, DirectX 12, OptiScaler's XeSS taking the game's XeSS or its FSR 3, network B | about 28 fps of NR's at 1280x720 and render scale 0.4 | 2026-11-05 |
 | Euro Truck Simulator 2 | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 21-22 fps at 1920x1080 and render scale 0.4 with network B; 6 at full render scale | 2026-11-04 |
 | Star Wars Battlefront II (2017) | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | about 22 fps at 1920x1080 and render scale 0.4 with network B, once the player kept the PC's other Vulkan layers out (`VK_LOADER_LAYERS_DISABLE=~implicit~`) | 2026-11-04 |
@@ -131,7 +132,8 @@ Tried another game? Tell us how it went, with the file **Save report** writes:
 ## If it does not work
 
 - **Nothing changes.** Check that NR is on: **Home** in the game, or **Enable NR** in the setup
-  window. A DirectX 12 game must use XeSS as its upscaler. In a Vulkan game NR is only in the
+  window. A DirectX 12 game must use XeSS as its upscaler, or FSR 3 where it has no XeSS. In a
+  Vulkan game NR is only in the
   `.exe` you chose; **Check** names the one that draws with Vulkan (DOOM 2016: `DOOMx64vk.exe`).
 - **It is very slow.** Lower the game's resolution first, then the render scale, and use network B.
 - **It stopped after a game update.** **Remove NR**, then **Install NR** again.
@@ -168,7 +170,9 @@ If NR is useful to you, you can support its development on
 - [OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR) (MIT): where that graph and the
   vendor's differ, this port follows it, checked block by block (`notes/opendlss-reference.md`).
 - [DLSSNR-AMD](https://github.com/mochizuki0323/DLSSNR-AMD) (MIT): the cut in the game's DirectX 12
-  command list that NR's XeSS path is built on.
+  command list that NR's XeSS and FSR 3.1 paths are built on.
+- AMD's [FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) (MIT): its
+  API headers lay out the types NR's FSR 3.1 path reads.
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT) draws the panel in the game, which
   Paimonshen contributed ([#20](https://github.com/Uzbekunknown/dlss-nr-on-intel/pull/20)).
 - [DXVK](https://github.com/doitsujin/dxvk) 3.1.1 (zlib) ships with the Windows release, for

@@ -152,7 +152,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   Mortal Kombat 11 (below, 11-11, morning): the owner's look, then the word on pushing it, with
   `master` and `alchemist` after it~~: pushed at the owner's word with the weights by column,
   `master`, `newnr` and `alchemist` at `2ae1d82` on 11-12.
-- 0.0.6, built and checked (below, 11-12, evening): the owner's word on publishing it.
+- 0.0.6, built and checked (below, 11-12, evening): the owner's word on publishing it, as built or
+  with the GPU report's network and FSR 3.1 (below, 11-12, late evening).
 - From the `cleanup` branch (PR #39, merged 11-11), proposed and not done: INT8 out of the main
   line (it is in libxmx, the shader lists and the release's file lists) and one build system
   instead of three; the Configure/Restore Steam buttons are a line under Windows. Archive, 11-05.
@@ -202,7 +203,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in 0.0.5 (archive, 11-05 evening).
   Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no XeSS of
   its own, the cut beside OptiScaler's own D3D12 hooks, and #38's Stellar Blade (cause not known).
-  An FSR 3.1 proxy without OptiScaler: designed, not built (archive, 11-05 later).
+  ~~An FSR 3.1 proxy without OptiScaler: designed, not built (archive, 11-05 later)~~: built
+  (`0195200`) and run in Hogwarts (below, 11-12, late evening).
+- FSR 3.1 without OptiScaler: a game with FSR 3.1 and no XeSS (Stellar Blade's is the case #38
+  asked about), FidelityFX SDK 2.0's loader, FSR 3's own frame generation; and whether the setup
+  window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -304,6 +309,64 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
+
+The owner, 11-12, after 0.0.6 was built: change the tester Arc A-series owners run, and reach
+games through FSR 3.1 without OptiScaler. Two local commits on `alchemist` after `2557b9d`; nothing
+pushed, and the 0.0.6 ZIP below has neither.
+
+**The GPU report** (`37efa77`). `nr_gpu_probe.exe` also runs NR's networks on the card:
+`src/bench/gpu_report_network.py`, started with the release's Python, builds B and A from their
+tensors' shapes alone (A's from MLX-DLSS's `weight_spec.json`, B's from A's by each block's role
+in `nr_topology`) with random weights, every half an E4M3 value, and times them as the daemon
+replays the graph at 640x360, 1280x720 and 1920x1080 at render scale 0.4; a second process times
+0.0.5's weights (`XMX_E4M3_WEIGHTS=0`, `XMX_WEIGHTS_BY_COLUMN=0`), and a per-pass profile of B at
+1280x720 says where an A770's ~55 us a pass goes (Open items, Windows). On the 140V it reads as
+the speed test: B 9.6-10.3 / 13.0-13.2 / 24.8-25.5 ms, A 18.3-19.0 / 24.1-25.7 / 46.4-51.6; the
+probe takes 19 s. The printed report names neither its folder nor the user's home; the request to
+post it is for Arc A-series cards alone. `player_reports.py` reads the new half; CTest and
+`run_tests.py` gain `test_gpu_report_network.py`.
+
+**FSR 3.1** (`0195200`). `src/xess/nr_ffx.c` builds `nr_xess.c` into an `amd_fidelityfx_dx12.dll`
+of the FidelityFX API's five exports, each forwarded to the game's DLL, kept beside it as
+`amd_fidelityfx_dx12_nr_orig.dll` (any name with `_nr_orig` before `.dll`: SDK 2.0's
+`amd_fidelityfx_loader_dx12.dll` too). After an upscale dispatch of a context it saw made, the
+list is cut and NR's answer goes into FSR's output, mode=after's way; the context and the dispatch
+give what XeSS hears at init and through its scales. FSR names each resource's state, so
+`record_cut` takes the frame's and the vectors' states from its caller now, and a barrier into the
+state a resource is already in is skipped. Non-linear colour, an unknown state and every other
+dispatch go to FSR whole. The second of NR's DirectX 12 DLLs to load in a process forwards
+everything (a named mutex), so two never hook the same classes. The structures follow AMD's MIT
+headers, unchanged from SDK 1.1.0 to 2.4.0. Setup: DirectX 12 takes XeSS where the game has it or
+OptiScaler is there, else FSR 3.1; a request's `upscaler` (`auto`, `xess`, `fsr`) picks one, which
+the window keeps from the profile but does not offer; the release carries `nr_ffx.dll` and, now,
+the two MIT notices of its DirectX 12 DLLs. `test_nr_xess`: five new cases (the output in
+PIXEL_COMPUTE_READ, UNORDERED_ACCESS and COPY_DEST, its size from the context, display-resolution
+vectors at a scale of 0.5, the calls handed on whole); `test_windows_wizard` 103, `test_release`,
+the window's self-test (89 controls, 198 keys).
+
+**Hogwarts Legacy through its FSR 3.1** (FidelityFX 1.0.1.41314, beside its executable; the game
+has XeSS 2.0.2.68 too, so `upscaler: fsr`; `nr-game\hogwarts-fsr-test.ps1` on a release root of
+`0195200`, network B, the owner at the game, Upscale Type set to FSR 3 by the owner). The context:
+render up to 1281x721, output 1920x1080 (`upscaleSize` left 0), HDR, depth inverted and infinite,
+vectors at the render's resolution, scale (1281, 721); the output R16G16B16A16_FLOAT in
+UNORDERED_ACCESS, the vectors in COMPUTE_READ; pre-exposure 0.0008 at the title screen, 0.26 in
+play, NR's `white` left at 1. 5734 frames in six minutes, every one answered on its own frame,
+none declined: 18-19 a second at the title screen (1920x1080, render scale 0.4, change 0.0279
+where XeSS gave 0.0286), 15-22 in play with the game's frame generation at x4; a new context on
+loading into the world taken without a new session; the panel, with NR turned off and on from it
+62 times, and the `hogwarts` profile. The game closed itself, no crash report, the daemon ended
+with it, and Remove NR left
+the executable's and XeSS's folders as they were, byte for byte.
+
+**Not run:** a game with FSR 3.1 and no XeSS, FidelityFX SDK 2.0's loader in a game, FSR 3's own
+frame generation (no FidelityFX frame-generation context appeared: the x4 was the game's other
+one), the D3D12 debug layer (not installed here) over the new states, Linux.
+
+**Next on Linux:** `make test` and CTest with `test_gpu_report_network.py` once this is on GitHub;
+nothing in `src/xess` builds there. **Next on Windows:** the owner's word on 0.0.6: as built
+(`525db45`), or built again with these two.
 
 ## 0.0.6 built and checked: 20-35 % more frames than 0.0.5 in Mortal Kombat 11, the same picture (2026-11-12, evening, branch `alchemist`)
 
