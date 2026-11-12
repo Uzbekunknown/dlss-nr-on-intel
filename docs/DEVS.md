@@ -67,8 +67,12 @@ The network runs slower on Intel's Windows compiler at large frames — about 17
   work/coopmat_probe      # also writes nr-gpu-report.txt
   ```
 
-  The Windows release carries it as `nr_gpu_probe.exe`. On an A-series card, please post the
-  report with the **Arc A-series report** issue template.
+  Where the build's libxmx and shaders are there too, it then runs NR's network itself
+  (`src/bench/gpu_report_network.py`): networks B and A built from their tensors' shapes, with
+  random weights, timed at three game sizes, against the weights as 0.0.5 kept them, and where
+  B's frame goes pass by pass, in under a minute; `--no-network` leaves it out, and any other
+  argument goes to that script. The Windows release carries it as `nr_gpu_probe.exe`. On an
+  A-series card, please post the report with the **Arc A-series report** issue template.
 - A **discrete** Xe2 card (Battlemage, B570/B580) works too, and does not need resizable BAR: where the card's memory
   cannot be mapped, the graph keeps its operands there anyway and the host reaches them by
   copies. Turn resizable BAR on if you can — it is the faster of the two paths and Arc wants

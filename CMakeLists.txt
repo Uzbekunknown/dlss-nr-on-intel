@@ -480,7 +480,7 @@ if(NR_BUILD_TESTS)
   foreach(name device_pick gemm_contract denorm input_fp16 compact_head gemm_int8 gemm_int8_staged
       window_block global_attention int8_quant gemm_residual window_residual window_attention
       gemm_qkv glue ffn_fused staged_partial staged32 staged_packed gemm_e4m3 gemm_by_column epilogue
-      specialization
+      specialization gpu_report_network
       softmax_pack qkv_fusion scratch_arena graph frame_execution resident)
     nr_test(gpu_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py")
   endforeach()

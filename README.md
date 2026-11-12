@@ -36,9 +36,11 @@ respective owners. Shown for comparison.</sup></sub>
 | Intel Arc A-series (A310 to A770, Alchemist) | **Experimental**: it computes correctly on all eleven cards reported so far (A380, A750, A770); an A770 reaches about 40 fps at 1280x720, with render scale 0.4 and network B |
 | Intel graphics without XMX engines | **No**: NR runs on XMX |
 
-Not sure? `nr_gpu_probe.exe`, in the release, says whether NR runs on your GPU and writes
-`nr-gpu-report.txt`. On an Arc A-series card, please post that file with the
-[Arc A-series report](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new/choose) template.
+Not sure? `nr_gpu_probe.exe`, in the release, says in under a minute whether NR runs on your GPU
+and how long NR's network takes there, without NVIDIA's DLL, and writes `nr-gpu-report.txt`. On
+an Arc A-series card, please post that file with the
+[Arc A-series report](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new/choose) template:
+it says where the network's time goes on your card.
 
 | The game's graphics | Windows | Linux |
 | --- | --- | --- |

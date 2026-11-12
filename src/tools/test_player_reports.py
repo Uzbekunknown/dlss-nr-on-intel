@@ -113,6 +113,35 @@ class Probe(unittest.TestCase):
         self.assertTrue(device["matrix_gflops"]["8x16x16"]["16"].startswith("WRONG"))
         self.assertEqual(device["fma32_gflops"], {"32": 18124})
         self.assertTrue(device["nr_kernels"].startswith("exact here"))
+        self.assertNotIn("network", device)             # a report from before 0.0.6 has none
+
+    NETWORK = """
+NR's network on this GPU, with random weights of its shapes, no DLL needed:
+  device: Intel(R) Arc(TM) A770 Graphics
+  weights kept as E4M3 bytes: yes; by column: no
+  network B: weights made in 0.7 s, measured in 5.6 s
+  ms a frame, render scale 0.4    640x360   1280x720  1920x1080
+  network B                        16.0       19.0       29.0
+  network A                        32.0       35.0       55.0
+  At 1280x720 and render scale 0.4 the network alone allows at most 53 frames a second with B, and 29 with A;
+  a game's own frame and NR's passes around the network come on top.
+  with the weights as 0.0.5 kept them (half, by row): B 20.5 ms, A 36.1 ms at 1280x720
+  where network B's 1280x720 frame goes on the GPU: 18.4 ms in 179 passes, 102.8 us a pass on average
+    gemm staged (flags 0)                 9.10 ms  49.5 %    126 passes    72.2 us each
+    row: window block                     4.05 ms  22.0 %      6 passes   675.0 us each
+"""
+
+    def test_network(self):
+        device = P.probe(self.TEXT + self.NETWORK, issue=40)[0]
+        network = device["network"]
+        self.assertEqual(network["weights"], "random weights of its shapes, no DLL needed")
+        self.assertEqual((network["e4m3"], network["by_column"]), (True, False))
+        self.assertEqual(network["ms"]["B"], {"640x360": 16.0, "1280x720": 19.0, "1920x1080": 29.0})
+        self.assertEqual(network["ms"]["A"]["1920x1080"], 55.0)
+        self.assertEqual(network["as_0_0_5"], {"B": 20.5, "A": 36.1})
+        self.assertEqual((network["profile"]["ms"], network["profile"]["passes"]), (18.4, 179))
+        self.assertEqual(network["profile"]["rows"][1],
+                         {"pass": "row: window block", "ms": 4.05, "passes": 6, "us_each": 675.0})
 
 
 class Fit(unittest.TestCase):

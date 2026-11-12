@@ -132,6 +132,47 @@ PROBE_CONFIG = re.compile(r"^\s*\d+\s+8\s+(\d+)\s+(\d+)\s+(\w+)\s+(\w+)\s+(\w+)\
 PROBE_MATRIX = re.compile(r"^\s*matrix 8x(\d+)x16, subgroup\s+(\d+): (exact, (\d+) GFLOP/s|.+)$")
 PROBE_VECTOR = re.compile(r"^\s*vector float32 FMA, subgroup\s+(\d+): (\d+) GFLOP/s")
 PROBE_VERDICT = re.compile(r"^\s*NR's kernels \(float16 8x16x16 at subgroup 32\): (.+)$")
+# The network half since 0.0.6 (src/bench/gpu_report_network.py), on the device libxmx picks.
+NET_START = re.compile(r"^NR's network on this GPU, with (.+):$")
+NET_DEVICE = re.compile(r"^\s*device: (.+)$")
+NET_FORMS = re.compile(r"^\s*weights kept as E4M3 bytes: (yes|no); by column: (yes|no)")
+NET_WINDOWS = re.compile(r"^\s*ms a frame, render scale 0\.4\s+(.+)$")
+NET_ROW = re.compile(r"^\s*network ([AB])\s+([0-9.\s]+)$")
+NET_COMPARE = re.compile(r"^\s*with the weights as 0\.0\.5 kept them \(([^)]*)\): (.+) at 1280x720$")
+NET_PROFILE = re.compile(r"^\s*where network B's 1280x720 frame goes on the GPU: ([0-9.]+) ms in "
+                         r"(\d+) passes")
+NET_PASS = re.compile(r"^\s{4}(\S.*?)\s+([0-9.]+) ms\s+[0-9.]+ %\s+(\d+) passes\s+([0-9.]+) us each$")
+
+
+def probe_network(text):
+    """The network half of a probe report, or None where the report has none."""
+    network, windows = None, []
+    for line in text.splitlines():
+        line = line.rstrip()
+        if found := NET_START.match(line):
+            network = {"weights": found.group(1), "device": None, "e4m3": None, "by_column": None,
+                       "ms": {}, "as_0_0_5": {}, "profile": None}
+        elif network is None:
+            continue
+        elif found := NET_DEVICE.match(line):
+            network["device"] = found.group(1)
+        elif found := NET_FORMS.match(line):
+            network["e4m3"], network["by_column"] = (v == "yes" for v in found.groups())
+        elif found := NET_WINDOWS.match(line):
+            windows = found.group(1).split()
+        elif (found := NET_ROW.match(line)) and windows:
+            network["ms"][found.group(1)] = dict(zip(windows, map(float, found.group(2).split())))
+        elif found := NET_COMPARE.match(line):
+            for name, ms in re.findall(r"\b([AB]) ([0-9.]+) ms", found.group(2)):
+                network["as_0_0_5"][name] = float(ms)
+        elif found := NET_PROFILE.match(line):
+            network["profile"] = {"ms": float(found.group(1)), "passes": int(found.group(2)),
+                                  "rows": []}
+        elif (found := NET_PASS.match(line)) and network["profile"] is not None:
+            name, ms, passes, each = found.groups()
+            network["profile"]["rows"].append({"pass": name, "ms": float(ms), "passes": int(passes),
+                                               "us_each": float(each)})
+    return network
 
 
 def probe(text, issue=None):
@@ -158,6 +199,10 @@ def probe(text, issue=None):
             device["fma32_gflops"][found.group(1)] = int(found.group(2))
         elif found := PROBE_VERDICT.match(line):
             device["nr_kernels"] = found.group(1)
+    network = probe_network(text)
+    for device in devices:
+        if network and network["device"] == device["gpu"]:
+            device["network"] = network
     return [d for d in devices if d["offered"]]
 
 

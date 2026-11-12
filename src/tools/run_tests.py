@@ -88,7 +88,11 @@ CHECKS = [
     py("src/gpu/test_denorm.py", kind="gpu"),
     py("src/gpu/test_input_fp16.py", kind="heavy"),
     py("src/gpu/test_compact_head.py", kind="heavy"),
-    Check("work/coopmat_probe: NR's kernels run here", [binary("work/coopmat_probe")], "gpu",
+    # The probe's network half once, short: network B at 640x360, two frames, through the
+    # probe's own launch of src/bench/gpu_report_network.py (test_gpu_report_network.py checks it).
+    Check("work/coopmat_probe: NR's kernels run here",
+          [binary("work/coopmat_probe"), "--networks", "B", "--fields", "640x360", "--frames", "2",
+           "--warm", "1", "--no-compare", "--no-profile"], "gpu",
           cwd=WORK, expect="NR's kernels (float16 8x16x16 at subgroup 32): run here"),
     exe("work/test_soft_cursor", "alone", system="windows"),
     exe("work/test_focus_gate", "alone", system="windows"),
@@ -145,6 +149,7 @@ CHECKS = [
     py("src/gpu/test_staged_packed.py", kind="gpu"),
     py("src/gpu/test_gemm_e4m3.py", kind="gpu"),
     py("src/gpu/test_gemm_by_column.py", kind="gpu"),
+    py("src/gpu/test_gpu_report_network.py", kind="gpu"),
     py("src/gpu/test_epilogue.py", kind="gpu"),
     py("src/gpu/test_specialization.py", kind="gpu"),
     py("src/gpu/test_softmax_pack.py", kind="gpu"),

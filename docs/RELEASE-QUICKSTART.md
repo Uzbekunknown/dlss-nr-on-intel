@@ -13,8 +13,9 @@ compatible `nvngx_dlssnr.dll` (Hogwarts Legacy carries one since its DLSS 5 upda
 and supported Lunar Lake Xe2 iGPUs are the current targets. Arc A-series (A310 to
 A770) is experimental: NR has computed correctly on all eleven cards reported so far (A380,
 A750, A770), at speeds that vary. If you
-have one, double-click `nr_gpu_probe.exe` in this folder and post the `nr-gpu-report.txt`
-it writes with the **Arc A-series report** issue template.
+have one, double-click `nr_gpu_probe.exe` in this folder: in under a minute it says whether NR
+runs on the card and how long its network takes there, without NVIDIA's DLL, and writes
+`nr-gpu-report.txt`. Post that file with the **Arc A-series report** issue template.
 
 For an MSVC Windows build, install the
 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)

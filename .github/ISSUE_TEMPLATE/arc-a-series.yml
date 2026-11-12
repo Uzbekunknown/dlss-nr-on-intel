@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Arc A-series is not supported yet. Its matrix units multiply 8x8x16 tiles, where NR's kernels are written for Xe2's 8x16x16, so on an A-series card they run on a shape the hardware lacks, at 1-2 fps. A path for these cards can only be designed and tested from reports like this one.
+        Arc A-series runs NR experimentally. Its matrix units offer 8x8x16 tiles, where NR's kernels are written for Xe2's 8x16x16, and every A-series card reported so far computes NR's shape exactly anyway: an A770 reaches about 40 fps at 1280x720 with render scale 0.4 and network B. Where the network's time goes on these cards, pass by pass, is what a faster path for them is built from.
 
-        **How:** double-click `nr_gpu_probe.exe` in the release folder. It takes a few seconds, needs no weights, and leaves `nr-gpu-report.txt` beside itself. Paste that whole file below.
+        **How:** double-click `nr_gpu_probe.exe` in the unpacked release folder. In under a minute it checks the matrix units and times NR's network on random weights of its shapes, with no DLL and no weights, and leaves `nr-gpu-report.txt` beside itself. Paste that whole file below.
         On Linux: `make work/coopmat_probe work/coopmat_bench8.spv work/coopmat_bench16.spv && work/coopmat_probe`.
 
         **Do not attach `nvngx_dlssnr.dll` or any weights.**

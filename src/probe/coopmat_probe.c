@@ -15,6 +15,12 @@
  * gets it right is whether NR's picture is. Needs no weights and nothing else of the build; the
  * output also goes to nr-gpu-report.txt.
  *
+ * Then, where the release's Python is beside it, NR's own network on this GPU without NVIDIA's
+ * DLL (src/bench/gpu_report_network.py: networks B and A from their tensors' shapes, random
+ * weights, three game sizes, where the time goes pass by pass), its arguments passed on to that
+ * script; --no-network leaves it out. The line asking for the report is for Arc A-series cards
+ * alone: a B580's owner posted one because every card was asked to.
+ *
  * Build: cc -O2 -Iwork/vulkan-headers/include -o work/coopmat_probe \
  *              src/probe/coopmat_probe.c -lvulkan
  */
@@ -636,6 +642,260 @@ static void say_where(void)
 #endif
 }
 
+/* NR's own network on this GPU: src/bench/gpu_report_network.py, run by the Python a release
+ * carries in python\ beside the probe (a Windows checkout's work\ holds one too; on Linux,
+ * python3), with the probe's own arguments passed on to it. It needs neither NVIDIA's DLL nor
+ * weights: it builds both networks from their tensors' shapes with random weights and times
+ * them as the daemon would run them, so an Arc A-series owner learns what NR's network takes
+ * on that card before installing anything, and the report carries where its time goes. Its
+ * lines come into the report as they come, with the probe's folder and the user's home taken
+ * out: the report is posted publicly, and a path names the user. */
+#define NETWORK_TIMEOUT_MS (10 * 60 * 1000)
+
+/* UTF-8: the probe's folder, then the user's home, each as written, with its backslashes
+ * doubled (as Python's repr of a path prints it: an error naming a file did, home and all) and
+ * with forward slashes; the folder first, since a release often sits inside the home. */
+static char hidden[6][8192];
+
+static void hide(int slot, const char *path)
+{
+	char *as_is = hidden[3 * slot], *doubled = hidden[3 * slot + 1], *forward = hidden[3 * slot + 2];
+	size_t d = 0, f = 0;
+
+	snprintf(as_is, sizeof hidden[0], "%s", path);
+	for (const char *p = path; *p && d < sizeof hidden[0] - 2; p++) {
+		doubled[d++] = *p;
+		if (*p == '\\')
+			doubled[d++] = '\\';
+		forward[f++] = *p == '\\' ? '/' : *p;
+	}
+	doubled[d] = forward[f] = 0;
+}
+
+static int same_prefix(const char *text, const char *prefix, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		char a = text[i], b = prefix[i];
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z')
+			b = (char)(b - 'A' + 'a');
+		if (a != b)
+			return 0;
+	}
+	return 1;
+}
+
+static void say_hidden(const char *line)
+{
+	char out[8192];
+	size_t o = 0;
+
+	for (const char *p = line; *p && o < sizeof out - 16;) {
+		int hit = -1;
+		size_t n = 0;
+		for (int i = 0; i < 6 && hit < 0; i++) {
+			n = strlen(hidden[i]);
+			if (n && strlen(p) >= n && same_prefix(p, hidden[i], n))
+				hit = i;
+		}
+		if (hit < 0) {
+			out[o++] = *p++;
+			continue;
+		}
+		const char *mark = hit < 3 ? "<release>" : "<home>";
+		size_t m = strlen(mark);
+		memcpy(out + o, mark, m);
+		o += m;
+		p += n;
+	}
+	out[o] = 0;
+	say("%s\n", out);
+}
+
+/* Splits what the child writes into lines, a carriage return dropped. */
+static void take_output(const char *bytes, size_t got, char *line, size_t *used, size_t size)
+{
+	for (size_t i = 0; i < got; i++) {
+		char c = bytes[i];
+		if (c == '\r')
+			continue;
+		if (c == '\n' || *used == size - 1) {
+			line[*used] = 0;
+			say_hidden(line);
+			*used = 0;
+			if (c == '\n')
+				continue;
+		}
+		line[(*used)++] = c;
+	}
+}
+
+#ifdef _WIN32
+static void network_report(int argc, char **argv)
+{
+	static const wchar_t *const up[] = { L"", L"\\.." };
+	wchar_t dir[4096], python[4200], script[4200], cmd[16384];
+	DWORD n = GetModuleFileNameW(NULL, dir, 4096);
+	if (!n || n >= 4096)
+		return;
+	dir[n] = 0;
+	wchar_t *slash = wcsrchr(dir, L'\\');
+	if (!slash)
+		return;
+	*slash = 0;
+	_snwprintf(python, 4200, L"%ls\\python\\python.exe", dir);
+	python[4199] = 0;
+	int found = 0;
+	for (int i = 0; i < 2 && !found; i++) {
+		_snwprintf(script, 4200, L"%ls%ls\\src\\bench\\gpu_report_network.py", dir, up[i]);
+		script[4199] = 0;
+		found = GetFileAttributesW(script) != INVALID_FILE_ATTRIBUTES;
+	}
+	if (!found || GetFileAttributesW(python) == INVALID_FILE_ATTRIBUTES) {
+		say("\nNR's network was not timed: python\\ and src\\ belong beside the probe, as in the\n"
+		    "unpacked release folder.\n");
+		return;
+	}
+	char utf8[4 * 4096];
+	if (WideCharToMultiByte(CP_UTF8, 0, dir, -1, utf8, (int)sizeof utf8, NULL, NULL))
+		hide(0, utf8);
+	wchar_t home[4096];
+	DWORD h = GetEnvironmentVariableW(L"USERPROFILE", home, 4096);
+	if (h && h < 4096 && WideCharToMultiByte(CP_UTF8, 0, home, -1, utf8, (int)sizeof utf8, NULL, NULL))
+		hide(1, utf8);
+
+	int len = _snwprintf(cmd, 16384, L"\"%ls\" -I -X utf8 \"%ls\"", python, script);
+	for (int i = 1; i < argc && len > 0 && len < 16000; i++) {
+		wchar_t arg[1024];
+		if (!strcmp(argv[i], "--no-network") || !MultiByteToWideChar(CP_ACP, 0, argv[i], -1, arg, 1024))
+			continue;
+		len += _snwprintf(cmd + len, (size_t)(16384 - len), L" \"%ls\"", arg);
+	}
+	cmd[16383] = 0;
+
+	SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+	HANDLE rd, wr;
+	if (!CreatePipe(&rd, &wr, &sa, 0)) {
+		say("\nNR's network was not timed: no pipe to its Python (%lu)\n", GetLastError());
+		return;
+	}
+	SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+	HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+				 OPEN_EXISTING, 0, NULL);
+	STARTUPINFOW si = { .cb = sizeof si, .dwFlags = STARTF_USESTDHANDLES, .hStdInput = nul,
+			    .hStdOutput = wr, .hStdError = wr };
+	PROCESS_INFORMATION pi;
+	printf("\nTiming NR's network on this GPU; this takes up to a minute ...\n");
+	fflush(stdout);
+	BOOL started = CreateProcessW(python, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+	DWORD why = GetLastError();
+	CloseHandle(wr);
+	if (nul != INVALID_HANDLE_VALUE)
+		CloseHandle(nul);
+	if (!started) {
+		CloseHandle(rd);
+		say("\nNR's network was not timed: its Python did not start (%lu)\n", why);
+		return;
+	}
+	say("\n");
+	char bytes[4096], line[8192];
+	size_t used = 0;
+	DWORD began = GetTickCount();
+	for (;;) {
+		DWORD avail = 0, got = 0;
+		if (!PeekNamedPipe(rd, NULL, 0, NULL, &avail, NULL))
+			break;                  /* the child is gone and the pipe is empty */
+		if (!avail) {
+			if (GetTickCount() - began > NETWORK_TIMEOUT_MS) {
+				TerminateProcess(pi.hProcess, 1);
+				say("  stopped: the network's timing had not ended after ten minutes\n");
+				break;
+			}
+			WaitForSingleObject(pi.hProcess, 100);
+			continue;
+		}
+		if (!ReadFile(rd, bytes, avail < sizeof bytes ? avail : (DWORD)sizeof bytes, &got, NULL) || !got)
+			break;
+		take_output(bytes, got, line, &used, sizeof line);
+	}
+	if (used) {
+		line[used] = 0;
+		say_hidden(line);
+	}
+	DWORD code = 1;
+	WaitForSingleObject(pi.hProcess, 5000);
+	GetExitCodeProcess(pi.hProcess, &code);
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+	CloseHandle(rd);
+	if (code && code != 2 && code != 3)
+		say("  the network's timing ended with exit code %lu\n", code);
+}
+#else
+static void network_report(int argc, char **argv)
+{
+	static const char *const up[] = { "", "/.." };
+	char dir[4096], script[4200], cmd[16384];
+	ssize_t got = readlink("/proc/self/exe", dir, sizeof dir - 1);
+	if (got <= 0)
+		return;
+	dir[got] = 0;
+	char *slash = strrchr(dir, '/');
+	if (!slash)
+		return;
+	*slash = 0;
+	int found = 0;
+	for (int i = 0; i < 2 && !found; i++) {
+		snprintf(script, sizeof script, "%s%s/src/bench/gpu_report_network.py", dir, up[i]);
+		found = access(script, R_OK) == 0;
+	}
+	if (!found) {
+		say("\nNR's network was not timed: src/bench/gpu_report_network.py is not beside the probe.\n");
+		return;
+	}
+	hide(0, dir);
+	const char *home = getenv("HOME");
+	if (home)
+		hide(1, home);
+	int len = snprintf(cmd, sizeof cmd, "python3 -X utf8 '%s'", script);
+	for (int i = 1; i < argc && len > 0 && len < 16000; i++)
+		if (strcmp(argv[i], "--no-network"))
+			len += snprintf(cmd + len, sizeof cmd - (size_t)len, " '%s'", argv[i]);
+	if (len > 0 && len < 16000)
+		snprintf(cmd + len, sizeof cmd - (size_t)len, " 2>&1");
+	printf("\nTiming NR's network on this GPU; this takes up to a minute ...\n");
+	fflush(stdout);
+	FILE *child = popen(cmd, "r");
+	if (!child) {
+		say("\nNR's network was not timed: python3 did not start\n");
+		return;
+	}
+	say("\n");
+	char bytes[4096], line[8192];
+	size_t used = 0, n;
+	while ((n = fread(bytes, 1, sizeof bytes, child)) > 0)
+		take_output(bytes, n, line, &used, sizeof line);
+	if (used) {
+		line[used] = 0;
+		say_hidden(line);
+	}
+	int status = pclose(child);
+	int code = status >= 0 && (status & 0x7f) == 0 ? (status >> 8) & 0xff : 1;
+	if (code && code != 2 && code != 3)
+		say("  the network's timing ended with exit code %d\n", code);
+}
+#endif
+
+/* An Arc A-series card by its name: "Intel(R) Arc(TM) A770 Graphics", Mesa's "Arc(tm)" too. */
+static int is_arc_a(const char *name)
+{
+	for (const char *p = name; *p; p++)
+		if (same_prefix(p, "arc(tm) a", 9) && p[9] >= '0' && p[9] <= '9')
+			return 1;
+	return 0;
+}
+
 /* Every way out: a double click gives the probe a console of its own, which closes with it, so
  * it stays open until Enter, a failure included. */
 static int finish(int code)
@@ -653,8 +913,12 @@ static int finish(int code)
 	return code;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+	int network = 1, a_series = 0;
+	for (int i = 1; i < argc; i++)
+		if (!strcmp(argv[i], "--no-network"))
+			network = 0;
 	report = fopen("nr-gpu-report.txt", "w");
 	VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 				  .pApplicationName = "coopmat_probe",
@@ -704,6 +968,7 @@ int main(void)
 		int have_cm2  = has_ext(exts, next, VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
 
 		say("\n=== device %u: %s ===\n", d, p2.properties.deviceName);
+		a_series |= is_arc_a(p2.properties.deviceName);
 		say("  apiVersion    : %u.%u.%u\n", VK_API_VERSION_MAJOR(p2.properties.apiVersion),
 		       VK_API_VERSION_MINOR(p2.properties.apiVersion),
 		       VK_API_VERSION_PATCH(p2.properties.apiVersion));
@@ -814,8 +1079,14 @@ int main(void)
 		say("\nNot everything was measured: coopmat_bench8.spv and coopmat_bench16.spv belong beside\n"
 		    "the probe or in the work folder beside it. From a release, unpack the whole ZIP first and\n"
 		    "run the probe in that folder.\n");
+	if (network && ndev)
+		network_report(argc, argv);
 	say_where();
-	say("For an Arc A-series card, please post it with the template at\n"
-	    "https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new?template=arc-a-series.yml\n");
+	if (a_series)
+		say("For an Arc A-series card, please post it with the template at\n"
+		    "https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/new?template=arc-a-series.yml\n");
+	else
+		say("This is no Arc A-series card, so the A-series report is not needed. NR-Setup.exe's\n"
+		    "Speed test and Save report say what NR does here.\n");
 	return finish(0);
 }
