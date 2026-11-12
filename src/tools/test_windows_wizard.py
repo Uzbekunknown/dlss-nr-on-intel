@@ -547,6 +547,32 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(core.set_pacing(vulkan)["live"])
         self.assertFalse(preview.exists())
 
+    def test_d3d12_speed_up_reaches_the_settings_beside_the_upscaler(self):
+        profile, xess = self.unreal_game()
+        self.assertTrue(core.install(profile)["ok"])
+        placed, copy = xess / core.XESS_SETTINGS, core.installed_path(profile) / core.XESS_SETTINGS
+        # Off unless chosen, and said so: NR on every frame.
+        self.assertIn("cache=0", placed.read_text(encoding="utf-8").splitlines())
+        before = [line for line in placed.read_text(encoding="utf-8").splitlines() if not line.startswith("cache=")]
+        # Chosen in the window: both copies say it, every other line as it was, once each.
+        result = core.set_pacing(replace(profile, nr_cache=True))
+        self.assertTrue(result["applied"] and result["profile"]["nr_cache"], result)
+        for path in (placed, copy):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual([line for line in lines if line.startswith("cache=")], ["cache=2"], path)
+            self.assertEqual([line for line in lines if not line.startswith("cache=")], before, path)
+        self.assertTrue(core.load_profile(self.root).nr_cache)
+        # And off again.
+        core.set_pacing(replace(profile, nr_cache=False))
+        self.assertIn("cache=0", placed.read_text(encoding="utf-8").splitlines())
+        self.assertNotIn("cache=2", placed.read_text(encoding="utf-8").splitlines())
+        # A profile from before it has it off; one that is not a boolean is refused.
+        values = profile.to_dict()
+        del values["nr_cache"]
+        self.assertFalse(core.Profile.from_dict(values).nr_cache)
+        with self.assertRaises(ValueError):
+            core.Profile.from_dict(dict(values, nr_cache="yes"))
+
     def test_d3d12_takes_only_an_xess_nrs_libxess_can_stand_in_front_of(self):
         profile, xess = self.unreal_game()
         write_pe(self.game, x64=False)

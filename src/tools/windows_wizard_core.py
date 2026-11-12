@@ -146,6 +146,10 @@ class Profile:
     # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
     # none, so "auto"; a request may name one, for a game with both.
     upscaler: str = "auto"
+    # For DirectX 12, the experimental speed-up: the network answers every other frame at most and
+    # its change is carried along the game's motion to the frames between (XESS_SETTINGS' `cache=`,
+    # src/xess/nr_xess.c). Off unless chosen.
+    nr_cache: bool = False
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -162,7 +166,7 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler}
+                "upscaler": self.upscaler, "nr_cache": self.nr_cache}
 
     @classmethod
     def from_dict(cls, values):
@@ -190,6 +194,9 @@ class Profile:
         upscaler = values.get("upscaler") or "auto"
         if not isinstance(upscaler, str) or upscaler not in UPSCALERS:
             raise ValueError("upscaler must be one of " + ", ".join(UPSCALERS))
+        cached = values.get("nr_cache", False)
+        if not isinstance(cached, bool):
+            raise ValueError("nr_cache must be a boolean")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -198,7 +205,7 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler)
+                   preset=preset, upscaler=upscaler, nr_cache=cached)
 
 
 def profile_path(root):
@@ -1687,15 +1694,45 @@ def _write_proxy_environment(profile, stage, destination):
     (stage / ENV_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def _cache_line(profile):
+    """XESS_SETTINGS' line for the experimental speed-up: the network on every other frame at most,
+    or on every frame."""
+    return "cache=2" if profile.nr_cache else "cache=0"
+
+
 def _write_xess_settings(profile, stage, destination):
     """XESS_SETTINGS, which NR's libxess.dll or amd_fidelityfx_dx12.dll reads beside it: NR after the
-    upscaler, on its output, the daemon's pipe, and the ENV_FILE to start the daemon from, whose
-    trigger turns NR on and off."""
+    upscaler, on its output, the daemon's pipe, the ENV_FILE to start the daemon from, whose
+    trigger turns NR on and off, and the experimental speed-up (`_cache_line`)."""
     lines = ["# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside it (src/xess/nr_xess.c, "
              "nr_ffx.c); Install NR writes it.",
              "mode=after", "pipe=" + layer_environment(profile)["NR_LAYER_SOCKET"],
-             "env=" + str(destination / ENV_FILE)]
+             "env=" + str(destination / ENV_FILE), _cache_line(profile)]
     (stage / XESS_SETTINGS).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def _rewrite_cache_line(profile):
+    """The speed-up's line in XESS_SETTINGS where NR's DirectX 12 DLL reads it, beside the game's
+    upscaler, and in the installation's copy: the DLL reads the file again while the game runs, so
+    the change takes effect within a second. Every other line is kept as it was, and each file is
+    replaced whole, as `_rewrite_pacing_lines` replaces ENV_FILE. Returns how many were written."""
+    folder = installed_path(profile)
+    paths = [folder / XESS_SETTINGS]
+    entry = _game_record(folder)["files"].get(XESS_SETTINGS)
+    if isinstance(entry, dict):
+        paths.append(_game_target(profile, XESS_SETTINGS, entry))
+    written = 0
+    for path in paths:
+        if not path.is_file():
+            continue
+        kept = [line for line in path.read_text(encoding="utf-8").splitlines()
+                if line.split("=", 1)[0].strip() != "cache"]
+        kept.append(_cache_line(profile))
+        temporary = path.with_name(path.name + ".new")
+        temporary.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
+        os.replace(temporary, path)
+        written += 1
+    return written
 
 
 def _undo_game_files(profile, folder, done):
@@ -2179,6 +2216,8 @@ def set_pacing(profile):
     if applied:
         try:
             _rewrite_pacing_lines(env_file, layer_environment(profile))
+            if profile.api == "d3d12":
+                _rewrite_cache_line(profile)
         except OSError as exc:
             # The profile is already saved, so the window is not lying about what it holds; what
             # failed is telling the game. Say so rather than reporting a success that will not
