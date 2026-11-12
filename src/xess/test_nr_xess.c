@@ -1,10 +1,10 @@
-/* test_nr_xess.c — the XeSS proxy's GPU work on this machine's D3D12 device, without a
+﻿/* test_nr_xess.c â€” the XeSS proxy's GPU work on this machine's D3D12 device, without a
  * game. A colour texture goes through two executes: the first is captured for NR, the
  * second is handed NR's change. Both are checked against the CPU, for each colour format
  * the proxy takes, and with the strength at 0 the pass must give the colour back exactly.
- * Then the change is followed through motion — a uniform motion with the picture moving
+ * Then the change is followed through motion â€” a uniform motion with the picture moving
  * along, a half-pixel jitter, and a block whose vectors say it moved while the picture did
- * not, where the change is not trusted and is filled from around it — and one change fades into the
+ * not, where the change is not trusted and is filled from around it â€” and one change fades into the
  * next over three executes. Every expected value comes from a CPU transcription of
  * nr_xess.hlsl below. Last, FSR 3.1's dispatch through nr_ffx.c, with a stand-in for AMD's DLL:
  * the cut after it as after XeSS, from the states the game names, and the calls it hands on whole.
@@ -137,7 +137,7 @@ static void pack(int kind, const float *c, uint8_t *out)
 
 /* A block of the picture that moved by (dx, dy) colour pixels on the second frame of
  * `run_uncovered`: its pixels show what was (dx, dy) behind them, and the strip it left
- * shows the background — the same as the block showed there, so the picture alone cannot
+ * shows the background â€” the same as the block showed there, so the picture alone cannot
  * tell them apart. Empty outside that case. */
 static struct { int x0, y0, x1, y1, dx, dy; } moved;
 
@@ -562,8 +562,8 @@ static xess_d3d12_execute_params_t params_for(ID3D12Resource *tex, ID3D12Resourc
 	return p;
 }
 
-/* One case: execute on the first frame, wait for NR, execute on the second — the picture
- * moved by (sx, sy), with its own vectors (`how2`, as `motion2` was drawn) and jitter — and
+/* One case: execute on the first frame, wait for NR, execute on the second â€” the picture
+ * moved by (sx, sy), with its own vectors (`how2`, as `motion2` was drawn) and jitter â€” and
  * compare what XeSS was handed with the CPU's apply pass. */
 static int run(DXGI_FORMAT format, const char *name, float strength, int sx, int sy,
 	       ID3D12Resource *motion1, ID3D12Resource *motion2, const float *how1, const float *how2,
@@ -719,7 +719,7 @@ static void uncovered_place(int x, int y, float *gx, float *gy)
 }
 
 /* A block of the picture moves on and uncovers background that looks just as the block did
- * there — as hair can look like dark wood. The vectors trace the uncovered background back
+ * there â€” as hair can look like dark wood. The vectors trace the uncovered background back
  * to the block, whose change the tracker used to carry onto it: the trail behind a moving
  * character. Now the background's pixels and the block's that came from the same place are
  * contested and filled, each from the surfaces round it that move as it does, and the strip
@@ -737,7 +737,7 @@ static int run_uncovered(void)
 	moved.dx = 6;
 	moved.dy = 0;
 	ID3D12Resource *second = texture(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how);
-	/* In texels: the block's pixels were 6 pixels to their left, on both frames — it was
+	/* In texels: the block's pixels were 6 pixels to their left, on both frames â€” it was
 	 * moving already, as a character walking on is. */
 	float drawn1[6] = { -12, 0, (float)(2 * (moved.x0 - moved.dx)), (float)(2 * moved.y0),
 			    (float)(2 * (moved.x1 - moved.dx)), (float)(2 * moved.y1) };
@@ -1048,7 +1048,7 @@ static int run_split(void)
 }
 
 /* A stand-in for the daemon's protocol 3, on its own queue: it waits there for a frame's V,
- * puts `answer` and the stamp naming V into the shared output — nothing when declining — and
+ * puts `answer` and the stamp naming V into the shared output â€” nothing when declining â€” and
  * signals V + 1. A frame of a session it has not taken fails, as the daemon's does, with the
  * fence left where it is; `down` answers nothing, as no daemon at all; `dies` ends it with the
  * next frame, unanswered and the fence at UINT64_MAX, as a daemon's process ending left it
@@ -1126,7 +1126,7 @@ static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *repl
 
 /* An execute in mode=cut with the stand-in: the frame NR is given as the CPU encodes it, the
  * stamp naming the frame's V, and the colour XeSS is handed against the colour plus NR's change
- * to this very frame — or the colour unchanged, declined or at strength 0. */
+ * to this very frame â€” or the colour unchanged, declined or at strength 0. */
 static int run_cut(DXGI_FORMAT format, const char *name, float strength, int decline)
 {
 	UINT texel;
@@ -1221,8 +1221,8 @@ static int run_cut(DXGI_FORMAT format, const char *name, float strength, int dec
 }
 
 /* mode=cut's motion: of two executes in a row, the second hands the daemon, after the frame,
- * each pixel's offset to where its surface was on the first — the game's vector, (3, -2)
- * pixels here, and the two frames' jitter — NaN where that was off screen, and names the first
+ * each pixel's offset to where its surface was on the first â€” the game's vector, (3, -2)
+ * pixels here, and the two frames' jitter â€” NaN where that was off screen, and names the first
  * frame in its FRAME. The first names none. */
 static int run_cut_motion(ID3D12Resource *motion)
 {
@@ -1394,6 +1394,220 @@ static int run_after(DXGI_FORMAT format, const char *name)
 	free(mixed);
 	ID3D12Resource_Release(out);
 	ID3D12Resource_Release(tex);
+	return failures != 0;
+}
+
+/* ---- The edit cache (`cache=N`) after XeSS ---- */
+
+static void fill_constant(int x, int y, uint8_t *out, const void *how)
+{
+	(void)x;
+	(void)y;
+	memcpy(out, how, 4);
+}
+
+/* The proxy's linear light of a colour, held to [0, 1], as nr_xess.hlsl's APPLY takes it. */
+static void proxy_value(const float *c, float *p)
+{
+	float d[3], white = config.white;
+	for (int i = 0; i < 3; i++) d[i] = (c[i] > 0 ? c[i] : 0) / white;
+	float lit = 0.2126f * d[0] + 0.7152f * d[1] + 0.0722f * d[2];
+	float scale = lit > 0.75f ? (0.75f + 0.25f * (1 - expf(-(lit - 0.75f) / 0.25f))) / lit : 1;
+	for (int i = 0; i < 3; i++) p[i] = clampf(d[i] * scale, 0, 1);
+}
+
+/* The output region of `out` after the list so far, as the game goes on with it. */
+static int read_output(ID3D12Resource *out, uint8_t *mixed)
+{
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes, D3D12_RESOURCE_FLAG_NONE,
+					       D3D12_RESOURCE_STATE_COPY_DEST);
+	D3D12_RESOURCE_BARRIER b = transition(out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	D3D12_BOX box = { BASE_X, BASE_Y, 0, BASE_X + IN_W, BASE_Y + IN_H, 1 };
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = readback, .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+					   .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = out, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, &box);
+	b = transition(out, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	if (submit()) return 1;
+	uint8_t *raw;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&raw);
+	memcpy(mixed, raw, (size_t)nr.bytes);
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	return 0;
+}
+
+/* A frame of the moving picture (its colour shifted by `sx`, `sy`) against its colour with A's edit
+ * `weight` of the way in, read where its surface was on A, (`back_x`, `back_y`) away: inside the
+ * part of the frame that was on screen then. */
+static int compare_carried(const char *name, int kind, UINT texel, const uint8_t *mixed, int sx, int sy,
+			   const float *edit, float weight, int back_x, int back_y)
+{
+	int failures = 0, checked = 0;
+	double worst = 0, added = 0;
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			int fx = x + back_x, fy = y + back_y;
+			if (fx < 0 || fy < 0 || fx >= IN_W || fy >= IN_H) continue;
+			float o[4], got[4] = { 0 }, p[3], white = config.white;
+			colour_at(kind, x, y, sx, sy, o);
+			proxy_value(o, p);
+			load_texel(mixed + nr.footprint.Offset + (size_t)y * nr.footprint.Footprint.RowPitch
+				   + (size_t)x * texel, kind, got);
+			float lit = (0.2126f * o[0] + 0.7152f * o[1] + 0.0722f * o[2]) / white;
+			float gain = lit > 0.75f ? lit / (0.75f + 0.25f * (1 - expf(-(lit - 0.75f) / 0.25f))) : 1;
+			for (int c = 0; c < 3; c++) {
+				float e = weight * edit[((size_t)fy * IN_W + fx) * 3 + c];
+				float d = (p[c] + 1.0f / 512) * exp2f(e) - 1.0f / 512 - p[c];
+				float want = o[c] + white * gain * d;
+				if (want < 0) want = 0;
+				double error = fabs(got[c] - want);
+				if (error > worst) worst = error;
+				added += fabs(got[c] - o[c]);
+				if (error > 3e-3 * (1 + fabs(want)) && failures++ < 3)
+					printf("FAIL %s: (%d, %d) channel %d is %.5f, expected %.5f\n", name, x, y, c, got[c], want);
+			}
+			checked++;
+		}
+	printf("%s %s: the colour moved by %.4f on average over %d pixels; worst error %.2g\n",
+	       failures ? "FAIL" : "ok  ", name, added / (checked * 3.0), checked, worst);
+	return failures;
+}
+
+/* `cache=2` after XeSS, on a picture moving (2, 1) pixels a frame with the vectors saying so, a
+ * constant depth beside it. A refreshes: NR's answer whole. B is carried: A's edit along the
+ * vectors, the daemon not asked. C refreshes and the stand-in declines it, so its edit is none and
+ * A's, two frames old, gives way half of it; the daemon is told the tracker's offsets back to A. D is
+ * carried: C's edit alone, none. */
+static int run_cache(void)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R16G16B16A16_FLOAT, &texel), failures = 0;
+	enum { FRAMES = 4, DX = 2, DY = 1 };
+	float m[6] = { -DX, -DY };
+	ID3D12Resource *vectors = texture(DXGI_FORMAT_R16G16_FLOAT, IN_W, IN_H, 4, fill_motion, m);
+	float depth_value = 0.25f;
+	ID3D12Resource *depth = texture(DXGI_FORMAT_R32_FLOAT, IN_W, IN_H, 4, fill_constant, &depth_value);
+	/* each frame XeSS's output of its own, as a game's is drawn afresh each frame; and one for the
+	 * executes that open the session, whose answer lands in it */
+	ID3D12Resource *out[FRAMES + 1];
+	for (int f = 0; f <= FRAMES; f++) {
+		struct colour_how how = { kind, f < FRAMES ? -DX * f : 0, f < FRAMES ? -DY * f : 0 };
+		out[f] = texture_as(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how,
+				    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		if (!out[f] || !vectors || !depth) {
+			printf("FAIL edit cache: no texture\n");
+			return 1;
+		}
+	}
+	xess_d3d12_init_params_t init = { .outputResolution = { IN_W, IN_H }, .initFlags = XESS_INIT_FLAG_INVERTED_DEPTH };
+	xessD3D12Init((xess_context_handle_t)1, &init);
+	config.strength = 1;
+	config.cache = 2;
+	config.cache_fade = 1;
+	stand.decline = 0;
+	static uint8_t given[IN_W * IN_H * 4];
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			float o[4];
+			colour_at(kind, x, y, 0, 0, o);
+			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
+		}
+	brighten(given, NULL, stand.answer, IN_W, IN_H);
+	static float edit[IN_W * IN_H * 3], whole[IN_W * IN_H * 3];
+	xess_d3d12_execute_params_t params = params_for(out[FRAMES], vectors, NULL);
+	params.pDepthTexture = depth;
+	params.pOutputTexture = out[FRAMES];
+	params.outputColorBase.x = BASE_X;
+	params.outputColorBase.y = BASE_Y;
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL edit cache: the session was not opened\n");
+		return 1;
+	}
+	uint8_t *mixed = malloc((size_t)nr.bytes);
+	uint64_t values[FRAMES] = { 0 };
+	int asked[FRAMES];
+	UINT64 bytes = NR_GPU_MOTION_BYTES(IN_W, IN_H);
+	ID3D12Resource *offsets_back = make_buffer(D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE,
+						   D3D12_RESOURCE_STATE_COPY_DEST);
+	uint64_t previous_at_c = 0;
+	for (int f = 0; f < FRAMES; f++) {
+		params.pColorTexture = out[f];
+		params.pOutputTexture = out[f];
+		params.resetHistory = f == 0;          /* A starts the cache afresh, whatever came before */
+		stand.decline = f == 2;
+		int before = stand.frames;
+		xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+		values[f] = cut.last;
+		if (f == 2)
+			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, offsets_back, 0, cut.gpu.input, cut.gpu.motion, bytes);
+		if (read_output(out[f], mixed)) return 1;
+		asked[f] = stand.frames - before;
+		if (f == 2) previous_at_c = stand.previous;
+		if (f == 0) {
+			/* A's edit as CAPTURE takes it: from what the GPU encoded, which may lie a level
+			 * from the CPU's, to the stand-in's answer */
+			UINT64 shared = (UINT64)IN_W * IN_H * 4;
+			ID3D12Resource *back = make_buffer(D3D12_HEAP_TYPE_READBACK, shared, D3D12_RESOURCE_FLAG_NONE,
+							   D3D12_RESOURCE_STATE_COPY_DEST);
+			ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, back, 0, cut.gpu.input, 0, shared);
+			if (submit()) return 1;
+			const uint8_t *g8;
+			ID3D12Resource_Map(back, 0, NULL, (void **)&g8);
+			for (int i = 0; i < IN_W * IN_H; i++)
+				for (int c = 0; c < 3; c++) {
+					float a = linear8[stand.answer[4 * i + c]], g = linear8[g8[4 * i + c]];
+					edit[3 * i + c] = log2f((a + 1.0f / 512) / (g + 1.0f / 512));
+					whole[3 * i + c] = a - g;
+				}
+			ID3D12Resource_Unmap(back, 0, NULL);
+			ID3D12Resource_Release(back);
+		}
+		char name[96];
+		static const char *what[FRAMES] = { "A, a refresh", "B, carried", "C, a refresh, declined, A fading out",
+						    "D, carried" };
+		snprintf(name, sizeof name, "edit cache, %s", what[f]);
+		if (f == 0) failures += compare(name, kind, texel, mixed, 0, 0, 1, whole, 1);
+		else failures += compare_carried(name, kind, texel, mixed, -DX * f, -DY * f, edit,
+						 f == 1 ? 1.0f : f == 2 ? 0.5f : 0.0f, -DX * f, -DY * f);
+	}
+	stand.decline = 0;
+	free(mixed);
+	int cadence = asked[0] == 1 && asked[1] == 0 && asked[2] == 1 && asked[3] == 0;
+	printf("%s edit cache: the stand-in was asked for %d, %d, %d and %d of the four frames\n",
+	       cadence ? "ok  " : "FAIL", asked[0], asked[1], asked[2], asked[3]);
+	failures += !cadence;
+	/* C's offsets lead back to A, (-4, -2), where A had the surface on screen */
+	float *o;
+	ID3D12Resource_Map(offsets_back, 0, NULL, (void **)&o);
+	int wrong = 0, known = 0;
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			const float *d = o + 2 * ((size_t)y * IN_W + x);
+			int off = x - 2 * DX < 0 || y - 2 * DY < 0;
+			int right = off ? isnan(d[0]) && isnan(d[1]) : d[0] == -2 * DX && d[1] == -2 * DY;
+			known += !off;
+			if (!right && wrong++ < 3)
+				printf("FAIL edit cache: C's offset at (%d, %d) is (%g, %g)\n", x, y, d[0], d[1]);
+		}
+	ID3D12Resource_Unmap(offsets_back, 0, NULL);
+	ID3D12Resource_Release(offsets_back);
+	int named = previous_at_c == values[0] && values[0] != 0;
+	printf("%s edit cache: C's offsets lead back to A over %d pixels, the frame named %llu (A was %llu)\n",
+	       wrong || !named ? "FAIL" : "ok  ", known, (unsigned long long)previous_at_c,
+	       (unsigned long long)values[0]);
+	failures += wrong != 0 || !named;
+	config.cache = 0;
+	for (int f = 0; f <= FRAMES; f++) ID3D12Resource_Release(out[f]);
+	ID3D12Resource_Release(vectors);
+	ID3D12Resource_Release(depth);
 	return failures != 0;
 }
 
@@ -1900,6 +2114,7 @@ int main(int argc, char **argv)
 	failed += run_after(DXGI_FORMAT_R16G16B16A16_FLOAT, "after XeSS, R16G16B16A16_FLOAT");
 	failed += run_after(DXGI_FORMAT_R11G11B10_FLOAT, "after XeSS, R11G11B10_FLOAT");
 	failed += run_reopen(moving);
+	failed += run_cache();
 
 	/* FSR 3.1 through the FidelityFX API, on the same stand-in for the daemon */
 	ffx.create = stub_ffx_create;
