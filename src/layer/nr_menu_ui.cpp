@@ -219,6 +219,38 @@ static int g_nr_request = -1;
  * that lost copy is why a dragged slider changed nothing. */
 static nrex_row *g_rows = nullptr;
 
+/* **The two graphs, after OptiScaler's.** The counter's numbers say what the last second averaged;
+ * these say whether it was steady, which is the difference a player actually feels.
+ *
+ *   frame  green - milliseconds between presents, so frame generation's extra frames are the
+ *                  short ones and a stall is a spike;
+ *   NR     blue  - the network's milliseconds, the cost NR adds to those frames.
+ *
+ * Both, because a player deciding whether NR is the cause needs the pair: a high frame time with a
+ * low NR time is the game, and both high is the network.
+ *
+ * Copied from the caller's array rather than pointed at: the counter is drawn once a frame from a
+ * frame's stack, and the samples live in the panel's struct, which outlives this call. The C side
+ * fills a ring once a present (`nr_frame_rate.h`'s `nr_frame_graph`) and hands the run here; this
+ * file only draws it, which is what keeps the arithmetic testable without ImGui. */
+static float g_graph_frame[NREX_GRAPH_SAMPLES];
+static float g_graph_net[NREX_GRAPH_SAMPLES];
+static int   g_graph_frame_count = 0;
+static int   g_graph_net_count = 0;
+/* Whether the CORNER draws them. The panel always does - see `nrex_counter`. */
+static int   g_corner_graphs = 1;
+
+/* Wide enough to read a two-second trend at a glance, narrow enough not to cover a corner of a 720p
+ * picture: 180x34 each, stacked, so the counter box grows by about 70 pixels. */
+static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
+static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
+static const float kGraphWidth = 180.0f;
+static const float kGraphHeight = 34.0f;
+/* The panel's copy is wider: its rows are a table 190+86+210 wide, and a graph narrower than the
+ * thing it summarises reads as a decoration rather than a measurement. */
+static const float kPanelGraphWidth = 460.0f;
+
+
 /* The top of a graph's axis: the highest point, floored, capped and rounded up to a readable step.
  *
  * Rounded rather than exact so the axis number is one a reader can hold - 20, 40, 60, 100 - and so
@@ -238,37 +270,39 @@ static float graph_axis_top(const float *series, int count)
     return ceilf(highest / step) * step;
 }
 
+/* **The two graphs, drawn once.** The panel's header and the corner both call this, so the axis,
+ * the colours and the gap handling cannot drift between them; the only thing they differ in is the
+ * width, because the panel's column is wider than a corner box may be.
+ *
+ * `frame` and `net` are the series and their lengths, oldest first. A zero length draws nothing,
+ * which is what a host with no counts passes. */
+static void draw_graphs(const float *frame, int frame_count, const float *net, int net_count,
+                        float width)
+{
+    if (frame_count <= 0) return;
+    char axis[32];
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
+    const float frame_top = graph_axis_top(frame, frame_count);
+    snprintf(axis, sizeof axis, "%.0f ms", (double)frame_top);
+    ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphFrameColour);
+    ImGui::PlotLines("##nr_frame_ms", frame, frame_count, 0, axis, 0.0f, frame_top,
+                     ImVec2(width, kGraphHeight));
+    ImGui::PopStyleColor();
+    if (net_count > 0) {
+        const float net_top = graph_axis_top(net, net_count);
+        snprintf(axis, sizeof axis, "%.0f ms", (double)net_top);
+        ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphNetColour);
+        ImGui::PlotLines("##nr_net_ms", net, net_count, 0, axis, 0.0f, net_top,
+                         ImVec2(width, kGraphHeight));
+        ImGui::PopStyleColor();
+    }
+    ImGui::PopStyleVar();
+}
+
 /* The frame counter's line for the top of the panel, and what it means, as `nrex_counter` was last
  * handed them. Copied, like the footer's hint. 1024 for the hint: its Russian is over 500 bytes. */
 static char g_counter_line[192] = "";
 static char g_counter_hint[1024] = "";
-
-/* **The two graphs, after OptiScaler's.** The counter's numbers say what the last second averaged;
- * these say whether it was steady, which is the difference a player actually feels.
- *
- *   frame  green - milliseconds between presents, so frame generation's extra frames are the
- *                  short ones and a stall is a spike;
- *   NR     blue  - the network's milliseconds, the cost NR adds to those frames.
- *
- * Both, because a player deciding whether NR is the cause needs the pair: a high frame time with a
- * low NR time is the game, and both high is the network.
- *
- * Copied from the caller's array rather than pointed at: the counter is drawn once a frame from a
- * frame's stack, and the samples live in the panel's struct, which outlives this call. The C side
- * fills a ring once a present (`nr_frame_rate.h`'s `nr_frame_graph`) and hands the run here; this
- * file only draws it, which is what keeps the arithmetic testable without ImGui. */
-static float g_graph_frame[NREX_GRAPH_SAMPLES];
-static float g_graph_net[NREX_GRAPH_SAMPLES];
-static int   g_graph_frame_count = 0;
-static int   g_graph_net_count = 0;
-
-/* Wide enough to read a two-second trend at a glance, narrow enough not to cover a corner of a 720p
- * picture: 180x34 each, stacked, so the counter box grows by about 70 pixels. */
-static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
-static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
-static const float kGraphWidth = 180.0f;
-static const float kGraphHeight = 34.0f;
-
 /* The knob's explanation, shown while the pointer rests on the row just submitted.
  *
  * Call it immediately after the item the tip belongs to: `IsItemHovered` asks about the last item,
@@ -474,6 +508,15 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
     if (g_counter_line[0]) {
         ImGui::TextUnformatted(g_counter_line);
         nrex_hint_tooltip(g_counter_hint);
+        /* **The panel's graphs, always.** The corner's are the user's switch (`nrex_counter`'s
+         * `corner_graphs`); these are not - a player who opened the panel is looking at the
+         * numbers, and the shape behind them is why the panel is open. Drawn here rather than
+         * under the corner's copy so the two are independent: turning the corner's off must not
+         * take the panel's with it.
+         *
+         * The same axis rule as the corner's, and the same helper. */
+        draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
+                    kPanelGraphWidth);
         ImGui::Separator();
     }
 
@@ -798,7 +841,7 @@ extern "C" NREX_API void nrex_set_nr_enabled(nrex_ui *ui, int on)
 extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint,
                                       int corner, const char *corner_line,
                                       const float *frame_ms, int frame_count,
-                                      const float *net_ms, int net_count)
+                                      const float *net_ms, int net_count, int corner_graphs)
 {
     (void)ui;
     snprintf(g_counter_line, sizeof g_counter_line, "%s", panel_line ? panel_line : "");
@@ -815,6 +858,8 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
         g_graph_net_count = net_count < NREX_GRAPH_SAMPLES ? net_count : NREX_GRAPH_SAMPLES;
         for (int i = 0; i < g_graph_net_count; ++i) g_graph_net[i] = net_ms[i];
     }
+    /* The corner's graphs, which are the user's switch; the panel's are unconditional. */
+    g_corner_graphs = corner_graphs ? 1 : 0;
     if (corner < 1 || corner > 4 || !corner_line || !corner_line[0]) return;
 
     ImGuiIO &io = ImGui::GetIO();
@@ -836,31 +881,19 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
         ImGui::TextUnformatted(corner_line);
         /* The graphs, under the numbers they are the shape of.
          *
+         * **The panel's header always has them; the corner follows the user's switch.** A corner
+         * window over a game's HUD is competing for the same pixels, so it is the one that can be
+         * turned off - and when it is, the corner is the line of numbers it was before the graphs
+         * existed.
+         *
          * **Scaled to the data, with a floor and a cap.** A fixed axis makes a steady stream and a
          * stuttering one draw the same flat line at 70 fps - 14 ms against 100 ms is a sixth of the
          * height - which is the one thing the picture exists to tell apart. Each series gets
          * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
          * the reader knows what the height means. */
-        if (g_graph_frame_count > 0) {
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
-            char axis[32];
-            const float frame_top = graph_axis_top(g_graph_frame, g_graph_frame_count);
-            snprintf(axis, sizeof axis, "frame  %.0f ms", (double)frame_top);
-            ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphFrameColour);
-            ImGui::PlotLines("##nr_frame_ms", g_graph_frame, g_graph_frame_count, 0,
-                             axis, 0.0f, frame_top,
-                             ImVec2(kGraphWidth, kGraphHeight));
-            ImGui::PopStyleColor();
-            if (g_graph_net_count > 0) {
-                const float net_top = graph_axis_top(g_graph_net, g_graph_net_count);
-                snprintf(axis, sizeof axis, "NR  %.0f ms", (double)net_top);
-                ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphNetColour);
-                ImGui::PlotLines("##nr_net_ms", g_graph_net, g_graph_net_count, 0,
-                                 axis, 0.0f, net_top,
-                                 ImVec2(kGraphWidth, kGraphHeight));
-                ImGui::PopStyleColor();
-            }
-            ImGui::PopStyleVar();
+        if (g_corner_graphs) {
+            draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
+                        kGraphWidth);
         }
     }
     ImGui::End();

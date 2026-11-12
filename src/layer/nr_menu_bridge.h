@@ -136,6 +136,12 @@ enum { NR_COUNTER_PANEL = 0, NR_COUNTER_TOP_LEFT = 1, NR_COUNTER_TOP_RIGHT = 2,
        NR_COUNTER_BOTTOM_LEFT = 3, NR_COUNTER_BOTTOM_RIGHT = 4, NR_COUNTER_PLACES = 5 };
 int nr_menu_bridge_counter(const nr_menu_bridge *bridge);
 void nr_menu_bridge_set_counter(nr_menu_bridge *bridge, int where);
+
+/* Whether the corner window draws the two frame-time graphs as well. The panel always draws them,
+ * so this is only ever about the corner - and a corner exists only when `counter` puts it
+ * somewhere. Default on; saved as `menu_graphs`. */
+int nr_menu_bridge_graphs(const nr_menu_bridge *bridge);
+void nr_menu_bridge_set_graphs(nr_menu_bridge *bridge, int on);
 int nr_menu_bridge_pacing_async(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_gpu_image(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_every(const nr_menu_bridge *bridge);

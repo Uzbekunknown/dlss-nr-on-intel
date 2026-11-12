@@ -628,7 +628,7 @@ int main(void)
             dio.DisplaySize = ImVec2(800.0f, 600.0f);
             dio.DeltaTime = 1.0f / 60.0f;
             ImGui::NewFrame();
-            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms", nullptr, 0, nullptr, 0);
+            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms", nullptr, 0, nullptr, 0, 1);
             ImGui::Render();
         }
         int any = nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600);
@@ -642,6 +642,67 @@ int main(void)
               (corner->Flags & ImGuiWindowFlags_NoFocusOnAppearing),
               "the corner is a window that takes no input and no focus");
 
+        /* ---- the corner's graphs are a switch; the panel's are not ---- */
+        {
+            /* Two frames of the same data, once with `corner_graphs` on and once off. The corner
+             * window's height is what changes: the numbers are the same line either way, so a
+             * difference there can only be the graphs. This is the whole of the user's switch, and
+             * it is checked on the drawn window rather than on the flag the caller passed. */
+            static float series[60];
+            for (int i = 0; i < 60; ++i) series[i] = 12.0f + (float)(i % 7);
+            float corner_height_on = 0.0f, corner_height_off = 0.0f;
+            for (int pass = 0; pass < 2; ++pass) {
+                float *net = (pass == 0) ? series : nullptr;
+                int net_count = (pass == 0) ? 60 : 0;
+                for (int i = 0; i < 2; ++i) {
+                    ImGuiIO &dio = ImGui::GetIO();
+                    dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                    dio.DeltaTime = 1.0f / 60.0f;
+                    ImGui::NewFrame();
+                    /* pass 0: corner graphs on; pass 1: off, and no net series so the second
+                     * graph would be absent anyway - the frame graph alone is the test. */
+                    nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps",
+                                 series, 60, net, net_count, pass == 0 ? 1 : 0);
+                    ImGui::Render();
+                }
+                ImGuiWindow *w = ImGui::FindWindowByName("##nr_frame_counter");
+                float h = w ? w->Size.y : 0.0f;
+                if (pass == 0) corner_height_on = h; else corner_height_off = h;
+            }
+            snprintf(detail, sizeof detail, "corner %.0f px with graphs, %.0f px without",
+                     (double)corner_height_on, (double)corner_height_off);
+            check(corner_height_on > corner_height_off + 40.0f,
+                  "the corner draws the graphs when asked, and not when not", detail);
+
+            /* **And the panel's are unconditional.** The same data with `corner_graphs` off must
+             * still draw them in the panel's header - the switch is the corner's alone. A panel
+             * frame with no graphs and one with graphs differ in vertex count; the open panel is
+             * where that shows. */
+            int verts_panel_off = 0, verts_panel_none = 0;
+            for (int pass = 0; pass < 2; ++pass) {
+                ImGuiIO &pio2 = ImGui::GetIO();
+                pio2.DisplaySize = ImVec2(800.0f, 600.0f);
+                pio2.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps", "what they are", 0,
+                             nullptr, (pass == 0) ? series : nullptr, (pass == 0) ? 60 : 0,
+                             nullptr, 0, 0);   /* corner off - it must not matter here */
+                nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
+                nrex_rows(nullptr, rows, ROWS, 0);
+                nrex_end_panel(nullptr);
+                ImGui::Render();
+                int v = 0;
+                ImDrawData *dd2 = ImGui::GetDrawData();
+                if (dd2)
+                    for (int i = 0; i < dd2->CmdListsCount; ++i) v += dd2->CmdLists[i]->VtxBuffer.Size;
+                if (pass == 0) verts_panel_off = v; else verts_panel_none = v;
+            }
+            snprintf(detail, sizeof detail, "%d vertices with the graphs, %d without",
+                     verts_panel_off, verts_panel_none);
+            check(verts_panel_off > verts_panel_none,
+                  "the panel draws the graphs even with the corner's switch off", detail);
+        }
+
         /* A pointer over it, pressed: it is not hovered, it asks for no mouse, nothing is reported. */
         if (corner) {
             ImGuiIO &mio = ImGui::GetIO();
@@ -651,7 +712,7 @@ int main(void)
             int captured = 0, hovered = 0;
             for (int i = 0; i < 2; ++i) {
                 ImGui::NewFrame();
-                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps", nullptr, 0, nullptr, 0);
+                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps", nullptr, 0, nullptr, 0, 1);
                 captured |= mio.WantCaptureMouse ? 1 : 0;
                 hovered |= ImGui::GetCurrentContext()->HoveredWindow == corner ? 1 : 0;
                 ImGui::Render();
@@ -666,7 +727,7 @@ int main(void)
 
         /* In the panel's place the counter's place is nowhere: nothing is drawn. */
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps", nullptr, 0, nullptr, 0);
+        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps", nullptr, 0, nullptr, 0, 1);
         ImGui::Render();
         check(!nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600),
               "with the counter in the panel, a shut panel draws nothing");
@@ -678,7 +739,7 @@ int main(void)
         pio.DeltaTime = 1.0f / 60.0f;
         ImGui::NewFrame();
         nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps    network 24.5 ms", "what they are", 0,
-                     nullptr, nullptr, 0, nullptr, 0);
+                     nullptr, nullptr, 0, nullptr, 0, 1);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         int with_line = nrex_end_panel(nullptr);
@@ -688,7 +749,7 @@ int main(void)
         if (dd)
             for (int i = 0; i < dd->CmdListsCount; ++i) verts_line += dd->CmdLists[i]->VtxBuffer.Size;
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0);
+        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0, 1);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         nrex_end_panel(nullptr);

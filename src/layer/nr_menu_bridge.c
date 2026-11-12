@@ -259,6 +259,13 @@ struct nr_menu_bridge {
      * writes it as `menu_counter`, and Revert brings back `counter_saved`, what the file says. */
     int counter;
     int counter_saved;
+    /* **Whether the corner window draws the two frame-time graphs as well.** The panel always
+     * draws them; this is about the corner, which only exists when `counter` puts it somewhere.
+     * Saved as `menu_graphs`, and like the counter's place it is a panel preference rather than a
+     * knob: the daemon never reads it and Reset leaves it. Default on, because a counter in a
+     * corner with no graph is the number without the shape. */
+    int graphs;
+    int graphs_saved;
     char env_path[1088];
     /* `NR_ROOT` from the same file: where the release lives, and so where the setup window's
      * profile is. Empty when the line is absent, and then nothing is written back. */
@@ -806,6 +813,9 @@ static int load_settings(nr_menu_bridge *b)
         b->stamp = 0;
         /* No file says nothing about the counter either: it is in the panel, the default. */
         b->counter = b->counter_saved = NR_COUNTER_PANEL;
+        /* And the graphs: on, which is the default and the useful setting - a counter in a corner
+         * with no graph is the number without the shape behind it. */
+        b->graphs = b->graphs_saved = 1;
         return 0;
     }
 
@@ -838,6 +848,14 @@ static int load_settings(nr_menu_bridge *b)
         }
         b->counter = b->counter_saved;
 
+        /* And whether the corner draws the graphs. Absent is ON: a file written before this
+         * setting existed gets the graphs, which is what its counter in a corner looks best with -
+         * and turning them off is the explicit act, not leaving them off by omission. A value
+         * that is not 0 or 1 falls back to the default rather than to off. */
+        b->graphs_saved = 1;
+        int graphs_at = nr_settings_find(&settings, "menu_graphs");
+        if (graphs_at >= 0) b->graphs_saved = atoi(settings.value[graphs_at]) ? 1 : 0;
+        b->graphs = b->graphs_saved;
         for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
             const nr_knob_def *k = &knobs[i];
             int at = nr_settings_find(&settings, k->key);
@@ -1066,6 +1084,7 @@ static int save_settings(nr_menu_bridge *b)
     int wrote_language = 0;
     int wrote_nr = 0;
     int wrote_counter = 0;
+    int wrote_graphs = 0;
 
     /* Whether a field has already been emitted, so the comma goes BEFORE a field rather than after
      * it. Writing `"key": value,\n` for every field and closing with `}` leaves a trailing comma
@@ -1120,6 +1139,14 @@ static int save_settings(nr_menu_bridge *b)
                 continue;
             }
 
+            /* And whether the corner draws the graphs. */
+            if (strcmp(name, "menu_graphs") == 0) {
+                snprintf(moved_text, sizeof moved_text, "%d", b->graphs ? 1 : 0);
+                NR_EMIT("  \"%s\": %s", name, moved_text);
+                wrote_graphs = 1;
+                continue;
+            }
+
             /* **Not the network.** It lives in `NR_PRESET`, written below; a `preset` key that
              * round ten's Save left here is dropped, so no file keeps a second answer. */
             if (strcmp(name, "preset") == 0) continue;
@@ -1155,6 +1182,11 @@ static int save_settings(nr_menu_bridge *b)
     if (!wrote_counter && b->counter != NR_COUNTER_PANEL)
         NR_EMIT("  \"menu_counter\": %d", b->counter);
 
+    /* And the graphs, by the same rule but the other default: ON is what an absent key means, so
+     * the key is written only when the user turned it off. */
+    if (!wrote_graphs && !b->graphs)
+        NR_EMIT("  \"menu_graphs\": 0");
+
     /* Append the keys the user moved that were not already there. */
     for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
         if (written[i] || !b->moved[i]) continue;
@@ -1178,6 +1210,7 @@ static int save_settings(nr_menu_bridge *b)
 
     b->stamp = nr_file_stamp(b->settings_path);
     b->counter_saved = b->counter;
+    b->graphs_saved = b->graphs;
 
     /* **The network goes where the setup window keeps it**: `NR_PRESET` in `nr-env.txt`, which the
      * layer reads at the next start, and the profile the window shows. Round ten wrote a `preset`
@@ -1710,6 +1743,20 @@ void nr_menu_bridge_set_counter(nr_menu_bridge *b, int where)
     if (!b || where < 0 || where >= NR_COUNTER_PLACES) return;
     /* Shown at once, written by the next Save: nothing here goes to the daemon. */
     b->counter = where;
+    b->dirty = 1;
+}
+
+/* Whether the corner window draws the two frame-time graphs as well. The panel's own header
+ * always draws them, so this is only ever asked about the corner. */
+int nr_menu_bridge_graphs(const nr_menu_bridge *b)
+{
+    return b ? (b->graphs ? 1 : 0) : 1;
+}
+
+void nr_menu_bridge_set_graphs(nr_menu_bridge *b, int on)
+{
+    if (!b) return;
+    b->graphs = on ? 1 : 0;
     b->dirty = 1;
 }
 

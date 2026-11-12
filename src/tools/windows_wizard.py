@@ -111,6 +111,12 @@ def main() -> int:
                 if 'settings' not in values:
                     raise ValueError('Specify the runtime settings to save.')
                 result = core.save_settings(args.root, values['settings'])
+                # The panel's own keys, when the window carried them: separate from the knobs
+                # because a daemon never reads them, and separate from the launch profile because
+                # they belong to the panel rather than to how the game is started.
+                panel = values.get('panel')
+                if panel:
+                    core.save_panel_preferences(args.root, panel)
             else:
                 result = core.reset_settings(args.root, values.get('reset'))
         else:
