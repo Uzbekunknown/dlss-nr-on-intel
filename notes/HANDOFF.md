@@ -213,6 +213,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - FSR 3.1 without OptiScaler: a game with FSR 3.1 and no XeSS (Stellar Blade's is the case #38
   asked about), FidelityFX SDK 2.0's loader, FSR 3's own frame generation; and whether the setup
   window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
+- The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
+  local branch `edit-cache`: Hogwarts with the owner, on and off in one power mode, then the
+  owner's word on merging it. Below, 11-13.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -314,6 +317,58 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## The edit cache: NR on every other frame in DirectX 12, its edit carried along the game's motion; built, not yet run in a game (2026-11-13, branch `edit-cache`)
+
+The owner, 11-12 and 11-13, after Skynizz's edit cache (`optiscaler-dlss5`): can NR answer one
+frame in N in the DirectX 12 proxy, its edit carried to the frames between; measure it, then build
+it, and let the user turn it on or off. Three commits on the local branch `edit-cache` from
+`alchemist` at `0624ccc`, in the worktree `D:\NRonWindows\dlss-nr-cache`; nothing pushed. The
+measurements, the design and the progress are in `D:\NRonWindows\nr-game\edit-cache\DESIGN.md`,
+outside the repository, with the testbed beside it and its data in
+`C:\Users\Uzbekunknown\datasets\nr-cache`.
+
+**Measured offline first.** Two Hogwarts recordings through FSR 3.1 (a fast scripted pan, 27 and
+40 output pixels a frame), network B at 0.4, every frame answered, then played as the cache would
+run. mode=carry's MATCH, REDUCE and APPLY after the upscaler, with a depth check and the edit as a
+log ratio, keep the most of NR's change at every lag (81 / 74 / 63 % at 1 / 2 / 4 frames) and
+spoil the fewest pixels (0.8-2.9 %). Carried frames are as steady as NR on every frame; the
+refresh frame jumps 1.6-2.9x NR's own flicker, and fading the new edit in over the interval takes
+22-35 % off that for about 2 points of NR's change. Below 20 pixels a frame, every other frame is
+within 1.0-1.2x NR's own flicker; past 40 it falls off, so the interval shortens with the camera.
+
+**Built** (`43323c3`, `9cd6e10`, `3ce573a`):
+- `nr_xess.hlsl`: the root signature takes 40 constants, t0-t6 and u0-u1. CAPTURE keeps a
+  refresh's edit as a log ratio with the frame's depth; DEPTH reads the game's depth (log2 of a
+  pseudo-linear depth) and sums the vectors' lengths; MATCH refuses another surface's depth and
+  fades the older change out, all of the newest where the older is not trusted; APPLY lays a ratio
+  on; MOTION can hand the daemon the tracker's offsets. mode=carry sets none of the new flags.
+- `nr_xess.c`: `cache=N` in `nr-xess.txt` (0, the default, is today's behaviour; read live, with
+  `cache_fast` 60 and `cache_slow` 20 pixels a frame and `cache_fade`). `after_upscale` decides each
+  execute: a refresh is `record_cut` plus the tracker, CAPTURE and the fade; a carried frame is
+  `record_carry`, the passes in the game's list with no cut and no wait, inside a snapshot and
+  restore of the list's state. `nr_ffx.c` hands FSR's depth and its convention on; XeSS's depth
+  is read when the game gives one.
+- Setup: `Profile.nr_cache`, written as `cache=2` or `cache=0` at install and rewritten live by
+  `set_pacing` beside the upscaler; the setup window's checkbox in four languages, for DirectX 12
+  games only. No in-game panel row yet.
+
+**Checked on Windows:** `build_xess.bat` with no warning; `test_nr_xess` all passed, its cut test
+binding the new root signature, and `run_cache` new (four frames moving (2, 1) a frame: A
+refreshes whole, B carried within 0.0012 of the CPU's ratio, C refreshes declined with A fading
+at one half, D none; the stand-in asked for A and C only; C's offsets lead back to A);
+`test_windows_wizard` 104 OK, one skipped; the window's self-test, 91 controls and 201 keys.
+
+**Not run:** a game; the carried frame's GPU time, so the gain in frames is an estimate (Hogwarts
+at 1920x1080 and 0.4, 18 a second today: about 24 at every other frame); the in-game panel; Linux.
+
+**Next on Windows:** Hogwarts through its FSR 3.1 with the owner: the test root
+`C:\Users\Uzbekunknown\nr-rel\cache-3ce573a\dlss-nr-windows` (0.0.6's build root with this
+branch's two DLLs and setup) through `nr-game\hogwarts-fsr-test.ps1 -Rel`, the power mode the same
+for every run, `cache=2` and `cache=0` written into `nr-xess.txt` beside the executable while the
+game runs; frames a second from the proxy's log (`edit cache: R refreshes and C carried frames in
+5.0 s` against `NR: N frames in 5 s`), and the owner's eye on the refresh's pulse and on fast
+turns. **Next on Linux:** nothing until it is pushed; `test_windows_wizard.py` runs there.
 
 ## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
 
