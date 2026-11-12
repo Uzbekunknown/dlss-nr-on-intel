@@ -52,12 +52,17 @@ static void fill_rows(void)
         rows[i].label = labels[i];
         rows[i].hint = "";
         rows[i].hint_id = -1;
-        if (i == 2 || i == 10) {
+        if (i == 2) {
             rows[i].kind = NREX_KIND_CHOICE;
             rows[i].choices = choice_names;
             rows[i].choice_count = 3;
             rows[i].choice_index = 0;
             snprintf(shown[i], sizeof shown[i], "standard");
+        } else if (i == 10) {
+            /* A flag, which the panel draws as a checkbox: the corner's frame graphs are one. */
+            rows[i].kind = NREX_KIND_FLAG;
+            rows[i].choice_index = 1;
+            snprintf(shown[i], sizeof shown[i], "on");
         } else {
             /* A range wide enough that a second of holding cannot reach either end: the panel
              * stops reporting a step once the value clamps, so a narrow range measures the clamp
@@ -762,6 +767,57 @@ int main(void)
         check(verts_line > verts_plain, "the open panel draws the counter's line", detail);
         check(with_line == plain, "and reports what it did without it",
               "identical actions with and without the line");
+    }
+
+    /* ---- a checkbox row: the corner's frame graphs ---- */
+    {
+        /* **A FLAG row is drawn as a checkbox, and its state comes from `choice_index`.** The
+         * corner's frame graphs are the panel's first flag, so this is the first time the row kind
+         * has been exercised at all.
+         *
+         * What is checked is what can be measured without a real pointer: the row reports the
+         * state it was given (not a raw index), and a ticked row and an unticked one draw different
+         * pictures - which is the checkbox showing the difference rather than ignoring it. */
+        char detail[256];
+        const int row = 10;                 /* the flag, from `fill_rows` */
+
+        rows[row].choice_index = 1;         /* ticked */
+        rows[row].disabled = 0;
+        clear_edits();
+        frame(0);
+        ImDrawData *ticked = ImGui::GetDrawData();
+        int verts_ticked = ticked ? ticked->TotalVtxCount : 0;
+
+        rows[row].choice_index = 0;         /* unticked */
+        clear_edits();
+        frame(0);
+        ImDrawData *unticked = ImGui::GetDrawData();
+        int verts_unticked = unticked ? unticked->TotalVtxCount : 0;
+
+        snprintf(detail, sizeof detail, "%d vertices ticked, %d unticked",
+                 verts_ticked, verts_unticked);
+        /* Both draw the box; the tick mark is what differs, so the counts differ. */
+        check(verts_ticked != verts_unticked,
+              "a flag row draws differently ticked and unticked", detail);
+        check(verts_ticked > 0 && verts_unticked > 0, "and draws in both states", detail);
+
+        /* **A disabled row refuses the keyboard and takes no click.** The graphs' checkbox is
+         * disabled when the counter is in the panel alone, and the mechanism is `nrex_row.disabled`
+         * - `BeginDisabled` around the whole row - so a disabled one must report no change however
+         * it is pressed. */
+        rows[row].choice_index = 1;
+        rows[row].disabled = 1;
+        clear_edits();
+        ImGuiIO &dio = ImGui::GetIO();
+        dio.AddKeyEvent(ImGuiKey_RightArrow, true);
+        frame(0);
+        dio.AddKeyEvent(ImGuiKey_RightArrow, false);
+        int acted_disabled = frame(0);
+        snprintf(detail, sizeof detail, "changed=%d value_i=%d acted=%d",
+                 rows[row].changed, rows[row].value_i, acted_disabled);
+        check(!rows[row].changed,
+              "a disabled flag row reports nothing", detail);
+        rows[row].disabled = 0;
     }
 
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);

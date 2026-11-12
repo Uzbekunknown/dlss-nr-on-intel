@@ -132,8 +132,9 @@ EXTRA = {
                                        "window as well. They are always drawn in the panel; in the "
                                        "corner they follow this, and when the counter is set to the "
                                        "panel only there is no corner to draw them in."),
-    "graphs_on":            (None,     "Show in the corner too"),
-    "graphs_off":           (None,     "In the panel only"),
+    # The two graphs' names, short because they sit in a narrow column beside the plot.
+    "graph_frame":          (None,     "frame"),
+    "graph_net":            (None,     "NR"),
 }
 
 # Compare modes, in the order the key cycles them. OptiScaler's own names are Off / Side by side /
@@ -204,8 +205,8 @@ OWN = {
                         "well. They are always drawn in the panel; in the corner they follow "
                         "this, and when the counter is set to the panel only there is no "
                         "corner to draw them in.",
-        "graphs_on":    "Show in the corner too",
-        "graphs_off":   "In the panel only",
+        "graph_frame":  "frame",
+        "graph_net":    "NR",
     },
     "zh": {
         "hint":          "\u4e0a/\u4e0b \u9009\u62e9  \u5de6/\u53f3 \u8c03\u6574  L \u8bed\u8a00  "
@@ -261,8 +262,8 @@ OWN = {
         "graphs_hint":  "\u662f\u5426\u5728\u89d2\u843d\u6d6e\u7a97\u4e2d\u4e5f\u7ed8\u5236\u4e24\u6761\u5e27\u65f6\u95f4\u66f2\u7ebf\u3002"
                         "\u9762\u677f\u5185\u59cb\u7ec8\u7ed8\u5236\uff1b\u89d2\u843d\u4e2d\u7531\u6b64\u9879\u51b3\u5b9a\uff0c"
                         "\u5f53\u5e27\u7387\u663e\u793a\u8bbe\u4e3a\u201c\u4ec5\u9762\u677f\u201d\u65f6\u6ca1\u6709\u89d2\u843d\u53ef\u753b\u3002",
-        "graphs_on":    "\u89d2\u843d\u4e2d\u4e5f\u663e\u793a",
-        "graphs_off":   "\u4ec5\u5728\u9762\u677f\u4e2d",
+        "graph_frame":  "\u5e27",
+        "graph_net":    "\u7f51\u7edc",
     },
     "ru": {
         "hint":          "\u0412\u0432\u0435\u0440\u0445/\u0412\u043d\u0438\u0437 \u0432\u044b\u0431\u043e\u0440  "
@@ -352,8 +353,8 @@ OWN = {
                         "\u0412 \u043f\u0430\u043d\u0435\u043b\u0438 \u043e\u043d\u0438 \u0440\u0438\u0441\u0443\u044e\u0442\u0441\u044f \u0432\u0441\u0435\u0433\u0434\u0430; \u0432 \u0443\u0433\u043b\u0443 \u044d\u0442\u043e "
                         "\u0437\u0430\u0432\u0438\u0441\u0438\u0442 \u043e\u0442 \u044d\u0442\u043e\u0439 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0430 \u0435\u0441\u043b\u0438 \u0441\u0447\u0451\u0442\u0447\u0438\u043a "
                         "\u0441\u0442\u043e\u0438\u0442 \u00ab\u0442\u043e\u043b\u044c\u043a\u043e \u0432 \u043f\u0430\u043d\u0435\u043b\u0438\u00bb, \u0443\u0433\u043b\u0430 \u043d\u0435\u0442.",
-        "graphs_on":    "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0438 \u0432 \u0443\u0433\u043b\u0443",
-        "graphs_off":   "\u0422\u043e\u043b\u044c\u043a\u043e \u0432 \u043f\u0430\u043d\u0435\u043b\u0438",
+        "graph_frame":  "\u043a\u0430\u0434\u0440",
+        "graph_net":    "\u0441\u0435\u0442\u044c",
     },
     "es": {
         "hint":          "Arriba/Abajo elegir  Izq/Der cambiar  L idioma  Home activar  "
@@ -412,8 +413,8 @@ OWN = {
         "graphs_hint":  "Si los dos gr\u00e1ficos de tiempo de fotograma se dibujan tambi\u00e9n "
                         "en la esquina. En el panel se dibujan siempre; en la esquina dependen "
                         "de esto, y si el contador est\u00e1 solo en el panel no hay esquina.",
-        "graphs_on":    "Mostrar tambi\u00e9n en la esquina",
-        "graphs_off":   "Solo en el panel",
+        "graph_frame":  "fotograma",
+        "graph_net":    "red",
     },
 }
 

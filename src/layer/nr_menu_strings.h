@@ -87,8 +87,8 @@ enum {
     NR_STR_COUNTER_BOTTOM_RIGHT = 48,
     NR_STR_GRAPHS = 49,
     NR_STR_GRAPHS_HINT = 50,
-    NR_STR_GRAPHS_ON = 51,
-    NR_STR_GRAPHS_OFF = 52,
+    NR_STR_GRAPH_FRAME = 51,
+    NR_STR_GRAPH_NET = 52,
 };
 
 /* [language][key] */

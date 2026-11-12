@@ -146,12 +146,9 @@ struct nr_panel {
 /* The frame counter's row among `row_what`'s values: not pacing, and not the bridge's pacing entry
  * point - its value goes to `nr_menu_bridge_set_counter`. */
 #define NR_PANEL_ROW_COUNTER 100
-/* And the graphs' row. Two values, because the row is drawn in one of two states: offered (there
- * is a corner for the graphs) and greyed (the counter is in the panel alone, so there is not).
- * A `nrex_row` has no disabled flag, so the greyed state is the panel's own - it refuses the
- * change in `panel_row_changed` and the row reads "in the panel only". */
+/* And the graphs' checkbox. One value: the row is always present, and `nrex_row.disabled` is what
+ * says whether it can be changed (the counter must be somewhere other than the panel). */
 #define NR_PANEL_ROW_GRAPHS 101
-#define NR_PANEL_ROW_GRAPHS_OFF 102
 
 /* The effect's state, through the host: 1 on, 0 off, -1 for an installation with no trigger. */
 static int trigger_state(struct nr_panel *data)
@@ -570,15 +567,20 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 		n++;
 	}
 
-	/* **Whether the corner draws the graphs.** The panel always draws them - that is what the
-	 * user asked for - so this row is only about the corner, and it is offered only when there is
-	 * a corner: with the counter set to the panel alone there is nowhere for the graphs to go, so
-	 * the row is shown greyed rather than hidden. A row that appears and disappears as the counter
-	 * moves would make the list jump under the keys.
+	/* **Whether the corner draws the graphs, as a checkbox like the effect's.**
 	 *
-	 * Greyed is `NR_PANEL_ROW_GRAPH_OFF`: `nrex_row` has no disabled flag, so the panel draws it
-	 * and the row's own handler refuses the change, and the value reads "in the panel only" so the
-	 * reason is on screen rather than in a tooltip nobody opens. */
+	 * It was a two-value combo, which made a switch look like a choice between two named states.
+	 * A checkbox says the same thing in the form the panel already teaches for on/off, and the
+	 * effect's own box is the pattern: `NR [x]` beside a label.
+	 *
+	 * The panel's own graphs are not a setting - they are always drawn - so this is only about the
+	 * corner, and it is offered only when there is one: with the counter set to the panel alone
+	 * there is nowhere for the graphs to go, so the row is shown GREYED rather than hidden. A row
+	 * that appeared and disappeared as the counter moved would make the list jump under the keys.
+	 *
+	 * Greyed is `nrex_row.disabled`, which the UI submits under `BeginDisabled` - the same
+	 * mechanism the pacing rows use - so the box is drawn greyed and refuses input, rather than
+	 * being drawn live with a handler that quietly swallows the change. */
 	if (data->menu_ui && data->host.counts && n < capacity && n < MENU_UI_MAX_ROWS) {
 		int counter_at = nr_menu_bridge_counter(data->menu_bridge);
 		int has_corner = counter_at != NR_COUNTER_PANEL;
@@ -586,21 +588,13 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 		memset(r, 0, sizeof *r);
 		r->label = nr_menu_text(language, NR_STR_GRAPHS);
 		r->hint = nr_menu_text(language, NR_STR_GRAPHS_HINT);
-		r->kind = NREX_KIND_CHOICE;
-		snprintf(name_storage[n][0], sizeof name_storage[n][0], "%s",
-			 nr_menu_text(language, NR_STR_GRAPHS_ON));
-		snprintf(name_storage[n][1], sizeof name_storage[n][1], "%s",
-			 nr_menu_text(language, NR_STR_GRAPHS_OFF));
-		names[n][0] = name_storage[n][0];
-		names[n][1] = name_storage[n][1];
-		names[n][2] = NULL;
-		r->choices = (const char *const *)names[n];
-		r->choice_count = 2;
-		/* With no corner the answer is "in the panel only" whatever the setting says: that is
-		 * what the user sees, and it is true. */
-		r->choice_index = has_corner ? (nr_menu_bridge_graphs(data->menu_bridge) ? 0 : 1) : 1;
-		r->value = names[n][r->choice_index];
-		data->row_what[n] = has_corner ? NR_PANEL_ROW_GRAPHS : NR_PANEL_ROW_GRAPHS_OFF;
+		r->kind = NREX_KIND_FLAG;
+		r->choice_index = has_corner && nr_menu_bridge_graphs(data->menu_bridge) ? 1 : 0;
+		/* No corner: the box reads unticked and cannot be ticked, which is the truth - there is
+		 * nothing for it to turn on. The hint says why, because "greyed for no visible reason" is
+		 * the one thing a disabled control must never be. */
+		r->disabled = !has_corner;
+		data->row_what[n] = NR_PANEL_ROW_GRAPHS;
 		n++;
 	}
 
@@ -1465,15 +1459,13 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 			nr_menu_bridge_set_counter(data->menu_bridge, (int)v);
 			continue;
 		}
-		/* The graphs, when there is a corner to draw them in. The greyed row is listed among the
-		 * rows so the list does not jump, but it takes no change: its value is a statement about
-		 * the counter's place, not a setting, and writing it through would turn the graphs off
-		 * behind the user's back the moment they moved the counter into the panel. */
+		/* The graphs, as a checkbox: ticked means the corner draws them too. The greyed state is
+		 * the UI's (`nrex_row.disabled`), so a change can only arrive from a row that was live -
+		 * there is nothing to refuse here. */
 		if (data->row_what[i] == NR_PANEL_ROW_GRAPHS) {
-			nr_menu_bridge_set_graphs(data->menu_bridge, (int)v == 0);
+			nr_menu_bridge_set_graphs(data->menu_bridge, (int)v != 0);
 			continue;
 		}
-		if (data->row_what[i] == NR_PANEL_ROW_GRAPHS_OFF) continue;
 		/* The pacing rows and the network come after the knobs and are not knobs: their values
 		 * live in the proxy's environment file, not the settings file, so they go to the bridge's
 		 * own entry point. Each such row said what it is when it was built (`row_what`). */

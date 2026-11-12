@@ -16,6 +16,7 @@
  */
 #include "nr_menu_ui.h"
 #include "nr_menu_ui_backend.h"
+#include "nr_menu_strings.h"   /* nr_menu_text: the graphs' names, in the panel's language */
 
 #include "imgui.h"
 /* For `SetKeyOwner` only.
@@ -270,6 +271,63 @@ static float graph_axis_top(const float *series, int count)
     return ceilf(highest / step) * step;
 }
 
+/* **One graph, with its name and its axis in a column to the LEFT of the plot.**
+ *
+ * The axis used to be ImGui's overlay value, printed inside the plot against the top edge, where
+ * it sat on top of the trace it was labelling - the one part of the picture that must stay
+ * readable. It is a separate column now: the name on the first line (that is what tells the two
+ * graphs apart, so it does not need a legend), the axis under it, and neither one over the data.
+ *
+ * `has_data` is false when every point is a gap - a frame the daemon answered without a network
+ * time, which is every frame on the CPU path. The plot is not drawn at all then, rather than drawn
+ * as a flat line along the bottom: a line at zero says "the network is free", and the truth is
+ * "there is nothing to measure here". The column keeps its height so the box does not jump.
+ *
+ * A gap in the middle of a series is still a gap: ImGui has no break in `PlotLines`, so those
+ * points are passed as 0 and read as the floor of the plot. That is the honest reading of a
+ * missing sample - cheaper than any frame the network ran - and the alternative, dropping the
+ * point, would silently change the time axis. */
+static void draw_one_graph(const char *name, const float *series, int count, ImU32 colour,
+                           float width, float label_width)
+{
+    char axis[32] = "";
+    float top = 0.0f;
+    int any = 0;
+    for (int i = 0; i < count; ++i) if (series[i] >= 0.0f) { any = 1; break; }
+    if (any) {
+        top = graph_axis_top(series, count);
+        snprintf(axis, sizeof axis, "%.0f ms", (double)top);
+    } else {
+        snprintf(axis, sizeof axis, "%s", "-");
+    }
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(name);
+    ImGui::TextDisabled("%s", axis);
+    ImGui::EndGroup();
+    /* The plot starts at a fixed x rather than after the group, so the two plots line up whatever
+     * the names are: a column, not a label that happens to be beside a box. */
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + label_width);
+    if (any) {
+        ImGui::PushStyleColor(ImGuiCol_PlotLines, colour);
+        ImGui::PlotLines("", series, count, 0, nullptr, 0.0f, top,
+                         ImVec2(width, kGraphHeight));
+        ImGui::PopStyleColor();
+    } else {
+        /* An empty box of the same size, with a line of text in it: the row keeps its place and
+         * says why it is empty rather than pretending to be a graph. */
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##nr_graph_empty", ImVec2(width, kGraphHeight));
+        ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + width, at.y + kGraphHeight),
+                                            IM_COL32(90, 90, 96, 160));
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        const char *why = "no network time";
+        ImVec2 sz = ImGui::CalcTextSize(why);
+        dl->AddText(ImVec2(at.x + (width - sz.x) * 0.5f, at.y + (kGraphHeight - sz.y) * 0.5f),
+                    IM_COL32(140, 140, 150, 200), why);
+    }
+}
+
 /* **The two graphs, drawn once.** The panel's header and the corner both call this, so the axis,
  * the colours and the gap handling cannot drift between them; the only thing they differ in is the
  * width, because the panel's column is wider than a corner box may be.
@@ -280,22 +338,34 @@ static void draw_graphs(const float *frame, int frame_count, const float *net, i
                         float width)
 {
     if (frame_count <= 0) return;
-    char axis[32];
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
-    const float frame_top = graph_axis_top(frame, frame_count);
-    snprintf(axis, sizeof axis, "%.0f ms", (double)frame_top);
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphFrameColour);
-    ImGui::PlotLines("##nr_frame_ms", frame, frame_count, 0, axis, 0.0f, frame_top,
-                     ImVec2(width, kGraphHeight));
-    ImGui::PopStyleColor();
+    /* The label column is whatever the two names and the wider axis need, measured rather than
+     * guessed: a language may call the frame time something long, and a fixed width would clip it. */
+    char widest[32];
+    float top = graph_axis_top(frame, frame_count);
+    snprintf(widest, sizeof widest, "%.0f ms", (double)top);
     if (net_count > 0) {
-        const float net_top = graph_axis_top(net, net_count);
-        snprintf(axis, sizeof axis, "%.0f ms", (double)net_top);
-        ImGui::PushStyleColor(ImGuiCol_PlotLines, kGraphNetColour);
-        ImGui::PlotLines("##nr_net_ms", net, net_count, 0, axis, 0.0f, net_top,
-                         ImVec2(width, kGraphHeight));
-        ImGui::PopStyleColor();
+        float nt = graph_axis_top(net, net_count);
+        char other[32];
+        snprintf(other, sizeof other, "%.0f ms", (double)nt);
+        if (ImGui::CalcTextSize(other).x > ImGui::CalcTextSize(widest).x)
+            snprintf(widest, sizeof widest, "%s", other);
     }
+    /* The two names, in the panel's language. Read before the column is measured, because the
+     * widest label decides how wide it is. */
+    const char *frame_name = nr_menu_text(g_language, NR_STR_GRAPH_FRAME);
+    const char *net_name = nr_menu_text(g_language, NR_STR_GRAPH_NET);
+
+    float label_width = ImGui::CalcTextSize(frame_name).x;
+    if (ImGui::CalcTextSize(net_name).x > label_width)
+        label_width = ImGui::CalcTextSize(net_name).x;
+    if (ImGui::CalcTextSize(widest).x > label_width)
+        label_width = ImGui::CalcTextSize(widest).x;
+    label_width += 4.0f;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
+    draw_one_graph(frame_name, frame, frame_count, kGraphFrameColour, width, label_width);
+    if (net_count > 0)
+        draw_one_graph(net_name, net, net_count, kGraphNetColour, width, label_width);
     ImGui::PopStyleVar();
 }
 
@@ -714,7 +784,23 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
         }
         case NREX_KIND_FLAG: {
             bool on = r.choice_index != 0;
-            if (ImGui::Checkbox("##f", &on)) {
+            bool flipped = ImGui::Checkbox("##f", &on);
+            /* **Left/Right flip it too, as they change every other row.** The hint says the arrows
+             * change a row and Up/Down move between them; a flag answered only the mouse, so the
+             * only keys that could reach it were Tab and Space, neither of which the hint
+             * mentions. ImGui's checkbox has no arrow handling of its own, so this claims the keys
+             * the way the combo row above does, and only while the row is focused. */
+            if (!flipped && ImGui::IsItemFocused()) {
+                const ImGuiID row_id = ImGui::GetItemID();
+                ImGui::SetKeyOwner(ImGuiKey_LeftArrow,  row_id);
+                ImGui::SetKeyOwner(ImGuiKey_RightArrow, row_id);
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
+                    ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  false)) {
+                    on = !on;
+                    flipped = true;
+                }
+            }
+            if (flipped) {
                 g_actions |= NREX_ACT_CHANGED;
                 if (g_rows) { g_rows[i].changed = 1; g_rows[i].value_i = on ? 1 : 0; }
             }
