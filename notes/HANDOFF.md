@@ -40,17 +40,21 @@ such move; what it still leaves open becomes a line of its own.
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
-  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01), v0.0.4 (`8232603`, 11-05) and **v0.0.5**
-  (`bb9317b`, 11-06, the latest), a ZIP with the setup window, DXVK 3.1.1, both layers, a
-  `vulkan-1.dll` proxy, NR's `libxess.dll` as `nr_xess.dll` and, since 0.0.4, its own Python.
+  (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01), v0.0.4 (`8232603`, 11-05), v0.0.5 (`bb9317b`,
+  11-06) and **v0.0.6** (`c473048`, 11-12, the latest), a ZIP with the setup window, DXVK 3.1.1,
+  both layers, a `vulkan-1.dll` proxy, NR's `libxess.dll` as `nr_xess.dll`, since 0.0.4 its own
+  Python, and since 0.0.6 NR's `amd_fidelityfx_dx12.dll` as `nr_ffx.dll`.
   0.0.4 brings that Python and the staged GEMM's walk, which takes 9-19 % off the network on
   Intel's Windows driver (archive, 11-05 and 11-04 night). 0.0.5 brings the `hogwarts`
   profile, Hogwarts Legacy's own tuning, the panel's frame counter and OptiScaler's XeSS in setup
-  (archive, 11-06, morning). What 0.0.2 to 0.0.3.1 brought is in the archive (10-31, 11-01) and on
-  the release pages. The last five went out on the owner's word before Linux's `make test` at
-  their heads, as 0.0.1.3 did, and Linux has run them green since: 0.0.2's at `eb9b281`, 0.0.3's
-  and 0.0.3.1's at `d28e841` (archive, 11-04 later), 0.0.4's and 0.0.5's at `127f6dc` (below,
-  11-11). Linux users build from source (README).
+  (archive, 11-06, morning). 0.0.6 brings the network's weights as Intel's Windows driver reads
+  them fastest (the E4M3 bytes and the weights by column), the GPU path's frame 9 % shorter, FSR
+  3.1 without OptiScaler and the GPU report's network (below, 11-12). What 0.0.2 to 0.0.3.1
+  brought is in the archive (10-31, 11-01) and on the release pages. The last six went out on the
+  owner's word before Linux's `make test` at their heads, as 0.0.1.3 did, and Linux has run five
+  green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04 later),
+  0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's is owed (Open items, Linux). Linux
+  users build from source (README).
 - **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` are level
   since 11-11 and move together, each push a fast-forward of all three; `media` holds the README's
   pictures; `improve-int8` is kept for INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
@@ -152,8 +156,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   Mortal Kombat 11 (below, 11-11, morning): the owner's look, then the word on pushing it, with
   `master` and `alchemist` after it~~: pushed at the owner's word with the weights by column,
   `master`, `newnr` and `alchemist` at `2ae1d82` on 11-12.
-- 0.0.6, built and checked (below, 11-12, evening), and built again with the GPU report's network
-  and FSR 3.1 at the owner's word (below, 11-12, late evening): the owner's word on publishing it.
+- ~~0.0.6, built and checked (below, 11-12, evening), and built again with the GPU report's network
+  and FSR 3.1 at the owner's word (below, 11-12, late evening): the owner's word on publishing it~~:
+  published at the owner's word, 11-12 (below, late evening).
 - From the `cleanup` branch (PR #39, merged 11-11), proposed and not done: INT8 out of the main
   line (it is in libxmx, the shader lists and the release's file lists) and one build system
   instead of three; the Configure/Restore Steam buttons are a line under Windows. Archive, 11-05.
@@ -378,10 +383,18 @@ before. That run is a check, not a timing: the machine was not checked quiet, af
 Hogwarts with the owner at it, and the code it runs is the first candidate's (45.96). The notes,
 `work\pr-replies\release-notes-0.0.6.md`, name FSR 3.1 and the GPU report and this ZIP.
 
-**Next on Linux:** `make test` and CTest with `test_gpu_report_network.py` once this is on GitHub;
-nothing in `src/xess` builds there. **Next on Windows:** the owner's word on publishing 0.0.6: push
-`alchemist`, fast-forward `master` and `newnr` to it, tag `v0.0.6` at `c473048`, and the release
-with this ZIP and the notes.
+**Published** at the owner's word ("Можем пушить и паблишить"), 11-12 21:35 +0900: `alchemist`
+pushed and `master` and `newnr` fast-forwarded to it on GitHub (`b7747e6`, then this entry), the
+lightweight tag `v0.0.6` at `c473048`, and the release "DLSS-NR 0.0.6 for Windows", Latest, with
+the ZIP (GitHub's digest `sha256:0d09b505...6103`, the ZIP's own) and the notes without their
+draft comment. Before the push, `run_tests.py` on Windows: every check of the code these commits
+touch passed; the ten that failed are Linux-only ones in code untouched since `2ae1d82` (the
+Makefile's binaries, Unix socket paths, `fcntl`).
+
+**Next on Linux:** `git fetch`, fast-forward `master`, `newnr` and `alchemist` to GitHub's, then
+`make test` in both memory modes and CTest: 0.0.6's head, with `test_gpu_report_network.py`;
+nothing in `src/xess` builds there. **Next on Windows:** the Open items; the players' reports from
+the new GPU report, and an FSR-only game.
 
 ## 0.0.6 built and checked: 20-35 % more frames than 0.0.5 in Mortal Kombat 11, the same picture (2026-11-12, evening, branch `alchemist`)
 
