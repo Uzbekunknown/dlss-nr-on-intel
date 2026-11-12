@@ -57,6 +57,7 @@ class ReleaseTests(unittest.TestCase):
         for name in release.PROXIES:
             self.write("work/" + name, name)
         self.write(release.XESS_PROXY[0], "NR's libxess.dll")
+        self.write(release.FFX_PROXY[0], "NR's amd_fidelityfx_dx12.dll")
         self.write(release.XESS_PROBE[0], "the panel's probe")
         self.write(release.GPU_PROBE[0], "the GPU report")
         self.write("VERSION", "0.0.2\n")
@@ -111,6 +112,9 @@ class ReleaseTests(unittest.TestCase):
         # DirectX 12's, under the name the setup window looks for in a release.
         self.assertEqual((self.target / release.XESS_PROXY[1]).read_text(), "NR's libxess.dll")
         self.assertEqual(release.XESS_PROXY[1], "nr_xess.dll")
+        # FSR 3.1's, under the name setup copies into a game as its FidelityFX DLL.
+        self.assertEqual((self.target / release.FFX_PROXY[1]).read_text(), "NR's amd_fidelityfx_dx12.dll")
+        self.assertEqual(release.FFX_PROXY[1], "nr_ffx.dll")
         # And the probe the panel finds Present with, at the root the proxy looks in (NR_ROOT).
         self.assertEqual((self.target / "nr_present_probe.exe").read_text(), "the panel's probe")
         # The GPU report an Arc A-series owner runs, with its two shaders where it looks for them.
@@ -212,7 +216,7 @@ class ReleaseTests(unittest.TestCase):
     def test_windows_release_needs_dxvk_and_the_32bit_layer(self):
         for name in ("work/dxvk/x64/dxgi.dll", "work/nr_layer32.dll", "work/dxvk/LICENSE",
                      "work/nr_vulkan_proxy.dll", "work/nr_vulkan_proxy32.dll", release.XESS_PROXY[0],
-                     release.XESS_PROBE[0], release.GPU_PROBE[0], "work/python/python.exe",
+                     release.FFX_PROXY[0], release.XESS_PROBE[0], release.GPU_PROBE[0], "work/python/python.exe",
                      "work/python/Lib/site-packages/numpy/__init__.py", "work/python/LICENSE.txt"):
             path = self.root / name
             saved = path.read_bytes()

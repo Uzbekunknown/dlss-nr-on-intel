@@ -1,0 +1,9 @@
+; NR's amd_fidelityfx_dx12.dll (nr_ffx.c): the FidelityFX API's five exports, the names AMD's
+; amd_fidelityfx_dx12.dll and amd_fidelityfx_loader_dx12.dll export.
+LIBRARY amd_fidelityfx_dx12
+EXPORTS
+    ffxConfigure
+    ffxCreateContext
+    ffxDestroyContext
+    ffxDispatch
+    ffxQuery

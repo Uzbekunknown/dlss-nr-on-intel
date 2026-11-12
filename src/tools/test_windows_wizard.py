@@ -102,6 +102,8 @@ def write_pe_exporting(path, exports, suffix=b""):
 
 XESS_EXPORTS = ("xessD3D12CreateContext", "xessD3D12Init", "xessD3D12Execute", "xessGetVersion",
                 "xessSetVelocityScale", "xessSetJitterScale", "xessDestroyContext")
+# The FidelityFX API's five, which AMD's amd_fidelityfx_dx12.dll and NR's nr_ffx.dll export.
+FFX_EXPORTS = ("ffxConfigure", "ffxCreateContext", "ffxDestroyContext", "ffxDispatch", "ffxQuery")
 
 
 def write_weights(path, count=649):
@@ -581,6 +583,130 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(core.installed_path(profile).exists())
         self.assertTrue(core.install(profile)["ok"])
         self.assertTrue((xess / core.XESS_ORIGINAL).read_bytes().endswith(b"updated"))
+
+    def fsr_game(self, name="amd_fidelityfx_dx12.dll", with_xess=False):
+        """A DirectX 12 game laid out as Hogwarts Legacy is, FSR 3.1's FidelityFX DLL beside the
+        executable in the project's Binaries\\Win64; XeSS in its plug-in too when `with_xess`. A release
+        carries NR's DLL for both."""
+        top = self.base / "Upscaled game (test)"
+        exe = write_pe(top / "Project" / "Binaries" / "Win64" / "Project-Win64-Shipping.exe")
+        write_pe_exporting(exe.parent / name, FFX_EXPORTS, suffix=b"AMD's FidelityFX")
+        write_pe_exporting(self.root / core.FFX_PROXY, FFX_EXPORTS, suffix=b"NR's FSR proxy")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        if with_xess:
+            xess = top / "Engine" / "Plugins" / "Runtime" / "Intel" / "XeSS" / "Binaries" / "ThirdParty" / "Win64"
+            write_pe_exporting(xess / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"Intel's XeSS")
+        return replace(self.profile, api="d3d12", game_exe=exe), exe.parent
+
+    def test_d3d12_without_xess_puts_nrs_fidelityfx_dll_in_front_of_fsr_and_remove_puts_it_back(self):
+        profile, folder = self.fsr_game()
+        name = "amd_fidelityfx_dx12.dll"
+        amd = (folder / name).read_bytes()
+        before = sorted(path.name for path in folder.iterdir())
+        checks = self.checks(profile)
+        self.assertTrue(checks["xess_library"]["ok"], checks["xess_library"])
+        self.assertIn("FSR 3.1", checks["xess_library"]["detail"])
+        self.assertIn(str(folder), checks["xess_library"]["detail"])
+        self.assertTrue(checks["runtime_files"]["ok"], checks["runtime_files"])
+        self.assertIn(name, checks["game_files"]["detail"])
+        result = core.install(profile)
+        self.assertTrue(result["ok"], result)
+        installed = core.installed_path(profile)
+        self.assertEqual((folder / name).read_bytes(), (self.root / core.FFX_PROXY).read_bytes())
+        self.assertEqual((folder / core.ffx_original(name)).read_bytes(), amd)
+        self.assertEqual(core.ffx_original(name), "amd_fidelityfx_dx12_nr_orig.dll")
+        self.assertEqual((installed / core.GAME_BACKUP / name).read_bytes(), amd)
+        self.assertFalse((folder / core.XESS_NAME).exists())
+        self.assertFalse((folder / core.PROXY_NAME).exists())
+        settings = (folder / core.XESS_SETTINGS).read_text(encoding="utf-8").splitlines()
+        self.assertIn("mode=after", settings)
+        self.assertIn("pipe=" + core.layer_environment(profile)["NR_LAYER_SOCKET"], settings)
+        self.assertIn("env=" + str(installed / core.ENV_FILE), settings)
+        self.assertIn("nr_ffx.c", settings[0])
+        lines = (installed / core.ENV_FILE).read_text(encoding="utf-8").splitlines()
+        self.assertIn("nr_xess.c", lines[0])
+        # Installed again: the game's own is still the one set aside, once.
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((installed / core.GAME_BACKUP / name).read_bytes(), amd)
+        self.assertEqual((folder / core.ffx_original(name)).read_bytes(), amd)
+        self.processes.return_value = []
+        (folder / core.XESS_LOG).write_text("what NR's amd_fidelityfx_dx12.dll said in the game\n")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), before)
+        self.assertEqual((folder / name).read_bytes(), amd)
+        self.assertFalse(installed.exists())
+
+    def test_d3d12_takes_xess_where_the_game_has_both_and_fsr_when_asked(self):
+        profile, folder = self.fsr_game(with_xess=True)
+        name = "amd_fidelityfx_dx12.dll"
+        amd = (folder / name).read_bytes()
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn("XeSS", detail["detail"])
+        self.assertNotIn("FSR", detail["detail"])
+        chosen = replace(profile, upscaler="fsr")
+        self.assertEqual(core.Profile.from_dict(chosen.to_dict()), chosen)
+        with self.assertRaises(ValueError):
+            core.Profile.from_dict({**chosen.to_dict(), "upscaler": "dlss"})
+        detail = self.checks(chosen)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn("FSR 3.1", detail["detail"])
+        self.assertTrue(core.install(chosen)["ok"])
+        self.assertEqual((folder / name).read_bytes(), (self.root / core.FFX_PROXY).read_bytes())
+        xess = profile.game_exe.parents[3] / "Engine" / "Plugins" / "Runtime" / "Intel" / "XeSS" / "Binaries" \
+            / "ThirdParty" / "Win64"
+        self.assertEqual(sorted(path.name for path in xess.iterdir()), [core.XESS_NAME])
+        # Installed, "auto" keeps the upscaler the installation went in front of; XeSS asked for
+        # needs Remove NR first.
+        self.assertIn("FSR 3.1", self.checks(profile)["xess_library"]["detail"])
+        detail = self.checks(replace(profile, upscaler="xess"))["game_files"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Remove NR", detail["detail"])
+        self.processes.return_value = []
+        self.assertTrue(core.uninstall(chosen)["ok"])
+        self.assertEqual((folder / name).read_bytes(), amd)
+        self.assertFalse((folder / core.ffx_original(name)).exists())
+
+    def test_d3d12_takes_only_a_fidelityfx_dll_nrs_can_stand_in_front_of(self):
+        profile, folder = self.fsr_game()
+        name = "amd_fidelityfx_dx12.dll"
+        # One with a function NR's does not export, which the game may call.
+        write_pe_exporting(folder / name, (*FFX_EXPORTS, "ffxGetNewThing"))
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("ffxGetNewThing", detail["detail"])
+        # One that is no FidelityFX API at all.
+        write_pe_exporting(folder / name, ("SomethingElse",))
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("ffxDispatch", detail["detail"])
+        # NR's own in the game's place, with no record of it.
+        shutil.copy2(self.root / core.FFX_PROXY, folder / name)
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("is NR's", detail["detail"])
+        self.assertFalse(core.install(profile)["ok"])
+        # None at all, and no XeSS either.
+        (folder / name).unlink()
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("No libxess.dll or amd_fidelityfx_dx12.dll", detail["detail"])
+        # The FidelityFX SDK 2.0's loader takes the same place, its own name kept for the original.
+        loader = "amd_fidelityfx_loader_dx12.dll"
+        write_pe_exporting(folder / loader, FFX_EXPORTS, suffix=b"AMD's loader")
+        self.assertEqual(core.ffx_libraries(profile.game_exe), [folder / loader])
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((folder / loader).read_bytes(), (self.root / core.FFX_PROXY).read_bytes())
+        self.assertTrue((folder / "amd_fidelityfx_loader_dx12_nr_orig.dll").read_bytes().endswith(b"AMD's loader"))
+        self.processes.return_value = []
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertTrue((folder / loader).read_bytes().endswith(b"AMD's loader"))
+        # The release without NR's FidelityFX DLL says so.
+        (self.root / core.FFX_PROXY).unlink()
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn(core.FFX_PROXY, detail["detail"])
 
     def test_pacing_in_the_profile_the_environment_and_an_installed_game(self):
         # Asynchronous mode and every Nth frame: kept in the profile, set for the layer either

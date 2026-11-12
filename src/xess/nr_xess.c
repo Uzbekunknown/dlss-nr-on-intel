@@ -65,7 +65,9 @@
 #include "nr_xess_motion.h"
 #include "nr_xess_compose.h"
 #ifndef NR_XESS_TEST
+#ifndef NR_PROXY_FFX            /* nr_ffx.c builds this file into a DLL of FidelityFX's exports */
 #include "nr_xess_exports.h"
+#endif
 #include "nr_xess_panel.h"
 #endif
 
@@ -133,6 +135,12 @@ static struct {
 	xess_2d_t output;
 	int quality;
 } xess = { { 1, 1 }, { 1, 1 }, 0, { 0, 0 }, 0 };
+
+/* The upscaler this file stands in front of, for the log: XeSS, or FSR 3.1 in nr_ffx.c, which hands
+ * the cut what FSR's calls say in XeSS's terms. */
+static const char *upscaler = "XeSS";
+/* 1 when another of NR's proxies is in this process (`another_proxy`): every call goes on as it is. */
+static int passive;
 
 /* ---- The log and the settings, both beside this DLL ---- */
 
@@ -1441,6 +1449,9 @@ struct batch {
 static void add(struct batch *b, ID3D12Resource *resource, D3D12_RESOURCE_STATES from,
 		D3D12_RESOURCE_STATES to)
 {
+	/* A resource already in the state needs no barrier, and D3D12 refuses one: FSR 3.1 may hand
+	 * its output over in COPY_SOURCE or COPY_DEST, the states this file copies it in. */
+	if (from == to) return;
 	b->barrier[b->count++] = transition(resource, from, to);
 }
 
@@ -1567,7 +1578,7 @@ static ID3D12Resource *record(ID3D12GraphicsCommandList *list, const xess_d3d12_
 		    p->pVelocityTexture ? "yes" : "no", p->pDepthTexture ? "yes" : "no",
 		    p->exposureScale, p->jitterOffsetX, p->jitterOffsetY);
 		if (rebuild(device, width, height, desc.Format, kind, texel) != 0) {
-			say("setup failed; from here on XeSS gets every frame as it is\n");
+			say("setup failed; from here on %s gets every frame as it is\n", upscaler);
 			nr.broken = 1;
 		}
 	}
@@ -2042,12 +2053,12 @@ static void say_line(const char *line)
 	say("cut: %s\n", line);
 }
 
-/* Why this frame went to XeSS whole, when that changes. */
+/* Why this frame went to the upscaler whole, when that changes. */
 static void cut_said(const char *why)
 {
 	if (!strcmp(why, cut.said)) return;
 	snprintf(cut.said, sizeof cut.said, "%s", why);
-	say("this frame goes to XeSS without NR: %s\n", why);
+	say("this frame goes to %s without NR: %s\n", upscaler, why);
 }
 
 /* The frame's queue waits on the GPU for V + 1. Where the daemon cannot give it, this does,
@@ -2334,16 +2345,18 @@ static void bind_cut(ID3D12GraphicsCommandList *list, const struct cut_constants
  * to XeSS whole. With mode=after it is XeSS's output, recorded already, which the continuation
  * overwrites with NR's answer before the game goes on to its post-processing and interface;
  * the return is that output, or NULL when the frame goes on without NR. The game's textures
- * end each half in the state the call found them in (the colour NON_PIXEL_SHADER_RESOURCE,
- * the output UNORDERED_ACCESS), and our buffers and the shared ones start and end each half
- * in COMMON, which the daemon's side needs. */
+ * end each half in the state the call found them in: `frame_at` for the frame and `vectors_at`
+ * for the motion vectors, which for XeSS are NON_PIXEL_SHADER_RESOURCE for both inputs and
+ * UNORDERED_ACCESS for the output, and for FSR 3.1 whatever the game said (nr_ffx.c). Our
+ * buffers and the shared ones start and end each half in COMMON, which the daemon's side needs. */
 static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3d12_execute_params_t *p,
-				  int after)
+				  int after, D3D12_RESOURCE_STATES frame_at, D3D12_RESOURCE_STATES vectors_at)
 {
 	uint64_t call = ++cut.calls;   /* offsets lead back only to the execute before this one */
 	ID3D12Resource *frame = after ? p->pOutputTexture : p->pColorTexture;
 	xess_2d_t base = after ? p->outputColorBase : p->inputColorBase;
-	const char *what = after ? "XeSS's output" : "colour";
+	char what[32];
+	snprintf(what, sizeof what, after ? "%s's output" : "colour", upscaler);
 	D3D12_RESOURCE_DESC desc, colour_desc;
 	ID3D12Resource_GetDesc(frame, &desc);
 	ID3D12Resource_GetDesc(p->pColorTexture, &colour_desc);
@@ -2370,7 +2383,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		    what, width, height, desc.Format, base.x, base.y, desc.Width, desc.Height,
 		    p->exposureScale, p->jitterOffsetX, p->jitterOffsetY);
 		if (cut_rebuild(device, width, height, desc.Format, kind, texel) != 0) {
-			say("setup failed; from here on XeSS gets every frame as it is\n");
+			say("setup failed; from here on %s gets every frame as it is\n", upscaler);
 			nr.broken = 1;
 		}
 	}
@@ -2384,7 +2397,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 			return NULL;
 		}
 		if (cut_reopen() != 0) {
-			say("setup failed; from here on XeSS gets every frame as it is\n");
+			say("setup failed; from here on %s gets every frame as it is\n", upscaler);
 			nr.broken = 1;
 			return NULL;
 		}
@@ -2446,14 +2459,14 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST,
 		write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
-	const D3D12_RESOURCE_STATES at = after ? write : read;   /* the frame's state at the call */
+	const D3D12_RESOURCE_STATES at = frame_at;   /* the frame's state at the call */
 
 	/* The first half: the frame as a buffer, and the frame NR is given from it; after the frame
 	 * in the same buffer, from a copy of the vectors, the offsets when they are to be followed. */
 	add(&b, frame, at, source);
 	add(&b, nr.staging, common, dest);
 	if (follow) {
-		add(&b, p->pVelocityTexture, read, source);
+		add(&b, p->pVelocityTexture, vectors_at, source);
 		add(&b, nr.motion[0], common, dest);
 	}
 	flush(l, &b);
@@ -2472,7 +2485,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		D3D12_TEXTURE_COPY_LOCATION to = { .pResource = nr.motion[0],
 			.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, .PlacedFootprint = nr.motion_footprint };
 		ID3D12GraphicsCommandList_CopyTextureRegion(l, &to, 0, 0, 0, &vectors, &region);
-		add(&b, p->pVelocityTexture, source, read);
+		add(&b, p->pVelocityTexture, source, vectors_at);
 		add(&b, nr.motion[0], dest, read);
 	}
 	add(&b, frame, source, at);
@@ -2552,31 +2565,39 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	return target;
 }
 
+/* The setup window's Enable NR, looked at once a second: a file's attributes, on the calling thread */
+static void look_at_trigger(void)
+{
+	if (!trigger[0] || GetTickCount64() - trigger_checked < 1000) return;
+	trigger_checked = GetTickCount64();
+	LONG on = GetFileAttributesW(trigger) != INVALID_FILE_ATTRIBUTES;
+	if (InterlockedExchange(&trigger_on, on) != on)
+		say("NR %s by the setup window\n", on ? "turned on" : "turned off");
+}
+
 xess_result_t xessD3D12Execute(xess_context_handle_t context, ID3D12GraphicsCommandList *list,
 			       const xess_d3d12_execute_params_t *params)
 {
 	if (!real_execute) return XESS_RESULT_ERROR_CANT_LOAD_LIBRARY;
+	if (passive) return real_execute(context, list, params);
 #ifndef NR_XESS_TEST
 	nr_xess_panel_list(list);
 #endif
 	handed = params ? params->pColorTexture : NULL;
 	cut_now = 0;
-	/* The setup window's Enable NR, looked at once a second: a file's attributes, on this thread */
-	if (trigger[0] && GetTickCount64() - trigger_checked >= 1000) {
-		trigger_checked = GetTickCount64();
-		LONG on = GetFileAttributesW(trigger) != INVALID_FILE_ATTRIBUTES;
-		if (InterlockedExchange(&trigger_on, on) != on)
-			say("NR %s by the setup window\n", on ? "turned on" : "turned off");
-	}
+	look_at_trigger();
 	if (nr.broken || !config.enabled || !trigger_on || !list || !params || !params->pColorTexture)
 		return real_execute(context, list, params);
+	/* XeSS takes its inputs in NON_PIXEL_SHADER_RESOURCE and its output in UNORDERED_ACCESS */
+	const D3D12_RESOURCE_STATES read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 	if (config.cut == AFTER) {
 		/* XeSS's work goes into the list first, and the cut after it */
 		xess_result_t result = real_execute(context, list, params);
-		if (result == 0 && params->pOutputTexture) record_cut(list, params, 1);
+		if (result == 0 && params->pOutputTexture)
+			record_cut(list, params, 1, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, read);
 		return result;
 	}
-	ID3D12Resource *mixed = config.cut == BEFORE ? record_cut(list, params, 0) : record(list, params);
+	ID3D12Resource *mixed = config.cut == BEFORE ? record_cut(list, params, 0, read, read) : record(list, params);
 	if (!mixed) return real_execute(context, list, params);
 	handed = mixed;
 	xess_d3d12_execute_params_t changed = *params;
@@ -2630,6 +2651,47 @@ xess_result_t xessSetJitterScale(xess_context_handle_t context, float x, float y
 }
 
 #ifndef NR_XESS_TEST
+/* One of NR's proxies to a process. A game given both of them, its XeSS's and its FSR 3.1's
+ * (nr_ffx.c), would have both hook the same command-list, queue and swap-chain classes, and draw
+ * two panels: the second to load forwards every call as it is and does nothing else. The claim is
+ * a named mutex with the process's id, held while the module is loaded. */
+static HANDLE proxy_claim;
+
+static int another_proxy(void)
+{
+	wchar_t name[64];
+	_snwprintf(name, 64, L"Local\\dlss-nr-d3d12-proxy-%lu", GetCurrentProcessId());
+	proxy_claim = CreateMutexW(NULL, FALSE, name);
+	if (proxy_claim && GetLastError() == ERROR_ALREADY_EXISTS) {
+		CloseHandle(proxy_claim);
+		proxy_claim = NULL;
+		return 1;
+	}
+	return 0;
+}
+
+/* At FreeLibrary, not at the process's end: a module loaded again may claim the process again. */
+static void let_go_of_claim(void)
+{
+	if (proxy_claim) CloseHandle(proxy_claim);
+	proxy_claim = NULL;
+}
+
+/* This DLL's directory into `here`, with its backslash, and the log's path beside it; 0 when the
+ * path does not fit. */
+static int find_here(HINSTANCE instance)
+{
+	DWORD length = GetModuleFileNameW(instance, here, MAX_PATH);
+	if (!length || length >= MAX_PATH) return 0;
+	wchar_t *slash = wcsrchr(here, L'\\');
+	if (!slash) return 0;
+	slash[1] = L'\0';
+	_snwprintf(log_path, MAX_PATH + 16, L"%lsnr-xess.log", here);
+	return 1;
+}
+#endif
+
+#if !defined(NR_XESS_TEST) && !defined(NR_PROXY_FFX)
 /* What a jump lands on when the original does not export the name: an older libxess. */
 static xess_result_t missing_export(void)
 {
@@ -2638,15 +2700,10 @@ static xess_result_t missing_export(void)
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
-	(void)reserved;
+	if (reason == DLL_PROCESS_DETACH && !reserved) let_go_of_claim();
 	if (reason != DLL_PROCESS_ATTACH) return TRUE;
 	DisableThreadLibraryCalls(instance);
-	DWORD length = GetModuleFileNameW(instance, here, MAX_PATH);
-	if (!length || length >= MAX_PATH) return FALSE;
-	wchar_t *slash = wcsrchr(here, L'\\');
-	if (!slash) return FALSE;
-	slash[1] = L'\0';
-	_snwprintf(log_path, MAX_PATH + 16, L"%lsnr-xess.log", here);
+	if (!find_here(instance)) return FALSE;
 	/* By its full path: the game's DLL search path need not include this directory. */
 	wchar_t original[MAX_PATH + 32];
 	_snwprintf(original, MAX_PATH + 32, L"%lslibxess_nr_orig.dll", here);
@@ -2664,6 +2721,12 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 	real_init = (init_fn)(void *)GetProcAddress(module, "xessD3D12Init");
 	real_velocity_scale = (scale_fn)(void *)GetProcAddress(module, "xessSetVelocityScale");
 	real_jitter_scale = (scale_fn)(void *)GetProcAddress(module, "xessSetJitterScale");
+	if (another_proxy()) {
+		passive = 1;
+		say("NR in front of XeSS, process %lu: another of NR's proxies is in this process already, so "
+		    "this one hands every call to XeSS as it is\n", GetCurrentProcessId());
+		return TRUE;
+	}
 	build_tables();
 	nr_split_set_log(say_line);
 	read_settings(1);

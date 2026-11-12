@@ -80,6 +80,19 @@ XESS_LOG = "nr-xess.log"
 # The XeSS versions the proxy has run in a game: Hogwarts Legacy's 2.0.2.53 (2026-10-28 and -30),
 # and OptiScaler 0.9.4's 2.0.2.68 (2026-11-05).
 TESTED_XESS = ("2.0.2",)
+# DirectX 12 through FSR 3.1, for a game with no XeSS (src/xess/nr_ffx.c): NR's
+# amd_fidelityfx_dx12.dll, FFX_PROXY in a release, goes in front of the FidelityFX API's DLL the
+# game loads, which stays beside it under its name with _nr_orig before .dll (`ffx_original`). It
+# reads XESS_SETTINGS and writes XESS_LOG beside itself, as NR's libxess.dll does. The FidelityFX
+# SDK 1.1's name first, then SDK 2.0's loader, which keeps the upscaler in a DLL of its own.
+FFX_PROXY = "nr_ffx.dll"
+FFX_NAMES = ("amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll")
+# The FidelityFX API versions the proxy has run in a game: Hogwarts Legacy's 1.0.1.41314.
+TESTED_FFX = ("1.0.1",)
+# Which of a DirectX 12 game's upscalers NR stands in front of (`_d3d12_target`): "auto" takes
+# XeSS where the game has it, which an Arc runs on its matrix units, else FSR 3.1; "xess" or "fsr"
+# takes that one.
+UPSCALERS = ("auto", "xess", "fsr")
 # OptiScaler (github.com/optiscaler/OptiScaler) takes a DirectX 12 game's DLSS, FSR or XeSS and
 # upscales with XeSS unless its OptiScaler.ini says otherwise, from the libxess.dll it loads
 # (issue #38). NR's goes in front of that one, so NR runs after OptiScaler's XeSS, whichever
@@ -130,6 +143,9 @@ class Profile:
     gpu_image_path: bool = True
     # The network, NR_PRESET: one of PRESETS, read by the daemon when the game starts it.
     preset: str = "A"
+    # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
+    # none, so "auto"; a request may name one, for a game with both.
+    upscaler: str = "auto"
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -145,7 +161,8 @@ class Profile:
                 "disable_fossilize": self.disable_fossilize,
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
-                "gpu_image_path": self.gpu_image_path, "preset": self.preset}
+                "gpu_image_path": self.gpu_image_path, "preset": self.preset,
+                "upscaler": self.upscaler}
 
     @classmethod
     def from_dict(cls, values):
@@ -170,6 +187,9 @@ class Profile:
         preset = values.get("preset", "A")
         if not isinstance(preset, str) or preset not in PRESETS:
             raise ValueError("preset must be one of " + ", ".join(PRESETS))
+        upscaler = values.get("upscaler") or "auto"
+        if not isinstance(upscaler, str) or upscaler not in UPSCALERS:
+            raise ValueError("upscaler must be one of " + ", ".join(UPSCALERS))
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -178,7 +198,7 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset)
+                   preset=preset, upscaler=upscaler)
 
 
 def profile_path(root):
@@ -715,21 +735,37 @@ def xess_libraries(game_exe):
     of their own under the executable's (NBA 2K27, issue #27), so where neither place has one, the
     folders under the executable's are looked in, XESS_DEPTH deep, NR's own installation apart: it
     holds the game's DLL set aside."""
+    return _game_libraries(game_exe, (XESS_NAME,))
+
+
+def ffx_libraries(game_exe):
+    """Each FidelityFX API DLL the game ships (FFX_NAMES), those beside its executable first, looked
+    for where `xess_libraries` looks: Hogwarts Legacy keeps amd_fidelityfx_dx12.dll beside its own."""
+    return _game_libraries(game_exe, FFX_NAMES)
+
+
+def _game_libraries(game_exe, names):
     folder = Path(game_exe).parent
-    found = [folder / XESS_NAME] if (folder / XESS_NAME).is_file() else []
+    found = [folder / name for name in names if (folder / name).is_file()]
     if folder.name.lower() == "win64" and folder.parent.name.lower() == "binaries":
         project = folder.parent.parent
         for root in (project / "Plugins", project.parent / "Engine" / "Plugins"):
-            for path, _, names in os.walk(root):
-                found += [Path(path) / name for name in names if name.lower() == XESS_NAME]
+            for path, _, files in os.walk(root):
+                found += [Path(path) / name for name in files if name.lower() in names]
     if not found:
-        for path, folders, names in os.walk(folder):
+        for path, folders, files in os.walk(folder):
             here = Path(path)
             depth = len(here.relative_to(folder).parts)
             folders[:] = [] if depth >= XESS_DEPTH else [
                 name for name in folders if not (depth == 0 and name.lower() == "dlss-nr")]
-            found += [here / name for name in names if name.lower() == XESS_NAME]
+            found += [here / name for name in files if name.lower() in names]
     return found
+
+
+def ffx_original(name):
+    """The name the game's own FidelityFX DLL keeps beside NR's: amd_fidelityfx_dx12_nr_orig.dll for
+    amd_fidelityfx_dx12.dll, the name nr_ffx.c loads it by."""
+    return name[:-len(".dll")] + "_nr_orig.dll"
 
 
 def _ini_values(path):
@@ -797,11 +833,37 @@ def _xess_placed(record, profile):
 
 
 def _xess_original(profile, folder, record, stage=None):
-    """The game's own libxess.dll: in its folder until NR's takes its place, then set aside in the
-    installation, or in its stage while one is being made."""
-    if _xess_placed(record, profile) and record["files"][XESS_NAME].get("backup"):
-        return Path(stage or installed_path(profile)) / GAME_BACKUP / XESS_NAME
-    return folder / XESS_NAME
+    """The game's own libxess.dll (`_upscaler_original`)."""
+    return _upscaler_original(profile, folder, XESS_NAME, record, stage)
+
+
+def _upscaler_original(profile, folder, name, record, stage=None):
+    """The game's own upscaler DLL `name`, libxess.dll or a FidelityFX one: in its folder until NR's
+    takes its place, then set aside in the installation, or in its stage while one is being made."""
+    entry = record["files"].get(name, {})
+    if entry.get("placed") and entry.get("backup"):
+        return Path(stage or installed_path(profile)) / GAME_BACKUP / name
+    return folder / name
+
+
+def _ffx_placed(record, profile):
+    """Where NR's FidelityFX DLL went, by an installation's record: (its folder, the name it took),
+    or None."""
+    for name, entry in record["files"].items():
+        if name.lower() in FFX_NAMES and entry.get("placed"):
+            return (Path(entry["folder"]) if entry.get("folder") else Path(profile.game_exe).parent), name
+    return None
+
+
+def _upscaler_name(name):
+    """Whether `name` is an upscaler DLL of the game's that NR's takes the place of."""
+    return name.lower() == XESS_NAME or name.lower() in FFX_NAMES
+
+
+def _upscaler_placed(record, profile):
+    """(The folder, the name) of the game's upscaler DLL an installation put NR's in place of, or None."""
+    folder = _xess_placed(record, profile)
+    return (folder, XESS_NAME) if folder is not None else _ffx_placed(record, profile)
 
 
 def _xess_check(profile, record=None):
@@ -859,6 +921,108 @@ def _xess_check(profile, record=None):
             detail += ("; OptiScaler's menu opens on Insert, as NR's panel does: set ShortcutKey in "
                        f"{opti['ini']} to another key, such as 0x23 (End)")
     return folder, detail + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
+
+
+def _ffx_check(profile, record=None):
+    """Whether NR can go in front of the game's FSR 3.1: ((its folder, the DLL's name), what it is),
+    or (None, why not).
+
+    The FidelityFX API is five functions, which NR's amd_fidelityfx_dx12.dll exports, and every one
+    of the game's DLL must be among them, as for XeSS. One without ffxDispatch is not the API."""
+    if pe_architecture(profile.game_exe) != "x64":
+        return None, "DirectX 12 through FSR 3.1 is for 64-bit games"
+    try:
+        record = record or _game_record(installed_path(profile))
+    except (OSError, ValueError) as error:
+        return None, str(error)
+    placed = _ffx_placed(record, profile)
+    if placed is None:
+        found = ffx_libraries(profile.game_exe)
+        if not found:
+            return None, ("No amd_fidelityfx_dx12.dll in the game's folders. NR reaches FSR 3.1 through the "
+                          "FidelityFX API's DLL; FSR 2 and 3.0 are built into their games, with none")
+        if len(found) > 1 and found[0].parent != profile.game_exe.parent:
+            return None, "Several FidelityFX DLLs, none beside the game: " + ", ".join(map(str, found))
+        placed = found[0].parent, found[0].name
+    folder, name = placed
+    original, ours = _upscaler_original(profile, folder, name, record), profile.root / FFX_PROXY
+    if not original.is_file():
+        return None, f"{original} is missing; the game's file check (Steam's, or its launcher's) restores it"
+    if not ours.is_file():
+        return None, f"This release has no {FFX_PROXY}, NR's FidelityFX DLL"
+    if original.stat().st_size == ours.stat().st_size and _sha256(original) == _sha256(ours):
+        return None, (f"{folder / name} is NR's, from an installation setup has no record of. Restore "
+                      "the game's own with its file check (Steam's, or its launcher's), then Install NR")
+    theirs, provided = pe_exports(original), pe_exports(ours)
+    if not theirs or provided is None or pe_architecture(original) != "x64":
+        return None, f"{original} is not a 64-bit FidelityFX library setup can read"
+    version = _file_version(original) or "of unknown version"
+    if "ffxDispatch" not in theirs:
+        return None, f"{original}, {version}, exports no ffxDispatch: it is not FSR 3.1's FidelityFX API"
+    missing = sorted(theirs - provided)
+    if missing:
+        return None, (f"This game's FidelityFX DLL, {version}, has functions NR's does not: "
+                      + ", ".join(missing[:8]) + ("..." if len(missing) > 8 else ""))
+    tested = any(version.startswith(prefix + ".") for prefix in TESTED_FFX)
+    return (folder, name), (f"FSR 3.1, FidelityFX {version} in {folder}: NR runs while the game upscales "
+                            "with FSR" + ("" if tested else f"; NR has run with FidelityFX {', '.join(TESTED_FFX)}"))
+
+
+def _d3d12_target(profile, record=None):
+    """Which of a DirectX 12 game's upscalers NR stands in front of: ({"upscaler": "xess" or "fsr",
+    "folder", "name": the game's DLL NR's takes the place of, "original": the name the game's keeps
+    beside NR's, "proxy": NR's in the release}, what it is), or (None, why not).
+
+    By the profile's `upscaler`. "auto" keeps the one an installation placed; else XeSS where the
+    game has it or OptiScaler is beside it, else FSR 3.1; and a game whose XeSS NR cannot stand in
+    front of gets FSR 3.1 where it can, XeSS's reason said."""
+    if pe_architecture(profile.game_exe) != "x64":
+        return None, "DirectX 12 through XeSS or FSR 3.1 is for 64-bit games"
+    try:
+        record = record or _game_record(installed_path(profile))
+    except (OSError, ValueError) as error:
+        return None, str(error)
+
+    def xess():
+        folder, detail = _xess_check(profile, record)
+        target = {"upscaler": "xess", "folder": folder, "name": XESS_NAME, "original": XESS_ORIGINAL,
+                  "proxy": XESS_PROXY}
+        return (target if folder is not None else None), detail
+
+    def fsr():
+        found, detail = _ffx_check(profile, record)
+        if found is None:
+            return None, detail
+        folder, name = found
+        return {"upscaler": "fsr", "folder": folder, "name": name, "original": ffx_original(name),
+                "proxy": FFX_PROXY}, detail
+
+    opti = optiscaler(profile.game_exe)
+    if profile.upscaler == "xess":
+        return xess()
+    if profile.upscaler == "fsr":
+        if opti is not None:
+            return None, ("OptiScaler is beside the game, and NR runs after the XeSS it upscales with: "
+                          "leave the upscaler to setup")
+        return fsr()
+    if _xess_placed(record, profile) is not None:
+        return xess()
+    if _ffx_placed(record, profile) is not None:
+        return fsr()
+    target, why = xess()
+    if target is not None or opti is not None:
+        return target, why
+    other, detail = fsr()
+    has_xess = bool(xess_libraries(profile.game_exe))
+    if other is not None:
+        return other, detail + (f"; not XeSS: {why}" if has_xess else "")
+    if has_xess:
+        return None, why
+    if ffx_libraries(profile.game_exe):
+        return None, detail
+    return None, ("No libxess.dll or amd_fidelityfx_dx12.dll in the game's folders. NR reaches a DirectX 12 "
+                  "game through its own XeSS or FSR 3.1, and this one has neither, or keeps them where "
+                  "setup does not look")
 
 
 def bundled_python(root):
@@ -1127,7 +1291,7 @@ def validate(profile):
     check("release_root", profile.root.is_dir() and str(profile.root).isascii(),
           "The permanent release root must exist and use an ASCII path")
     check("api", profile.api in ("vulkan", "dxvk", "d3d12"),
-          "Native Vulkan, DirectX 8-11 through DXVK, or DirectX 12 through the game's own XeSS")
+          "Native Vulkan, DirectX 8-11 through DXVK, or DirectX 12 through the game's own XeSS or FSR 3.1")
     check("launch_mode", profile.launch_mode in ("direct", "steam") and (
         profile.launch_mode != "steam" or not profile.steam_app_id or profile.steam_app_id.isdecimal()),
         "Direct launch, or Steam with an optional numeric app ID; blank uses autodetection")
@@ -1146,8 +1310,11 @@ def validate(profile):
     proxy = PROXIES.get(arch, PROXIES["x64"])
     shader_names = _shader_names(profile.root)
     required = [layer, proxy, *RUNTIME_MODULES, *["work/" + name for name in (*LIBRARIES, *shader_names)]]
+    # For DirectX 12, NR's DLL for the upscaler it goes in front of, XeSS's where none is chosen yet.
+    target, target_detail = _d3d12_target(profile) if profile.api == "d3d12" else (None, "")
+    d3d12_proxy = target["proxy"] if target else XESS_PROXY
     if profile.api == "d3d12":
-        required.append(XESS_PROXY)
+        required.append(d3d12_proxy)
     missing = [name for name in required if not (profile.root / name).is_file()]
     missing.extend("src/" + name for name in SOURCE_DIRS if not (profile.root / "src" / name).is_dir())
     check("runtime_files", not missing, "Missing: " + ", ".join(missing) if missing else "Complete local release runtime and extractors")
@@ -1155,9 +1322,9 @@ def validate(profile):
     for name in (layer, proxy):
         if arch in LAYERS and (profile.root / name).is_file() and pe_architecture(profile.root / name) != arch:
             bad_arch.append(name)
-    if profile.api == "d3d12" and (profile.root / XESS_PROXY).is_file() \
-            and pe_architecture(profile.root / XESS_PROXY) != "x64":
-        bad_arch.append(XESS_PROXY)
+    if profile.api == "d3d12" and (profile.root / d3d12_proxy).is_file() \
+            and pe_architecture(profile.root / d3d12_proxy) != "x64":
+        bad_arch.append(d3d12_proxy)
     check("runtime_architecture", not bad_arch, "Wrong architecture: " + ", ".join(bad_arch) if bad_arch
           else f"Native libraries are x64; {layer} and {proxy} for this {arch or 'unidentified'} game")
     dependency = _load_dependencies(profile) if _native_python(info) and not bad_arch else {"ok": False, "failures": {"probe": "Requires native x64 Python and x64 runtime"}}
@@ -1215,8 +1382,8 @@ def validate(profile):
               f"DXVK for this {arch} game, from {folder}" if arch in LAYERS and not wrong
               else "The release's DXVK is missing or of another architecture: " + ", ".join(wrong))
     if profile.api == "d3d12":
-        folder, detail = _xess_check(profile)
-        check("xess_library", folder is not None, detail)
+        # Named for XeSS, the first upscaler NR went in front of; FSR 3.1's choice is said here too.
+        check("xess_library", target is not None, target_detail)
     files_ok, files_detail = _game_files_check(profile, arch)
     check("game_files", files_ok, files_detail)
     if profile.api == "vulkan" and arch in LAYERS:
@@ -1382,17 +1549,19 @@ def _game_sources(profile, arch, stage=None):
     """What goes into the game's folders, by name: (source, the folder it goes into).
 
     Beside the executable, the proxy for every Vulkan or DirectX 8-11 game, and DXVK for DirectX 8-11.
-    For DirectX 12, in the folder of the game's XeSS: a copy of its libxess.dll under another name,
-    NR's in its place, and NR's settings for it, which install writes into `stage` first."""
+    For DirectX 12, in the folder of the game's upscaler, XeSS or FSR 3.1 (`_d3d12_target`): a copy of
+    its DLL under another name, NR's in its place, and NR's settings for it, which install writes into
+    `stage` first."""
     game = profile.game_exe.parent
     if profile.api == "d3d12":
         record = _game_record(stage or installed_path(profile))
-        folder, detail = _xess_check(profile, record)
-        if folder is None:
+        target, detail = _d3d12_target(profile, record)
+        if target is None:
             raise ValueError(detail)
+        folder, name = target["folder"], target["name"]
         # The copy first, while the game's own is still where it was.
-        return {XESS_ORIGINAL: (_xess_original(profile, folder, record, stage), folder),
-                XESS_NAME: (profile.root / XESS_PROXY, folder),
+        return {target["original"]: (_upscaler_original(profile, folder, name, record, stage), folder),
+                name: (profile.root / target["proxy"], folder),
                 XESS_SETTINGS: (Path(stage or installed_path(profile)) / XESS_SETTINGS, folder)}
     sources = {PROXY_NAME: (profile.root / PROXIES[arch], game)}
     if profile.api == "dxvk":
@@ -1422,16 +1591,16 @@ def _game_files_check(profile, arch):
     # An installation from before the proxy has fewer files placed, and gains it; one with
     # DXVK's files placed for DirectX cannot become a Vulkan one without Remove NR first.
     if placed and (not set(placed) <= set(sources) or record.get("arch") != arch):
-        return False, "Remove NR from this game before changing its graphics API or executable"
+        return False, "Remove NR from this game before changing its graphics API, upscaler or executable"
     aside = []
     for name, (source, folder) in sources.items():
         target = folder / name
         entry = record["files"].get(name, {})
         if target.is_symlink() or (target.exists() and not target.is_file()):
             return False, f"{target} is not a regular file"
-        if name == XESS_NAME and entry.get("placed") and target.is_file() \
+        if _upscaler_name(name) and entry.get("placed") and target.is_file() \
                 and _sha256(target) != entry.get("sha256"):
-            return False, ("The game has replaced NR's libxess.dll, in an update most likely: Remove NR, "
+            return False, (f"The game has replaced NR's {name}, in an update most likely: Remove NR, "
                            "then Install NR again")
         if target.is_file() and not entry.get("placed") and source.is_file() \
                 and _sha256(target) != _sha256(source):
@@ -1508,7 +1677,8 @@ def _write_proxy_environment(profile, stage, destination):
     it is for, where to record a launch, and the game's own loader if one was set aside."""
     lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process."
              if profile.api != "d3d12" else
-             "# Read by NR's libxess.dll beside the game's XeSS (src/xess/nr_xess.c), in the game's process.",
+             "# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside the game's upscaler "
+             "(src/xess/nr_xess.c, nr_ffx.c), in the game's process.",
              "NR_GAME_EXE=" + str(profile.game_exe),
              "NR_LAUNCH_STATE=" + str(profile.root / "work/windows-wizard/launch-state.json")]
     if _game_record(stage)["files"].get(PROXY_NAME, {}).get("backup"):
@@ -1518,9 +1688,11 @@ def _write_proxy_environment(profile, stage, destination):
 
 
 def _write_xess_settings(profile, stage, destination):
-    """XESS_SETTINGS, which NR's libxess.dll reads beside it: NR after XeSS, on its output, the
-    daemon's pipe, and the ENV_FILE to start the daemon from, whose trigger turns NR on and off."""
-    lines = ["# Read by NR's libxess.dll beside it (src/xess/nr_xess.c); Install NR writes it.",
+    """XESS_SETTINGS, which NR's libxess.dll or amd_fidelityfx_dx12.dll reads beside it: NR after the
+    upscaler, on its output, the daemon's pipe, and the ENV_FILE to start the daemon from, whose
+    trigger turns NR on and off."""
+    lines = ["# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside it (src/xess/nr_xess.c, "
+             "nr_ffx.c); Install NR writes it.",
              "mode=after", "pipe=" + layer_environment(profile)["NR_LAYER_SOCKET"],
              "env=" + str(destination / ENV_FILE)]
     (stage / XESS_SETTINGS).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
@@ -1572,12 +1744,12 @@ def uninstall(profile, emit=None):
     try:
         record = _game_record(destination)
         placed_any = any(entry.get("placed") for entry in record["files"].values())
-        xess = _xess_placed(record, profile)
+        upscaler = _upscaler_placed(record, profile)
         for name in sorted(record["files"]):
             entry = record["files"][name]
             if entry.get("placed"):
                 target = _game_target(profile, name, entry)
-                if name == XESS_NAME and target.is_file() and _sha256(target) != entry.get("sha256"):
+                if _upscaler_name(name) and target.is_file() and _sha256(target) != entry.get("sha256"):
                     # The game put its own back over NR's, in an update: it stays, and the one set
                     # aside, which it replaces, goes with the installation.
                     updated.append(name)
@@ -1599,8 +1771,8 @@ def uninstall(profile, emit=None):
             _atomic_json(destination / GAME_FILES, record)
         if placed_any:
             _remove_dxvk_logs(profile, destination, record)
-        if xess and not kept:
-            (xess / XESS_LOG).unlink(missing_ok=True)
+        if upscaler and not kept:
+            (upscaler[0] / XESS_LOG).unlink(missing_ok=True)
         if kept:
             return {"ok": False, "error": "Changed since NR put them there, so left as they are: "
                     + ", ".join(kept) + ". The dlss-nr folder keeps the game's originals.", "kept": kept}

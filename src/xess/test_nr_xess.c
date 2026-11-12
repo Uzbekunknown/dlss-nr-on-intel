@@ -6,13 +6,14 @@
  * along, a half-pixel jitter, and a block whose vectors say it moved while the picture did
  * not, where the change is not trusted and is filled from around it — and one change fades into the
  * next over three executes. Every expected value comes from a CPU transcription of
- * nr_xess.hlsl below.
+ * nr_xess.hlsl below. Last, FSR 3.1's dispatch through nr_ffx.c, with a stand-in for AMD's DLL:
+ * the cut after it as after XeSS, from the states the game names, and the calls it hands on whole.
  *
  *   test_nr_xess              a stand-in daemon
  *   test_nr_xess <pipe>       the daemon listening at <pipe>, for the whole round trip
  */
 #define NR_XESS_TEST
-#include "nr_xess.c"
+#include "nr_ffx.c"                     /* which includes nr_xess.c */
 
 static xess_d3d12_execute_params_t seen;
 
@@ -194,7 +195,7 @@ static ID3D12Resource *texture_as(DXGI_FORMAT format, UINT width, UINT height, U
 					     .PlacedFootprint = footprint };
 	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, NULL);
 	D3D12_RESOURCE_BARRIER b = transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, state);
-	ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	if (state != D3D12_RESOURCE_STATE_COPY_DEST) ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
 	if (submit()) return NULL;
 	ID3D12Resource_Release(upload);
 	return tex;
@@ -1521,6 +1522,289 @@ static int run_reopen(ID3D12Resource *motion)
 	return failures != 0;
 }
 
+/* ---- FSR 3.1, through the FidelityFX API (nr_ffx.c) ---- */
+
+/* A stand-in for AMD's DLL: a context it makes is `ffx_context`, and a dispatch leaves the output
+ * as the test filled it, as the stand-in XeSS does. */
+#define FFX_CONTEXT ((ffxContext)(uintptr_t)0x5eed)
+static int ffx_dispatches;
+static struct ffx_dispatch_upscale ffx_seen;
+
+static ffxReturnCode_t stub_ffx_create(ffxContext *context, ffxApiHeader *desc, const ffxAllocationCallbacks *memory)
+{
+	(void)desc;
+	(void)memory;
+	*context = FFX_CONTEXT;
+	return FFX_API_RETURN_OK;
+}
+
+static ffxReturnCode_t stub_ffx_destroy(ffxContext *context, const ffxAllocationCallbacks *memory)
+{
+	(void)memory;
+	*context = NULL;
+	return FFX_API_RETURN_OK;
+}
+
+static ffxReturnCode_t stub_ffx_dispatch(ffxContext *context, const ffxApiHeader *desc)
+{
+	(void)context;
+	ffx_dispatches++;
+	if (desc->type == FFX_API_DISPATCH_DESC_TYPE_UPSCALE) ffx_seen = *(const struct ffx_dispatch_upscale *)desc;
+	return FFX_API_RETURN_OK;
+}
+
+/* An upscale context as a game makes one: the DX12 backend's description first, then the
+ * upscaler's, output IN_W x IN_H. */
+static ffxContext ffx_make(uint32_t flags)
+{
+	struct { ffxApiHeader header; ID3D12Device *device; } backend = { { 0x2u, NULL }, gpu.device };
+	struct ffx_create_upscale upscale = { { FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, NULL }, flags,
+					      { IN_W, IN_H }, { IN_W, IN_H }, NULL };
+	backend.header.pNext = &upscale.header;
+	ffxContext context = NULL;
+	if (ffxCreateContext(&context, &backend.header, NULL) != FFX_API_RETURN_OK) return NULL;
+	return context;
+}
+
+/* The upscale dispatch of `colour` into `out`, its output in `state` (FfxApiResourceState) and its
+ * vectors, when there are any, in COMPUTE_READ. */
+static struct ffx_dispatch_upscale ffx_upscale(ID3D12Resource *colour, ID3D12Resource *motion, ID3D12Resource *out,
+					       uint32_t state, int sized)
+{
+	struct ffx_dispatch_upscale d = { .header = { FFX_API_DISPATCH_DESC_TYPE_UPSCALE, NULL },
+		.command_list = gpu.list, .colour = { colour, { 0 }, 1u << 2 },
+		.motion = { motion, { 0 }, 1u << 2 }, .output = { out, { 0 }, state },
+		.motion_scale = { 1, 1 }, .render_size = { IN_W, IN_H }, .pre_exposure = 1 };
+	if (sized) d.upscale_size = (struct ffx_dimensions){ IN_W, IN_H };
+	return d;
+}
+
+/* What the game's FSR output is read as afterwards: from its own state, as the cut left it. */
+static void ffx_read_output(ID3D12Resource *out, D3D12_RESOURCE_STATES held, ID3D12Resource *readback)
+{
+	D3D12_RESOURCE_BARRIER b = transition(out, held, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	if (held != D3D12_RESOURCE_STATE_COPY_SOURCE) ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+	D3D12_BOX box = { 0, 0, 0, IN_W, IN_H, 1 };
+	D3D12_TEXTURE_COPY_LOCATION to = { .pResource = readback, .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+					   .PlacedFootprint = nr.footprint };
+	D3D12_TEXTURE_COPY_LOCATION from = { .pResource = out, .Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+	ID3D12GraphicsCommandList_CopyTextureRegion(gpu.list, &to, 0, 0, 0, &from, &box);
+	b = transition(out, D3D12_RESOURCE_STATE_COPY_SOURCE, held);
+	if (held != D3D12_RESOURCE_STATE_COPY_SOURCE) ID3D12GraphicsCommandList_ResourceBarrier(gpu.list, 1, &b);
+}
+
+/* After FSR 3.1: as run_after, through ffxDispatch, with the output where FSR writes it, at (0, 0),
+ * left by FSR in the state the game named, which the cut takes it from and gives it back in. Its
+ * size from the dispatch, or from the context where the dispatch gives none. FSR is handed the
+ * game's description as it was. */
+static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int sized)
+{
+	UINT texel;
+	int kind = kind_of(format, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 }, shifted = { kind, BASE_X, BASE_Y };
+	D3D12_RESOURCE_STATES held = ffx_state(state);
+	ID3D12Resource *tex = texture(format, W, H, texel, fill_colour, &how);
+	/* output pixel (x, y) is the colour's (x, y) of compare's, at its base */
+	ID3D12Resource *out = texture_as(format, W, H, texel, fill_colour, &shifted,
+					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, held);
+	ffxContext context = ffx_make(FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+	if (!tex || !out || context != FFX_CONTEXT) {
+		printf("FAIL %s: no texture, or no context\n", name);
+		return 1;
+	}
+	nr.width = 0;
+	config.strength = 1;
+	stand.decline = 0;
+	static uint8_t given[IN_W * IN_H * 4];
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			float o[4];
+			colour_at(kind, x, y, 0, 0, o);
+			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
+		}
+	brighten(given, NULL, stand.answer, IN_W, IN_H);
+	struct ffx_dispatch_upscale d = ffx_upscale(tex, NULL, out, state, sized);
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		ffxDispatch(&context, &d.header);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL %s: the session was not opened\n", name);
+		return 1;
+	}
+	int before = stand.frames;
+	ffxDispatch(&context, &d.header);
+	uint64_t value = cut.last;
+	if (memcmp(&ffx_seen, &d, sizeof d) || !cut_now) {
+		printf("FAIL %s: FSR was not handed the game's description as it was, or the frame went on without "
+		       "NR (%s)\n", name, cut.said);
+		return 1;
+	}
+	if (xess.output.x != IN_W || xess.output.y != IN_H) {
+		printf("FAIL %s: the output was taken as %ux%u\n", name, xess.output.x, xess.output.y);
+		failures++;
+	}
+	UINT64 shared = (UINT64)IN_W * IN_H * 4;
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, nr.bytes + 2 * shared + 16,
+					       D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+	ffx_read_output(out, held, readback);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes, cut.gpu.input, 0, shared);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, nr.bytes + shared, cut.gpu.output, 0, shared + 16);
+	if (submit()) return 1;
+	if (stand.frames != before + 1) {
+		printf("FAIL %s: the stand-in was handed %d frames, not one\n", name, stand.frames - before);
+		failures++;
+	}
+	uint8_t *raw;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&raw);
+	const uint8_t *gpu_given = raw + nr.bytes, *answer = raw + nr.bytes + shared;
+	for (size_t i = 0; i < shared; i++)
+		if (i % 4 != 3 && abs((int)gpu_given[i] - (int)given[i]) > 1 && failures++ < 3)
+			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
+	struct nr_gpu_stamp stamp;
+	memcpy(&stamp, answer + shared, sizeof stamp);
+	if (!nr_gpu_d3d12_answered(&stamp, value)) {
+		printf("FAIL %s: the stamp does not name frame %llu\n", name, (unsigned long long)value);
+		failures++;
+	}
+	static float delta[IN_W * IN_H * 3];
+	for (int i = 0; i < IN_W * IN_H; i++)
+		for (int c = 0; c < 3; c++)
+			delta[3 * i + c] = linear8[answer[4 * i + c]] - linear8[gpu_given[4 * i + c]];
+	uint8_t *mixed = malloc((size_t)nr.bytes);
+	memcpy(mixed, raw, (size_t)nr.bytes);
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	failures += compare(name, kind, texel, mixed, 0, 0, 1, delta, 1);
+	free(mixed);
+	ffxDestroyContext(&context, NULL);
+	ID3D12Resource_Release(out);
+	ID3D12Resource_Release(tex);
+	return failures != 0;
+}
+
+/* FSR 3.1's vectors at the output's resolution (FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS),
+ * scaled by the dispatch's motionVectorScale: of two dispatches in a row, the second hands the
+ * daemon each pixel's offset to the first, the vectors' (6, -4) at a scale of 0.5, (3, -2) output
+ * pixels, with no jitter, as after XeSS. */
+static int run_ffx_motion(ID3D12Resource *motion)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R16G16B16A16_FLOAT, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how);
+	ID3D12Resource *out = texture_as(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how,
+					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	ffxContext context = ffx_make(FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE
+				      | FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS);
+	if (!tex || !out || !context) {
+		printf("FAIL FSR 3.1, motion: no texture, or no context\n");
+		return 1;
+	}
+	nr.width = 0;
+	config.strength = 1;
+	stand.decline = 0;
+	struct ffx_dispatch_upscale d = ffx_upscale(tex, motion, out, 1u << 1, 1);
+	d.motion_scale = (struct ffx_coords){ 0.5f, 0.5f };
+	d.jitter = (struct ffx_coords){ 0.25f, -0.25f };
+	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
+		ffxDispatch(&context, &d.header);
+		if (submit()) return 1;
+		Sleep(20);
+	}
+	if (cut.hello != 2) {
+		printf("FAIL FSR 3.1, motion: the session was not opened\n");
+		return 1;
+	}
+	ffxDispatch(&context, &d.header);
+	if (submit()) return 1;
+	uint64_t earlier = cut.last;
+	d.jitter = (struct ffx_coords){ -0.25f, 0.5f };
+	ffxDispatch(&context, &d.header);
+	UINT64 bytes = NR_GPU_MOTION_BYTES(IN_W, IN_H);
+	ID3D12Resource *readback = make_buffer(D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE,
+					       D3D12_RESOURCE_STATE_COPY_DEST);
+	ID3D12GraphicsCommandList_CopyBufferRegion(gpu.list, readback, 0, cut.gpu.input, cut.gpu.motion, bytes);
+	if (submit()) return 1;
+	if (!cut.followed || stand.previous != earlier || nr.motion_width != IN_W || nr.motion_height != IN_H
+	    || xess.velocity[0] != 0.5f || !(xess.flags & XESS_INIT_FLAG_HIGH_RES_MV)) {
+		printf("FAIL FSR 3.1, motion: followed %d, naming %llu not %llu, vectors %ux%u, scale (%g, %g), "
+		       "flags 0x%x\n", cut.followed, (unsigned long long)stand.previous, (unsigned long long)earlier,
+		       nr.motion_width, nr.motion_height, xess.velocity[0], xess.velocity[1], xess.flags);
+		failures++;
+	}
+	float *offsets;
+	ID3D12Resource_Map(readback, 0, NULL, (void **)&offsets);
+	float dx = 3, dy = -2;
+	int wrong = 0, known = 0;
+	for (int y = 0; y < IN_H; y++)
+		for (int x = 0; x < IN_W; x++) {
+			const float *o = offsets + 2 * ((size_t)y * IN_W + x);
+			int off = x + dx < -0.5f || y + dy < -0.5f || x + dx > IN_W - 0.5f || y + dy > IN_H - 0.5f;
+			int right = off ? isnan(o[0]) && isnan(o[1]) : o[0] == dx && o[1] == dy;
+			known += !off;
+			if (!right && wrong++ < 3)
+				printf("FAIL FSR 3.1, motion: pixel (%d, %d) has (%g, %g)\n", x, y, o[0], o[1]);
+		}
+	ID3D12Resource_Unmap(readback, 0, NULL);
+	ID3D12Resource_Release(readback);
+	failures += wrong != 0;
+	printf("%s FSR 3.1, motion: (%.2f, %.2f) to the frame before over %d pixels, the rest off screen\n",
+	       failures ? "FAIL" : "ok  ", dx, dy, known);
+	ffxDestroyContext(&context, NULL);
+	ID3D12Resource_Release(out);
+	ID3D12Resource_Release(tex);
+	return failures != 0;
+}
+
+/* What goes to FSR whole, with nothing recorded: a dispatch of another kind (frame generation's),
+ * an upscale of a context this proxy did not see made, one made with non-linear colour, and one
+ * whose output is in a state the proxy does not know. FSR is called once each. */
+static int run_ffx_whole(void)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R16G16B16A16_FLOAT, &texel), failures = 0;
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how);
+	ID3D12Resource *out = texture_as(DXGI_FORMAT_R16G16B16A16_FLOAT, W, H, texel, fill_colour, &how,
+					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+	if (!tex || !out) {
+		printf("FAIL FSR 3.1, handed on whole: no texture\n");
+		return 1;
+	}
+	struct { const char *what, *said; } cases[] = {
+		{ "frame generation's dispatch", NULL },
+		{ "a context not seen made", "did not see made" },
+		{ "non-linear colour", "non-linear" },
+		{ "an output state not known", "state 0x400" },
+	};
+	for (int i = 0; i < 4; i++) {
+		ffxContext context = i == 1 ? (ffxContext)(uintptr_t)0x7777
+			: ffx_make(i == 2 ? FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE : 0);
+		struct ffx_dispatch_upscale d = ffx_upscale(tex, NULL, out, i == 3 ? 1u << 10 : 1u << 1, 1);
+		if (i == 0) d.header.type = 0x00020001u;   /* FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION */
+		uint64_t calls = cut.calls;
+		int dispatches = ffx_dispatches;
+		cut_now = 0;                             /* the last dispatch's, which a whole one leaves */
+		ffxDispatch(&context, &d.header);
+		int recorded = cut.calls != calls || cut_now;
+		int said = !cases[i].said || strstr(cut.said, cases[i].said) != NULL;
+		if (ffx_dispatches != dispatches + 1 || recorded || !said) {
+			printf("FAIL FSR 3.1, %s: FSR called %d times, %s, said \"%s\"\n", cases[i].what,
+			       ffx_dispatches - dispatches, recorded ? "a cut recorded" : "nothing recorded", cut.said);
+			failures++;
+		}
+		if (i != 1) ffxDestroyContext(&context, NULL);
+	}
+	if (submit()) return 1;
+	ID3D12Resource_Release(out);
+	ID3D12Resource_Release(tex);
+	printf("%s FSR 3.1, handed on whole: another kind of dispatch, a context not seen made, non-linear "
+	       "colour, an output state not known\n", failures ? "FAIL" : "ok  ");
+	return failures != 0;
+}
+
 int main(int argc, char **argv)
 {
 	_snwprintf(log_path, MAX_PATH + 16, L"test_nr_xess.log");
@@ -1613,6 +1897,19 @@ int main(int argc, char **argv)
 	failed += run_after(DXGI_FORMAT_R16G16B16A16_FLOAT, "after XeSS, R16G16B16A16_FLOAT");
 	failed += run_after(DXGI_FORMAT_R11G11B10_FLOAT, "after XeSS, R11G11B10_FLOAT");
 	failed += run_reopen(moving);
+
+	/* FSR 3.1 through the FidelityFX API, on the same stand-in for the daemon */
+	ffx.create = stub_ffx_create;
+	ffx.destroy = stub_ffx_destroy;
+	ffx.dispatch = stub_ffx_dispatch;
+	upscaler = "FSR 3.1";
+	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, R16G16B16A16_FLOAT, output in "
+			  "PIXEL_COMPUTE_READ, its size the context's", (1u << 3) | (1u << 2), 0);
+	failed += run_ffx(DXGI_FORMAT_R11G11B10_FLOAT, "after FSR 3.1, R11G11B10_FLOAT, output in UNORDERED_ACCESS",
+			  1u << 1, 1);
+	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, output in COPY_DEST", 1u << 5, 1);
+	failed += run_ffx_motion(moving);
+	failed += run_ffx_whole();
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }

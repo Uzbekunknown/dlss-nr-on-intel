@@ -26,6 +26,9 @@ PROXIES = ("nr_vulkan_proxy.dll", "nr_vulkan_proxy32.dll")
 # DirectX 12 through the game's own XeSS: src/xess/build_xess.bat builds this libxess.dll, which
 # the setup window puts in front of a game's, and a release carries it as nr_xess.dll.
 XESS_PROXY = ("work/xess/libxess.dll", "nr_xess.dll")
+# ... and through FSR 3.1 where a game has no XeSS: the same proxy with FidelityFX's exports
+# (src/xess/nr_ffx.c), which setup puts in front of the game's amd_fidelityfx_dx12.dll.
+FFX_PROXY = ("work/xess/amd_fidelityfx_dx12.dll", "nr_ffx.dll")
 # The panel in a DirectX 12 game finds DXGI's Present with this, in a process of its own; the proxy
 # runs it from the release's root (NR_ROOT), beside nr_xess.dll (src/xess/nr_present_probe.c).
 XESS_PROBE = ("work/xess/nr_present_probe.exe", "nr_present_probe.exe")
@@ -48,9 +51,12 @@ PYTHON_FILES = ("python.exe", "NR-PYTHON.json", "LICENSE.txt",
 # by that path, and those two files ARE shipped - a release without it therefore points at
 # nothing. ImGui is linked into the layer, so its MIT notice travels with the binaries built on
 # it; a release carries no source tree, so NOTICE's `third_party/imgui/` wording is not a path
-# inside the package.
+# inside the package. nr_xess.dll and nr_ffx.dll carry the cut adapted from DLSSNR-AMD, and
+# nr_ffx.dll the FidelityFX API's types after AMD's headers, the notices NOTICE names for them.
 LICENCES = (("licenses/rdna3-e4m3-MIT.txt", "licenses/rdna3-e4m3-MIT.txt"),
-            ("third_party/imgui/LICENSE.txt", "licenses/imgui-MIT.txt"))
+            ("third_party/imgui/LICENSE.txt", "licenses/imgui-MIT.txt"),
+            ("licenses/dlssnr-amd-MIT.txt", "licenses/dlssnr-amd-MIT.txt"),
+            ("licenses/fidelityfx-sdk-MIT.txt", "licenses/fidelityfx-sdk-MIT.txt"))
 # A stub left where a fetch should have put a real file. `work/dxvk` and `work/mlx-dlss/LICENSE`
 # are populated by scripts/fetch_dxvk.py and scripts/get_weights.py; a tree where those did not
 # run carries short text files instead, which pass an is_file() check and would be packaged as
@@ -178,6 +184,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         # vulkan-1.dll beside each game, which gives it NR's environment however it starts.
         files += [root / "work" / name for name in PROXIES]
         files.append(root / XESS_PROXY[0])
+        files.append(root / FFX_PROXY[0])
         files.append(root / XESS_PROBE[0])
         files.append(root / GPU_PROBE[0])
         files += [root / name for name in (*DXVK, *DXVK_INFO)]
@@ -229,6 +236,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
             for name in PROXIES:
                 shutil.copy2(root / "work" / name, stage / name)
             shutil.copy2(root / XESS_PROXY[0], stage / XESS_PROXY[1])
+            shutil.copy2(root / FFX_PROXY[0], stage / FFX_PROXY[1])
             shutil.copy2(root / XESS_PROBE[0], stage / XESS_PROBE[1])
             shutil.copy2(root / GPU_PROBE[0], stage / GPU_PROBE[1])
             for name in (*DXVK, *DXVK_INFO):

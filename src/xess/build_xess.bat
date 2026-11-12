@@ -1,5 +1,6 @@
 @echo off
-rem build_xess.bat - the XeSS proxy (libxess.dll), its panel's probe, and their tests, with MSVC.
+rem build_xess.bat - the XeSS proxy (libxess.dll), the FSR 3.1 proxy (amd_fidelityfx_dx12.dll), their
+rem panel's probe, and their tests, with MSVC.
 rem   src\xess\build_xess.bat [out-dir]       default: work\xess
 setlocal
 set "HERE=%~dp0"
@@ -53,6 +54,10 @@ set PANEL=
 for %%O in (nr_xess_panel nr_menu_ui_d3d12 nr_menu_ui imgui imgui_draw imgui_tables imgui_widgets nr_panel nr_menu nr_menu_font nr_menu_strings nr_menu_strings_lookup nr_menu_bridge nr_file nr_focus nr_raw_mouse nr_input_guard nr_menu_floor) do call :panel_object %%O
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_xess.obj" /Fe:"%OUT%\libxess.dll" /LD "%HERE%nr_xess.c" /link /DEF:"%HERE%nr_xess.def" "%OUT%\nr_xess_thunks.obj" "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: libxess.dll failed & exit /b 1 )
+rem FSR 3.1's FidelityFX API in front of AMD's (nr_ffx.c, which builds nr_xess.c into it): the same
+rem cut, passes and panel in a DLL of FidelityFX's five exports; a release carries it as nr_ffx.dll.
+cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_ffx.obj" /Fe:"%OUT%\amd_fidelityfx_dx12.dll" /LD "%HERE%nr_ffx.c" /link /DEF:"%HERE%nr_ffx.def" "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxguid.lib user32.lib gdi32.lib
+if errorlevel 1 ( echo ERROR: amd_fidelityfx_dx12.dll failed & exit /b 1 )
 rem The probe that finds DXGI's Present in a process of its own; a release carries it beside nr_xess.dll.
 cl /nologo /O2 /W4 /std:c11 /TC /Fo:"%OUT%\nr_present_probe.obj" /Fe:"%OUT%\nr_present_probe.exe" "%HERE%nr_present_probe.c" /link d3d12.lib dxgi.lib dxguid.lib user32.lib
 if errorlevel 1 ( echo ERROR: nr_present_probe.exe failed & exit /b 1 )
@@ -63,7 +68,7 @@ if errorlevel 1 ( echo ERROR: replay_nr_xess.exe failed & exit /b 1 )
 rem The panel over a swap chain of the test's own, through the probe and the hook, read back.
 cl /nologo /O2 /W4 /std:c11 /TC /Fo:"%OUT%\test_xess_panel.obj" /Fe:"%OUT%\test_xess_panel.exe" "%HERE%test_xess_panel.c" /link "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_xess_panel.exe failed & exit /b 1 )
-echo built %OUT%\libxess.dll, nr_present_probe.exe, test_nr_xess.exe, replay_nr_xess.exe and test_xess_panel.exe
+echo built %OUT%\libxess.dll, amd_fidelityfx_dx12.dll, nr_present_probe.exe, test_nr_xess.exe, replay_nr_xess.exe and test_xess_panel.exe
 exit /b 0
 
 rem One pass: nr_xess.hlsl with the pass's name defined, upper-cased, to nr_xess_<pass>.h.

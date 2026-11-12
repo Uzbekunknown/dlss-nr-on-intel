@@ -112,6 +112,12 @@ DLSSNR-AMD — https://github.com/mochizuki0323/DLSSNR-AMD
   adapted from windows/src/pe/nr_pe_d3d12split.cpp, commit c71b0f4.
   Copyright (c) 2026 mochizuki0323, MIT License; retained in licenses/dlssnr-amd-MIT.txt.
 
+AMD FidelityFX SDK — https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+  src/xess/nr_ffx.c, NR in front of FSR 3.1, declares the FidelityFX API's types it reads after
+  ffx_api.h, ffx_api_types.h, ffx_upscale.h and dx12/ffx_api_dx12.h of SDK 1.1.0; no header is
+  copied. Copyright (C) 2024 Advanced Micro Devices, Inc., MIT License; retained in
+  licenses/fidelityfx-sdk-MIT.txt. FSR and FidelityFX are AMD's.
+
 --------------------------------------------------------------------------------
 Provenance within this repository
 --------------------------------------------------------------------------------
