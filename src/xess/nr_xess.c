@@ -680,7 +680,17 @@ static void encode_proxy(const float *rgb, float inverse_white, uint8_t *out)
  * R8G8B8A8_UNORM holding sRGB-encoded values, as a swapchain would. With `motion` — for
  * each pixel, two floats: the offset to where its surface was on the frame sent before,
  * NaN where it was not on screen — the request is the daemon's MAGIC_MOTION, and its
- * history follows the game's own vectors instead of standing still. */
+ * history follows the game's own vectors instead of standing still.
+ *
+ * **The answer may end with the network's time** (the layer's `exchange_receive`, the
+ * daemon's TRAILER_MAGIC): eight bytes, a little-endian word naming itself and one
+ * naming the frame's microseconds. Read past the pixels when they are there, never
+ * waiting for an old daemon's silence; what lands in `last_answer_us` is this frame's
+ * cost, and zero means the daemon said nothing. The signature stays the shape the
+ * test's stand-ins (`brighten`, `spot`) implement — the trailer travels through the
+ * module variable below instead of a parameter. */
+static volatile LONG64 last_answer_us;
+
 static int exchange_pipe(const uint8_t *frame, const float *motion, uint8_t *answer,
 			 uint32_t width, uint32_t height)
 {
@@ -692,7 +702,19 @@ static int exchange_pipe(const uint8_t *frame, const float *motion, uint8_t *ans
 		     || nr_link_write(&link, frame, bytes) != 0
 		     || (motion && nr_link_write(&link, motion, bytes * 2) != 0)
 		     || nr_link_read(&link, answer, bytes) != 0;
+	uint32_t us = 0;
+	if (!failed) {
+		unsigned char tail[8];
+		if (nr_link_read_nowait(&link, tail, sizeof tail) == 0) {
+			const uint32_t magic = (uint32_t)tail[0] | ((uint32_t)tail[1] << 8) |
+					       ((uint32_t)tail[2] << 16) | ((uint32_t)tail[3] << 24);
+			if (magic == 0x54494E52u)
+				us = (uint32_t)tail[4] | ((uint32_t)tail[5] << 8) |
+				     ((uint32_t)tail[6] << 16) | ((uint32_t)tail[7] << 24);
+		}
+	}
 	nr_link_close(&link);
+	InterlockedExchange64(&last_answer_us, (LONG64)us);
 	return failed ? -1 : 0;
 }
 
@@ -1029,7 +1051,14 @@ static DWORD WINAPI worker(LPVOID unused)
 		}
 		if (ok) {
 			publish(epoch, sequence, jitter);
-			panel_count_answer(0);   /* the CPU exchange reports no network time */
+			/* The daemon's time for this frame, when the trailer carried one.
+			 * The GPU cut path fills the same counters from its reply's
+			 * `detail` (panel_count_answer(reply.detail) below); zero here
+			 * means the exchange said nothing, which counts the frame but not
+			 * the graph. The stand-ins the tests install never set the
+			 * variable, so their frames read as "not reported" — the honest
+			 * answer for a fake daemon. */
+			panel_count_answer((uint32_t)InterlockedCompareExchange64(&last_answer_us, 0, 0));
 			if (answers_dir) write_answer(sequence);
 			if (++nr.answered == 30 && config.dump) dump_frames();
 			QueryPerformanceCounter(&t1);
