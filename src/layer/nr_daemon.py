@@ -72,6 +72,7 @@ MAGIC_MASKED = 0x314E524E     # the same, with a one-byte-per-pixel interface ma
 # motion vectors (src/xess/nr_xess.c); the history then follows them (`History.follow`).
 MAGIC_MOTION = 0x324E524E
 MAGIC_GPU = 0x3147524E       # control metadata for same-device external GPU resources
+<<<<<<< HEAD
 # `change` in a frame's line: how far the answer moved the game's frame, a figure for the log
 # alone. NR_CHANGE_METRIC=0 leaves it out on every path (the GPU image path's float copy of the
 # composition with it, gpu_image_pipeline.CHANGE_METRIC), and the line reads `change off`.
@@ -81,6 +82,13 @@ CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
 def change_text(value):
     """A frame line's change figure: five places, or `off` where it was not measured."""
     return "off" if value is None else f"{value:.5f}"
+=======
+# Eight bytes a legacy answer may end with, when the client reads past its pixels: the
+# magic, then the frame's wall-clock microseconds. 'RINT' — the tail of 'NRN0T' by way of
+# a joke nobody needs. A client that does not read it costs this write one broken pipe,
+# which `process` swallows; a client that does reads the panel's network graph out of it.
+TRAILER_MAGIC = 0x54494E52
+>>>>>>> 420533c (cpu: the legacy path carries the network's time home)
 
 # The swapchain formats a compositor or VKD3D actually hands out. A game writes
 # sRGB-encoded values into a UNORM swapchain just as it does into an SRGB one, so both
@@ -1099,7 +1107,13 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             args.image_transport = "gpu-image-host"
             started = time.perf_counter()
             answer = engine.process_host(payload, width, height, vk_format, live)
-            connection.sendall(answer)
+            # The trailer rides with the pixels (see the legacy path): one write, no race
+            # with a client that peeks the moment its pixels are home. `answer` may be a
+            # memoryview over the pipeline's own buffer, which does not concatenate —
+            # bytes() of it is the copy `sendall` would need anyway.
+            connection.sendall(bytes(answer) + struct.pack(
+                "<2I", TRAILER_MAGIC,
+                min(int(round((time.perf_counter() - started) * 1e6)), 0xFFFFFFFF)))
             metrics = {**engine.last, "total_seconds": time.perf_counter() - started}
             print_gpu_frame(width, height, vk_format, live, metrics, "gpu-image-host")
             return
@@ -1284,8 +1298,20 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             encoded = protected.tobytes()
         # so a --dump shows what was actually sent
         (full[top:bottom, left:right] if full is not None else composed)[held] = colour[held]
+<<<<<<< HEAD
     connection.sendall(encoded)
     if changed is None and CHANGE_METRIC:
+=======
+    connection.sendall(encoded + struct.pack(
+        "<2I", TRAILER_MAGIC,
+        min(int(round((time.perf_counter() - clock) * 1e6)), 0xFFFFFFFF)))
+    # The trailer rides in the SAME write as the pixels, not after them. A separate
+    # sendall loses every time: the layer reads its pixels and peeks for the trailer
+    # faster than this interpreter gets back around to its own next sendall, so the
+    # eight bytes would land on a pipe the layer had already closed. One buffer, one
+    # write, no race. An old client simply never reads the last eight bytes.
+    if changed is None:
+>>>>>>> 420533c (cpu: the legacy path carries the network's time home)
         changed = float(np.abs(composed[::4] - colour[::4]).mean())
     # What the game was handed at the active region, for the dump below.
     active = full[top:bottom, left:right] if full is not None else composed

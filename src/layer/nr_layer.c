@@ -267,13 +267,39 @@ static int exchange_send(const void *header, size_t header_size, const void *pay
 	return nr_link_handle(link);
 }
 
-/* Reads the whole answer and closes the connection, whichever way it ends. */
-static int exchange_receive(int fd, void *reply, size_t reply_size)
+/* Reads the whole answer and closes the connection, whichever way it ends.
+ *
+ * `out_us`, when not NULL, takes the network's time a daemon may append after the
+ * pixels — 8 bytes, a magic then microseconds (nr_daemon.py's TRAILER_MAGIC). An old
+ * daemon sends nothing there, which reads as 0 and means "not reported": the panel's
+ * network graph then shows the empty box it always has on this path. The read never
+ * waits for bytes that are not coming — `nr_link_read_nowait` peeks and gives up — so
+ * the old-daemon case costs nothing but one PeekNamedPipe. */
+static int exchange_receive(int fd, void *reply, size_t reply_size, uint32_t *out_us)
 {
 	nr_link link = nr_link_from_handle(fd);
 	if (nr_link_read(&link, reply, reply_size) != 0) {
 		nr_link_close(&link);
 		return -1;
+	}
+	if (out_us) {
+		*out_us = 0;
+		unsigned char tail[8];
+		int rw = nr_link_read_nowait(&link, tail, sizeof tail);
+		if (rw == 0) {
+			/* The daemon's magic is `struct.pack("<I", 0x54494E52)` — bytes 52 4E
+			 * 49 54, little-endian like every other number on this wire — so the
+			 * comparison decodes the word the same way instead of spelling it:
+			 * memcmp with "RINT" compares 52 49 4E 54 and never matches. Found in
+			 * the game, where 545 frames carried a perfect trailer the check
+			 * rejected one byte order at a time. */
+			const uint32_t magic = (uint32_t)tail[0] | ((uint32_t)tail[1] << 8) |
+					       ((uint32_t)tail[2] << 16) | ((uint32_t)tail[3] << 24);
+			if (magic == 0x54494E52u) {
+				*out_us = (uint32_t)tail[4] | ((uint32_t)tail[5] << 8) |
+					  ((uint32_t)tail[6] << 16) | ((uint32_t)tail[7] << 24);
+			}
+		}
 	}
 	nr_link_close(&link);
 	return 0;
@@ -281,10 +307,10 @@ static int exchange_receive(int fd, void *reply, size_t reply_size)
 
 
 static int exchange(const void *header, size_t header_size, const void *payload,
-		    size_t payload_size, void *reply, size_t reply_size)
+		    size_t payload_size, void *reply, size_t reply_size, uint32_t *out_us)
 {
 	int fd = exchange_send(header, header_size, payload, payload_size);
-	return fd < 0 ? -1 : exchange_receive(fd, reply, reply_size);
+	return fd < 0 ? -1 : exchange_receive(fd, reply, reply_size, out_us);
 }
 
 /* An answer still on its way is read to the end and thrown away rather than cut off: the
@@ -1865,13 +1891,21 @@ static int process_frame(struct device_data *data, struct swapchain_data *chain,
 	if (!socket_path) return -1;
 	/* The mask travels immediately after the colour, one byte a pixel. */
 	if (masked) {
+		uint32_t net_us = 0;
 		uint64_t began = data->timing.active ? nr_time_us() : 0;
 		int failed = exchange(header, sizeof header, data->outgoing,
-			     (size_t)needed + pixels, data->result, (size_t)needed);
+			     (size_t)needed + pixels, data->result, (size_t)needed, &net_us);
 		if (data->timing.active) nr_timing_add(&data->timing, NR_TIME_EXCHANGE, nr_time_us() - began);
 		if (failed) {
 			fprintf(stderr, "[nr_layer] the daemon did not answer; frame unchanged\n");
 			return -1;
+		}
+		/* The daemon's time for this frame, when it said one. Same two counters the
+		 * GPU path fills (process_frame_gpu), so the panel's network graph reads
+		 * this path the same way. 0 is "not reported" and counts nothing. */
+		if (net_us > 0) {
+			data->nr_network_us += net_us;
+			data->nr_network_frames++;
 		}
 		memcpy(data->mapped, data->result, (size_t)needed);
 		if (!data->timing.enabled)
@@ -1879,13 +1913,18 @@ static int process_frame(struct device_data *data, struct swapchain_data *chain,
 				chain->extent.width, chain->extent.height);
 		return 0;
 	}
+	uint32_t net_us = 0;
 	uint64_t began = data->timing.active ? nr_time_us() : 0;
 	int failed = exchange(header, sizeof header, data->mapped, (size_t)needed, data->result,
-		     (size_t)needed);
+		     (size_t)needed, &net_us);
 	if (data->timing.active) nr_timing_add(&data->timing, NR_TIME_EXCHANGE, nr_time_us() - began);
 	if (failed) {
 		fprintf(stderr, "[nr_layer] the daemon did not answer; frame unchanged\n");
 		return -1;
+	}
+	if (net_us > 0) {
+		data->nr_network_us += net_us;
+		data->nr_network_frames++;
 	}
 	memcpy(data->mapped, data->result, (size_t)needed);
 	if (!data->timing.enabled)
@@ -1913,10 +1952,12 @@ static int process_frame_async(struct device_data *data, struct swapchain_data *
 		return -1;
 	}
 	int answered = 0;
+	uint32_t net_us = 0;
 	uint64_t exchange_started = data->timing.active ? nr_time_us() : 0;
 	if (data->inflight && data->inflight_size == needed) {
 		data->inflight = 0;
-		answered = exchange_receive(data->inflight_fd, data->result, (size_t)needed) == 0;
+		answered = exchange_receive(data->inflight_fd, data->result, (size_t)needed,
+					    &net_us) == 0;
 		if (answered && data->inflight_timing_started &&
 		    data->inflight_timing_group == data->timing.group) {
 			/* Attach wall latency to the previous sampled request. Current request
@@ -1927,6 +1968,17 @@ static int process_frame_async(struct device_data *data, struct swapchain_data *
 			data->timing.since_summary++;
 		}
 		data->inflight_timing_started = 0;
+		if (answered && net_us > 0) {
+			/* The frame that was just read was SENT in a previous present, so
+			 * its time belongs to that frame's counting — but the counters are a
+			 * sum over answers, not a per-frame ledger, and the present that sent
+			 * it may not even have counted a graph point (its total had not moved
+			 * yet). Counting the time with the answer keeps it next to the frames
+			 * it describes on average; being one present late is invisible at the
+			 * two-second scale the graph draws. */
+			data->nr_network_us += net_us;
+			data->nr_network_frames++;
+		}
 		if (!answered)
 			fprintf(stderr, "[nr_layer] the daemon did not answer; frame unchanged\n");
 	} else {

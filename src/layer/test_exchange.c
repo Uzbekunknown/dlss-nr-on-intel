@@ -29,7 +29,11 @@ int main(int argc, char **argv)
     /* the reply buffer is exactly the colour, as the layer's is: asking for more than
      * that is what the separate reply size exists to prevent */
     uint32_t header[] = { masked ? 0x314E524E : 0x304E524E, width, height, 44 };
-    int result = exchange(header, sizeof header, payload, sent, reply, bytes);
+    /* The trailer is new and optional; the fixture is about the pixel exchange, so it
+     * passes the pointer and ignores what lands there. A NULL would be the same path,
+     * but passing it exercises the not-waiting read on every fixture run. */
+    uint32_t trailer_us = 0;
+    int result = exchange(header, sizeof header, payload, sent, reply, bytes, &trailer_us);
     int ok = reject ? result == -1
                     : result == 0 && memcmp(payload, reply, bytes) == 0;
     free(payload); free(reply);

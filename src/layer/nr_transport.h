@@ -123,6 +123,59 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 	return 0;
 }
 
+/* **Read what is already there, and give up at once if it is not.**
+ *
+ * The legacy answer's optional trailer (the network's time, appended by a daemon that
+ * has it) arrives a moment after the pixels, and whether it arrives at all says which
+ * daemon is answering. `nr_link_read` cannot tell those apart: its deadline is the
+ * exchange's whole 60-second budget, so waiting in it for bytes an old daemon will
+ * never send would hang every frame. This waits a few milliseconds at most — enough
+ * for a trailer that is in flight, nothing for one that does not exist.
+ *
+ * Returns 0 and fills `data` when `count` bytes were read; returns 1 when the peer
+ * has nothing (or not enough yet) — not an error, just no trailer this frame. */
+static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	DWORD waited = 0;
+	while (count > 0) {
+		DWORD available = 0;
+		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
+			return -1;
+		if (available == 0) {
+			/* Nothing YET is not nothing EVER: a large answer streams through a
+			 * 1 MB pipe buffer while the layer reads it, and the trailer is the
+			 * tail of the daemon's one `sendall` — its last `WriteFile` can still
+			 * be queued when the pixels finish arriving. Measured on a 1280x720
+			 * legacy frame: every peek found an empty pipe inside 5 ms, and the
+			 * daemon's write of the last bytes landed inside 30. The budget is
+			 * Sleep(1) calls, so a machine on the default 15.6 ms scheduler tick
+			 * stretches one Sleep to one tick — 30 of them stay under half a
+			 * second in the worst case, and an old daemon, which will never send
+			 * a trailer, pays that once a frame against the ten-plus
+			 * milliseconds of network work that precedes it. */
+			if (waited >= 30) return 1;
+			Sleep(1);
+			waited += 1;
+			continue;
+		}
+		DWORD want = (DWORD)(count < available ? count : available);
+		DWORD got = 0;
+		if (!ReadFile(link->handle, p, want, &got, NULL)) return -1;
+		if (got == 0) return -1;
+		p += got;
+		count -= got;
+		/* A partial read means the trailer straddles a pipe boundary; give the
+		 * rest a moment rather than dropping half a magic word on the floor. */
+		if (count > 0) {
+			if (waited >= 20) return 1;
+			Sleep(1);
+			waited += 1;
+		}
+	}
+	return 0;
+}
+
 #else  /* the Linux build, unchanged: a Unix socket */
 
 #include <sys/socket.h>
@@ -203,6 +256,31 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 		if (n <= 0) return -1;
 		p += n;
 		count -= (size_t)n;
+	}
+	return 0;
+}
+
+/* The Unix twin of the Windows `nr_link_read_nowait` above: take what has arrived,
+ * never wait. `MSG_DONTWAIT` fails with EAGAIN when the socket has nothing, which is
+ * the "no trailer this frame" case, not an error. A partial read waits a moment for
+ * the rest, as the Windows one does — the trailer is 8 bytes and straddles nothing
+ * bigger than itself, but a stream has no message boundaries to trust. */
+static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	int waited = 0;
+	while (count > 0) {
+		ssize_t n = recv(link->fd, p, count, MSG_DONTWAIT);
+		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 1;
+		if (n < 0 && errno == EINTR) continue;
+		if (n <= 0) return -1;
+		p += n;
+		count -= (size_t)n;
+		if (count > 0) {
+			if (waited >= 20) return 1;
+			usleep(1000);
+			waited += 1;
+		}
 	}
 	return 0;
 }
