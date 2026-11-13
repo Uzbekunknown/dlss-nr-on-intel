@@ -242,17 +242,29 @@ static int   g_graph_net_count = 0;
 /* Whether the CORNER draws them. The panel always does - see `nrex_counter`. */
 static int   g_corner_graphs = 1;
 
-/* Wide enough to read a two-second trend at a glance, narrow enough not to cover a corner of a 720p
- * picture. 180x44 each, stacked, so the counter box grows by about 90 pixels - which it can afford:
- * the corner is 8 px from the edge of a 1440p frame, and a graph whose height is a couple of text
- * lines is a shape you can read rather than a texture you glance at. */
+/* **The knob table's columns, which the graphs' row has to line up with.** One definition here
+ * and one use there: the knob rows and the graph rows are drawn by different code, and two copies
+ * of "where the label column starts" is exactly how they drifted apart - the graph row drew its
+ * text at 340 px while the knob labels sat at 292, and the eye saw two columns pretending to be
+ * one. A knob row is slider + spacing + field + spacing, then the label; a graph row is plot +
+ * spacing, then its name and band. Both share the same text-column start, so the plot's width is
+ * DERIVED: column start, minus the gap the graph row puts between plot and text. */
 static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
 static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
+/* The corner's: a small box in the corner of a game, with its text under it rather than beside -
+ * the corner has no rows to line up with, and every pixel it takes is a pixel of the picture. */
 static const float kGraphWidth = 180.0f;
-static const float kGraphHeight = 44.0f;
-/* The panel's copy is wider: its rows are a table 190+86+210 wide, and a graph narrower than the
- * thing it summarises reads as a decoration rather than a measurement. */
-static const float kPanelGraphWidth = 460.0f;
+static const float kGraphHeight = 34.0f;
+/* The panel's columns. `kKnobTextColumn` is where both the knob labels and the graphs' names sit;
+ * the plot is whatever is left of it after the 10 px gap. 276 is the combo's own width
+ * (190 + spacing + 86), and one more spacing lands the label. */
+static const float kKnobSlider = 190.0f;
+static const float kKnobField = 86.0f;
+static const float kKnobSpacing = 8.0f;          /* ImGui's default ItemSpacing.x */
+static const float kKnobTextColumn = kKnobSlider + kKnobSpacing + kKnobField + kKnobSpacing;
+static const float kPanelGraphGap = 10.0f;
+static const float kPanelGraphWidth = kKnobTextColumn - kPanelGraphGap;   /* 282 */
+static const float kPanelGraphHeight = 30.0f;
 
 
 /* **One graph, with its name and its axis in a column to the LEFT of the plot.**
@@ -271,8 +283,20 @@ static const float kPanelGraphWidth = 460.0f;
  * points are passed as 0 and read as the floor of the plot. That is the honest reading of a
  * missing sample - cheaper than any frame the network ran - and the alternative, dropping the
  * point, would silently change the time axis. */
-static void draw_one_graph(const char *name, const float *series, int count, ImU32 colour,
-                           float width, float label_width)
+/* **One graph: the plot on the left, its name and its band on the right.**
+ *
+ * The order is deliberate and comes from what the eye does with a settings list. Every row below
+ * these two has its control on the left and its LABEL on the right (`slider  value  Render scale`),
+ * so a graph that put its label first would be the only row in the panel reading the other way -
+ * which is exactly how the first version looked: a column of text, then a box, then a wider box.
+ *
+ * `width` is the plot; the text column is measured from the widest name and the widest band, so the
+ * two rows line up with each other and the right edge lands where the rows below end.
+ *
+ * `id` is passed in rather than built from the name: two `PlotLines("")` in one window collide on
+ * the empty ID, which is the "2 visible items with conflicting ID" the panel showed. */
+static void draw_one_graph(const char *id, const char *name, const float *series, int count,
+                           ImU32 colour, float width, int label_right, float height)
 {
     char axis[32] = "";
     float lo = 0.0f, hi = 0.0f;
@@ -284,14 +308,12 @@ static void draw_one_graph(const char *name, const float *series, int count, ImU
     } else {
         snprintf(axis, sizeof axis, "%s", "-");
     }
-    ImGui::BeginGroup();
-    ImGui::TextUnformatted(name);
-    ImGui::TextDisabled("%s", axis);
-    ImGui::EndGroup();
-    /* The plot starts at a fixed x rather than after the group, so the two plots line up whatever
-     * the names are: a column, not a label that happens to be beside a box. */
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + label_width);
+    /* The corner's text goes above its plot, so the box stays narrow; the panel's goes beside it,
+     * so the row reads the way the knob rows below do. */
+    if (!label_right) {
+        ImGui::TextUnformatted(name);
+        ImGui::TextDisabled("%s", axis);
+    }
     if (any) {
         ImGui::PushStyleColor(ImGuiCol_PlotLines, colour);
         /* **The line is smoothed, the axis is not.** `lo`/`hi` came from the raw series above, so
@@ -300,60 +322,67 @@ static void draw_one_graph(const char *name, const float *series, int count, ImU
          * which is how the network's missing samples keep their shape. */
         float smooth[NR_GRAPH_SAMPLES];
         const int smoothed = nr_frame_graph_smooth(series, count, smooth, NR_GRAPH_SAMPLES);
-        ImGui::PlotLines("", smoothed > 0 ? smooth : series, smoothed > 0 ? smoothed : count,
-                         0, nullptr, lo, hi, ImVec2(width, kGraphHeight));
+        ImGui::PlotLines(id, smoothed > 0 ? smooth : series, smoothed > 0 ? smoothed : count,
+                         0, nullptr, lo, hi, ImVec2(width, height));
         ImGui::PopStyleColor();
     } else {
         /* An empty box of the same size, with a line of text in it: the row keeps its place and
          * says why it is empty rather than pretending to be a graph. */
         ImVec2 at = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("##nr_graph_empty", ImVec2(width, kGraphHeight));
-        ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + width, at.y + kGraphHeight),
+        char empty_id[64];
+        snprintf(empty_id, sizeof empty_id, "e%s", id);
+        ImGui::InvisibleButton(empty_id, ImVec2(width, height));
+        ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + width, at.y + height),
                                             IM_COL32(90, 90, 96, 160));
         ImDrawList *dl = ImGui::GetWindowDrawList();
         const char *why = "no network time";
         ImVec2 sz = ImGui::CalcTextSize(why);
-        dl->AddText(ImVec2(at.x + (width - sz.x) * 0.5f, at.y + (kGraphHeight - sz.y) * 0.5f),
+        dl->AddText(ImVec2(at.x + (width - sz.x) * 0.5f, at.y + (height - sz.y) * 0.5f),
                     IM_COL32(140, 140, 150, 200), why);
+    }
+    if (label_right) {
+        /* To the RIGHT of the plot, centred on its height - the same order the knob rows use, and
+         * the reason the panel no longer reads as two blocks of text with a box between them. */
+        ImGui::SameLine(0.0f, kPanelGraphGap);
+        ImGui::BeginGroup();
+        const float line = ImGui::GetTextLineHeight();
+        const float pad = (height - line * 2.0f) * 0.5f;
+        if (pad > 0.0f) ImGui::Dummy(ImVec2(0.0f, pad));
+        ImGui::TextUnformatted(name);
+        ImGui::TextDisabled("%s", axis);
+        ImGui::EndGroup();
     }
 }
 
 /* **The two graphs, drawn once.** The panel's header and the corner both call this, so the axis,
- * the colours and the gap handling cannot drift between them; the only thing they differ in is the
- * width, because the panel's column is wider than a corner box may be.
+ * the colours and the gap handling cannot drift between them.
  *
  * `frame` and `net` are the series and their lengths, oldest first. A zero length draws nothing,
- * which is what a host with no counts passes. */
+ * which is what a host with no counts passes. `width` is the plot's own width.
+ *
+ * `label_right` says where the text goes, and the two callers want opposite answers:
+ *   - the PANEL's header has the knob table under it (slider, value, label, 486 wide), so its
+ *     graphs put the text on the RIGHT like every row below - one reading order down the panel;
+ *   - the CORNER is a small box in the corner of a game with no rows under it, so the text goes
+ *     ABOVE the plot, which keeps the box narrow instead of making it twice as wide. */
 static void draw_graphs(const float *frame, int frame_count, const float *net, int net_count,
-                        float width)
+                        float width, int label_right, float height)
 {
     if (frame_count <= 0) return;
-    /* The label column is whatever the two names and the wider axis need, measured rather than
-     * guessed: a language may call the frame time something long, and a fixed width would clip it. */
-    char widest[32];
-    nr_frame_graph_axis_text(frame, frame_count, widest, sizeof widest);
-    if (net_count > 0) {
-        char other[32];
-        nr_frame_graph_axis_text(net, net_count, other, sizeof other);
-        if (ImGui::CalcTextSize(other).x > ImGui::CalcTextSize(widest).x)
-            snprintf(widest, sizeof widest, "%s", other);
-    }
-    /* The two names, in the panel's language. Read before the column is measured, because the
-     * widest label decides how wide it is. */
     const char *frame_name = nr_menu_text(g_language, NR_STR_GRAPH_FRAME);
     const char *net_name = nr_menu_text(g_language, NR_STR_GRAPH_NET);
 
-    float label_width = ImGui::CalcTextSize(frame_name).x;
-    if (ImGui::CalcTextSize(net_name).x > label_width)
-        label_width = ImGui::CalcTextSize(net_name).x;
-    if (ImGui::CalcTextSize(widest).x > label_width)
-        label_width = ImGui::CalcTextSize(widest).x;
-    label_width += 4.0f;
-
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
-    draw_one_graph(frame_name, frame, frame_count, kGraphFrameColour, width, label_width);
+    /* The ids carry the caller: the panel's header and the corner both draw, and two `PlotLines`
+     * with the same id in one window is the "2 visible items with conflicting ID" the panel showed
+     * while both were open. */
+    const char *frame_id = label_right ? "##nr_frame_ms_panel" : "##nr_frame_ms_corner";
+    const char *net_id = label_right ? "##nr_net_ms_panel" : "##nr_net_ms_corner";
+    draw_one_graph(frame_id, frame_name, frame, frame_count, kGraphFrameColour, width,
+                   label_right, height);
     if (net_count > 0)
-        draw_one_graph(net_name, net, net_count, kGraphNetColour, width, label_width);
+        draw_one_graph(net_id, net_name, net, net_count, kGraphNetColour, width,
+                       label_right, height);
     ImGui::PopStyleVar();
 }
 
@@ -574,7 +603,7 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
          *
          * The same axis rule as the corner's, and the same helper. */
         draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
-                    kPanelGraphWidth);
+                    kPanelGraphWidth, 1, kPanelGraphHeight);
         ImGui::Separator();
     }
 
@@ -967,7 +996,7 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
          * the reader knows what the height means. */
         if (g_corner_graphs) {
             draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
-                        kGraphWidth);
+                        kGraphWidth, 0, kGraphHeight);
         }
     }
     ImGui::End();
