@@ -84,9 +84,11 @@ def change_text(value):
     return "off" if value is None else f"{value:.5f}"
 =======
 # Eight bytes a legacy answer may end with, when the client reads past its pixels: the
-# magic, then the frame's wall-clock microseconds. 'RINT' — the tail of 'NRN0T' by way of
-# a joke nobody needs. A client that does not read it costs this write one broken pipe,
-# which `process` swallows; a client that does reads the panel's network graph out of it.
+# magic, then the frame's wall-clock microseconds. The magic reads "RNIT" on the wire
+# (0x54494E52 little-endian); the layer decodes the word rather than spelling it, so the
+# two ends cannot drift apart the way a spelling invites. A client that does not read
+# the trailer costs this write one broken pipe, which `process` swallows; a client that
+# does reads the panel's network graph out of it.
 TRAILER_MAGIC = 0x54494E52
 >>>>>>> 420533c (cpu: the legacy path carries the network's time home)
 
