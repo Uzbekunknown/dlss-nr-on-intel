@@ -860,8 +860,11 @@ static int load_settings(nr_menu_bridge *b)
         /* And whether the corner draws the graphs. Absent is ON: a file written before this
          * setting existed gets the graphs, which is what its counter in a corner looks best with -
          * and turning them off is the explicit act, not leaving them off by omission. A value
-         * that is not a number falls back to the default rather than to off, which is what the
-         * knob branch below does with one too (strtod, "leave the default"). */
+         * that is not a whole number falls back to the default rather than to off. Stricter
+         * than the knob branch below, on purpose: a knob's strtod takes a trailing "mm" as
+         * its number and a knob has a range to clamp into, while this switch has two states
+         * and no range, so anything but exactly an integer is a file someone hand-edited
+         * into nonsense - and the default is the safe reading of that. */
         int graphs_at = nr_settings_find(&settings, "menu_graphs");
         if (graphs_at >= 0) {
             char *end = NULL;
