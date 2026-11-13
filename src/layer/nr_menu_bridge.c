@@ -819,6 +819,15 @@ static int load_settings(nr_menu_bridge *b)
         return 0;
     }
 
+    /* The corner's graphs, defaulted BEFORE the parse: a file that exists but fails to
+     * parse never reaches the branch below, and the calloc'd zero would read — and then,
+     * through the next Save, be written back — as "graphs off". Same default as the
+     * no-file branch above: absent or unreadable means on. The parse-success branch
+     * overwrites both from the file's own `menu_graphs`, so the default here is only
+     * what a corrupt file falls back to. */
+    b->graphs_saved = 1;
+    b->graphs = 1;
+
     nr_settings settings;
     if (nr_settings_parse(text, &settings)) {
         /* The language, which is not a knob. `NR_MENU_LANG_EN` is index 0 and the fallback, so an
@@ -851,10 +860,15 @@ static int load_settings(nr_menu_bridge *b)
         /* And whether the corner draws the graphs. Absent is ON: a file written before this
          * setting existed gets the graphs, which is what its counter in a corner looks best with -
          * and turning them off is the explicit act, not leaving them off by omission. A value
-         * that is not 0 or 1 falls back to the default rather than to off. */
-        b->graphs_saved = 1;
+         * that is not a number falls back to the default rather than to off, which is what the
+         * knob branch below does with one too (strtod, "leave the default"). */
         int graphs_at = nr_settings_find(&settings, "menu_graphs");
-        if (graphs_at >= 0) b->graphs_saved = atoi(settings.value[graphs_at]) ? 1 : 0;
+        if (graphs_at >= 0) {
+            char *end = NULL;
+            long parsed = strtol(settings.value[graphs_at], &end, 10);
+            if (end != settings.value[graphs_at] && *end == '\0')
+                b->graphs_saved = parsed ? 1 : 0;
+        }
         b->graphs = b->graphs_saved;
         for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
             const nr_knob_def *k = &knobs[i];
