@@ -123,7 +123,15 @@ class DeviceChecks(unittest.TestCase):
                     checks += 1
                 cut = follower.cut(stats, buffers[5], 10.0)
                 self.assertAlmostEqual(cut, history.cut, delta=1e-6 * max(1.0, history.cut))
-                checks += 1
+                # The reductions recorded behind the passes, in their submit, as the pipeline
+                # has them: the same value to the last bit.
+                rt.begin()
+                follower.record(buffers[0].address, neural=buffers[1], previous=buffers[2],
+                                active=buffers[3], previous_inner=buffers[4], inner=buffers[5])
+                cut_of = follower.record_cut(stats, buffers[5])
+                rt.submit()
+                self.assertEqual(cut_of(10.0), cut)
+                checks += 2
                 for buffer in buffers:
                     buffer.free()
                 follower.close()
@@ -144,8 +152,10 @@ class DeviceChecks(unittest.TestCase):
         rt.begin()
         follower.record(motion.address, neural=image, previous=image, active=image,
                         previous_inner=image, inner=image)
+        cut_of = follower.record_cut(stats, image)
         rt.submit()
         self.assertIsNone(follower.cut(stats, image, .15))
+        self.assertIsNone(cut_of(.15))
         for buffer in (motion, image):
             buffer.free()
         follower.close()

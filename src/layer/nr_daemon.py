@@ -1555,7 +1555,10 @@ def print_gpu_frame(width, height, vk_format, live, metrics, transport):
           f"gpu 0+{metrics['network_ms']:.0f}+0ms  network {nw}x{nh} scale {live.render_scale:g} "
           f"transport={transport} image prep={metrics['preprocess_ms']:.3f}ms "
           f"compose={metrics['compose_ms']:.3f}ms "
-          f"history={('moved' if metrics.get('motion') else 'still') if metrics.get('history') else 'none'}",
+          f"history={('moved' if metrics.get('motion') else 'still') if metrics.get('history') else 'none'}"
+          # A DirectX 12 game's own word that its history started over here (protocol 3). Only
+          # logged: whether it can stand in for the cut test is read from these lines.
+          f"{' game-reset' if metrics.get('game_reset') else ''}",
           flush=True)
 
 

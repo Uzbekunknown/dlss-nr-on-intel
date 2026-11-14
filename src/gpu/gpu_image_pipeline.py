@@ -158,8 +158,9 @@ class GPUImagePipeline:
         follow=motion is not None and live.temporal>0 and self.history_frames>0
         follower=self._follower(width,height,crop,ih,iw) if follow else None
         # One submit for the decode and what reads it before the CPU decides anything: the cut
-        # test, or with motion the follower. They ran as separate submits in this order, and
-        # each image pass is still recorded behind a barrier (`xmx_rec_image_pipeline`).
+        # test, or with motion the follower and its cut test's two reductions. They ran as
+        # separate submits in this order, and each image pass is still recorded behind a barrier
+        # (`xmx_rec_image_pipeline`).
         self.rt.begin()
         self.decode.record(raw,self.active)
         self.inner_decode.record(raw,self.inner)
@@ -168,12 +169,13 @@ class GPUImagePipeline:
             self.history_resize.record(self.previous_neural,follower.resampled)
             follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
                             active=self.active,previous_inner=self.previous_inner,inner=self.inner)
+            cut_of=follower.record_cut(self.stats,self.inner)
         elif self.history_frames:
             cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
         self.rt.submit()
         if follow:
             # Known nowhere, or a cut even against the last frame moved here: no history.
-            cut=follower.cut(self.stats,self.inner,live.cut_limit)
+            cut=cut_of(live.cut_limit)
             history=cut is not None and cut<=live.cut_limit
             cut=0.0 if cut is None else cut
         else:

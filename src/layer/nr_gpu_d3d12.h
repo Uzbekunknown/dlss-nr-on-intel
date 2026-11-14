@@ -151,6 +151,12 @@ static inline void nr_gpu_d3d12_follow(struct nr_gpu_packet *p, uint64_t previou
     memcpy(p->driver_uuid, &previous, sizeof previous);
 }
 
+/* A FRAME at which the game started its upscaler's history over (nr_gpu_wire.h). */
+static inline void nr_gpu_d3d12_reset(struct nr_gpu_packet *p)
+{
+    p->driver_uuid[8] = 1;
+}
+
 /* What the daemon left in a stamp the client copied out of the output: 1 when it names V. */
 static inline int nr_gpu_d3d12_answered(const struct nr_gpu_stamp *stamp, uint64_t value)
 {

@@ -1057,6 +1057,7 @@ static struct {
 	ID3D12Resource *upload;
 	uint8_t answer[IN_W * IN_H * 4];
 	int decline, down, dies, frames, hellos;
+	int reset;                        /* the last FRAME's reset (nr_gpu_wire.h) */
 	uint64_t input_alloc, previous;   /* the HELLO's input, the last FRAME's motion */
 	uint64_t session, released;       /* the session taken, the last one released */
 } stand;
@@ -1096,6 +1097,7 @@ static int stand_in_gpu(const struct nr_gpu_packet *p, struct nr_gpu_reply *repl
 	}
 	uint64_t value = p->done_sem;
 	memcpy(&stand.previous, p->driver_uuid, sizeof stand.previous);
+	stand.reset = p->driver_uuid[8];
 	ID3D12CommandAllocator_Reset(stand.allocator);
 	ID3D12GraphicsCommandList_Reset(stand.list, stand.allocator, NULL);
 	if (!stand.decline) {
@@ -1281,10 +1283,26 @@ static int run_cut_motion(ID3D12Resource *motion)
 		}
 	ID3D12Resource_Unmap(readback, 0, NULL);
 	ID3D12Resource_Release(readback);
-	ID3D12Resource_Release(tex);
 	failures += wrong != 0;
-	printf("%s cut, motion: (%.2f, %.2f) to the frame before over %d pixels, the rest off screen\n",
-	       failures ? "FAIL" : "ok  ", dx, dy, known);
+	/* The game's own word that its history starts over: said on that frame alone, which then
+	 * names no motion to follow (nr_gpu_wire.h). */
+	int said_before = stand.reset;
+	params.resetHistory = 1;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	int said = stand.reset;
+	uint64_t named_at_reset = stand.previous;
+	params.resetHistory = 0;
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	if (submit()) return 1;
+	if (said_before || !said || named_at_reset != 0 || stand.reset) {
+		printf("FAIL cut, motion: the reset said %d, %d, %d over three frames (0, 1, 0), and the reset "
+		       "frame named %llu\n", said_before, said, stand.reset, (unsigned long long)named_at_reset);
+		failures++;
+	}
+	ID3D12Resource_Release(tex);
+	printf("%s cut, motion: (%.2f, %.2f) to the frame before over %d pixels, the rest off screen; "
+	       "the game's reset said on its frame alone\n", failures ? "FAIL" : "ok  ", dx, dy, known);
 	return failures != 0;
 }
 

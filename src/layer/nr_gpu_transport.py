@@ -124,8 +124,10 @@ def unpack_packet(raw, width, height, fmt):
             raise ValueError("D3D12 protocol requires a shared fence of its own")
         if (p["action"] == FRAME) != bool(p["done_sem"]) or p["done_sem"] >= 1 << 62:
             raise ValueError("a D3D12 FRAME carries its fence value, and nothing else does")
-        if any(p["device_uuid"][8:]) or any(p["driver_uuid"][8:]):
+        if any(p["device_uuid"][8:]) or any(p["driver_uuid"][9:]) or p["driver_uuid"][8] > 1:
             raise ValueError("D3D12 protocol names its adapter by LUID alone")
+        if reset_at(p) and p["action"] != FRAME:
+            raise ValueError("only a D3D12 FRAME says its game started its history over")
         before = motion_from(p)
         if before and (p["action"] != FRAME or before >= p["done_sem"]):
             raise ValueError("a D3D12 FRAME's motion leads back to an earlier frame, and nothing else names one")
@@ -137,6 +139,12 @@ def unpack_packet(raw, width, height, fmt):
 def motion_from(p):
     """Protocol 3: the frame a FRAME's offsets lead back to, by its fence value; 0 for none."""
     return int.from_bytes(p["driver_uuid"][:8], "little")
+
+
+def reset_at(p):
+    """Protocol 3: whether the game started its upscaler's history over at this FRAME. Only
+    logged so far: the history is still decided by the cut test."""
+    return p["driver_uuid"][8] == 1
 
 
 def carries_motion(p):
@@ -471,7 +479,7 @@ class GPUSharedTransport:
             context.value = value + 1
             context.answered = value
             self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
-                         "sync": "d3d12"}
+                         "sync": "d3d12", "game_reset": reset_at(p)}
             self._reply(connection, p, 0, network_us(self.last))
             return self.last
         except Exception:

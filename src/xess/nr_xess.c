@@ -2005,11 +2005,13 @@ struct cut_constants {
 _Static_assert(sizeof(struct cut_constants) == 32 * 4, "the root signature takes 32 constants");
 
 /* What one frame's cut hands the daemon: its fence, held, since the session may close before
- * the worker gets to it, the frame's value V, the session it belongs to, and the V of the
- * frame its offsets lead back to, or 0 when it has none to follow. */
+ * the worker gets to it, the frame's value V, the session it belongs to, the V of the frame
+ * its offsets lead back to, or 0 when it has none to follow, and whether the game started its
+ * history over at this frame. */
 struct handover {
 	ID3D12Fence *fence;
 	uint64_t value, session, previous;
+	int reset;
 	LARGE_INTEGER queued;
 };
 
@@ -2110,6 +2112,7 @@ static void hand_over(struct handover *h)
 	if (current) {
 		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
 		nr_gpu_d3d12_follow(&packet, h->previous);
+		if (h->reset) nr_gpu_d3d12_reset(&packet);
 	}
 	ReleaseSRWLockShared(&cut.lock);
 	if (!current) {
@@ -2517,6 +2520,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	h->value = value;
 	h->session = cut.session;
 	h->previous = follow ? cut.last : 0;
+	h->reset = p->resetHistory != 0;
 	if (!nr_split_cut(list, run_between, drop_handover, h, state, why, sizeof why)) {
 		ID3D12Fence_Release(h->fence);
 		free(h);

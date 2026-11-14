@@ -69,7 +69,8 @@ class FakeFollower:
         self.resampled=rt.buffer(ih*iw*3);self.inner=rt.buffer(ih*iw*3)
         self.motions=[];self.share=1.;self.closed=False
     def record(self,motion,**kwargs): self.motions.append(motion)
-    def cut(self,stats,inner,limit): return None if self.share==0 else stats.cut
+    def cut(self,stats,inner,limit): raise AssertionError("the pipeline records the cut test's reductions")
+    def record_cut(self,stats,inner): return lambda limit: None if self.share==0 else stats.cut
     def close(self): self.closed=True
 
 

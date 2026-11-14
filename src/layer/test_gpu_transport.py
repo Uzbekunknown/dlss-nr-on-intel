@@ -726,6 +726,21 @@ class D3D12ProtocolTests(TransportCase):
             with self.subTest(action=action, value=value, changes=changes), self.assertRaises(ValueError):
                 T.unpack_packet(encoded(d3d12_packet(action, value, **changes)), 1280, 720, 44)
 
+    def test_the_games_reset_is_read_and_only_logged(self):
+        said = bytes(8) + bytes([1]) + bytes(7)
+        p = T.unpack_packet(encoded(d3d12_packet(T.FRAME, 7, driver_uuid=said)), 1280, 720, 44)
+        self.assertTrue(T.reset_at(p))
+        self.assertFalse(T.reset_at(T.unpack_packet(encoded(d3d12_packet(T.FRAME, 7)), 1280, 720, 44)))
+        for action, value, uuid in ((T.HELLO, 0, said), (T.RELEASE, 0, said),
+                                    (T.FRAME, 7, bytes(8) + bytes([2]) + bytes(7))):
+            with self.subTest(action=action, uuid=uuid), self.assertRaises(ValueError):
+                T.unpack_packet(encoded(d3d12_packet(action, value, driver_uuid=uuid)), 1280, 720, 44)
+        self.request(d3d12_packet())
+        _, result = self.request(d3d12_packet(T.FRAME, 5, driver_uuid=said))
+        self.assertTrue(result["game_reset"])
+        _, result = self.frame(7)
+        self.assertFalse(result["game_reset"])
+
     def test_motion_is_followed_back_to_the_frame_answered_last(self):
         self.request(d3d12_packet(input_alloc=self.MOTION_ALLOC))
         self.assertEqual(self.imports[0], (42, 100, self.MOTION_ALLOC))
