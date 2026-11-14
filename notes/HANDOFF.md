@@ -270,9 +270,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   Kombat 11's runs (below, 11-11, morning): whether it stays on by default for every GPU on
   Intel's Windows driver; desktop Arc cards and the B580 have not run it, nor the weights by
   column, on by default there too (below, 11-12).
-- `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
-  default, or a row in the panel or the setup window, is the owner's call. Off, it is 0.3 ms of
-  B's frame at 1280x720 and 1.0-1.5 at 1920x1080 on the merge (below, 11-11, morning).
+- ~~`NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
+  default, or a row in the panel or the setup window, is the owner's call~~: off by default, and a
+  checkbox in the setup window turns it on to collect data (the owner, 11-15; `64c0e0f`, below).
+- `dx12-waits` (below, 11-15): local, not pushed. A Hogwarts Legacy run with it, with the owner,
+  says whether the game's resets and the cut test ever part (` game-reset`, ` cut-over` in the
+  daemon's lines), then the owner's word on merging it.
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -314,6 +317,70 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   runs one subgroup to a workgroup (archive, 09-25).
 
 ---
+
+## DirectX 12 on the game's own data, the change metric off, and where WQHD's time goes (2026-11-15, branch `dx12-waits`)
+
+The owner, 11-15, after another AI's list of optimisations was checked against this project's
+notes (most of it had been measured here and lost): take the free one, the game's own resets and
+motion in DirectX 12 ("on DX12 we carry crutches from when we had no data"), the follower in the
+composition, half-precision history, the bottleneck's reuse, and focus on high resolutions. Five
+commits on the local branch `dx12-waits` from `0624ccc`; nothing pushed. Arc 140V, Intel
+101.9150, on AC, quiet before and after every timing.
+
+**What changed:**
+- `686d391`: with motion, the cut test's two reductions are recorded in the decode's submit
+  (`GPUImageFollower.record_cut`): they were a submit and a wait each, 0.46-0.48 -> 0.04-0.05 ms
+  of a 1920x1200 frame. Protocol 3 carries the game's resets (`driver_uuid[8]`, nr_gpu_wire.h).
+- `64c0e0f`: `NR_CHANGE_METRIC` off by default; the setup window's checkbox "Measure how much NR
+  changes each frame" (four languages, Profile.change_metric) writes `NR_CHANGE_METRIC=1`.
+- `a33e142`: a DirectX 12 game's word on its resets decides the history: its reset drops it, and
+  a frame it did not reset keeps the one its motion leads back to past the cut limit (not where
+  the motion is known nowhere). A client that says nothing keeps the cut test, as every Vulkan
+  game does; `NR_DX12_CUT_TEST=1` goes back to it. The test still runs, and the frame line ends in
+  ` game-reset` and ` cut-over` (a history the test alone would have dropped).
+- `6aed11f`: the composition reads the network's last output and the game's last frame along the
+  motion itself (image_compose.comp MOVED, `history_sample.glsl` shared with image_history.comp),
+  where the follower's active-extent pass wrote both as float32 images for it to read back; the
+  pass runs only for `known` when the motion is known nowhere. `NR_FOLLOW_IN_COMPOSE=0` compares.
+
+**The same bytes:** the full-model motion parity against the CPU's `History.follow` on both paths
+(and with the metric on and off), `test_image_history` (48 exact comparisons, `record_cut` and the
+pass left out), `test_gpu_transport` (the reset's packet rules), `test_nr_xess` (the 2, 3, 2 over
+a reset), `test_windows_wizard` 104, the window's self-test (90 controls, 200 keys); MinGW and
+MSVC CTest 71 of 71 each; `test_gpu_d3d12.py` with and without the network, `test_daemon`.
+
+**The Hogwarts Legacy recordings through `replay_nr_xess`** (mode=after, network B at 0.4, the
+daemon's own frame lines; the driver `nr-game\perf-1115\replay_ab.py`). The 10-16 recording's one
+reset came with cut 0.1136, under the 0.15 limit, so the cut test had kept an unmoved history
+across the cut (`history=still`); the game's word drops it there. No frame of 289 was past the
+limit without the game's reset. The 10-18 recording at 1920x1200, four rounds alternating:
+
+| ms a frame | the follower's pass | in the composition |
+| --- | --- | --- |
+| prep (decode, follow, cut, features) | 4.95-5.38 | 2.92-3.17 |
+| compose (the metric off) | 1.59-1.66 | 2.46-2.81 |
+
+**At 2560x1440** (a synthetic recording with motion from `make_synthetic_recording.py`'s shapes at
+1280x720 -> 2560x1440, `perf-1115\make_wqhd_recording.py`; network 1024x576): the old settings
+(`NR_CHANGE_METRIC=1 NR_FOLLOW_IN_COMPOSE=0`) against the new defaults, three rounds: prep
+7.97-8.04 -> 4.07-4.26 ms, compose 4.30-4.49 -> 4.13-4.36, the daemon's frame 63.5-64 -> 59.5-62.
+
+**Tried and not kept:** the network's kept output as float16. Exact (the composition keeps
+`trunc_half` values, which half holds), but the five-tap reads made the composition 12.7 ms
+against 3.6-4.1 at 2560x1440 with 16-bit loads, and 4.45 against 3.64 reading 32-bit words: those
+reads are not bandwidth-bound on this driver. The patch is `perf-1115\half-history-not-kept.patch`.
+The previous frame as bytes was not built for the same reason: its reads are the same five taps.
+
+**Where network B's time goes at 1024x576** (`frame_profile.py --size 576 1024`, 43.4 ms on the
+device): the eight bottleneck blocks 6.2 ms (14 %; ~30 % at 512x320), so reusing their output
+every other frame, as F5's VitEvery does, would take at most ~3 ms a frame there; the
+full-resolution C = 32 blocks 17.7 ms (41 %: `window_block` 9.7, `ffn_fused` 7.9), level 0's four
+passes 11.3 of it. At WQHD those, the Linux agent's lead of 11-04, are the target.
+
+**Next on Linux:** once this is on GitHub, `make test` in both memory modes and CTest:
+`image_compose.comp` and `image_history.comp` include `history_sample.glsl` (the Makefile and
+CMake know), and the D3D12 parts build only on Windows. **Next on Windows:** Hogwarts Legacy with
+the owner on this branch's build, the ` game-reset` and ` cut-over` counts; then the owner's word.
 
 ## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
 
