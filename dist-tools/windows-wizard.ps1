@@ -357,7 +357,7 @@ $script:SettingsStateKey = 'SettingsLoading'
          <TextBlock x:Name="CounterLabel" VerticalAlignment="Center" ToolTip=""/>
          <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
           <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" IsChecked="True" ToolTip=""/>
-          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" IsEnabled="False" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
+          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
          </StackPanel>
         </Grid>
         <TextBlock x:Name="CounterNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
@@ -558,6 +558,7 @@ $script:Strings=@{
   SpeedNote='Taking each frame from the game and giving it back takes time too, and the game draws on the same GPU: in a game the frame rate is lower than these.'
   PacingHeading='Frame pacing'; PacingNote='Takes effect when the game starts next.'
   CounterLabel='Frame counter'; CounterTL='top left'; CounterTR='top right'; CounterBL='bottom left'; CounterBR='bottom right'; CounterCheck='Show in a corner'; CounterNote='The frames-per-second line, drawn over the corner you pick. Untick it and only the panel carries it.';
+  GraphsCheck='Show the graphs in the corner too';
   GraphsLabel='Frame graphs'; GraphsOn='Show in the corner too'; GraphsOff='In the panel only'
   GraphsNote='Two graphs under the frame counter: the milliseconds between frames, and the network''s own time. Always drawn in the panel; this is whether the corner window draws them too.'
   AsyncMode='Asynchronous: the network works while the game draws its next frame'
@@ -676,6 +677,7 @@ $script:Strings=@{
   SpeedNote='Захват кадра из игры и его возврат тоже занимают время, а игра рисует на той же видеокарте, поэтому fps в игре будет ниже этих значений.'
   PacingHeading='Подача кадров'; PacingNote='Применится при следующем запуске игры.'
   CounterLabel='Счётчик кадров'; CounterTL='сверху слева'; CounterTR='сверху справа'; CounterBL='снизу слева'; CounterBR='снизу справа'; CounterCheck='Показывать в углу'; CounterNote='Строка кадров в секунду поверх выбранного угла. Сними отметку — останется только панель.';
+  GraphsCheck='Показывать графики и в углу';
   GraphsLabel='Графики времени кадра'; GraphsOn='Показывать и в углу'; GraphsOff='Только в панели'
   GraphsNote='Два графика под счётчиком кадров: миллисекунды между кадрами и время самой сети. В панели рисуются всегда; здесь — рисует ли их также окно в углу.'
   AsyncMode='Асинхронно: сеть работает, пока игра рисует следующий кадр'
@@ -794,6 +796,7 @@ $script:Strings=@{
   SpeedNote='Tomar cada fotograma del juego y devolverlo también lleva tiempo, y el juego dibuja en la misma GPU: en un juego los FPS son más bajos que estos.'
   PacingHeading='Ritmo de fotogramas'; PacingNote='Se aplica la próxima vez que se inicie el juego.'
   CounterLabel='Contador de fotogramas'; CounterTL='arriba a la izquierda'; CounterTR='arriba a la derecha'; CounterBL='abajo a la izquierda'; CounterBR='abajo a la derecha'; CounterCheck='Mostrar en una esquina'; CounterNote='La línea de fotogramas por segundo sobre la esquina que elijas. Desmárcala y solo el panel la lleva.';
+  GraphsCheck='Mostrar los gráficos también en la esquina';
   GraphsLabel='Gráficos de tiempo de fotograma'; GraphsOn='Mostrar también en la esquina'; GraphsOff='Solo en el panel'
   GraphsNote='Dos gráficos bajo el contador de fotogramas: los milisegundos entre fotogramas y el tiempo de la propia red. En el panel se dibujan siempre; esto decide si la ventana de la esquina también los dibuja.'
   AsyncMode='Asíncrono: la red trabaja mientras el juego dibuja el siguiente fotograma'
@@ -912,6 +915,7 @@ $script:Strings=@{
    SpeedNote='从游戏取每一帧再交回去也要花时间，而且游戏在同一块 GPU 上绘制：在游戏中的帧率会低于这些数字。'
    PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
   CounterLabel='帧率显示'; CounterTL='左上角'; CounterTR='右上角'; CounterBL='左下角'; CounterBR='右下角'; CounterCheck='在角落中显示'; CounterNote='每秒帧数一行，绘制在所选的角落上。取消勾选则仅面板中显示。';
+  GraphsCheck='角落中也显示曲线';
   GraphsLabel='帧时间曲线'; GraphsOn='角落中也显示'; GraphsOff='仅在面板中'
   GraphsNote='帧率计数器下方的两条曲线：帧与帧之间的毫秒数，以及网络自身的时间。面板内始终绘制；此项决定角落浮窗是否也绘制。'
    AsyncMode='异步：网络在游戏绘制下一帧时工作'
@@ -968,7 +972,7 @@ $script:ContentBindings=@{
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
  AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
- CounterTL='CounterTL'; CounterTR='CounterTR'; CounterBL='CounterBL'; CounterBR='CounterBR'
+ CounterCheck='CounterCheck'; GraphsCheck='GraphsCheck'; CounterTL='CounterTL'; CounterTR='CounterTR'; CounterBL='CounterBL'; CounterBR='CounterBR'
  PresetA='PresetA'; PresetB='PresetB'
  OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
  OpenUpdate='OpenUpdate'; UpdateAtStart='UpdateAtStart'
@@ -1224,7 +1228,7 @@ function Apply-Profile($Profile) {
         $script:Ui.AsyncMode.IsChecked=[bool]$Profile.nr_async
         $script:Ui.GpuImagePath.IsChecked=[bool]$Profile.gpu_image_path
  if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { $script:Ui.GraphsCheck.IsChecked = [int]$Profile.menu_graphs -ne 0 }
- if($Profile.PSObject.Properties.Name -contains 'menu_counter') { $c=[int]$Profile.menu_counter; $script:Ui.CounterCheck.IsChecked = $c -ne 0; $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0}) }
+ if($Profile.PSObject.Properties.Name -contains 'menu_counter') { $c=[int]$Profile.menu_counter; $script:Ui.CounterCheck.IsChecked = $c -ne 0; $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0}); $script:Ui.CounterCorner.IsEnabled = ($c -ne 0) }
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.
