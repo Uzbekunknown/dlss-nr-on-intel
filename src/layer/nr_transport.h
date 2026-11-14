@@ -102,12 +102,14 @@ static int nr_link_write(nr_link *link, const void *data, size_t count)
 static int nr_link_read(nr_link *link, void *data, size_t count)
 {
 	unsigned char *p = data;
-	DWORD waited = 0;
+	DWORD waited = 0;                  /* milliseconds spent waiting */
+	const DWORD started = GetTickCount();
 	while (count > 0) {
 		DWORD available = 0;
 		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
 			return -1;
 		if (available == 0) {
+			waited = GetTickCount() - started;
 			if (waited >= link->deadline_ms) return -1;
 			Sleep(10);
 			waited += 10;
@@ -123,6 +125,59 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 	return 0;
 }
 
+/* **Read what is already there, and give up at once if it is not.**
+ *
+ * The legacy answer's optional trailer (the network's time, appended by a daemon that
+ * has it) arrives a moment after the pixels, and whether it arrives at all says which
+ * daemon is answering. `nr_link_read` cannot tell those apart: its deadline is the
+ * exchange's whole 60-second budget, so waiting in it for bytes an old daemon will
+ * never send would hang every frame. This waits a few milliseconds at most — enough
+ * for a trailer that is in flight, nothing for one that does not exist.
+ *
+ * Returns 0 and fills `data` when `count` bytes were read; returns 1 when the peer
+ * has nothing (or not enough yet) — not an error, just no trailer this frame. */
+static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	/* **Wall-clock milliseconds, not a count of Sleeps.** Sleep(1) rounds up to the
+	 * scheduler tick - 15.6 ms by default, and nothing in this tree calls
+	 * timeBeginPeriod - so "30 sleeps" is anywhere from 30 ms to nearly half a
+	 * second depending on the machine and the load. Measured with a deadline, the
+	 * worst case is the deadline. */
+	const DWORD started = GetTickCount();
+	while (count > 0) {
+		DWORD available = 0;
+		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
+			return -1;
+		if (available == 0) {
+			/* Nothing YET is not nothing EVER: a large answer streams through a
+			 * 1 MB pipe buffer while the layer reads it, so the trailer - the tail
+			 * of the daemon's one `sendall` - can still be queued when the pixels
+			 * finish arriving. Measured on a 1280x720 legacy frame, the daemon's
+			 * write of the last bytes landed within a millisecond of the pixels.
+			 *
+			 * TWO milliseconds, once, for a daemon that will never send a trailer
+			 * at all: that is the price of asking a version we cannot identify,
+			 * against the seven-plus milliseconds of network work before it. The
+			 * first version counted 30 Sleep(1) calls and called it "30 ms", which
+			 * on a default-tick machine is up to half a second on the present
+			 * thread, every frame. */
+			if (GetTickCount() - started >= 2u) return 1;
+			Sleep(0);
+			continue;
+		}
+		DWORD want = (DWORD)(count < available ? count : available);
+		DWORD got = 0;
+		if (!ReadFile(link->handle, p, want, &got, NULL)) return -1;
+		if (got == 0) return -1;
+		p += got;
+		count -= got;
+		/* A partial read means the trailer straddles a pipe boundary; give the
+		 * rest a moment rather than dropping half a magic word on the floor -
+		 * still inside the same two-millisecond budget. */
+	}
+	return 0;
+}
 #else  /* the Linux build, unchanged: a Unix socket */
 
 #include <sys/socket.h>
@@ -203,6 +258,31 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 		if (n <= 0) return -1;
 		p += n;
 		count -= (size_t)n;
+	}
+	return 0;
+}
+
+/* The Unix twin of the Windows `nr_link_read_nowait` above: take what has arrived,
+ * never wait. `MSG_DONTWAIT` fails with EAGAIN when the socket has nothing, which is
+ * the "no trailer this frame" case, not an error. A partial read waits a moment for
+ * the rest, as the Windows one does — the trailer is 8 bytes and straddles nothing
+ * bigger than itself, but a stream has no message boundaries to trust. */
+static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	int waited = 0;
+	while (count > 0) {
+		ssize_t n = recv(link->fd, p, count, MSG_DONTWAIT);
+		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 1;
+		if (n < 0 && errno == EINTR) continue;
+		if (n <= 0) return -1;
+		p += n;
+		count -= (size_t)n;
+		if (count > 0) {
+			if (waited >= 20) return 1;
+			usleep(1000);
+			waited += 1;
+		}
 	}
 	return 0;
 }

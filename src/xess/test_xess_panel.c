@@ -303,16 +303,30 @@ int main(int argc, char **argv)
 				}
 			snprintf(detail, sizeof detail, "%d of %d samples by the corner are not the game's", box, total);
 			check(total && box * 10 >= total * 9, "the counter is drawn in the top right corner", detail);
-			/* And nothing else: where the panel would be, the middle, the other three corners. */
+			/* And nothing else: where the panel would be, the middle, the other three corners.
+			 * The right-hand points stay clear of the counter's corner WINDOW, which the graphs
+			 * made taller and wider than the number row it replaced: measured on this very
+			 * dump, its drawing reaches x >= 986 and y <= 170, so (1100, 120) - the point this
+			 * test used for two releases - fell inside it and read the corner's own text.
+			 * (900, 400) is below the window's reach and clear of the centre point. */
 			static const int kept[][2] = { {4, 4}, {300, 300}, {640, 360}, {4, 715}, {1275, 715},
-						       {1100, 120}, {60, 30} };
+						       {900, 400}, {60, 30} };
 			int all = 1;
+			int bad = 0;
 			for (size_t i = 0; i < sizeof kept / sizeof kept[0]; ++i) {
+				/* Cleared before every sample: a point whose pixel() fails leaves `rgb` as it
+				 * was, and the diagnostic then printed the PREVIOUS point's colour beside this
+				 * point's coordinates - a failure message that points at the wrong place. The
+				 * count is reported too, because `detail` keeps only the last one. */
+				rgb[0] = rgb[1] = rgb[2] = 0u;
 				got = pixel(ppm, size, kept[i][0], kept[i][1], rgb);
 				if (!got || !green(rgb)) {
 					all = 0;
-					snprintf(detail, sizeof detail, "(%u, %u, %u) at %d,%d", rgb[0], rgb[1], rgb[2],
-						 kept[i][0], kept[i][1]);
+					++bad;
+					snprintf(detail, sizeof detail, "(%u, %u, %u)%s at %d,%d%s",
+						 rgb[0], rgb[1], rgb[2], got ? "" : " unreadable",
+						 kept[i][0], kept[i][1],
+						 bad > 1 ? " (later failures not shown)" : "");
 				}
 			}
 			if (all) snprintf(detail, sizeof detail, "%d points the game's", (int)(sizeof kept / sizeof kept[0]));

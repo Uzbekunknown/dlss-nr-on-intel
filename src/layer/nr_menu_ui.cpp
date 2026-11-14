@@ -16,6 +16,8 @@
  */
 #include "nr_menu_ui.h"
 #include "nr_menu_ui_backend.h"
+#include "nr_menu_strings.h"   /* nr_menu_text: the graphs' names, in the panel's language */
+#include "nr_frame_rate.h"     /* nr_frame_graph_axis: the graphs' percentile axis */
 
 #include "imgui.h"
 /* For `SetKeyOwner` only.
@@ -30,6 +32,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>    /* ceilf, for the graphs' axis */
 #include <cstring>
 #ifndef _WIN32
 #include <time.h>    /* CLOCK_MONOTONIC, for nrex_now_seconds */
@@ -218,11 +221,208 @@ static int g_nr_request = -1;
  * that lost copy is why a dragged slider changed nothing. */
 static nrex_row *g_rows = nullptr;
 
+/* **The two graphs, after OptiScaler's.** The counter's numbers say what the last second averaged;
+ * these say whether it was steady, which is the difference a player actually feels.
+ *
+ *   frame  green - milliseconds between presents, so frame generation's extra frames are the
+ *                  short ones and a stall is a spike;
+ *   NR     blue  - the network's milliseconds, the cost NR adds to those frames.
+ *
+ * Both, because a player deciding whether NR is the cause needs the pair: a high frame time with a
+ * low NR time is the game, and both high is the network.
+ *
+ * Copied from the caller's array rather than pointed at: the counter is drawn once a frame from a
+ * frame's stack, and the samples live in the panel's struct, which outlives this call. The C side
+ * fills a ring once a present (`nr_frame_rate.h`'s `nr_frame_graph`) and hands the run here; this
+ * file only draws it, which is what keeps the arithmetic testable without ImGui. */
+static float g_graph_frame[NREX_GRAPH_SAMPLES];
+static float g_graph_net[NREX_GRAPH_SAMPLES];
+static int   g_graph_frame_count = 0;
+static int   g_graph_net_count = 0;
+/* Whether the CORNER draws them. The panel always does - see `nrex_counter`. */
+static int   g_corner_graphs = 1;
+
+/* **The knob table's columns, which the graphs' row has to line up with.** One definition here
+ * and one use there: the knob rows and the graph rows are drawn by different code, and two copies
+ * of "where the label column starts" is exactly how they drifted apart - the graph row drew its
+ * text at 340 px while the knob labels sat at 292, and the eye saw two columns pretending to be
+ * one. A knob row is slider + spacing + field + spacing, then the label; a graph row is plot +
+ * spacing, then its name and band. Both share the same text-column start, so the plot's width is
+ * DERIVED: column start, minus the gap the graph row puts between plot and text. */
+static const ImU32 kGraphFrameColour = IM_COL32(120, 220, 120, 255);
+static const ImU32 kGraphNetColour   = IM_COL32(120, 170, 255, 255);
+/* The corner's: a small box in the corner of a game, with its text under it rather than beside -
+ * the corner has no rows to line up with, and every pixel it takes is a pixel of the picture. */
+static const float kGraphWidth = 180.0f;
+static const float kGraphHeight = 34.0f;
+/* The panel's columns. `kKnobTextColumn` is where both the knob labels and the graphs' names sit;
+ * the plot is whatever is left of it after the 10 px gap. 276 is the combo's own width
+ * (190 + spacing + 86), and one more spacing lands the label. */
+static const float kKnobSlider = 190.0f;
+static const float kKnobField = 86.0f;
+static const float kKnobSpacing = 8.0f;          /* ImGui's default ItemSpacing.x */
+static const float kKnobTextColumn = kKnobSlider + kKnobSpacing + kKnobField + kKnobSpacing;
+static const float kPanelGraphGap = 10.0f;
+static const float kPanelGraphWidth = kKnobTextColumn - kPanelGraphGap;   /* 282 */
+static const float kPanelGraphHeight = 30.0f;
+
+
+/* **One graph, with its name and its axis in a column to the LEFT of the plot.**
+ *
+ * The axis used to be ImGui's overlay value, printed inside the plot against the top edge, where
+ * it sat on top of the trace it was labelling - the one part of the picture that must stay
+ * readable. It is a separate column now: the name on the first line (that is what tells the two
+ * graphs apart, so it does not need a legend), the axis under it, and neither one over the data.
+ *
+ * `has_data` is false when every point is a gap - a frame the daemon answered without a network
+ * time, which is every frame on the CPU path. The plot is not drawn at all then, rather than drawn
+ * as a flat line along the bottom: a line at zero says "the network is free", and the truth is
+ * "there is nothing to measure here". The column keeps its height so the box does not jump.
+ *
+ * A gap in the middle of a series is drawn as a gap, because this plot is drawn by hand (see
+ * `draw_one_graph`): `PlotLines` would clamp -1 to the floor of its box and draw a line along it,
+ * which reads as "the network answered in no time" - the one meaning this graph must never give. */
+/* **One graph: the plot on the left, its name and its band on the right.**
+ *
+ * The order is deliberate and comes from what the eye does with a settings list. Every row below
+ * these two has its control on the left and its LABEL on the right (`slider  value  Render scale`),
+ * so a graph that put its label first would be the only row in the panel reading the other way -
+ * which is exactly how the first version looked: a column of text, then a box, then a wider box.
+ *
+ * `width` is the plot; the text column is measured from the widest name and the widest band, so the
+ * two rows line up with each other and the right edge lands where the rows below end.
+ *
+ * `id` is passed in rather than built from the name: two `PlotLines("")` in one window collide on
+ * the empty ID, which is the "2 visible items with conflicting ID" the panel showed. */
+static void draw_one_graph(const char *id, const char *name, const float *series, int count,
+                           ImU32 colour, float width, int label_right, float height)
+{
+    char axis[32] = "";
+    float lo = 0.0f, hi = 0.0f;
+    int any = 0;
+    for (int i = 0; i < count; ++i) if (series[i] >= 0.0f) { any = 1; break; }
+    if (any) {
+        nr_frame_graph_axis(series, count, &lo, &hi);
+        nr_frame_graph_axis_text(series, count, axis, sizeof axis);
+    } else {
+        snprintf(axis, sizeof axis, "%s", "-");
+    }
+    /* The corner's text goes above its plot, so the box stays narrow; the panel's goes beside it,
+     * so the row reads the way the knob rows below do. */
+    if (!label_right) {
+        ImGui::TextUnformatted(name);
+        ImGui::TextDisabled("%s", axis);
+    }
+    if (any) {
+        /* **The line is smoothed, the axis is not.** `lo`/`hi` came from the raw series above, so
+         * a stall is still drawn at its full height; the smoothing only softens the hedge of
+         * per-frame jitter into the trend the graph is for. A gap stays a gap through the filter,
+         * which is how the network's missing samples keep their shape.
+         *
+         * **Drawn by hand, because `PlotLines` cannot leave a hole.** It normalises every point
+         * through `ImSaturate`, so a gap - which `nr_frame_graph_smooth` hands back as -1 - is
+         * clamped to the bottom of the plot and drawn as a line along it: the picture then claims
+         * the network answered in zero milliseconds, which is the one reading this graph must
+         * never give. `ImDrawList::AddLine` per run of real samples draws the holes as holes, and
+         * costs about what `PlotLines` did - the same number of segments, without a scratch
+         * buffer and without the value clamp that caused this.
+         *
+         * A single isolated sample has no neighbour to join, so it gets a dot: one frame the
+         * network answered, drawn as one, rather than a point of a line that is not there. */
+        float smooth[NR_GRAPH_SAMPLES];
+        const int smoothed = nr_frame_graph_smooth(series, count, smooth, NR_GRAPH_SAMPLES);
+        const float *plot = smoothed > 0 ? smooth : series;
+        const int plot_count = smoothed > 0 ? smoothed : count;
+
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(id, ImVec2(width, height));
+        ImDrawList *draw = ImGui::GetWindowDrawList();
+        const float span = hi - lo;
+        const float step_x = plot_count > 1 ? width / (float)(plot_count - 1) : 0.0f;
+        const float px_per_value = span > 0.0f ? height / span : 0.0f;
+        bool have_prev = false;
+        ImVec2 prev(0.0f, 0.0f);
+        for (int i = 0; i < plot_count; ++i) {
+            if (plot[i] < 0.0f) { have_prev = false; continue; }
+            float v = plot[i];
+            if (v < lo) v = lo;
+            if (v > hi) v = hi;
+            const ImVec2 at(origin.x + step_x * (float)i,
+                            origin.y + height - (v - lo) * px_per_value);
+            if (have_prev) {
+                draw->AddLine(prev, at, colour, 1.0f);
+            } else {
+                draw->AddRectFilled(ImVec2(at.x - 1.0f, at.y - 1.0f),
+                                    ImVec2(at.x + 1.0f, at.y + 1.0f), colour);
+            }
+            prev = at;
+            have_prev = true;
+        }
+    } else {
+        /* An empty box of the same size, with a line of text in it: the row keeps its place and
+         * says why it is empty rather than pretending to be a graph. */
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        char empty_id[64];
+        snprintf(empty_id, sizeof empty_id, "e%s", id);
+        ImGui::InvisibleButton(empty_id, ImVec2(width, height));
+        ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + width, at.y + height),
+                                            IM_COL32(90, 90, 96, 160));
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        const char *why = "no network time";
+        ImVec2 sz = ImGui::CalcTextSize(why);
+        dl->AddText(ImVec2(at.x + (width - sz.x) * 0.5f, at.y + (height - sz.y) * 0.5f),
+                    IM_COL32(140, 140, 150, 200), why);
+    }
+    if (label_right) {
+        /* To the RIGHT of the plot, centred on its height - the same order the knob rows use, and
+         * the reason the panel no longer reads as two blocks of text with a box between them. */
+        ImGui::SameLine(0.0f, kPanelGraphGap);
+        ImGui::BeginGroup();
+        const float line = ImGui::GetTextLineHeight();
+        const float pad = (height - line * 2.0f) * 0.5f;
+        if (pad > 0.0f) ImGui::Dummy(ImVec2(0.0f, pad));
+        ImGui::TextUnformatted(name);
+        ImGui::TextDisabled("%s", axis);
+        ImGui::EndGroup();
+    }
+}
+
+/* **The two graphs, drawn once.** The panel's header and the corner both call this, so the axis,
+ * the colours and the gap handling cannot drift between them.
+ *
+ * `frame` and `net` are the series and their lengths, oldest first. A zero length draws nothing,
+ * which is what a host with no counts passes. `width` is the plot's own width.
+ *
+ * `label_right` says where the text goes, and the two callers want opposite answers:
+ *   - the PANEL's header has the knob table under it (slider, value, label, 486 wide), so its
+ *     graphs put the text on the RIGHT like every row below - one reading order down the panel;
+ *   - the CORNER is a small box in the corner of a game with no rows under it, so the text goes
+ *     ABOVE the plot, which keeps the box narrow instead of making it twice as wide. */
+static void draw_graphs(const float *frame, int frame_count, const float *net, int net_count,
+                        float width, int label_right, float height)
+{
+    if (frame_count <= 0) return;
+    const char *frame_name = nr_menu_text(g_language, NR_STR_GRAPH_FRAME);
+    const char *net_name = nr_menu_text(g_language, NR_STR_GRAPH_NET);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
+    /* The ids carry the caller: the panel's header and the corner both draw, and two `PlotLines`
+     * with the same id in one window is the "2 visible items with conflicting ID" the panel showed
+     * while both were open. */
+    const char *frame_id = label_right ? "##nr_frame_ms_panel" : "##nr_frame_ms_corner";
+    const char *net_id = label_right ? "##nr_net_ms_panel" : "##nr_net_ms_corner";
+    draw_one_graph(frame_id, frame_name, frame, frame_count, kGraphFrameColour, width,
+                   label_right, height);
+    if (net_count > 0)
+        draw_one_graph(net_id, net_name, net, net_count, kGraphNetColour, width,
+                       label_right, height);
+    ImGui::PopStyleVar();
+}
+
 /* The frame counter's line for the top of the panel, and what it means, as `nrex_counter` was last
  * handed them. Copied, like the footer's hint. 1024 for the hint: its Russian is over 500 bytes. */
 static char g_counter_line[192] = "";
 static char g_counter_hint[1024] = "";
-
 /* The knob's explanation, shown while the pointer rests on the row just submitted.
  *
  * Call it immediately after the item the tip belongs to: `IsItemHovered` asks about the last item,
@@ -428,6 +628,15 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
     if (g_counter_line[0]) {
         ImGui::TextUnformatted(g_counter_line);
         nrex_hint_tooltip(g_counter_hint);
+        /* **The panel's graphs, always.** The corner's are the user's switch (`nrex_counter`'s
+         * `corner_graphs`); these are not - a player who opened the panel is looking at the
+         * numbers, and the shape behind them is why the panel is open. Drawn here rather than
+         * under the corner's copy so the two are independent: turning the corner's off must not
+         * take the panel's with it.
+         *
+         * The same axis rule as the corner's, and the same helper. */
+        draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
+                    kPanelGraphWidth, 1, kPanelGraphHeight);
         ImGui::Separator();
     }
 
@@ -625,7 +834,23 @@ static void nrex_draw_panel(nrex_ui *u, const char *title, int language,
         }
         case NREX_KIND_FLAG: {
             bool on = r.choice_index != 0;
-            if (ImGui::Checkbox("##f", &on)) {
+            bool flipped = ImGui::Checkbox("##f", &on);
+            /* **Left/Right flip it too, as they change every other row.** The hint says the arrows
+             * change a row and Up/Down move between them; a flag answered only the mouse, so the
+             * only keys that could reach it were Tab and Space, neither of which the hint
+             * mentions. ImGui's checkbox has no arrow handling of its own, so this claims the keys
+             * the way the combo row above does, and only while the row is focused. */
+            if (!flipped && ImGui::IsItemFocused()) {
+                const ImGuiID row_id = ImGui::GetItemID();
+                ImGui::SetKeyOwner(ImGuiKey_LeftArrow,  row_id);
+                ImGui::SetKeyOwner(ImGuiKey_RightArrow, row_id);
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
+                    ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  false)) {
+                    on = !on;
+                    flipped = true;
+                }
+            }
+            if (flipped) {
                 g_actions |= NREX_ACT_CHANGED;
                 if (g_rows) { g_rows[i].changed = 1; g_rows[i].value_i = on ? 1 : 0; }
             }
@@ -750,11 +975,27 @@ extern "C" NREX_API void nrex_set_nr_enabled(nrex_ui *ui, int on)
  * its text - grows away from the edge. Drawn before the panel's window, which takes the focus and
  * so stays on top of it. */
 extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint,
-                                      int corner, const char *corner_line)
+                                      int corner, const char *corner_line,
+                                      const float *frame_ms, int frame_count,
+                                      const float *net_ms, int net_count, int corner_graphs)
 {
     (void)ui;
     snprintf(g_counter_line, sizeof g_counter_line, "%s", panel_line ? panel_line : "");
     snprintf(g_counter_hint, sizeof g_counter_hint, "%s", hint ? hint : "");
+    /* Copied and clamped: the caller's arrays are a frame's scratch, and the ring is
+     * NREX_GRAPH_SAMPLES deep whatever it hands over. */
+    g_graph_frame_count = 0;
+    g_graph_net_count = 0;
+    if (frame_ms && frame_count > 0) {
+        g_graph_frame_count = frame_count < NREX_GRAPH_SAMPLES ? frame_count : NREX_GRAPH_SAMPLES;
+        for (int i = 0; i < g_graph_frame_count; ++i) g_graph_frame[i] = frame_ms[i];
+    }
+    if (net_ms && net_count > 0) {
+        g_graph_net_count = net_count < NREX_GRAPH_SAMPLES ? net_count : NREX_GRAPH_SAMPLES;
+        for (int i = 0; i < g_graph_net_count; ++i) g_graph_net[i] = net_ms[i];
+    }
+    /* The corner's graphs, which are the user's switch; the panel's are unconditional. */
+    g_corner_graphs = corner_graphs ? 1 : 0;
     if (corner < 1 || corner > 4 || !corner_line || !corner_line[0]) return;
 
     ImGuiIO &io = ImGui::GetIO();
@@ -772,8 +1013,37 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
                                    ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 3));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    if (ImGui::Begin("##nr_frame_counter", nullptr, flags))
+    if (ImGui::Begin("##nr_frame_counter", nullptr, flags)) {
         ImGui::TextUnformatted(corner_line);
+        /* The graphs, under the numbers they are the shape of.
+         *
+         * **The panel's header always has them; the corner follows the user's switch.** A corner
+         * window over a game's HUD is competing for the same pixels, so it is the one that can be
+         * turned off - and when it is, the corner is the line of numbers it was before the graphs
+         * existed.
+         *
+         * **Scaled to the data, with a floor and a cap.** A fixed axis makes a steady stream and a
+         * stuttering one draw the same flat line at 70 fps - 14 ms against 100 ms is a sixth of the
+         * height - which is the one thing the picture exists to tell apart. Each series gets
+         * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
+         * the reader knows what the height means. */
+        if (g_corner_graphs) {
+            /* **As wide as the numbers above it, when they are wider.** The plots were a fixed
+             * 180 px under a counter line that grows with the language and the figures - so at
+             * "Screen 119 fps NR 119 fps network 4.7 ms" the window was a line of text with a
+             * shorter box hanging off its left and a bare strip of background under the rest.
+             * The width is the wider of the two now, measured this frame, so the picture ends
+             * where the text ends and the box under it is one shape.
+             *
+             * With the graphs OFF nothing here runs and the window is the text alone, which is
+             * the point of the switch: it should look like the counter it was before the graphs
+             * existed. */
+            const float text_width = ImGui::CalcTextSize(corner_line).x;
+            const float graph_width = text_width > kGraphWidth ? text_width : kGraphWidth;
+            draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
+                        graph_width, 0, kGraphHeight);
+        }
+    }
     ImGui::End();
     ImGui::PopStyleVar(2);
 }

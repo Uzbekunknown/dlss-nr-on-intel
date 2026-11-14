@@ -16,7 +16,7 @@
 #define NR_MENU_STRINGS_H
 
 #define NR_MENU_LANG_COUNT 4
-#define NR_MENU_KEY_COUNT 49
+#define NR_MENU_KEY_COUNT 53
 #define NR_MENU_COMPARE_COUNT 3
 /* The hints are one per KNOB, which is fewer than the keys: a key like `title` or `on` is
  * a string the menu shows, not a knob it explains. Declaring them with the key count left
@@ -85,6 +85,10 @@ enum {
     NR_STR_COUNTER_TOP_RIGHT = 46,
     NR_STR_COUNTER_BOTTOM_LEFT = 47,
     NR_STR_COUNTER_BOTTOM_RIGHT = 48,
+    NR_STR_GRAPHS = 49,
+    NR_STR_GRAPHS_HINT = 50,
+    NR_STR_GRAPH_FRAME = 51,
+    NR_STR_GRAPH_NET = 52,
 };
 
 /* [language][key] */

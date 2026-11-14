@@ -15,6 +15,7 @@
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_ui.h"
+#include "nr_frame_rate.h"   /* NR_GRAPH_SAMPLES, for the assertion below */
 #include "nr_menu_strings.h"
 #include "nr_menu_font.h"
 #include "nr_raw_mouse.h"
@@ -133,12 +134,28 @@ struct nr_panel {
 	nr_frame_rates rates;
 	char rates_line[192];
 	char rates_corner[192];
+	/* The graphs' points in drawing order, filled from `rates.graph` just before the counter is
+	 * drawn. Kept here rather than built on the call's stack because both call sites - the panel
+	 * open and shut - pass them, and a static in this file would be shared by every device. */
+	float graph_frame[NR_GRAPH_SAMPLES];
+	float graph_net[NR_GRAPH_SAMPLES];
+	int graph_frame_count;
+	int graph_net_count;
 	int trigger_live;
 };
+
+/* The ring and the UI's copy of it are the same depth, and this is the only file that
+ * sees both headers. The two used to be kept equal by a comment, which is not a check. */
+/* A negative array size is a compile error, and works on the C compilers this builds with
+ * (`_Static_assert` needs a newer MSVC than the /TC pass this file goes through). */
+typedef char nr_graph_depth_must_match[(NR_GRAPH_SAMPLES == NREX_GRAPH_SAMPLES) ? 1 : -1];
 
 /* The frame counter's row among `row_what`'s values: not pacing, and not the bridge's pacing entry
  * point - its value goes to `nr_menu_bridge_set_counter`. */
 #define NR_PANEL_ROW_COUNTER 100
+/* And the graphs' checkbox. One value: the row is always present, and `nrex_row.disabled` is what
+ * says whether it can be changed (the counter must be somewhere other than the panel). */
+#define NR_PANEL_ROW_GRAPHS 101
 
 /* The effect's state, through the host: 1 on, 0 off, -1 for an installation with no trigger. */
 static int trigger_state(struct nr_panel *data)
@@ -554,6 +571,37 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 		r->choice_index = nr_menu_bridge_counter(data->menu_bridge);
 		r->value = names[n][r->choice_index];
 		data->row_what[n] = NR_PANEL_ROW_COUNTER;
+		n++;
+	}
+
+	/* **Whether the corner draws the graphs, as a checkbox like the effect's.**
+	 *
+	 * It was a two-value combo, which made a switch look like a choice between two named states.
+	 * A checkbox says the same thing in the form the panel already teaches for on/off, and the
+	 * effect's own box is the pattern: `NR [x]` beside a label.
+	 *
+	 * The panel's own graphs are not a setting - they are always drawn - so this is only about the
+	 * corner, and it is offered only when there is one: with the counter set to the panel alone
+	 * there is nowhere for the graphs to go, so the row is shown GREYED rather than hidden. A row
+	 * that appeared and disappeared as the counter moved would make the list jump under the keys.
+	 *
+	 * Greyed is `nrex_row.disabled`, which the UI submits under `BeginDisabled` - the same
+	 * mechanism the pacing rows use - so the box is drawn greyed and refuses input, rather than
+	 * being drawn live with a handler that quietly swallows the change. */
+	if (data->menu_ui && data->host.counts && n < capacity && n < MENU_UI_MAX_ROWS) {
+		int counter_at = nr_menu_bridge_counter(data->menu_bridge);
+		int has_corner = counter_at != NR_COUNTER_PANEL;
+		nrex_row *r = &out[n];
+		memset(r, 0, sizeof *r);
+		r->label = nr_menu_text(language, NR_STR_GRAPHS);
+		r->hint = nr_menu_text(language, NR_STR_GRAPHS_HINT);
+		r->kind = NREX_KIND_FLAG;
+		r->choice_index = has_corner && nr_menu_bridge_graphs(data->menu_bridge) ? 1 : 0;
+		/* No corner: the box reads unticked and cannot be ticked, which is the truth - there is
+		 * nothing for it to turn on. The hint says why, because "greyed for no visible reason" is
+		 * the one thing a disabled control must never be. */
+		r->disabled = !has_corner;
+		data->row_what[n] = NR_PANEL_ROW_GRAPHS;
 		n++;
 	}
 
@@ -1301,6 +1349,13 @@ static void panel_rates_text(struct nr_panel *data)
 			    sizeof data->rates_line);
 	nr_frame_rates_line(&data->rates, language, data->trigger_live, "   ", data->rates_corner,
 			    sizeof data->rates_corner);
+	/* The graphs' points, in the order `PlotLines` wants. The ring keeps them; this flattens it.
+	 * Both series are the same length by construction (`nr_frame_graph_add` writes both), so the
+	 * two counts agree and the shorter one never decides the x axis. */
+	data->graph_frame_count = nr_frame_graph_frame(&data->rates.graph, data->graph_frame,
+						       NR_GRAPH_SAMPLES);
+	data->graph_net_count = nr_frame_graph_net(&data->rates.graph, data->graph_net,
+						   NR_GRAPH_SAMPLES);
 }
 
 /* Seconds since THIS panel was last drawn, not a fixed step.
@@ -1348,7 +1403,10 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 		nrex_mouse(data->menu_ui, -1.0f, -1.0f, 0);
 		nrex_set_software_cursor(data->menu_ui, 0);
 		nrex_new_frame(data->menu_ui, (float)width, (float)height, panel_step(data));
-		nrex_counter(data->menu_ui, NULL, NULL, corner, data->rates_corner);
+		nrex_counter(data->menu_ui, NULL, NULL, corner, data->rates_corner,
+			     data->graph_frame, data->graph_frame_count,
+			     data->graph_net, data->graph_net_count,
+			     nr_menu_bridge_graphs(data->menu_bridge));
 		return;
 	}
 
@@ -1370,7 +1428,9 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 	 * corner too when one is chosen, so choosing it shows where it goes. */
 	nrex_counter(data->menu_ui, data->host.counts ? data->rates_line : NULL,
 		     nr_menu_text(nr_menu_language(data->menu), NR_STR_FPS_HINT), corner,
-		     data->rates_corner);
+		     data->rates_corner, data->graph_frame, data->graph_frame_count,
+		     data->graph_net, data->graph_net_count,
+		     nr_menu_bridge_graphs(data->menu_bridge));
 	/* The menu's CURRENT language, not the one this device started with.
 	 *
 	 * The language the bridge was created with is read once and never updated - so passing it
@@ -1404,6 +1464,13 @@ void nr_panel_frame(nr_panel *data, uint32_t width, uint32_t height)
 		/* The frame counter's place, the panel's own: shown at once, kept by Save. */
 		if (data->row_what[i] == NR_PANEL_ROW_COUNTER) {
 			nr_menu_bridge_set_counter(data->menu_bridge, (int)v);
+			continue;
+		}
+		/* The graphs, as a checkbox: ticked means the corner draws them too. The greyed state is
+		 * the UI's (`nrex_row.disabled`), so a change can only arrive from a row that was live -
+		 * there is nothing to refuse here. */
+		if (data->row_what[i] == NR_PANEL_ROW_GRAPHS) {
+			nr_menu_bridge_set_graphs(data->menu_bridge, (int)v != 0);
 			continue;
 		}
 		/* The pacing rows and the network come after the knobs and are not knobs: their values

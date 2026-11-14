@@ -146,6 +146,21 @@ class Profile:
     # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
     # none, so "auto"; a request may name one, for a game with both.
     upscaler: str = "auto"
+    # **Whether the corner window draws the two frame-time graphs.** 1 by default, which is what a
+    # counter in a corner looks best with: the number without the shape behind it says the last
+    # second averaged 14 ms and never says whether it stuttered. The panel always draws them; this
+    # is the corner alone, and it reaches the panel as `menu_graphs` in the settings file rather
+    # than through the environment - see `write_settings` below.
+    menu_graphs: int = 1
+    # Where the frame counter goes: 0 the panel alone, 1-4 the four corners. Written as
+    # `menu_counter` in the settings file, read by the panel like `menu_graphs` above.
+    #
+    # **Zero, matching the panel's own default** (`load_settings`: absent means the panel alone,
+    # because "a counter nobody asked for must not appear over a game"). This was 1, which made a
+    # fresh install disagree with itself: the window said "top right corner" while the panel -
+    # which is what actually draws - said panel-only, and the first touch of the window wrote 1
+    # and put a counter over a game nobody had asked to see it over.
+    menu_counter: int = 0
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -162,7 +177,8 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler}
+                "upscaler": self.upscaler, "menu_graphs": self.menu_graphs,
+                "menu_counter": self.menu_counter}
 
     @classmethod
     def from_dict(cls, values):
@@ -190,6 +206,15 @@ class Profile:
         upscaler = values.get("upscaler") or "auto"
         if not isinstance(upscaler, str) or upscaler not in UPSCALERS:
             raise ValueError("upscaler must be one of " + ", ".join(UPSCALERS))
+        # The panel's two preferences, which `to_dict` writes and this must read back: a
+        # profile that carried them and came back through a pacing save used to return
+        # with the defaults, so `discover` handed the window a stale counter place.
+        graphs = values.get("menu_graphs", 1)
+        if isinstance(graphs, bool) or not isinstance(graphs, int) or graphs not in (0, 1):
+            raise ValueError("menu_graphs must be 0 or 1")
+        counter = values.get("menu_counter", 1)
+        if isinstance(counter, bool) or not isinstance(counter, int) or not 0 <= counter <= 4:
+            raise ValueError("menu_counter must be a whole number from 0 to 4")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -198,7 +223,8 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler)
+                   preset=preset, upscaler=upscaler,
+                   menu_graphs=graphs, menu_counter=counter)
 
 
 def profile_path(root):
@@ -214,6 +240,20 @@ def _read_json(path, limit=1024 * 1024):
 
 
 def _atomic_json(path, values):
+    """Replace `path` with `values`, retrying the rename while another process holds it.
+
+    On Windows `Path.replace` is MoveFileEx(REPLACE_EXISTING), which fails with
+    WinError 5 - permission denied, not "busy" - while any other process has the
+    destination open without FILE_SHARE_DELETE. That is the normal state here: the
+    layer's bridge reads the settings file, the daemon polls it, and a person may
+    have it open in an editor. Linux's rename(2) never fails for a reader, which is
+    why this only shows up on Windows.
+
+    Three tries, 50 ms apart: long enough to outlast one daemon poll, short enough
+    that a genuinely held file is reported rather than hung on. The message names
+    the cause, because "WinError 5" beside a settings slider says nothing about the
+    editor the user forgot.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".nr-json-", dir=path.parent)
@@ -221,7 +261,15 @@ def _atomic_json(path, values):
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(values, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
-        Path(temporary).replace(path)
+        for attempt in range(3):
+            try:
+                Path(temporary).replace(path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise PermissionError(
+                        f"{path} is open in another program; close it and try again") from None
+                time.sleep(0.05)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -370,6 +418,42 @@ def reset_settings(root, names=None):
     if unknown:
         raise ValueError("Unknown runtime controls: " + ", ".join(sorted(unknown)))
     return save_settings(root, {name: defaults[name] for name in names})
+
+
+# The panel's own preferences, which are in the settings file but are not runtime knobs: the
+# daemon never reads them, so they do not go through `save_settings` and its knob table. The
+# setup window offers one of them - whether the corner counter draws the frame graphs - because
+# a player setting up a game has no panel open to change it in. The panel writes the same key
+# when the row is used, so the two cannot disagree: one file, one meaning, whoever wrote it last.
+PANEL_PREFERENCES = {"menu_graphs": (0, 1), "menu_counter": (0, 4)}
+
+
+def save_panel_preferences(root, changes):
+    """Merge panel preferences into the settings document, leaving every other key as it was.
+
+    Separate from `save_settings` on purpose. That one validates against the knob table and
+    refuses anything it does not know - correctly, because a knob name that is not there is a
+    caller's mistake. These keys are not knobs: `menu_counter` and `menu_graphs` are read by the
+    panel in the game's process, and a daemon never looks at them.
+
+    An unknown key is refused here too, and a value is checked against its range, so a typo in
+    the window fails at the window rather than writing a key nothing reads.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("Panel preferences must be a JSON object")
+    unknown = set(changes) - set(PANEL_PREFERENCES)
+    if unknown:
+        raise ValueError("Unknown panel preferences: " + ", ".join(sorted(unknown)))
+    for name, value in changes.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer")
+        low, high = PANEL_PREFERENCES[name]
+        if not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}")
+    path, values = _settings_document(root)
+    values.update(changes)
+    _atomic_json(path, values)
+    return {"ok": True, "error": None, "path": str(path), "panel": dict(changes)}
 
 
 def load_profile(root):
