@@ -15,6 +15,7 @@
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_ui.h"
+#include "nr_frame_rate.h"   /* NR_GRAPH_SAMPLES, for the assertion below */
 #include "nr_menu_strings.h"
 #include "nr_menu_font.h"
 #include "nr_raw_mouse.h"
@@ -142,6 +143,12 @@ struct nr_panel {
 	int graph_net_count;
 	int trigger_live;
 };
+
+/* The ring and the UI's copy of it are the same depth, and this is the only file that
+ * sees both headers. The two used to be kept equal by a comment, which is not a check. */
+/* A negative array size is a compile error, and works on the C compilers this builds with
+ * (`_Static_assert` needs a newer MSVC than the /TC pass this file goes through). */
+typedef char nr_graph_depth_must_match[(NR_GRAPH_SAMPLES == NREX_GRAPH_SAMPLES) ? 1 : -1];
 
 /* The frame counter's row among `row_what`'s values: not pacing, and not the bridge's pacing entry
  * point - its value goes to `nr_menu_bridge_set_counter`. */

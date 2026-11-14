@@ -40,11 +40,25 @@ long long nr_file_stamp(const char *path)
     if (!path || !*path) return 0;
 #ifdef _WIN32
     /* The write time, which changes whenever anybody writes the file - not the access time, which
-     * changes when it is read and would make a poll look like an edit. */
+     * changes when it is read and would make a poll look like an edit.
+     *
+     * **Mixed with the size, because FILETIME is not fine enough on its own.** The timestamp
+     * comes from the volume's update clock, which is the ~15.6 ms scheduler tick by default - so
+     * two writes inside one tick have the same FILETIME and the second looks like the first,
+     * already seen. The daemon hit exactly this in its own poll and compared bytes to settle it;
+     * a size in the mix catches every pair of writes that changes the length, which is all of
+     * ours (the settings object is rewritten, not edited in place), without a second read.
+     *
+     * The two halves are separate on purpose: the timestamp in the high bits, the size in the
+     * low, so neither can borrow from the other. */
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExA(path, GetFileExInfoStandard, &info)) return 0;
-    return ((long long)info.ftLastWriteTime.dwHighDateTime << 32)
-         | (unsigned)info.ftLastWriteTime.dwLowDateTime;
+    const long long written = ((long long)info.ftLastWriteTime.dwHighDateTime << 32)
+                            | (unsigned)info.ftLastWriteTime.dwLowDateTime;
+    /* XOR, not a shift: `written` is a full 64-bit FILETIME and shifting it left would throw its
+     * high half away - the half that carries the seconds. Xeroxing the length into the low half
+     * keeps every bit of the timestamp and lets any change of length show through. */
+    return written ^ (long long)(unsigned)info.nFileSizeLow;
 #else
     struct stat st;
     if (stat(path, &st) != 0) return 0;

@@ -1819,6 +1819,11 @@ int main(int argc, char **argv)
 	} else {
 		exchange = brighten;
 	}
+	/* A stand-in never sets `last_answer_us`, so its frames must read as "not reported". The
+	 * variable is a module static (this file includes nr_xess.c), and with a pipe argument the
+	 * real exchange has already run by the time a stand-in is installed - leaving its time behind
+	 * for the first stand-in frame to inherit. */
+	InterlockedExchange64(&last_answer_us, 0);
 	if (FAILED(D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&gpu.device))) {
 		printf("FAIL: no D3D12 device\n");
 		return 1;
@@ -1847,6 +1852,7 @@ int main(int argc, char **argv)
 					  .initFlags = XESS_INIT_FLAG_HIGH_RES_MV };
 	xessD3D12Init((xess_context_handle_t)1, &init);
 	exchange = spot;
+	InterlockedExchange64(&last_answer_us, 0);   /* see above: a stand-in reports nothing */
 	/* fill_motion reads six: the block's corners are left zero, for vectors everywhere */
 	float rest[6] = { 0, 0 }, uniform[6] = { 6, -4 };             /* texels: (3, -2) pixels */
 	float block[6] = { 20, 0, BLOCK_X0, BLOCK_Y0, BLOCK_X1, BLOCK_Y1 }; /* 10 pixels, in it only */
