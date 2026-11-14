@@ -118,7 +118,13 @@ static inline int nr_frame_graph_frame(const nr_frame_graph *g, float *out, int 
 {
 	if (!g || !out || capacity <= 0) return 0;
 	const int n = g->count < capacity ? g->count : capacity;
-	const int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	/* Where the retained run starts. With the ring full, the oldest point is `next`; with room
+	 * to spare it is index 0. **A capacity smaller than the ring keeps the NEWEST points**, not
+	 * the oldest: the right edge of this graph is "now", so a truncation that dropped the recent
+	 * end would be showing the wrong side of the window. No caller passes one today - both pass
+	 * `NR_GRAPH_SAMPLES` - which is why the old "keep the oldest" reading was never visible. */
+	int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	if (g->count > n) start = (start + (g->count - n)) % NR_GRAPH_SAMPLES;
 	for (int i = 0; i < n; ++i) out[i] = g->frame_ms[(start + i) % NR_GRAPH_SAMPLES];
 	return n;
 }
@@ -127,7 +133,8 @@ static inline int nr_frame_graph_net(const nr_frame_graph *g, float *out, int ca
 {
 	if (!g || !out || capacity <= 0) return 0;
 	const int n = g->count < capacity ? g->count : capacity;
-	const int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	int start = g->count < NR_GRAPH_SAMPLES ? 0 : g->next;
+	if (g->count > n) start = (start + (g->count - n)) % NR_GRAPH_SAMPLES;
 	for (int i = 0; i < n; ++i) out[i] = g->net_ms[(start + i) % NR_GRAPH_SAMPLES];
 	return n;
 }
@@ -189,9 +196,17 @@ static inline void nr_frame_rates_sample(nr_frame_rates *r, double now, const nr
 	 * between two presents is that frame, whatever else the last second did.
 	 *
 	 * A sample whose total did not move is a repeat of a held frame, not a new one - the panel runs
-	 * every present and so does this, but only a present that the screen counted is a frame. The
-	 * network's time is taken from the mean the rates would report, because the host's counters
-	 * carry a sum, not a per-frame figure. */
+	 * every present and so does this, but only a present that the screen counted is a frame.
+	 *
+	 * **The frame series is per frame; the network series is not.** The host's counters carry a
+	 * SUM of the answers' times, not a per-frame figure, so the only per-point value available is
+	 * `(sum - sum_at_the_last_reading) / (frames - frames_at_the_last_reading)` - a mean over the
+	 * half-second reading window, repeated on every present inside it. The blue line is therefore
+	 * a staircase with half-second steps, not a per-frame measurement, and it is drawn that way
+	 * rather than smoothed to hide it: a step down means the network got cheaper in that half
+	 * second, and the flat run after it means nothing was measured in between. Adding a per-frame
+	 * figure to the wire would be the way to change that; the trailer carries one number per
+	 * frame, but on the CPU path it is the frame's whole round trip, not the network alone. */
 	const int presented_now = counts->presented > r->seen[r->kept - 1].presented;
 	if (presented_now) {
 		const double frame_ms = (r->previous > 0.0 && now > r->previous)

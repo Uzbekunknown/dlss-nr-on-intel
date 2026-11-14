@@ -1270,6 +1270,11 @@ static int save_settings(nr_menu_bridge *b)
         b->preset_saved = b->preset;
         if (!write_pacing(b)) {
             b->preset_saved = was;
+            /* **The settings file is already written and its stamp taken; this Save is still
+             * partial.** Returning 0 tells the caller not to mark the preview confirmed, which is
+             * right - the network did not move even though the knobs did. The alternative, rolling
+             * the stamp back, would make the next update reload the file we just wrote and discard
+             * the preview that is now the only copy of the knobs the user saved. */
             return 0;
         }
         write_profile_pacing(b);
