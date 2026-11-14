@@ -1559,9 +1559,10 @@ def print_gpu_frame(width, height, vk_format, live, metrics, transport):
           f"transport={transport} image prep={metrics['preprocess_ms']:.3f}ms "
           f"compose={metrics['compose_ms']:.3f}ms "
           f"history={('moved' if metrics.get('motion') else 'still') if metrics.get('history') else 'none'}"
-          # A DirectX 12 game's own word that its history started over here (protocol 3). Only
-          # logged: whether it can stand in for the cut test is read from these lines.
-          f"{' game-reset' if metrics.get('game_reset') else ''}",
+          # A DirectX 12 game's own word that its history started over here (protocol 3), and a
+          # history its word kept that the cut test alone would have dropped (cut past the limit).
+          f"{' game-reset' if metrics.get('game_reset') else ''}"
+          f"{' cut-over' if metrics.get('cut_over') else ''}",
           flush=True)
 
 

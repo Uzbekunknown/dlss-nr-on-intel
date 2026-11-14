@@ -34,6 +34,15 @@ off`. The setup window's checkbox "Measure how much NR changes each frame" write
 `NR_CHANGE_METRIC=1` into `dlss-nr\nr-env.txt` (so does the daemon's environment) to collect it;
 the answer and the history are the same bytes either way.
 
+In a DirectX 12 game the history follows the game's own word since 2026-11-15: its upscaler's
+reset (XeSS's `resetHistory`, FSR's `reset`) drops it, and a frame the game did not reset keeps
+the one its motion leads back to, where the daemon's cut test used to decide alone. The test is
+still measured: a frame line ends in `game-reset` where the game started over and in `cut-over`
+where its word kept a history the test would have dropped. In the Hogwarts Legacy recording of
+2026-10-16 the test kept the history unmoved across the game's one reset (cut 0.114 against a
+limit of 0.15) and was never past the limit elsewhere. `NR_DX12_CUT_TEST=1` decides by the test
+alone, as before.
+
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the
 layer and the daemon do too, from an MSVC build (`docs/WINDOWS-PORT.md`). What

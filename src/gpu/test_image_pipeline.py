@@ -168,6 +168,33 @@ class HostChecks(unittest.TestCase):
         pipe.process_device(self.raw,320,192,37,live,motion=8192)   # another extent: rebuilt
         self.assertTrue(follower.closed);self.assertIsNone(pipe.follower)
 
+    def test_a_games_own_word_on_its_resets_decides_the_history(self):
+        """DirectX 12 (protocol 3): the game's reset drops the history, and its word that it did not
+        start over keeps one its motion leads back to past the cut test's limit, which is still
+        measured and said (`cut_over`); None is the cut test alone."""
+        live=settings();pipe=self.pipe
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False)
+        self.assertTrue(pipe.last["history"] and pipe.last["motion"])
+        pipe.stats.cut=.2                               # past the limit, and the game kept its shot
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False)
+        self.assertTrue(pipe.last["history"] and pipe.last["cut_over"])
+        self.assertIs(pipe.compose.calls[-1]["history"],pipe.follower.full)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)        # nobody's word: the test
+        self.assertFalse(pipe.last["history"] or pipe.last["cut_over"])
+        pipe.stats.cut=0.
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False)
+        pipe.follower.share=0                           # known nowhere: dropped, whatever was said
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False)
+        self.assertFalse(pipe.last["history"])
+        pipe.follower.share=1
+        pipe.process_device(self.raw,256,192,37,live,game_reset=False)  # no motion: the test, kept
+        self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
+        pipe.process_device(self.raw,256,192,37,live,game_reset=True)   # the game started over
+        self.assertFalse(pipe.last["history"] or pipe.last["cut_over"])
+        self.assertEqual(pipe.history_frames,1)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=True)
+        self.assertFalse(pipe.last["history"])
+
     def test_no_history_first_frame_then_cut_and_reset(self):
         live=settings()
         self.pipe.process_device(self.raw,256,192,37,live)

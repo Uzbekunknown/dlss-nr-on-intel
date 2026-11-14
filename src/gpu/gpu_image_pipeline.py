@@ -129,7 +129,7 @@ class GPUImagePipeline:
             grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
         return ih,iw,ah,aw
 
-    def process_device(self, raw, width, height, fmt, live, motion=None, output=None):
+    def process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None):
         """Return a device wire-image buffer. Only line maxima and scalar reductions are read.
 
         ``motion``: the device address of each pixel's offset to where its surface was on the
@@ -137,11 +137,17 @@ class GPUImagePipeline:
         NaN where it was not on screen; the history then follows it (`History.follow`).
         ``output``: a buffer of the frame's bytes for the composition to write the answer into,
         which is then what is returned - the transport's shared output, saving its copy. On a
-        refused frame it may hold part of an answer; the transport hands it on only on success."""
+        refused frame it may hold part of an answer; the transport hands it on only on success.
+        ``game_reset``: a DirectX 12 game's own word on this frame (protocol 3), None from a
+        client that says nothing, as every Vulkan one. True: its upscaler started its history
+        over here, and so does this pipeline, whatever the cut test reads. False: it did not, so
+        a history its motion leads back to is the shot before this one and is kept even where the
+        cut test reads past the limit (still measured, and said in the log: `cut_over`). None:
+        the cut test alone decides, as it always did."""
         reason=self.supported(width,height,fmt,live)
         if reason: raise ValueError(reason)
         try:
-            return self._process_device(raw,width,height,fmt,live,motion,output)
+            return self._process_device(raw,width,height,fmt,live,motion,output,game_reset)
         except Exception:
             self.rt.abort()
             self.reset_history()
@@ -152,7 +158,7 @@ class GPUImagePipeline:
             self.follower=GPUImageFollower(self.rt,frame_size=(height,width),crop=crop,inner_size=(ih,iw))
         return self.follower
 
-    def _process_device(self, raw, width, height, fmt, live, motion=None, output=None):
+    def _process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None):
         started=time.perf_counter()
         crop=self.stats.region(raw,width,height,fmt)
         ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
@@ -175,13 +181,19 @@ class GPUImagePipeline:
             cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
         self.rt.submit()
         if follow:
-            # Known nowhere, or a cut even against the last frame moved here: no history.
+            # Known nowhere, or a cut even against the last frame moved here: no history. A game
+            # that said it did not start over keeps it past the limit, though not where its
+            # motion is known nowhere.
             cut=cut_of(live.cut_limit)
-            history=cut is not None and cut<=live.cut_limit
+            history=(not game_reset and cut is not None
+                     and (cut<=live.cut_limit or game_reset is False))
             cut=0.0 if cut is None else cut
         else:
             cut=cut_of(live.cut_limit) if cut_of is not None else 0.0
-            history=live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
+            history=(live.temporal>0 and self.history_frames>0 and cut<=live.cut_limit
+                     and not game_reset)
+        # Where the game's word kept a history the cut test alone would have dropped.
+        cut_over=bool(history and cut>live.cut_limit)
         if not history: self.history_frames=0
         self.rt.begin()
         if history and not follow: self.history_resize.record(self.previous_neural,self.history_inner)
@@ -233,7 +245,8 @@ class GPUImagePipeline:
         self.last={"preprocess_ms":1000*(prepared-started),"network_ms":1000*(ran-prepared),
                    "compose_ms":1000*(composed-ran),"metadata_history_ms":1000*(time.perf_counter()-composed),
                    "network":(self.geometry.network_width,self.geometry.network_height),
-                   "change":change,"cut":cut,"history":history,"motion":follow,"crop":crop}
+                   "change":change,"cut":cut,"history":history,"motion":follow,"crop":crop,
+                   "cut_over":cut_over}
         self.backend.split=(0.0,ran-prepared,0.0)
         return result
 

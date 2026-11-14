@@ -1284,8 +1284,8 @@ static int run_cut_motion(ID3D12Resource *motion)
 	ID3D12Resource_Unmap(readback, 0, NULL);
 	ID3D12Resource_Release(readback);
 	failures += wrong != 0;
-	/* The game's own word that its history starts over: said on that frame alone, which then
-	 * names no motion to follow (nr_gpu_wire.h). */
+	/* The game's own word on its resets, in every frame (2), and that its history starts over (3)
+	 * on that frame alone, which then names no motion to follow (nr_gpu_wire.h). */
 	int said_before = stand.reset;
 	params.resetHistory = 1;
 	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
@@ -1295,8 +1295,8 @@ static int run_cut_motion(ID3D12Resource *motion)
 	params.resetHistory = 0;
 	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
 	if (submit()) return 1;
-	if (said_before || !said || named_at_reset != 0 || stand.reset) {
-		printf("FAIL cut, motion: the reset said %d, %d, %d over three frames (0, 1, 0), and the reset "
+	if (said_before != 2 || said != 3 || named_at_reset != 0 || stand.reset != 2) {
+		printf("FAIL cut, motion: the resets said %d, %d, %d over three frames (2, 3, 2), and the reset "
 		       "frame named %llu\n", said_before, said, stand.reset, (unsigned long long)named_at_reset);
 		failures++;
 	}

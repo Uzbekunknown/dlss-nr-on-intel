@@ -151,10 +151,11 @@ static inline void nr_gpu_d3d12_follow(struct nr_gpu_packet *p, uint64_t previou
     memcpy(p->driver_uuid, &previous, sizeof previous);
 }
 
-/* A FRAME at which the game started its upscaler's history over (nr_gpu_wire.h). */
-static inline void nr_gpu_d3d12_reset(struct nr_gpu_packet *p)
+/* The game's word on its resets, in every FRAME of a client that has it (nr_gpu_wire.h): `reset`
+ * when its upscaler's history started over at this frame. */
+static inline void nr_gpu_d3d12_tell_reset(struct nr_gpu_packet *p, int reset)
 {
-    p->driver_uuid[8] = 1;
+    p->driver_uuid[8] = (uint8_t)(2u | (reset ? 1u : 0u));
 }
 
 /* What the daemon left in a stamp the client copied out of the output: 1 when it names V. */

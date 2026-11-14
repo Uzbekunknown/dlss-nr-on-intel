@@ -165,10 +165,11 @@ class Images:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None, output=None):
+    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None):
         self.events.append(("process", raw.id))
         self.motions.append(motion)
         self.outputs = getattr(self, "outputs", []) + [output]
+        self.words = getattr(self, "words", []) + [game_reset]
         if self.before_process:
             self.before_process()
         if isinstance(self.error, Exception):
@@ -726,20 +727,30 @@ class D3D12ProtocolTests(TransportCase):
             with self.subTest(action=action, value=value, changes=changes), self.assertRaises(ValueError):
                 T.unpack_packet(encoded(d3d12_packet(action, value, **changes)), 1280, 720, 44)
 
-    def test_the_games_reset_is_read_and_only_logged(self):
-        said = bytes(8) + bytes([1]) + bytes(7)
-        p = T.unpack_packet(encoded(d3d12_packet(T.FRAME, 7, driver_uuid=said)), 1280, 720, 44)
-        self.assertTrue(T.reset_at(p))
-        self.assertFalse(T.reset_at(T.unpack_packet(encoded(d3d12_packet(T.FRAME, 7)), 1280, 720, 44)))
-        for action, value, uuid in ((T.HELLO, 0, said), (T.RELEASE, 0, said),
-                                    (T.FRAME, 7, bytes(8) + bytes([2]) + bytes(7))):
-            with self.subTest(action=action, uuid=uuid), self.assertRaises(ValueError):
-                T.unpack_packet(encoded(d3d12_packet(action, value, driver_uuid=uuid)), 1280, 720, 44)
+    def test_the_games_word_on_its_resets_reaches_the_pipeline(self):
+        def word(byte):
+            return bytes(8) + bytes([byte]) + bytes(7)
+        unpack = lambda p: T.unpack_packet(encoded(p), 1280, 720, 44)
+        for byte, tells, reset in ((0, False, False), (2, True, False), (3, True, True)):
+            p = unpack(d3d12_packet(T.FRAME, 7, driver_uuid=word(byte)))
+            self.assertEqual((T.tells_resets(p), T.reset_at(p)), (tells, reset))
+        # A reset from a client that does not tell them, any other bit, or outside a FRAME: refused.
+        for action, value, byte in ((T.FRAME, 7, 1), (T.FRAME, 7, 4), (T.FRAME, 7, 6),
+                                    (T.HELLO, 0, 2), (T.RELEASE, 0, 3)):
+            with self.subTest(action=action, byte=byte), self.assertRaises(ValueError):
+                unpack(d3d12_packet(action, value, driver_uuid=word(byte)))
         self.request(d3d12_packet())
-        _, result = self.request(d3d12_packet(T.FRAME, 5, driver_uuid=said))
+        _, result = self.request(d3d12_packet(T.FRAME, 5, driver_uuid=word(3)))
         self.assertTrue(result["game_reset"])
-        _, result = self.frame(7)
+        self.request(d3d12_packet(T.FRAME, 7, driver_uuid=word(2)))
+        _, result = self.frame(9)
         self.assertFalse(result["game_reset"])
+        self.assertEqual(self.images.words, [True, False, None])
+        # NR_DX12_CUT_TEST=1: the cut test alone, the word still in the log.
+        with patch.object(T, "GAME_RESETS", False):
+            _, result = self.request(d3d12_packet(T.FRAME, 11, driver_uuid=word(3)))
+        self.assertTrue(result["game_reset"])
+        self.assertIsNone(self.images.words[-1])
 
     def test_motion_is_followed_back_to_the_frame_answered_last(self):
         self.request(d3d12_packet(input_alloc=self.MOTION_ALLOC))

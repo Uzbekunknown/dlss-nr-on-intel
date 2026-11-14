@@ -2112,7 +2112,7 @@ static void hand_over(struct handover *h)
 	if (current) {
 		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
 		nr_gpu_d3d12_follow(&packet, h->previous);
-		if (h->reset) nr_gpu_d3d12_reset(&packet);
+		nr_gpu_d3d12_tell_reset(&packet, h->reset);
 	}
 	ReleaseSRWLockShared(&cut.lock);
 	if (!current) {
