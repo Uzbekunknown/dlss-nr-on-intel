@@ -146,6 +146,12 @@ class Profile:
     # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
     # none, so "auto"; a request may name one, for a game with both.
     upscaler: str = "auto"
+    # **Whether the corner window draws the two frame-time graphs.** 1 by default, which is what a
+    # counter in a corner looks best with: the number without the shape behind it says the last
+    # second averaged 14 ms and never says whether it stuttered. The panel always draws them; this
+    # is the corner alone, and it reaches the panel as `menu_graphs` in the settings file rather
+    # than through the environment - see `write_settings` below.
+    menu_graphs: int = 1
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -162,7 +168,7 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler}
+                "upscaler": self.upscaler, "menu_graphs": self.menu_graphs}
 
     @classmethod
     def from_dict(cls, values):
@@ -370,6 +376,42 @@ def reset_settings(root, names=None):
     if unknown:
         raise ValueError("Unknown runtime controls: " + ", ".join(sorted(unknown)))
     return save_settings(root, {name: defaults[name] for name in names})
+
+
+# The panel's own preferences, which are in the settings file but are not runtime knobs: the
+# daemon never reads them, so they do not go through `save_settings` and its knob table. The
+# setup window offers one of them - whether the corner counter draws the frame graphs - because
+# a player setting up a game has no panel open to change it in. The panel writes the same key
+# when the row is used, so the two cannot disagree: one file, one meaning, whoever wrote it last.
+PANEL_PREFERENCES = {"menu_graphs": (0, 1)}
+
+
+def save_panel_preferences(root, changes):
+    """Merge panel preferences into the settings document, leaving every other key as it was.
+
+    Separate from `save_settings` on purpose. That one validates against the knob table and
+    refuses anything it does not know - correctly, because a knob name that is not there is a
+    caller's mistake. These keys are not knobs: `menu_counter` and `menu_graphs` are read by the
+    panel in the game's process, and a daemon never looks at them.
+
+    An unknown key is refused here too, and a value is checked against its range, so a typo in
+    the window fails at the window rather than writing a key nothing reads.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("Panel preferences must be a JSON object")
+    unknown = set(changes) - set(PANEL_PREFERENCES)
+    if unknown:
+        raise ValueError("Unknown panel preferences: " + ", ".join(sorted(unknown)))
+    for name, value in changes.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer")
+        low, high = PANEL_PREFERENCES[name]
+        if not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}")
+    path, values = _settings_document(root)
+    values.update(changes)
+    _atomic_json(path, values)
+    return {"ok": True, "error": None, "path": str(path), "panel": dict(changes)}
 
 
 def load_profile(root):
