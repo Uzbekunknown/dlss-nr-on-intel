@@ -152,6 +152,9 @@ class Profile:
     # is the corner alone, and it reaches the panel as `menu_graphs` in the settings file rather
     # than through the environment - see `write_settings` below.
     menu_graphs: int = 1
+    # Where the frame counter goes: 0 the panel alone, 1-4 the four corners. Written as
+    # `menu_counter` in the settings file, read by the panel like `menu_graphs` above.
+    menu_counter: int = 1
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -168,7 +171,8 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler, "menu_graphs": self.menu_graphs}
+                "upscaler": self.upscaler, "menu_graphs": self.menu_graphs,
+                "menu_counter": self.menu_counter}
 
     @classmethod
     def from_dict(cls, values):
@@ -383,7 +387,7 @@ def reset_settings(root, names=None):
 # setup window offers one of them - whether the corner counter draws the frame graphs - because
 # a player setting up a game has no panel open to change it in. The panel writes the same key
 # when the row is used, so the two cannot disagree: one file, one meaning, whoever wrote it last.
-PANEL_PREFERENCES = {"menu_graphs": (0, 1)}
+PANEL_PREFERENCES = {"menu_graphs": (0, 1), "menu_counter": (0, 4)}
 
 
 def save_panel_preferences(root, changes):

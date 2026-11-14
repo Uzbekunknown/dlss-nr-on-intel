@@ -1603,14 +1603,18 @@ int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
         nr_menu_set_split(b->menu, split);
     }
 
-    if (!nr_menu_is_open(b->menu)) return state;
-
-    /* An edit from outside while the game runs - Notepad, or a tool - is picked up here. The stamp
-     * only moves when somebody else wrote it, so this does not fight our own saves. */
-    long long now = nr_file_stamp(b->settings_path);
-    if (now && now != b->stamp) {
+    /* An edit from outside while the game runs - Notepad, or the setup window - is picked up
+     * whether the panel is open or not: the graphs' corner switch lives here while the panel is
+     * shut, so a change made in setup would not reach the corner until the panel was opened and
+     * closed again. The stamp only moves when somebody else wrote it, so this does not fight our
+     * own saves. The key handling below stays behind the is-open gate. */
+    long long outside = nr_file_stamp(b->settings_path);
+    if (outside && outside != b->stamp) {
         if (load_settings(b)) nr_menu_bridge_refresh(b);
     }
+
+    if (!nr_menu_is_open(b->menu)) return state;
+
 
     int language;
     if (nr_menu_take_language_change(b->menu, &language)) {
