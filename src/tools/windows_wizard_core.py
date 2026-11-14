@@ -50,10 +50,10 @@ DXVK_FILES = ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
 PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
 PROXY_NAME = "vulkan-1.dll"
 ENV_FILE = "nr-env.txt"
-# The variables set_pacing rewrites in ENV_FILE (Profile.nr_async, nr_every, gpu_image_path and
-# preset), and the most presents one network frame may cover in the window.
+# The variables set_pacing rewrites in ENV_FILE (Profile.nr_async, nr_every, gpu_image_path,
+# preset and change_metric), and the most presents one network frame may cover in the window.
 PACING = ("NR_LAYER_LIVE", "NR_LAYER_ASYNC", "NR_GPU_IMAGE", "NR_GPU_TRANSPORT", "NR_GPU_ONLY",
-          "NR_PRESET")
+          "NR_PRESET", "NR_CHANGE_METRIC")
 MAX_EVERY = 4
 # The networks nvngx_dlssnr.dll carries, which NR_PRESET picks (notes/phase72-preset-b.md): A, the
 # original, and B, the faster one, from 310.9.16.0 on. Each one's logical weights, and their count.
@@ -146,6 +146,9 @@ class Profile:
     # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
     # none, so "auto"; a request may name one, for a game with both.
     upscaler: str = "auto"
+    # NR_CHANGE_METRIC: how much NR changed each frame, in the daemon's log, for players' reports.
+    # Off unless asked for (the owner, 2026-11-15): 0.3 ms of a 1280x720 frame, 1-1.5 at 1920x1080.
+    change_metric: bool = False
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -162,7 +165,7 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler}
+                "upscaler": self.upscaler, "change_metric": self.change_metric}
 
     @classmethod
     def from_dict(cls, values):
@@ -190,6 +193,10 @@ class Profile:
         upscaler = values.get("upscaler") or "auto"
         if not isinstance(upscaler, str) or upscaler not in UPSCALERS:
             raise ValueError("upscaler must be one of " + ", ".join(UPSCALERS))
+        # A profile from before the checkbox measured nothing: off.
+        change_metric = values.get("change_metric", False)
+        if not isinstance(change_metric, bool):
+            raise ValueError("change_metric must be a boolean")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -198,7 +205,7 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler)
+                   preset=preset, upscaler=upscaler, change_metric=change_metric)
 
 
 def profile_path(root):
@@ -447,6 +454,8 @@ def layer_environment(profile):
     values["NR_GPU_ONLY"] = "0"
     # The daemon the layer starts inherits it from the game's process.
     values["NR_PRESET"] = profile.preset
+    # Said either way, as the pacing is, so a value the game inherits cannot decide it.
+    values["NR_CHANGE_METRIC"] = "1" if profile.change_metric else "0"
     return values
 
 
@@ -2119,7 +2128,7 @@ def _rewrite_pacing_lines(path, wanted):
     own loader was set aside, `NR_REAL_VULKAN` - the installation, in other words, which a
     regenerated file would have to reconstruct and would get wrong the moment any of them moved.
     `nr_menu_bridge.c:write_pacing` makes the same trade for the same reason and its comment says
-    so. So the six pacing lines are dropped and re-appended from `wanted`, and nothing else is
+    so. So the pacing lines are dropped and re-appended from `wanted`, and nothing else is
     touched - not the comment, not the blank lines, not the order of what is left.
 
     Written through a temporary beside it and `os.replace`d, so a crash mid-write leaves the

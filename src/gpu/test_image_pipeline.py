@@ -368,6 +368,12 @@ class FullModelChecks(unittest.TestCase):
         with patch.object(G,"CHANGE_METRIC",False):
             self.test_exact_wire_and_history_while_forbidding_image_readbacks()
 
+    def test_exact_wire_and_history_with_the_change_metric_on(self):
+        """The same frames with NR_CHANGE_METRIC=1, the setup window's checkbox, which is off by
+        default since 2026-11-15: the copy and its reduction recorded, the same bytes."""
+        with patch.object(G,"CHANGE_METRIC",True):
+            self.test_exact_wire_and_history_while_forbidding_image_readbacks()
+
     def test_exact_wire_and_history_along_motion(self):
         """The D3D12 transport's frames, each with its pixels' offsets to where they were: the
         pipeline's follower against the daemon's `History.follow`, byte for byte, frames that

@@ -825,6 +825,39 @@ class WizardFixture(unittest.TestCase):
         self.assertNotIn("NR_LAYER_TIMING", core.runtime_env(enabled))
         self.assertNotIn("NR_LAYER_TIMING_LOG", core.runtime_env(enabled))
 
+    def test_the_change_metric_is_off_unless_the_checkbox_asks_for_it(self):
+        # Off by default, and a profile from before the checkbox measured nothing either.
+        self.assertFalse(self.profile.change_metric)
+        old = self.profile.to_dict()
+        del old["change_metric"]
+        self.assertEqual(core.Profile.from_dict(old), self.profile)
+        for value in ("1", 1, None, ["yes"]):
+            with self.assertRaises(ValueError, msg=value):
+                core.Profile.from_dict({**old, "change_metric": value})
+        # Said either way, so a value the game inherits cannot turn it on.
+        with patch.dict(os.environ, {"NR_CHANGE_METRIC": "1"}):
+            self.assertEqual(core.runtime_env(self.profile)["NR_CHANGE_METRIC"], "0")
+        measured = replace(self.profile, change_metric=True)
+        self.assertEqual(core.Profile.from_dict(measured.to_dict()), measured)
+        self.assertEqual(core.layer_environment(measured)["NR_CHANGE_METRIC"], "1")
+        # The checkbox reaches an installed game's file, as the pacing does, and back.
+        self.assertTrue(core.install(self.profile)["ok"])
+        path = core.installed_path(self.profile) / core.ENV_FILE
+
+        def values():
+            return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line and not line.startswith("#"))
+
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "0")
+        others = {k: v for k, v in values().items() if k != "NR_CHANGE_METRIC"}
+        self.assertTrue(core.set_pacing(measured)["applied"])
+        self.assertTrue(core.load_profile(self.root).change_metric)
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "1")
+        self.assertEqual({k: v for k, v in values().items() if k != "NR_CHANGE_METRIC"}, others)
+        core.set_pacing(self.profile)
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "0")
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
     def preset_b_weights(self):
         return self.root / core.PRESETS["B"][0]
 

@@ -27,10 +27,12 @@ whole frame at 1280x720 and 9 % at 1920x1080 (`notes/HANDOFF.md`, 2026-11-08 and
 `NR_HISTORY_SWAP=0` brings back the three history copies, to compare.
 
 `change` in the daemon's frame lines, how far the answer moved the game's frame, is a figure for
-the log alone, and on this path the composition writes a float32 copy of itself for it.
-`NR_CHANGE_METRIC=0`, in `dlss-nr\nr-env.txt` or the daemon's environment, leaves both out on
-every path: about 0.7 ms of a 1280x720 frame at render scale 0.4 on Arc 140V, the answer and the
-history the same bytes, and the frame lines read `change off`. It is on by default.
+the log alone, and on this path the composition writes a float32 copy of itself for it. It is off
+by default since 2026-11-15: about 0.3 ms of a 1280x720 frame and 1 to 1.5 ms of a 1920x1080 one
+at render scale 0.4 on Arc 140V, for a number only reports read, and the frame lines read `change
+off`. The setup window's checkbox "Measure how much NR changes each frame" writes
+`NR_CHANGE_METRIC=1` into `dlss-nr\nr-env.txt` (so does the daemon's environment) to collect it;
+the answer and the history are the same bytes either way.
 
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the

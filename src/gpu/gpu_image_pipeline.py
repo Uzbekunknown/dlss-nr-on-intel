@@ -18,10 +18,11 @@ from gpu_image_stats import GPUImageStats
 # `_process_device`); NR_HISTORY_SWAP=0 is the comparison, the three copies as before.
 HISTORY_SWAP = os.environ.get("NR_HISTORY_SWAP", "1") != "0"
 # The change a frame's answer made (`change` in the daemon's frame line): a number for the log,
-# and the composition's float32 copy exists only for it. NR_CHANGE_METRIC=0 records neither
-# (0.2-0.4 ms of a 1280x720 frame, more at 1920x1080), and the line reads `change off`; the
-# answer and the history are the same bytes either way.
-CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
+# and the composition's float32 copy exists only for it. Off by default since 2026-11-15, as in
+# nr_daemon.CHANGE_METRIC: neither is recorded (0.2-0.4 ms of a 1280x720 frame, 1-1.5 at
+# 1920x1080) and the line reads `change off`; NR_CHANGE_METRIC=1 (the setup window's checkbox)
+# records both. The answer and the history are the same bytes either way.
+CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "0") != "0"
 
 
 class GPUImagePipeline:

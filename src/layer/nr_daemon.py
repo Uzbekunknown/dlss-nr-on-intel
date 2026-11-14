@@ -73,9 +73,12 @@ MAGIC_MASKED = 0x314E524E     # the same, with a one-byte-per-pixel interface ma
 MAGIC_MOTION = 0x324E524E
 MAGIC_GPU = 0x3147524E       # control metadata for same-device external GPU resources
 # `change` in a frame's line: how far the answer moved the game's frame, a figure for the log
-# alone. NR_CHANGE_METRIC=0 leaves it out on every path (the GPU image path's float copy of the
-# composition with it, gpu_image_pipeline.CHANGE_METRIC), and the line reads `change off`.
-CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "1") != "0"
+# alone. Off by default since 2026-11-15 (the owner: it costs 0.3 ms of a 1280x720 frame and
+# 1-1.5 ms of a 1920x1080 one, for a number only reports read); NR_CHANGE_METRIC=1, which the
+# setup window's checkbox writes, turns it on for collecting data. Off, every path leaves it out
+# (the GPU image path's float copy of the composition with it, gpu_image_pipeline.CHANGE_METRIC)
+# and the line reads `change off`.
+CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "0") != "0"
 
 
 def change_text(value):
@@ -1771,7 +1774,8 @@ def run_owned(args):
             ("XMX_WEIGHTS_BY_COLUMN", "weights_by_column"))),
           flush=True)
     if not CHANGE_METRIC:
-        print("change metric off (NR_CHANGE_METRIC=0): frame lines read `change off`", flush=True)
+        print("change metric off (NR_CHANGE_METRIC=1 turns it on): frame lines read `change off`",
+              flush=True)
 
     if os.name == "nt":
         # Windows has no AF_UNIX in CPython, so the layer and the daemon meet on a
