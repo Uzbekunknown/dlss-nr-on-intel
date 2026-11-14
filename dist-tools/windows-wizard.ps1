@@ -358,7 +358,7 @@ $script:SettingsStateKey = 'SettingsLoading'
          <TextBlock x:Name="CounterLabel" VerticalAlignment="Center" ToolTip=""/>
          <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
           <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" IsChecked="True" ToolTip=""/>
-          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" IsEnabled="False" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
+          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
          </StackPanel>
         </Grid>
         <TextBlock x:Name="CounterNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
@@ -1237,7 +1237,7 @@ function Apply-Profile($Profile) {
         $script:Ui.ChangeMetric.IsChecked=[bool]$Profile.change_metric
         # A profile from before the graphs ran them, as the corner does by default.
         if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { $script:Ui.GraphsCheck.IsChecked = [int]$Profile.menu_graphs -ne 0 }
-        if($Profile.PSObject.Properties.Name -contains 'menu_counter') { $c=[int]$Profile.menu_counter; $script:Ui.CounterCheck.IsChecked = $c -ne 0; $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0}) }
+        if($Profile.PSObject.Properties.Name -contains 'menu_counter') { $c=[int]$Profile.menu_counter; $script:Ui.CounterCheck.IsChecked = $c -ne 0; $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0}); $script:Ui.CounterCorner.IsEnabled = ($c -ne 0) }
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.

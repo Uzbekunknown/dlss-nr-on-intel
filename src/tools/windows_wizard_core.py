@@ -207,6 +207,15 @@ class Profile:
         change_metric = values.get("change_metric", False)
         if not isinstance(change_metric, bool):
             raise ValueError("change_metric must be a boolean")
+        # The panel's two preferences, which `to_dict` writes and this must read back: a
+        # profile that carried them and came back through a pacing save used to return
+        # with the defaults, so `discover` handed the window a stale counter place.
+        graphs = values.get("menu_graphs", 1)
+        if isinstance(graphs, bool) or not isinstance(graphs, int) or graphs not in (0, 1):
+            raise ValueError("menu_graphs must be 0 or 1")
+        counter = values.get("menu_counter", 1)
+        if isinstance(counter, bool) or not isinstance(counter, int) or not 0 <= counter <= 4:
+            raise ValueError("menu_counter must be a whole number from 0 to 4")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -215,7 +224,8 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler, change_metric=change_metric)
+                   preset=preset, upscaler=upscaler, change_metric=change_metric,
+                   menu_graphs=graphs, menu_counter=counter)
 
 
 def profile_path(root):
