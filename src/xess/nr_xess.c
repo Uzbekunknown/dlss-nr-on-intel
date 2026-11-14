@@ -714,7 +714,10 @@ static int exchange_pipe(const uint8_t *frame, const float *motion, uint8_t *ans
 		}
 	}
 	nr_link_close(&link);
-	InterlockedExchange64(&last_answer_us, (LONG64)us);
+	/* Only on success: a failed exchange leaves the variable as it was, so "zero means the
+	 * daemon said nothing" stays true and a stand-in that never sets it cannot inherit a real
+	 * daemon's time from a frame that failed. */
+	if (!failed) InterlockedExchange64(&last_answer_us, (LONG64)us);
 	return failed ? -1 : 0;
 }
 

@@ -312,12 +312,21 @@ int main(int argc, char **argv)
 			static const int kept[][2] = { {4, 4}, {300, 300}, {640, 360}, {4, 715}, {1275, 715},
 						       {900, 400}, {60, 30} };
 			int all = 1;
+			int bad = 0;
 			for (size_t i = 0; i < sizeof kept / sizeof kept[0]; ++i) {
+				/* Cleared before every sample: a point whose pixel() fails leaves `rgb` as it
+				 * was, and the diagnostic then printed the PREVIOUS point's colour beside this
+				 * point's coordinates - a failure message that points at the wrong place. The
+				 * count is reported too, because `detail` keeps only the last one. */
+				rgb[0] = rgb[1] = rgb[2] = 0u;
 				got = pixel(ppm, size, kept[i][0], kept[i][1], rgb);
 				if (!got || !green(rgb)) {
 					all = 0;
-					snprintf(detail, sizeof detail, "(%u, %u, %u) at %d,%d", rgb[0], rgb[1], rgb[2],
-						 kept[i][0], kept[i][1]);
+					++bad;
+					snprintf(detail, sizeof detail, "(%u, %u, %u)%s at %d,%d%s",
+						 rgb[0], rgb[1], rgb[2], got ? "" : " unreadable",
+						 kept[i][0], kept[i][1],
+						 bad > 1 ? " (later failures not shown)" : "");
 				}
 			}
 			if (all) snprintf(detail, sizeof detail, "%d points the game's", (int)(sizeof kept / sizeof kept[0]));

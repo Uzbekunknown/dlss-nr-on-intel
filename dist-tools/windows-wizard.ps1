@@ -1137,12 +1137,31 @@ function Reset-NrSettings([string[]]$Names=@()) {
     Start-Bridge 'settings-reset' '' $false $resetPayload
 }
 function Save-PanelGraphs {
-    # The panel's own key, saved on its own: `Save-NrSettings` returns early when no KNOB is
-    # pending, and this is not a knob. Same bridge action, a `panel` block instead of `settings`.
-    if($script:Busy) { return }
+    # The panel's own keys, saved on their own: `Save-NrSettings` returns early when no KNOB is
+    # pending, and these are not knobs. Same bridge action, a `panel` block instead of `settings`.
+    #
+    # **Busy means later, not never.** This used to `return` while an action was running, which
+    # threw the edit away silently while the two controls still showed the new value - and the
+    # next edit would then save the newer state, so the window and the game's panel could
+    # disagree for the rest of the session. `Save-NrSettings` already queues into
+    # `PendingSettings` for the same reason; this queues the panel block into its own, and the
+    # queued block is sent when the action ends.
+    $panel=@{}
     $on=0; if($script:Ui.GraphsCheck.IsChecked) { $on=1 }
     $corner=1; if($script:Ui.CounterCheck.IsChecked) { $corner=[int]$script:Ui.CounterCorner.SelectedItem.Tag }
-    Start-Bridge 'settings-save' '' $false @{settings=@{}; panel=@{menu_graphs=$on; menu_counter=$(if($script:Ui.CounterCheck.IsChecked){$corner}else{0})}}
+    $panel['menu_graphs']=$on
+    $panel['menu_counter']=$(if($script:Ui.CounterCheck.IsChecked){$corner}else{0})
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    $script:PendingPanel=$null
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
+}
+function Flush-PendingPanel {
+    # Sent by whatever ends a busy action, once, and only if a panel edit waited through it.
+    if(-not $script:PendingPanel) { return }
+    $panel=$script:PendingPanel
+    $script:PendingPanel=$null
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
 }
 function Restore-SettingsFailure($Job) {
     if($Job -and $Job.Action -in @('settings','settings-save','settings-reset')) { Set-SettingsState 'SettingsFailed' }
@@ -1308,8 +1327,11 @@ function Request-Pacing([string]$Action='pacing') {
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice','GraphsCheck','CounterCheck','CounterCorner')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    # A panel edit made while an action ran waited in PendingPanel; this is where it goes out.
+    if(-not $Busy) { Flush-PendingPanel }
     Update-PacingState $Busy
+    if(-not $Busy) { $script:Ui.CounterCorner.IsEnabled = [bool]$script:Ui.CounterCheck.IsChecked }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
     $script:Ui.Spinner.IsIndeterminate=$Busy

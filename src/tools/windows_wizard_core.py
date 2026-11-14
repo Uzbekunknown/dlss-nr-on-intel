@@ -154,7 +154,13 @@ class Profile:
     menu_graphs: int = 1
     # Where the frame counter goes: 0 the panel alone, 1-4 the four corners. Written as
     # `menu_counter` in the settings file, read by the panel like `menu_graphs` above.
-    menu_counter: int = 1
+    #
+    # **Zero, matching the panel's own default** (`load_settings`: absent means the panel alone,
+    # because "a counter nobody asked for must not appear over a game"). This was 1, which made a
+    # fresh install disagree with itself: the window said "top right corner" while the panel -
+    # which is what actually draws - said panel-only, and the first touch of the window wrote 1
+    # and put a counter over a game nobody had asked to see it over.
+    menu_counter: int = 0
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -234,6 +240,20 @@ def _read_json(path, limit=1024 * 1024):
 
 
 def _atomic_json(path, values):
+    """Replace `path` with `values`, retrying the rename while another process holds it.
+
+    On Windows `Path.replace` is MoveFileEx(REPLACE_EXISTING), which fails with
+    WinError 5 - permission denied, not "busy" - while any other process has the
+    destination open without FILE_SHARE_DELETE. That is the normal state here: the
+    layer's bridge reads the settings file, the daemon polls it, and a person may
+    have it open in an editor. Linux's rename(2) never fails for a reader, which is
+    why this only shows up on Windows.
+
+    Three tries, 50 ms apart: long enough to outlast one daemon poll, short enough
+    that a genuinely held file is reported rather than hung on. The message names
+    the cause, because "WinError 5" beside a settings slider says nothing about the
+    editor the user forgot.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".nr-json-", dir=path.parent)
@@ -241,7 +261,15 @@ def _atomic_json(path, values):
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(values, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
-        Path(temporary).replace(path)
+        for attempt in range(3):
+            try:
+                Path(temporary).replace(path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise PermissionError(
+                        f"{path} is open in another program; close it and try again") from None
+                time.sleep(0.05)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

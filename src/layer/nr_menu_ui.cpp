@@ -279,10 +279,9 @@ static const float kPanelGraphHeight = 30.0f;
  * as a flat line along the bottom: a line at zero says "the network is free", and the truth is
  * "there is nothing to measure here". The column keeps its height so the box does not jump.
  *
- * A gap in the middle of a series is still a gap: ImGui has no break in `PlotLines`, so those
- * points are passed as 0 and read as the floor of the plot. That is the honest reading of a
- * missing sample - cheaper than any frame the network ran - and the alternative, dropping the
- * point, would silently change the time axis. */
+ * A gap in the middle of a series is drawn as a gap, because this plot is drawn by hand (see
+ * `draw_one_graph`): `PlotLines` would clamp -1 to the floor of its box and draw a line along it,
+ * which reads as "the network answered in no time" - the one meaning this graph must never give. */
 /* **One graph: the plot on the left, its name and its band on the right.**
  *
  * The order is deliberate and comes from what the eye does with a settings list. Every row below
@@ -315,16 +314,50 @@ static void draw_one_graph(const char *id, const char *name, const float *series
         ImGui::TextDisabled("%s", axis);
     }
     if (any) {
-        ImGui::PushStyleColor(ImGuiCol_PlotLines, colour);
         /* **The line is smoothed, the axis is not.** `lo`/`hi` came from the raw series above, so
          * a stall is still drawn at its full height; the smoothing only softens the hedge of
          * per-frame jitter into the trend the graph is for. A gap stays a gap through the filter,
-         * which is how the network's missing samples keep their shape. */
+         * which is how the network's missing samples keep their shape.
+         *
+         * **Drawn by hand, because `PlotLines` cannot leave a hole.** It normalises every point
+         * through `ImSaturate`, so a gap - which `nr_frame_graph_smooth` hands back as -1 - is
+         * clamped to the bottom of the plot and drawn as a line along it: the picture then claims
+         * the network answered in zero milliseconds, which is the one reading this graph must
+         * never give. `ImDrawList::AddLine` per run of real samples draws the holes as holes, and
+         * costs about what `PlotLines` did - the same number of segments, without a scratch
+         * buffer and without the value clamp that caused this.
+         *
+         * A single isolated sample has no neighbour to join, so it gets a dot: one frame the
+         * network answered, drawn as one, rather than a point of a line that is not there. */
         float smooth[NR_GRAPH_SAMPLES];
         const int smoothed = nr_frame_graph_smooth(series, count, smooth, NR_GRAPH_SAMPLES);
-        ImGui::PlotLines(id, smoothed > 0 ? smooth : series, smoothed > 0 ? smoothed : count,
-                         0, nullptr, lo, hi, ImVec2(width, height));
-        ImGui::PopStyleColor();
+        const float *plot = smoothed > 0 ? smooth : series;
+        const int plot_count = smoothed > 0 ? smoothed : count;
+
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(id, ImVec2(width, height));
+        ImDrawList *draw = ImGui::GetWindowDrawList();
+        const float span = hi - lo;
+        const float step_x = plot_count > 1 ? width / (float)(plot_count - 1) : 0.0f;
+        const float px_per_value = span > 0.0f ? height / span : 0.0f;
+        bool have_prev = false;
+        ImVec2 prev(0.0f, 0.0f);
+        for (int i = 0; i < plot_count; ++i) {
+            if (plot[i] < 0.0f) { have_prev = false; continue; }
+            float v = plot[i];
+            if (v < lo) v = lo;
+            if (v > hi) v = hi;
+            const ImVec2 at(origin.x + step_x * (float)i,
+                            origin.y + height - (v - lo) * px_per_value);
+            if (have_prev) {
+                draw->AddLine(prev, at, colour, 1.0f);
+            } else {
+                draw->AddRectFilled(ImVec2(at.x - 1.0f, at.y - 1.0f),
+                                    ImVec2(at.x + 1.0f, at.y + 1.0f), colour);
+            }
+            prev = at;
+            have_prev = true;
+        }
     } else {
         /* An empty box of the same size, with a line of text in it: the row keeps its place and
          * says why it is empty rather than pretending to be a graph. */

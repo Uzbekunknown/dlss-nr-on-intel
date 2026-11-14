@@ -225,6 +225,12 @@ struct nr_menu_bridge {
     int preview_confirmed;
     int dirty;
     long long stamp;
+    /* When the settings file was last polled, in `nr_when_ms`'s clock. The poll is a
+     * GetFileAttributesEx, and it used to run once a frame while the panel was OPEN -
+     * which was free enough. It runs with the panel SHUT too now, because the corner's
+     * graphs switch lives here, so it is throttled to a second: an edit from setup does
+     * not need a 16 ms answer, and a 60 Hz game should not pay a syscall a frame for it. */
+    unsigned long long polled_ms;
     /* Whether the settings file says the effect is on. The CHECKBOX is a view of the
      * layer's trigger - the layer passes the live state in every frame - but Save has to
      * remember the choice for the next launch, and this is where it goes while the panel is
@@ -648,8 +654,15 @@ static int write_profile_pacing(const nr_menu_bridge *b)
 
     /* One key per line in the file, so each is replaced where it stands and everything else is
      * copied through untouched. A key that is absent is appended before the closing brace. */
-    static const char *const keys[4] = {"nr_async", "nr_every", "gpu_image_path", "preset"};
-    char values[4][16];
+    /* **The panel's two preferences travel with the pacing ones.** The setup window's
+     * `Apply-Profile` is the only place it learns these, and it reads
+     * `windows-profile.json` - so a Save in the game's panel that did not write them here left
+     * the window showing its previous value, and the next tick of either control wrote that old
+     * value back over the newer one. The window's `settings-save` path does not go through
+     * `Merge-PacingFromProfile`, so wiring them there alone was not enough. */
+    static const char *const keys[6] = {"nr_async", "nr_every", "gpu_image_path", "preset",
+                                        "menu_graphs", "menu_counter"};
+    char values[6][16];
     snprintf(values[0], sizeof values[0], "%s", b->pacing_async ? "true" : "false");
     snprintf(values[1], sizeof values[1], "%d", b->pacing_every);
     snprintf(values[2], sizeof values[2], "%s", b->pacing_gpu_image ? "true" : "false");
@@ -659,6 +672,10 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * `NR_PRESET` from it. So it is the SAVED letter, the one `nr-env.txt` carries: the previewed
      * one here would make an unsaved switch the window's choice. */
     snprintf(values[3], sizeof values[3], "\"%s\"", b->preset_saved ? "B" : "A");
+    /* The SAVED panel preferences, like `preset` above: an unsaved tick of the graphs switch is
+     * a preview, and the window should go on showing what the file says. */
+    snprintf(values[4], sizeof values[4], "%d", b->graphs_saved ? 1 : 0);
+    snprintf(values[5], sizeof values[5], "%d", b->counter_saved);
 
     char out[16384];
     size_t used = 0;
@@ -669,7 +686,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         while (*end && *end != '\n' && *end != '\r') ++end;
         size_t len = (size_t)(end - at);
         int replaced = 0;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             /* `  "nr_every": 4,` - the quote is what distinguishes the key from a value. */
             char quoted[32];
             int n = snprintf(quoted, sizeof quoted, "\"%s\"", keys[i]);
@@ -728,7 +745,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         char added[512];
         size_t n = 0;
         int first = 1;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             if (seen & (1 << i)) continue;
             int step = snprintf(added + n, sizeof added - n, "%s  \"%s\": %s",
                                 first ? "" : ",\n", keys[i], values[i]);
@@ -806,9 +823,17 @@ static int load_settings(nr_menu_bridge *b)
 
     /* A file that is not there is not an error: the menu then shows the defaults and writes
      * nothing until the user moves something. Creating the file on open would be a menu that
-     * changed the daemon's behaviour by being looked at. */
+     * changed the daemon's behaviour by being looked at.
+     *
+     * **This branch returns 0, and it has already reset the values.** That is right at startup,
+     * where the caller's rows are built from whatever this left behind. It is also why the
+     * outside-edit path only calls this while the panel is OPEN: a mid-session unlink that landed
+     * here would reset every knob's value while the rows still showed the old text, and the next
+     * Save would write the defaults. Straight after a reload the row text is rebuilt
+     * (`nr_menu_bridge_refresh`), so an open panel tells the truth either way. */
     char *text = NULL;
     size_t size = 0;
+    const long long read_stamp = nr_file_stamp(b->settings_path);   /* before the bytes: see below */
     if (!nr_read_file(b->settings_path, &text, &size)) {
         b->stamp = 0;
         /* No file says nothing about the counter either: it is in the panel, the default. */
@@ -897,7 +922,14 @@ static int load_settings(nr_menu_bridge *b)
         }
     }
 
-    b->stamp = nr_file_stamp(b->settings_path);
+    b->stamp = read_stamp;
+    /* **The stamp is taken BEFORE the bytes, not after.** The other order records the stamp of a
+     * file that a concurrent writer may have replaced in the window between the `fopen` and the
+     * `GetFileAttributesEx` - so that write is counted as "already seen" and never picked up
+     * until somebody writes again. The daemon's settings poll has the same rule for the same
+     * reason (`nr_daemon`, `os.stat` before `open`).
+     *
+     * The stamp was taken at the top of this function, before the read. */
     free(text);
     return 1;
 }
@@ -1555,6 +1587,47 @@ static int step_row(nr_menu_bridge *b, int row, int direction)
     return 1;
 }
 
+/* Milliseconds on a monotonic clock, for the settings poll's throttle. Monotonic, not wall:
+ * a clock that steps (DST, an NTP correction) must not make the next poll wait an hour. */
+static unsigned long long poll_clock_ms(void)
+{
+#ifdef _WIN32
+    return (unsigned long long)GetTickCount64();
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (unsigned long long)ts.tv_sec * 1000ull + (unsigned long long)(ts.tv_nsec / 1000000);
+#endif
+}
+
+/* The two settings the corner reads while the panel is shut: its place and whether the graphs
+ * are drawn there. Read straight out of the settings file, so an edit from the setup window
+ * reaches the corner without reloading - and without discarding - anything the panel is holding.
+ *
+ * A file that will not parse, or one without the keys, leaves both as they are rather than
+ * resetting them to defaults: an outside write we cannot read is not an instruction to reset. */
+static void reload_corner_settings(nr_menu_bridge *b)
+{
+    char *text = NULL;
+    size_t size = 0;
+    if (!nr_read_file(b->settings_path, &text, &size)) return;
+    nr_settings settings;
+    if (nr_settings_parse(text, &settings)) {
+        int counter_at = nr_settings_find(&settings, "menu_counter");
+        if (counter_at >= 0) {
+            int where = atoi(settings.value[counter_at]);
+            if (where >= 0 && where < NR_COUNTER_PLACES) b->counter = where;
+        }
+        int graphs_at = nr_settings_find(&settings, "menu_graphs");
+        if (graphs_at >= 0) {
+            char *end = NULL;
+            long parsed = strtol(settings.value[graphs_at], &end, 10);
+            if (end != settings.value[graphs_at] && *end == '\0') b->graphs = parsed ? 1 : 0;
+        }
+    }
+    free(text);
+}
+
 int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
 {
     if (!b) return 0;
@@ -1603,14 +1676,40 @@ int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
         nr_menu_set_split(b->menu, split);
     }
 
-    /* An edit from outside while the game runs - Notepad, or the setup window - is picked up
-     * whether the panel is open or not: the graphs' corner switch lives here while the panel is
-     * shut, so a change made in setup would not reach the corner until the panel was opened and
-     * closed again. The stamp only moves when somebody else wrote it, so this does not fight our
-     * own saves. The key handling below stays behind the is-open gate. */
-    long long outside = nr_file_stamp(b->settings_path);
-    if (outside && outside != b->stamp) {
-        if (load_settings(b)) nr_menu_bridge_refresh(b);
+    /* **An edit from outside while the game runs, picked up two different ways.**
+     *
+     * The corner's counter place and its graphs switch live here, and the setup window writes
+     * them while the panel is SHUT. They are two integers in a file, so they are read directly
+     * and nothing else is touched.
+     *
+     * The panel's own state is a different question, and the first version of this got it wrong:
+     * it called `load_settings` for both cases, which reloads every knob, clears `moved[]` and
+     * leaves `preview_confirmed` set - so a write from setup, with the panel shut, silently threw
+     * away the unsaved edits the "closing keeps them" rule (see the close handling below) exists
+     * to keep. The panel then showed the file's old values while the picture still ran the
+     * unsaved preview, and the next Save committed the old values. For the two corner settings a
+     * direct read is both sufficient and honest; the knobs are only reloaded while the panel is
+     * OPEN, where a reload is what the stamp has always meant.
+     *
+     * **A second apart, not a frame**, for the shut-panel case: this used to run every frame and
+     * was affordable only because the panel's own drawing dwarfed one GetFileAttributesEx. A
+     * 60 Hz game paying a syscall a frame for a setting nobody changes more than once a second
+     * never shows up in a profile and is wrong all the same. An open panel keeps the old
+     * immediacy - the row is on screen and must follow the file.
+     */
+    const int open = nr_menu_is_open(b->menu);
+    const unsigned long long now_ms = poll_clock_ms();
+    if (open || !b->polled_ms || now_ms - b->polled_ms >= 1000u) {
+        b->polled_ms = now_ms;
+        long long outside = nr_file_stamp(b->settings_path);
+        if (outside && outside != b->stamp) {
+            b->stamp = outside;
+            if (open) {
+                if (load_settings(b)) nr_menu_bridge_refresh(b);
+            } else {
+                reload_corner_settings(b);
+            }
+        }
     }
 
     if (!nr_menu_is_open(b->menu)) return state;
