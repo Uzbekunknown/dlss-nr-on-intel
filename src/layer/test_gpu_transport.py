@@ -165,7 +165,7 @@ class Images:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None):
+    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None, motion_session=False):
         self.events.append(("process", raw.id))
         self.motions.append(motion)
         self.outputs = getattr(self, "outputs", []) + [output]

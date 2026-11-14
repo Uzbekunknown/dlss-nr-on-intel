@@ -47,7 +47,7 @@ class Frame:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None):
+    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None, motion_session=False):
         return raw   # not the output, so the transport copies it there
 
     def reset_history(self):

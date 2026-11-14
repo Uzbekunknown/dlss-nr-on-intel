@@ -22,6 +22,7 @@ import xmxres
 
 SDR_FORMATS = {37: False, 43: False, 44: True, 50: True}
 BGRA, HISTORY, PREVIOUS, KEEP, GRADE, COMPOSED, MOVED = 1, 2, 4, 8, 16, 32, 64
+PREVIOUS_RAW = 512
 
 
 class _Push(ctypes.Structure):
@@ -149,7 +150,7 @@ class GPUImageComposer:
             raise ValueError(f"{name} buffer is missing, freed or too small")
 
     def record(self, raw, head, *, history=None, previous=None, target=None, composed=True,
-               moved=None):
+               moved=None, previous_raw=False):
         """Record one dispatch; buffers/commands must outlive submit completion.
 
         `target`: where the encoded frame goes, every pixel of it, instead of this composer's
@@ -161,14 +162,21 @@ class GPUImageComposer:
         network's last output and the game's last frame where they were: each is read along
         the motion here, as GPUImageFollower's active-extent pass reads them into `full` and
         `pixels`, the same bits without those two images written and read back (MOVED). The
-        motion is two float32 a pixel at the frame's extent."""
+        motion is two float32 a pixel at the frame's extent.
+        `previous_raw`: `previous` is the game's last frame as the bytes it came in, at the
+        frame's extent, as `raw` is, decoded here exactly as the decode pass would (PREVIOUS_RAW);
+        not with `moved`, whose reads of it are five-tap ones."""
         if self._closed:
             raise RuntimeError("GPUImageComposer is closed")
         self._check_buffer(raw, self.frame_width * self.frame_height * 4, "raw")
         self._check_buffer(head, self.head_height * self.head_row_width * self.head_channels * 4, "head")
-        for name, buf in (("history", history), ("previous", previous)):
+        if previous_raw and (previous is None or moved is not None):
+            raise ValueError("the last frame's bytes are read where it is, beside a history")
+        for name, buf, nbytes in (("history", history, self.width * self.height * 3 * 4),
+                                  ("previous", previous, self.frame_width * self.frame_height * 4
+                                   if previous_raw else self.width * self.height * 3 * 4)):
             if buf is not None:
-                self._check_buffer(buf, self.width * self.height * 3 * 4, name)
+                self._check_buffer(buf, nbytes, name)
         if previous is not None and history is None:
             raise ValueError("previous game pixels require temporal history")
         if moved is not None:
@@ -190,7 +198,7 @@ class GPUImageComposer:
         flags = ((BGRA if self.bgra else 0) | (HISTORY if history is not None else 0)
                  | (PREVIOUS if previous is not None else 0) | (KEEP if self.keep_neural else 0)
                  | (GRADE if self.has_grade else 0) | (COMPOSED if composed else 0)
-                 | (MOVED if moved is not None else 0))
+                 | (MOVED if moved is not None else 0) | (PREVIOUS_RAW if previous_raw else 0))
         operands = (raw, head, history, previous, encoded, self.neural,
                     self.composed if composed else None, self.settings)
         push = _Push()

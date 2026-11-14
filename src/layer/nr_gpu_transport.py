@@ -485,7 +485,8 @@ class GPUSharedTransport:
             # The game's own word on its resets, where its client gives it (GAME_RESETS).
             word = reset_at(p) if GAME_RESETS and tells_resets(p) else None
             result = self.images.process_device(context.input, width, height, fmt, live, motion=motion,
-                                                output=_direct(context, p, width, height), game_reset=word)
+                                                output=_direct(context, p, width, height), game_reset=word,
+                                                motion_session=bool(context.motion))
             _copy_unless_direct(self.backend.runtime, result, context, p)
             stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
             if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,

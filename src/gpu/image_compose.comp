@@ -26,7 +26,10 @@ layout(push_constant, scalar) uniform Push {
  * (with HISTORY and PREVIOUS): c and d are the network's last output and the game's last
  * frame where they were, and each is read along the client's motion here, as the follower's
  * active-extent pass did (image_history.comp, mode 0) and its two full-resolution images were
- * read back: the motion's address in p[12] and p[13], STALE's float bits in p[11]. */
+ * read back: the motion's address in p[12] and p[13], STALE's float bits in p[11].
+ * PREVIOUS_RAW=512 (with PREVIOUS, without MOVED): d is the game's last frame as the bytes it
+ * came in, at the frame's extent, decoded here through the same table as this frame's `rgb`,
+ * the decode pass's values exactly, where a float32 copy of it was kept for this read. */
 float unit(float v) { return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v; }
 /* Intel's native FDiv is approximate. One residual correction recovers the
  * correctly-rounded scalar division used by the CPU colour grade. Explicit fma
@@ -159,7 +162,12 @@ void main() {
         } else {
             FloatBuf history = FloatBuf(pc.c);
             held = vec3(history.v[3u * pixel], history.v[3u * pixel + 1u], history.v[3u * pixel + 2u]);
-            if ((flags & 4u) != 0u) {
+            if ((flags & 512u) != 0u) {
+                uint before = UintBuf(pc.d).v[index];
+                earlier = vec3(settings.v[16u + ((before >> (bgra ? 16u : 0u)) & 255u)],
+                               settings.v[16u + ((before >> 8u) & 255u)],
+                               settings.v[16u + ((before >> (bgra ? 0u : 16u)) & 255u)]);
+            } else if ((flags & 4u) != 0u) {
                 FloatBuf previous = FloatBuf(pc.d);
                 earlier = vec3(previous.v[3u * pixel], previous.v[3u * pixel + 1u], previous.v[3u * pixel + 2u]);
             }

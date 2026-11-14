@@ -28,6 +28,12 @@ CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "0") != "0"
 # pass wrote both as full-resolution float32 images for it to read back: the same bytes, two
 # images fewer written and read a frame. NR_FOLLOW_IN_COMPOSE=0 runs the pass, to compare.
 FOLLOW_IN_COMPOSE = os.environ.get("NR_FOLLOW_IN_COMPOSE", "1") != "0"
+# A session no motion comes in (every Vulkan game's): the composition reads the game's last frame
+# as the bytes it came in (a copy of them, four bytes a pixel), decoded as the decode pass does,
+# where that pass wrote a float32 copy of it, twelve bytes a pixel, for this one read; the same
+# values. With motion its reads are the history's five-tap ones, and it stays float32.
+# NR_RAW_PREVIOUS=0 keeps the float32 copy everywhere.
+RAW_PREVIOUS = os.environ.get("NR_RAW_PREVIOUS", "1") != "0"
 
 
 class GPUImagePipeline:
@@ -38,6 +44,7 @@ class GPUImagePipeline:
         self.key = None
         self.history_key = None
         self.history_frames = 0
+        self._raw_mode = False      # set by process_device for each frame (RAW_PREVIOUS)
         self.buffers = []
         self.prep = self.compose = None
         self.follower = None   # made at the first frame with motion
@@ -111,6 +118,7 @@ class GPUImagePipeline:
             self.previous_inner=self._buffer(ih*iw*3)
             self.previous_active=self._buffer(ah*aw*3)
             self.previous_neural=self._buffer(ah*aw*3)
+            self.previous_raw=self._buffer(width*height,np.uint32)
             self.history_inner=self._buffer(ih*iw*3)
             self.decode=GPUImageResampler(self.rt,(height,width),(ah,aw),crop=crop,vk_format=fmt)
             self.inner_decode=GPUImageResampler(self.rt,(height,width),(ih,iw),crop=crop,vk_format=fmt)
@@ -124,7 +132,8 @@ class GPUImagePipeline:
             self.buffers.append(self.compose.neural)
             self.key=key
         self.geometry=geometry
-        hkey=(width,height,fmt,crop,live.profile,ih,iw)
+        # The last frame kept as bytes or as float32 (RAW_PREVIOUS): a change starts over.
+        hkey=(width,height,fmt,crop,live.profile,ih,iw,self._raw_mode)
         if hkey!=self.history_key:
             self.history_frames=0
             self.history_key=hkey
@@ -134,7 +143,8 @@ class GPUImagePipeline:
             grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
         return ih,iw,ah,aw
 
-    def process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None):
+    def process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None,
+                       motion_session=False):
         """Return a device wire-image buffer. Only line maxima and scalar reductions are read.
 
         ``motion``: the device address of each pixel's offset to where its surface was on the
@@ -148,9 +158,14 @@ class GPUImagePipeline:
         over here, and so does this pipeline, whatever the cut test reads. False: it did not, so
         a history its motion leads back to is the shot before this one and is kept even where the
         cut test reads past the limit (still measured, and said in the log: `cut_over`). None:
-        the cut test alone decides, as it always did."""
+        the cut test alone decides, as it always did.
+        ``motion_session``: the client may hand motion (a DirectX 12 session with room for it),
+        so the game's last frame is kept as float32 for the history's reads along it."""
         reason=self.supported(width,height,fmt,live)
         if reason: raise ValueError(reason)
+        # Motion in a session that said none: float32 from here, the history starting over
+        # (the history's key changes), rather than a follow reading a last frame never decoded.
+        self._raw_mode=RAW_PREVIOUS and not motion_session and motion is None
         try:
             return self._process_device(raw,width,height,fmt,live,motion,output,game_reset)
         except Exception:
@@ -173,8 +188,10 @@ class GPUImagePipeline:
         # test, or with motion the follower and its cut test's two reductions. They ran as
         # separate submits in this order, and each image pass is still recorded behind a barrier
         # (`xmx_rec_image_pipeline`).
+        raw_mode=self._raw_mode
         self.rt.begin()
-        self.decode.record(raw,self.active)
+        # Without motion only the change metric reads the frame as float32 at its full extent.
+        if not raw_mode or self.change_metric: self.decode.record(raw,self.active)
         self.inner_decode.record(raw,self.inner)
         cut_of=None
         if follow:
@@ -227,8 +244,12 @@ class GPUImagePipeline:
                                        target=output,composed=self.change_metric)
         else:
             result=self.compose.record(raw,head,history=self.previous_neural if history else None,
-                                       previous=self.previous_active if history else None,
-                                       target=output,composed=self.change_metric)
+                                       previous=(self.previous_raw if raw_mode else self.previous_active)
+                                       if history else None,
+                                       target=output,composed=self.change_metric,
+                                       previous_raw=raw_mode and history)
+        # The frame's bytes, for the next frame's composition: after this one has read the last.
+        if raw_mode and live.temporal>0: self.rt.copy(raw,self.previous_raw,width*height*4)
         change_of=(self.stats.record_delta(self.compose.composed,self.active,aw,ah,slot="change")
                    if self.change_metric else None)
         self.rt.submit()
