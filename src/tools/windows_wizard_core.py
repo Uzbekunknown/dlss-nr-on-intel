@@ -168,8 +168,7 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler}
-                "menu_graphs": self.menu_graphs}
+                "upscaler": self.upscaler, "menu_graphs": self.menu_graphs}
 
     @classmethod
     def from_dict(cls, values):
