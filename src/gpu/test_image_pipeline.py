@@ -67,8 +67,9 @@ class FakeFollower:
         top,bottom,left,right=crop;ih,iw=inner_size
         self.full=rt.buffer((bottom-top)*(right-left)*3);self.pixels=rt.buffer((bottom-top)*(right-left)*3)
         self.resampled=rt.buffer(ih*iw*3);self.inner=rt.buffer(ih*iw*3)
-        self.motions=[];self.share=1.;self.closed=False
-    def record(self,motion,**kwargs): self.motions.append(motion)
+        self.motions=[];self.share=1.;self.closed=False;self.active_passes=[]
+    def record(self,motion,active_pass=True,**kwargs):
+        self.motions.append(motion);self.active_passes.append(active_pass)
     def cut(self,stats,inner,limit): raise AssertionError("the pipeline records the cut test's reductions")
     def record_cut(self,stats,inner): return lambda limit: None if self.share==0 else stats.cut
     def close(self): self.closed=True
@@ -136,6 +137,26 @@ class HostChecks(unittest.TestCase):
                 nr_daemon.process_connection(Connection(frame),None,args)
         self.assertEqual(args.image_transport,"cpu")
 
+    def test_the_composition_reads_along_the_motion_itself(self):
+        """NR_FOLLOW_IN_COMPOSE (the default): the follower leaves its active-extent pass out and
+        the composition reads the network's last output and the game's last frame along the
+        motion, with STALE; the network's history is still the follower's."""
+        live=settings();pipe=self.pipe
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        follower=pipe.follower
+        self.assertFalse(follower.active_passes[-1])
+        self.assertIs(pipe.prep.calls[-1]["history"],follower.inner)
+        call=pipe.compose.calls[-1]
+        self.assertEqual(call["moved"],(8192,G.STALE))
+        # the two read are this frame's previous ones, which then traded places with its own
+        self.assertIs(call["history"],pipe.compose.neural);self.assertIs(call["previous"],pipe.active)
+        with patch.object(G,"FOLLOW_IN_COMPOSE",False):
+            pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        self.assertTrue(follower.active_passes[-1])
+        self.assertIs(pipe.compose.calls[-1]["history"],follower.full)
+        self.assertNotIn("moved",pipe.compose.calls[-1])
+
+    @patch.object(G,"FOLLOW_IN_COMPOSE",False)
     def test_motion_is_followed_only_onto_a_history(self):
         live=settings();pipe=self.pipe
         pipe.process_device(self.raw,256,192,37,live,motion=8192)
@@ -178,7 +199,7 @@ class HostChecks(unittest.TestCase):
         pipe.stats.cut=.2                               # past the limit, and the game kept its shot
         pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False)
         self.assertTrue(pipe.last["history"] and pipe.last["cut_over"])
-        self.assertIs(pipe.compose.calls[-1]["history"],pipe.follower.full)
+        self.assertEqual(pipe.compose.calls[-1]["moved"],(8192,G.STALE))
         pipe.process_device(self.raw,256,192,37,live,motion=8192)        # nobody's word: the test
         self.assertFalse(pipe.last["history"] or pipe.last["cut_over"])
         pipe.stats.cut=0.
@@ -400,6 +421,13 @@ class FullModelChecks(unittest.TestCase):
         default since 2026-11-15: the copy and its reduction recorded, the same bytes."""
         with patch.object(G,"CHANGE_METRIC",True):
             self.test_exact_wire_and_history_while_forbidding_image_readbacks()
+
+    def test_exact_wire_and_history_along_motion_with_the_follow_pass(self):
+        """The motion frames with NR_FOLLOW_IN_COMPOSE=0: the follower's active-extent pass
+        writes the two images the composition reads; byte for byte the same as reading them
+        along the motion in the composition, which the default test runs."""
+        with patch.object(G,"FOLLOW_IN_COMPOSE",False):
+            self.test_exact_wire_and_history_along_motion()
 
     def test_exact_wire_and_history_along_motion(self):
         """The D3D12 transport's frames, each with its pixels' offsets to where they were: the

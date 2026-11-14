@@ -131,7 +131,18 @@ class DeviceChecks(unittest.TestCase):
                 cut_of = follower.record_cut(stats, buffers[5])
                 rt.submit()
                 self.assertEqual(cut_of(10.0), cut)
-                checks += 2
+                # The active-extent pass left out, as the composition then reads along the
+                # motion itself: `known` there is made on demand, where the motion is known
+                # nowhere the network reads (the lone column), and the cut is the same.
+                follower.known.zero()
+                rt.begin()
+                follower.record(buffers[0].address, neural=buffers[1], previous=buffers[2],
+                                active=buffers[3], previous_inner=buffers[4], inner=buffers[5],
+                                active_pass=False)
+                cut_of = follower.record_cut(stats, buffers[5])
+                rt.submit()
+                self.assertEqual(cut_of(10.0), cut)
+                checks += 3
                 for buffer in buffers:
                     buffer.free()
                 follower.close()
@@ -155,6 +166,12 @@ class DeviceChecks(unittest.TestCase):
         cut_of = follower.record_cut(stats, image)
         rt.submit()
         self.assertIsNone(follower.cut(stats, image, .15))
+        self.assertIsNone(cut_of(.15))
+        rt.begin()
+        follower.record(motion.address, neural=image, previous=image, active=image,
+                        previous_inner=image, inner=image, active_pass=False)
+        cut_of = follower.record_cut(stats, image)
+        rt.submit()
         self.assertIsNone(cut_of(.15))
         for buffer in (motion, image):
             buffer.free()

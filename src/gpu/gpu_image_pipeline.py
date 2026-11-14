@@ -11,7 +11,7 @@ import xmxres as X
 import nr_frame
 from gpu_image_preprocess import GPUImagePreprocessor, GPUImageResampler
 from gpu_image_compose import GPUImageComposer, fallback_reason
-from gpu_image_history import GPUImageFollower
+from gpu_image_history import GPUImageFollower, STALE
 from gpu_image_stats import GPUImageStats
 
 # The history's buffers trade places at the end of a frame instead of being copied (see
@@ -23,6 +23,11 @@ HISTORY_SWAP = os.environ.get("NR_HISTORY_SWAP", "1") != "0"
 # 1920x1080) and the line reads `change off`; NR_CHANGE_METRIC=1 (the setup window's checkbox)
 # records both. The answer and the history are the same bytes either way.
 CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "0") != "0"
+# With motion, the composition reads the network's last output and the game's last frame along it
+# itself (GPUImageComposer.record's `moved`) since 2026-11-15, where the follower's active-extent
+# pass wrote both as full-resolution float32 images for it to read back: the same bytes, two
+# images fewer written and read a frame. NR_FOLLOW_IN_COMPOSE=0 runs the pass, to compare.
+FOLLOW_IN_COMPOSE = os.environ.get("NR_FOLLOW_IN_COMPOSE", "1") != "0"
 
 
 class GPUImagePipeline:
@@ -175,7 +180,8 @@ class GPUImagePipeline:
         if follow:
             self.history_resize.record(self.previous_neural,follower.resampled)
             follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
-                            active=self.active,previous_inner=self.previous_inner,inner=self.inner)
+                            active=self.active,previous_inner=self.previous_inner,inner=self.inner,
+                            active_pass=not FOLLOW_IN_COMPOSE)
             cut_of=follower.record_cut(self.stats,self.inner)
         elif self.history_frames:
             cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
@@ -211,7 +217,12 @@ class GPUImagePipeline:
         self.rt.begin()
         nonfinite_of=self.stats.record_nonfinite(head,self.geometry.network_width,
             self.geometry.network_height,4 if self.rt.compact_head else 16,slot="head")
-        if history and follow:
+        if history and follow and FOLLOW_IN_COMPOSE:
+            # The follower's active-extent pass in the composition: the two images it read,
+            # read here along the same motion (`moved`).
+            result=self.compose.record(raw,head,history=self.previous_neural,previous=self.previous_active,
+                                       moved=(motion,STALE),target=output,composed=self.change_metric)
+        elif history and follow:
             result=self.compose.record(raw,head,history=self.follower.full,previous=self.follower.pixels,
                                        target=output,composed=self.change_metric)
         else:

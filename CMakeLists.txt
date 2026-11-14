@@ -70,7 +70,7 @@ endfunction()
 # fails the tests if the two lists part. Every shader depends on every shared GLSL
 # include: a superset, so an edit to one rebuilds a few shaders too many, never too few.
 set(NR_SPV)
-set(NR_GLSL_INCLUDES publish specialize residual_epilogue cosine_tree qkv_epilogue)
+set(NR_GLSL_INCLUDES publish specialize residual_epilogue cosine_tree qkv_epilogue history_sample)
 list(TRANSFORM NR_GLSL_INCLUDES PREPEND "${PROJECT_SOURCE_DIR}/src/gpu/")
 list(TRANSFORM NR_GLSL_INCLUDES APPEND ".glsl")
 function(nr_shader output source)

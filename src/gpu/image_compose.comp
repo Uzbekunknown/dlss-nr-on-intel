@@ -7,6 +7,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_GOOGLE_include_directive : require
 layout(local_size_x = 256) in;
 layout(buffer_reference, scalar, buffer_reference_align = 4) buffer FloatBuf { float v[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintBuf { uint v[]; };
@@ -21,7 +22,11 @@ layout(push_constant, scalar) uniform Push {
  * x ratio,y ratio (FP32), then padding through element 15, byte decode LUT256,
  * then the 65536-entry
  * exact NumPy gate table. Flags: BGRA=1 HISTORY=2 PREVIOUS=4 KEEP=8 GRADE=16 COMPOSED=32,
- * the last the float32 composition into g, which only the change metric reads. */
+ * the last the float32 composition into g, which only the change metric reads. MOVED=64
+ * (with HISTORY and PREVIOUS): c and d are the network's last output and the game's last
+ * frame where they were, and each is read along the client's motion here, as the follower's
+ * active-extent pass did (image_history.comp, mode 0) and its two full-resolution images were
+ * read back: the motion's address in p[12] and p[13], STALE's float bits in p[11]. */
 float unit(float v) { return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v; }
 /* Intel's native FDiv is approximate. One residual correction recovers the
  * correctly-rounded scalar division used by the CPU colour grade. Explicit fma
@@ -32,6 +37,7 @@ float divide(float a, float b) {
     precise float refined = q + error / b;
     return refined;
 }
+#include "history_sample.glsl"
 float half_round(float v) { return float(float16_t(v)); }
 float trunc_half(float v) {
     uint bits = floatBitsToUint(v);
@@ -135,10 +141,31 @@ void main() {
          * rounding is float16_t, matching the runtime's tested half path. */
         uint bits = packHalf2x16(vec2(half_round(h.w), 0.0)) & 65535u;
         precise float alpha = settings.v[272u + bits] * settings.v[1];
+        /* The game's last frame here and the history this pixel blends towards. */
+        vec3 earlier = vec3(0.0), held;
+        if ((flags & 64u) != 0u) {
+            /* MOVED: the follower's active-extent pass, here (image_history.comp, mode 0). The
+             * game's last frame and the network's last output read where this pixel's surface
+             * was, NOTHING and the frame itself where the motion is not known, and the frame
+             * itself for the history where that surface was another. `rgb` holds the frame's
+             * float32 values exactly as the decode pass that pass read does. */
+            float u, v;
+            bool known = moved_to(FloatBuf(uint64_t(pc.p[12]) | (uint64_t(pc.p[13]) << 32u)),
+                                  frame_width, left, top, x, y, x, y, width, height, width, height,
+                                  u, v);
+            earlier = known ? history_sample(FloatBuf(pc.d), height, width, u, v) : vec3(-1.0);
+            held = known ? history_sample(FloatBuf(pc.c), height, width, u, v) : vec3(rgb);
+            if (apart(vec3(rgb), earlier) > uintBitsToFloat(pc.p[11])) held = vec3(rgb);
+        } else {
+            FloatBuf history = FloatBuf(pc.c);
+            held = vec3(history.v[3u * pixel], history.v[3u * pixel + 1u], history.v[3u * pixel + 2u]);
+            if ((flags & 4u) != 0u) {
+                FloatBuf previous = FloatBuf(pc.d);
+                earlier = vec3(previous.v[3u * pixel], previous.v[3u * pixel + 1u], previous.v[3u * pixel + 2u]);
+            }
+        }
         if ((flags & 4u) != 0u) {
-            FloatBuf previous = FloatBuf(pc.d);
-            precise vec3 step = abs(rgb - vec3(previous.v[3u * pixel], previous.v[3u * pixel + 1u],
-                                              previous.v[3u * pixel + 2u]));
+            precise vec3 step = abs(rgb - earlier);
             float moved = max(max(step.r, step.g), step.b);
             if (settings.v[5] != 0.0) alpha *= unit(moved * settings.v[5] + 1.0);
             precise float floor_value = moved * settings.v[4] + settings.v[3];
@@ -146,9 +173,8 @@ void main() {
             floor_value *= settings.v[2];
             alpha = max(alpha, floor_value);
         }
-        FloatBuf history = FloatBuf(pc.c);
         for (uint c = 0u; c < 3u; ++c)
-            predicted[c] += alpha * (history.v[3u * pixel + c] - predicted[c]);
+            predicted[c] += alpha * (held[c] - predicted[c]);
     }
     if ((flags & (8u | 16u)) != 0u) {
         vec3 kept;
