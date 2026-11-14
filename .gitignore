@@ -1,13 +1,13 @@
-# NVIDIA's property 鈥?never committed, never redistributed. See notes/CLAUDE.md "Rules".
+# NVIDIA's property 閳?never committed, never redistributed. See notes/CLAUDE.md "Rules".
 /ref/
 /work/
 # The GPU report (src/probe/coopmat_probe.c) writes into the folder it is run from.
 nr-gpu-report.txt
 /dist/
 # Variant builds beside the shipped ones, for measuring one shader against another without
-# editing the tree (`analysis_e/_team/ACC16閲嶆祴.md`). The .spv are covered by the *.spv rule
+# editing the tree (`analysis_e/_team/ACC16闁插秵绁?md`). The .spv are covered by the *.spv rule
 # below; the .comp copies are throwaway derivatives of src/gpu/*.comp and must not be taken
-# for real sources 鈥?a second `gemm_staged.comp` in the tree is exactly the confusion this
+# for real sources 閳?a second `gemm_staged.comp` in the tree is exactly the confusion this
 # project has been bitten by before.
 /work_acc16/
 *.dll
@@ -29,7 +29,7 @@ __pycache__/
 *.pyc
 
 # Third-party game frames: test material, not code, and somebody else's copyright. A
-# single one was staged once and is still a loose object in this clone 鈥?see
+# single one was staged once and is still a loose object in this clone 閳?see
 # `src/tools/publish_check.py --history`, which is what found it.
 /pngs/
 *.png
@@ -59,3 +59,4 @@ nr_daemon.log
 /scripts/windows_wizard_core.py
 /scripts/windows_launch.py
 /scripts/windows-wizard.ps1
+test_nr_xess.log

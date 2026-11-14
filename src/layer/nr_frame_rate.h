@@ -48,7 +48,15 @@ typedef struct nr_frame_counts {
 
 #define NR_RATE_STEP 0.5      /* seconds from one reading to the next */
 #define NR_RATE_SAMPLES 3     /* readings kept: the rates are over the last two steps, a second */
-#define NR_RATE_GAP 2.0       /* no present for this long - a load, an alt-tab - and it starts over */
+/* No present for this long - a load, an alt-tab - and the rates start over.
+ *
+ * **The graph starts over with them.** `nr_frame_rates_reset` clears the ring, so a stall longer
+ * than this leaves the corner empty for a moment rather than drawing its two seconds across a
+ * gap where nothing was presented. That is the right trade for a rate - a rate over a second
+ * that held a three-second load is a number about the load - and it is also what the graph
+ * wants: the two seconds before and after the stall are not adjacent in time, and drawing them
+ * as one line would compress the stall to nothing. */
+#define NR_RATE_GAP 2.0
 
 /* **The two graphs, after OptiScaler's.** A rate is one number for the last second; a graph is the
  * shape of that second, which is what tells a steady 40 from a 60 that stalls every fourth frame.
@@ -349,8 +357,15 @@ static inline void nr_frame_graph_axis(const float *series, int count, float *lo
  * one is usually slow too.
  *
  * The weights are [1 2 3 2 1]/9: a triangle, not a box, so a step does not ring and a smooth
- * stretch comes through unchanged instead of being flattened. The window is five samples - a third
- * of a second at 15 fps, a twelfth at 60 - which is short enough that the right edge is still now.
+ * stretch comes through unchanged instead of being flattened. Five samples in the middle of a
+ * series - a third of a second at 15 fps, a twelfth at 60 - which is short enough that the right
+ * edge is still now.
+ *
+ * The first and last TWO samples have no neighbour on one side, so the window there is three wide
+ * ([1 2 3]/6 and [3 2 1]/6) and their variance is about 1.7x the interior's. That is deliberate
+ * and it is one-sided by nature - the right edge is the newest frame and has no future to average
+ * with - not a rounding of the same window, which is what "the window is five samples" used to
+ * imply.
  *
  * A gap is a gap: `-1` samples take no part in the average and stay `-1` in the output, so the
  * drawing side still knows where the network had nothing to report. */

@@ -102,12 +102,14 @@ static int nr_link_write(nr_link *link, const void *data, size_t count)
 static int nr_link_read(nr_link *link, void *data, size_t count)
 {
 	unsigned char *p = data;
-	DWORD waited = 0;
+	DWORD waited = 0;                  /* milliseconds spent waiting */
+	const DWORD started = GetTickCount();
 	while (count > 0) {
 		DWORD available = 0;
 		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
 			return -1;
 		if (available == 0) {
+			waited = GetTickCount() - started;
 			if (waited >= link->deadline_ms) return -1;
 			Sleep(10);
 			waited += 10;
@@ -137,26 +139,31 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
 {
 	unsigned char *p = data;
-	DWORD waited = 0;
+	/* **Wall-clock milliseconds, not a count of Sleeps.** Sleep(1) rounds up to the
+	 * scheduler tick - 15.6 ms by default, and nothing in this tree calls
+	 * timeBeginPeriod - so "30 sleeps" is anywhere from 30 ms to nearly half a
+	 * second depending on the machine and the load. Measured with a deadline, the
+	 * worst case is the deadline. */
+	const DWORD started = GetTickCount();
 	while (count > 0) {
 		DWORD available = 0;
 		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
 			return -1;
 		if (available == 0) {
 			/* Nothing YET is not nothing EVER: a large answer streams through a
-			 * 1 MB pipe buffer while the layer reads it, and the trailer is the
-			 * tail of the daemon's one `sendall` — its last `WriteFile` can still
-			 * be queued when the pixels finish arriving. Measured on a 1280x720
-			 * legacy frame: every peek found an empty pipe inside 5 ms, and the
-			 * daemon's write of the last bytes landed inside 30. The budget is
-			 * Sleep(1) calls, so a machine on the default 15.6 ms scheduler tick
-			 * stretches one Sleep to one tick — 30 of them stay under half a
-			 * second in the worst case, and an old daemon, which will never send
-			 * a trailer, pays that once a frame against the ten-plus
-			 * milliseconds of network work that precedes it. */
-			if (waited >= 30) return 1;
-			Sleep(1);
-			waited += 1;
+			 * 1 MB pipe buffer while the layer reads it, so the trailer - the tail
+			 * of the daemon's one `sendall` - can still be queued when the pixels
+			 * finish arriving. Measured on a 1280x720 legacy frame, the daemon's
+			 * write of the last bytes landed within a millisecond of the pixels.
+			 *
+			 * TWO milliseconds, once, for a daemon that will never send a trailer
+			 * at all: that is the price of asking a version we cannot identify,
+			 * against the seven-plus milliseconds of network work before it. The
+			 * first version counted 30 Sleep(1) calls and called it "30 ms", which
+			 * on a default-tick machine is up to half a second on the present
+			 * thread, every frame. */
+			if (GetTickCount() - started >= 2u) return 1;
+			Sleep(0);
 			continue;
 		}
 		DWORD want = (DWORD)(count < available ? count : available);
@@ -166,16 +173,11 @@ static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
 		p += got;
 		count -= got;
 		/* A partial read means the trailer straddles a pipe boundary; give the
-		 * rest a moment rather than dropping half a magic word on the floor. */
-		if (count > 0) {
-			if (waited >= 20) return 1;
-			Sleep(1);
-			waited += 1;
-		}
+		 * rest a moment rather than dropping half a magic word on the floor -
+		 * still inside the same two-millisecond budget. */
 	}
 	return 0;
 }
-
 #else  /* the Linux build, unchanged: a Unix socket */
 
 #include <sys/socket.h>
