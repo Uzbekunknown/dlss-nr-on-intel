@@ -323,9 +323,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 The owner, 11-15, after another AI's list of optimisations was checked against this project's
 notes (most of it had been measured here and lost): take the free one, the game's own resets and
 motion in DirectX 12 ("on DX12 we carry crutches from when we had no data"), the follower in the
-composition, half-precision history, the bottleneck's reuse, and focus on high resolutions. Five
-commits on the local branch `dx12-waits` from `0624ccc`; nothing pushed. Arc 140V, Intel
-101.9150, on AC, quiet before and after every timing.
+composition, half-precision history, the last frame as bytes, the bottleneck's reuse, and focus
+on high resolutions. Seven commits on the local branch `dx12-waits` from `0624ccc`; nothing
+pushed. Arc 140V, Intel 101.9150, on AC, quiet before and after every timing.
 
 **What changed:**
 - `686d391`: with motion, the cut test's two reductions are recorded in the decode's submit
@@ -342,6 +342,12 @@ commits on the local branch `dx12-waits` from `0624ccc`; nothing pushed. Arc 140
   motion itself (image_compose.comp MOVED, `history_sample.glsl` shared with image_history.comp),
   where the follower's active-extent pass wrote both as float32 images for it to read back; the
   pass runs only for `known` when the motion is known nowhere. `NR_FOLLOW_IN_COMPOSE=0` compares.
+- `2a7ca88`: a session no motion comes in (every Vulkan game's) keeps the last frame as its bytes
+  for the composition (PREVIOUS_RAW, the same table as its `rgb`), where a float32 decode at the
+  full extent was kept for that one read; a DirectX 12 session with room for motion keeps float32
+  (`motion_session`). Whole frames on a device buffer, B at 0.4, three rounds: the passes before
+  the network 3.22-3.25 -> 2.26-2.30 ms at 2560x1440, 2.14-2.16 -> 1.56-1.61 at 1920x1080.
+  `NR_RAW_PREVIOUS=0` compares.
 
 **The same bytes:** the full-model motion parity against the CPU's `History.follow` on both paths
 (and with the metric on and off), `test_image_history` (48 exact comparisons, `record_cut` and the
@@ -369,13 +375,23 @@ limit without the game's reset. The 10-18 recording at 1920x1200, four rounds al
 `trunc_half` values, which half holds), but the five-tap reads made the composition 12.7 ms
 against 3.6-4.1 at 2560x1440 with 16-bit loads, and 4.45 against 3.64 reading 32-bit words: those
 reads are not bandwidth-bound on this driver. The patch is `perf-1115\half-history-not-kept.patch`.
-The previous frame as bytes was not built for the same reason: its reads are the same five taps.
+For the same reason the last frame stays float32 where motion comes (`2a7ca88`): its reads there
+are the same five taps.
 
-**Where network B's time goes at 1024x576** (`frame_profile.py --size 576 1024`, 43.4 ms on the
-device): the eight bottleneck blocks 6.2 ms (14 %; ~30 % at 512x320), so reusing their output
-every other frame, as F5's VitEvery does, would take at most ~3 ms a frame there; the
-full-resolution C = 32 blocks 17.7 ms (41 %: `window_block` 9.7, `ffn_fused` 7.9), level 0's four
-passes 11.3 of it. At WQHD those, the Linux agent's lead of 11-04, are the target.
+**The bottleneck's output from the frame before** (F5's VitEvery=2), measured, not built.
+Speed: at 1024x576 (`frame_profile.py --size 576 1024`, 43.4 ms on the device) the eight
+bottleneck blocks are 6.2 ms (14 %; ~30 % at 512x320), so at most ~3 ms a frame every other frame
+there. The picture (`perf-1115\vit_reuse.py`: the CPU reference, network B, 640x360 colour from
+two fast-panning Hogwarts recordings of 11-07/11-08, frame t run whole and again with frame t-1's
+bottleneck output in place of its eight blocks, ten pairs): the answer moves 1.06-1.89 levels on
+average, 18-29 % of NR's own change (5.3-7.2 levels), p99 4.4-11.6, at worst 12.6-21.4 levels,
+the history's gate logit 0.19-0.44. Two to three times what INT8 did (6.8-13.6 %, declined); not
+worth ~3 ms.
+
+**Where WQHD's time goes, then:** the full-resolution C = 32 blocks, 17.7 ms of the 43.4 (41 %:
+`window_block` 9.7, `ffn_fused` 7.9; level 0's four passes 11.3 of it), each running near the
+3-4 TFLOP/s this project's kernels reach on this driver. Those, the Linux agent's lead of 11-04,
+are the target at high resolutions.
 
 **Next on Linux:** once this is on GitHub, `make test` in both memory modes and CTest:
 `image_compose.comp` and `image_history.comp` include `history_sample.glsl` (the Makefile and
