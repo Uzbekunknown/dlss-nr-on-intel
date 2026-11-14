@@ -1028,8 +1028,20 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
          * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
          * the reader knows what the height means. */
         if (g_corner_graphs) {
+            /* **As wide as the numbers above it, when they are wider.** The plots were a fixed
+             * 180 px under a counter line that grows with the language and the figures - so at
+             * "Screen 119 fps NR 119 fps network 4.7 ms" the window was a line of text with a
+             * shorter box hanging off its left and a bare strip of background under the rest.
+             * The width is the wider of the two now, measured this frame, so the picture ends
+             * where the text ends and the box under it is one shape.
+             *
+             * With the graphs OFF nothing here runs and the window is the text alone, which is
+             * the point of the switch: it should look like the counter it was before the graphs
+             * existed. */
+            const float text_width = ImGui::CalcTextSize(corner_line).x;
+            const float graph_width = text_width > kGraphWidth ? text_width : kGraphWidth;
             draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
-                        kGraphWidth, 0, kGraphHeight);
+                        graph_width, 0, kGraphHeight);
         }
     }
     ImGui::End();
