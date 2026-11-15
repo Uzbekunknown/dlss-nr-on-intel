@@ -211,6 +211,9 @@ static struct {
 	/* 1 fades a refresh's edit in over the interval, the one before it giving way; 0 takes it
 	 * whole, which shows as a pulse at the refresh. */
 	int cache_fade;
+	/* `cache_profile=1`: GPU timestamps around a carried frame's steps, their means in the log
+	 * with the cache's own line. For measuring only: each step then waits for the one before. */
+	int cache_profile;
 } config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER, "", 0, 60.0f,
 	     20.0f, 1 };
 
@@ -275,6 +278,8 @@ static void read_settings(int first)
 			config.cache_slow = (float)atof(value);
 		else if (!strcmp(line, "cache_fade"))
 			config.cache_fade = atoi(value);
+		else if (!strcmp(line, "cache_profile"))
+			config.cache_profile = atoi(value);
 	}
 	if (config.record > 0 && config.record_dir[0]) InterlockedExchange(&record_asked, config.record);
 	fclose(file);
@@ -2448,11 +2453,120 @@ static struct {
 
 static uint64_t upscales;                /* the upscaler's executes, NR or not: the trackers' chain */
 
+/* `cache_profile=1`: timestamps at the start of a carried frame and after each of its steps,
+ * each behind a barrier on every UAV so a step's time is its own: the copies in, DEPTH, CLEAR and
+ * CLAIM, TRACK, MATCH, REDUCE, APPLY, the copy back. Resolved into a readback slot that the
+ * marker cache_done writes says is done; the means go out with the cache's line. */
+#define PROF_STAMPS 9
+#define PROF_SLOTS 8
+static struct {
+	ID3D12QueryHeap *heap;
+	ID3D12Resource *readback;
+	UINT64 frequency;
+	uint32_t sequence[PROF_SLOTS];       /* the marker after each slot's resolve; 0 when read or unused */
+	uint32_t next;
+	int slot, base;                      /* the carried frame being stamped, or -1 */
+	double sum[PROF_STAMPS - 1];
+	uint64_t count;
+} prof = { .slot = -1, .base = -1 };
+
+static void prof_release(void)
+{
+	if (prof.heap) ID3D12QueryHeap_Release(prof.heap);
+	prof.heap = NULL;
+	drop(&prof.readback);
+	memset(prof.sequence, 0, sizeof prof.sequence);
+	prof.slot = prof.base = -1;
+}
+
+static void prof_read(void);
+
+/* The first stamp of a carried frame, when profiling is asked and a slot is free. */
+static void prof_begin(ID3D12GraphicsCommandList *l)
+{
+	prof.slot = prof.base = -1;
+	if (!config.cache_profile) return;
+	if (!prof.heap) {
+		ID3D12CommandQueue *queue = nr_split_last_queue();
+		if (!queue || FAILED(ID3D12CommandQueue_GetTimestampFrequency(queue, &prof.frequency)) || !prof.frequency)
+			return;
+		D3D12_QUERY_HEAP_DESC desc = { .Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP,
+					       .Count = PROF_SLOTS * PROF_STAMPS };
+		if (FAILED(ID3D12Device_CreateQueryHeap(nr.device, &desc, &IID_ID3D12QueryHeap, (void **)&prof.heap)))
+			prof.heap = NULL;
+		prof.readback = make_buffer(D3D12_HEAP_TYPE_READBACK, (UINT64)PROF_SLOTS * PROF_STAMPS * 8,
+					    D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+		if (!prof.heap || !prof.readback) {
+			say("the edit cache's profile could not make its queries; not profiled\n");
+			prof_release();
+			config.cache_profile = 0;
+			return;
+		}
+		say("the edit cache's profile: timestamps at %llu a second\n", (unsigned long long)prof.frequency);
+	}
+	prof_read();
+	int slot = (int)(prof.next++ % PROF_SLOTS);
+	if (prof.sequence[slot]) return;     /* not read back yet: this frame goes unstamped */
+	prof.slot = slot;
+	prof.base = slot * PROF_STAMPS;
+	D3D12_RESOURCE_BARRIER all = { .Type = D3D12_RESOURCE_BARRIER_TYPE_UAV, .UAV = { .pResource = NULL } };
+	ID3D12GraphicsCommandList_ResourceBarrier(l, 1, &all);
+	ID3D12GraphicsCommandList_EndQuery(l, prof.heap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)prof.base);
+}
+
+static void prof_stamp(ID3D12GraphicsCommandList *l, int i)
+{
+	if (prof.base < 0) return;
+	D3D12_RESOURCE_BARRIER all = { .Type = D3D12_RESOURCE_BARRIER_TYPE_UAV, .UAV = { .pResource = NULL } };
+	ID3D12GraphicsCommandList_ResourceBarrier(l, 1, &all);
+	ID3D12GraphicsCommandList_EndQuery(l, prof.heap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(prof.base + i));
+}
+
+/* The last stamp's resolve, before cache_done's marker. */
+static void prof_resolve(ID3D12GraphicsCommandList *l)
+{
+	if (prof.base < 0) return;
+	ID3D12GraphicsCommandList_ResolveQueryData(l, prof.heap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)prof.base,
+						   PROF_STAMPS, prof.readback, (UINT64)prof.base * 8);
+}
+
+/* After cache_done: the marker it wrote says when the slot can be read. */
+static void prof_sent(void)
+{
+	if (prof.slot >= 0) prof.sequence[prof.slot] = nr.sequence;
+	prof.slot = prof.base = -1;
+}
+
+/* The slots the GPU is done with, into the sums. */
+static void prof_read(void)
+{
+	if (!prof.readback) return;
+	uint32_t done = completed();
+	for (int s = 0; s < PROF_SLOTS; s++) {
+		if (!prof.sequence[s] || prof.sequence[s] > done) continue;
+		UINT64 *t = NULL;
+		D3D12_RANGE range = { (SIZE_T)s * PROF_STAMPS * 8, (SIZE_T)(s + 1) * PROF_STAMPS * 8 }, none = { 0, 0 };
+		if (SUCCEEDED(ID3D12Resource_Map(prof.readback, 0, &range, (void **)&t))) {
+			const UINT64 *stamps = t + (size_t)s * PROF_STAMPS;
+			int sane = 1;
+			for (int i = 1; i < PROF_STAMPS; i++) sane &= stamps[i] >= stamps[i - 1];
+			if (sane) {
+				for (int i = 1; i < PROF_STAMPS; i++)
+					prof.sum[i - 1] += (double)(stamps[i] - stamps[i - 1]) * 1000.0 / (double)prof.frequency;
+				prof.count++;
+			}
+			ID3D12Resource_Unmap(prof.readback, 0, &none);
+		}
+		prof.sequence[s] = 0;
+	}
+}
+
 /* The cache's buffers go, once the GPU is done with the executes that used them. */
 static void cache_release(void)
 {
 	if (nr.marker && !wait_for(nr.sequence, 1000))
 		say("the GPU had not finished with the edit cache's buffers after 1 s; going on\n");
+	prof_release();
 	for (int c = 0; c < 2; c++) {
 		drop(&cache.change[c]);
 		drop(&cache.tracker[c][0]);
@@ -2681,6 +2795,7 @@ static void cache_track(ID3D12GraphicsCommandList *l, struct constants k, int wh
 	ID3D12Resource *depth_write[2] = { cache.depth_now, cache.moved };
 	ID3D12GraphicsCommandList_SetPipelineState(l, nr.depth_pipeline);
 	bind_all(l, &k, sizeof k / 4, depth_read, depth_write, k.width, k.height);
+	prof_stamp(l, 2);
 	if (count) {
 		/* CLEAR, then CLAIM: which surfaces came from each of the last frame's pixels */
 		k.vectors = 1u | (cache.motion_previous ? 2u : 0u);
@@ -2694,6 +2809,7 @@ static void cache_track(ID3D12GraphicsCommandList *l, struct constants k, int wh
 		bind(l, &k, vectors, nr.claims);
 		add(&b, nr.claims, write, read);
 		flush(l, &b);
+		prof_stamp(l, 3);
 		ID3D12GraphicsCommandList_SetPipelineState(l, nr.track_pipeline);
 		for (int i = 0; i < count; i++) {
 			int c = changes[i];
@@ -2707,10 +2823,12 @@ static void cache_track(ID3D12GraphicsCommandList *l, struct constants k, int wh
 		}
 	} else {
 		add(&b, nr.claims, write, read);
+		prof_stamp(l, 3);
 	}
 	add(&b, cache.depth_now, write, read);
 	add(&b, cache.moved, write, D3D12_RESOURCE_STATE_COPY_SOURCE);
 	flush(l, &b);
+	prof_stamp(l, 4);
 }
 
 /* MATCH, REDUCE and APPLY: the newest change, and the older one giving way to it, `fade` of the
@@ -2748,11 +2866,13 @@ static void cache_apply(ID3D12GraphicsCommandList *l, struct constants k, int ne
 	bind_all(l, &k, sizeof k / 4, matching, matched, k.width, k.height);
 	add(&b, nr.matched, write, read);
 	flush(l, &b);
+	prof_stamp(l, 5);
 	ID3D12Resource *reducing[5] = { nr.matched, now, nr.matched, nr.matched, nr.matched };
 	ID3D12GraphicsCommandList_SetPipelineState(l, nr.reduce_pipeline);
 	bind_extent(l, &k, reducing, nr.sums, nr.cells_width, nr.cells_height);
 	add(&b, nr.sums, write, read);
 	flush(l, &b);
+	prof_stamp(l, 6);
 	ID3D12Resource *applying[5] = { nr.staging, nr.matched, nr.sums, now, nr.staging };
 	ID3D12GraphicsCommandList_SetPipelineState(l, nr.pipeline);
 	bind(l, &k, applying, nr.output);
@@ -2762,6 +2882,7 @@ static void cache_apply(ID3D12GraphicsCommandList *l, struct constants k, int ne
 	add(&b, cache.change[newest], read, common);
 	if (fading) add(&b, cache.change[older], read, common);
 	flush(l, &b);
+	prof_stamp(l, 7);
 }
 
 /* What cache_track left readable back to COMMON; DEPTH's sums copied for the CPU, and the marker
@@ -2814,6 +2935,16 @@ static void cache_next(int refresh)
 		    cache.speed);
 		cache.refreshes = cache.carried = 0;
 		cache.said = now;
+		prof_read();
+		if (prof.count) {
+			const double n = (double)prof.count, *s = prof.sum;
+			say("edit cache, a carried frame on the GPU (mean of %llu): copies in %.2f ms, DEPTH %.2f, CLEAR "
+			    "and CLAIM %.2f, TRACK %.2f, MATCH %.2f, REDUCE %.2f, APPLY %.2f, copy back %.2f; %.2f ms\n",
+			    (unsigned long long)prof.count, s[0] / n, s[1] / n, s[2] / n, s[3] / n, s[4] / n, s[5] / n,
+			    s[6] / n, s[7] / n, (s[0] + s[1] + s[2] + s[3] + s[4] + s[5] + s[6] + s[7]) / n);
+			memset(prof.sum, 0, sizeof prof.sum);
+			prof.count = 0;
+		}
 	}
 }
 
@@ -3178,6 +3309,7 @@ static int record_carry(ID3D12GraphicsCommandList *list, const xess_d3d12_execut
 		read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
 		source = D3D12_RESOURCE_STATE_COPY_SOURCE, dest = D3D12_RESOURCE_STATE_COPY_DEST;
 	const D3D12_RESOURCE_STATES at = frame_at;
+	prof_begin(l);
 
 	/* the output, the vectors and the depth copied */
 	add(&b, frame, at, source);
@@ -3195,6 +3327,7 @@ static int record_carry(ID3D12GraphicsCommandList *list, const xess_d3d12_execut
 	add(&b, nr.staging, dest, read);
 	cache_copy_out(&b, p, f);
 	flush(l, &b);
+	prof_stamp(l, 1);
 
 	/* the changes followed to this frame and laid on it: the older one, while it fades, takes
 	 * less of each frame, from (interval - 1) / interval of the refresh's to none */
@@ -3217,7 +3350,10 @@ static int record_carry(ID3D12GraphicsCommandList *list, const xess_d3d12_execut
 	add(&b, frame, dest, at);
 	add(&b, nr.staging, read, common);
 	flush(l, &b);
+	prof_stamp(l, 8);
+	prof_resolve(l);
 	cache_done(l, which, f->depth != NULL);
+	prof_sent();
 	nr_split_restore(list, state);
 	nr_split_snapshot_free(state);
 	cache_next(0);

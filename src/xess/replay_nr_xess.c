@@ -23,6 +23,8 @@
  *     --env FILE        a release's nr-env.txt, as Install NR names it in nr-xess.txt (`env=`):
  *                       no daemon need be running, the proxy starts one, and the file's
  *                       NR_LAYER_TRIGGER turns NR on and off
+ *     --cache N         mode=after's edit cache, NR on one frame in up to N (`cache=N`)
+ *     --cache-profile   its carried frames' steps timed on the GPU, in the log (`cache_profile=1`)
  *     --inputs DIR      also the colour XeSS was handed, the proxy's change in it, to
  *                       DIR\%04u.ppm: whether something in the output came in with the
  *                       change or grew in XeSS's own history
@@ -177,6 +179,8 @@ int main(int argc, char **argv)
 			config.match_to = (float)atof(argv[++i]);
 		}
 		else if (!strcmp(argv[i], "--env") && i + 1 < argc) snprintf(config.env, sizeof config.env, "%s", argv[++i]);
+		else if (!strcmp(argv[i], "--cache") && i + 1 < argc) config.cache = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--cache-profile")) config.cache_profile = 1;
 	}
 	if (every < 1) every = 1;
 	CreateDirectoryA(out, NULL);
