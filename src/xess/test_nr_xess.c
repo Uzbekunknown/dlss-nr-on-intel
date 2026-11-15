@@ -2049,8 +2049,17 @@ int main(int argc, char **argv)
 	ID3D12Device_CreateFence(gpu.device, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, (void **)&gpu.fence);
 	gpu.event = CreateEventW(NULL, FALSE, FALSE, NULL);
 
-	int failed = run(DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", 1, 0, 0, NULL, NULL,
-			 NULL, NULL, NULL, NULL, NULL);
+	/* The edit cache asked before the cut has made anything, as with `cache=2` from the start
+	 * (Install NR writes it): the first execute read the GPU's marker before there was one, and
+	 * the replay crashed on it (11-15). */
+	config.cache = 2;
+	uint32_t first_interval = cache_interval();
+	config.cache = 0;
+	printf("%s the edit cache before the cut has made its marker: an interval of %u\n",
+	       first_interval == 2 ? "ok  " : "FAIL", first_interval);
+	int failed = first_interval != 2;
+	failed += run(DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", 1, 0, 0, NULL, NULL,
+		      NULL, NULL, NULL, NULL, NULL);
 	failed += run(DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", 1, 0, 0, NULL, NULL, NULL, NULL, NULL,
 		      NULL, NULL);
 	failed += run(DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT, strength 0", 0, 0, 0, NULL,

@@ -850,10 +850,13 @@ static struct {
 	double window_ms;
 } nr = { .ready = -1, .fading = -1, .applied = -1, .period = 4 };
 
+/* The last marker the GPU wrote; 0 before the cut has made the marker. (The edit cache asks at an
+ * upscaler's first execute when `cache=` is set from the start, as Install NR writes it.) */
 static uint32_t completed(void)
 {
 	uint32_t *mapped = NULL, value = 0;
 	D3D12_RANGE range = { 0, sizeof(uint32_t) }, none = { 0, 0 };
+	if (!nr.marker) return 0;
 	if (SUCCEEDED(ID3D12Resource_Map(nr.marker, 0, &range, (void **)&mapped))) {
 		value = *(volatile uint32_t *)mapped;
 		ID3D12Resource_Unmap(nr.marker, 0, &none);
