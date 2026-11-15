@@ -273,9 +273,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - ~~`NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
   default, or a row in the panel or the setup window, is the owner's call~~: off by default, and a
   checkbox in the setup window turns it on to collect data (the owner, 11-15; `64c0e0f`, below).
-- `dx12-waits` (below, 11-15): local, not pushed. A Hogwarts Legacy run with it, with the owner,
-  says whether the game's resets and the cut test ever part (` game-reset`, ` cut-over` in the
-  daemon's lines), then the owner's word on merging it.
+- `dx12-waits` (below, 11-15): local, not pushed. Run in Hogwarts Legacy the same evening: 15.0 ->
+  16.0 frames a second; the game's resets and the cut test part only right after menus. The
+  owner's word on that, and on merging it.
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -324,8 +324,8 @@ The owner, 11-15, after another AI's list of optimisations was checked against t
 notes (most of it had been measured here and lost): take the free one, the game's own resets and
 motion in DirectX 12 ("on DX12 we carry crutches from when we had no data"), the follower in the
 composition, half-precision history, the last frame as bytes, the bottleneck's reuse, and focus
-on high resolutions. Seven commits on the local branch `dx12-waits` from `0624ccc`; nothing
-pushed. Arc 140V, Intel 101.9150, on AC, quiet before and after every timing.
+on high resolutions. Eight commits on the local branch `dx12-waits` from `0624ccc`, the last this
+entry's game run; nothing pushed. Arc 140V, Intel 101.9150, on AC, quiet before and after every timing.
 
 **What changed:**
 - `686d391`: with motion, the cut test's two reductions are recorded in the decode's submit
@@ -393,10 +393,37 @@ worth ~3 ms.
 3-4 TFLOP/s this project's kernels reach on this driver. Those, the Linux agent's lead of 11-04,
 are the target at high resolutions.
 
+**Hogwarts Legacy, the same evening** (the owner away: "run the experiments yourself"). The game
+as it was set: FSR 3 Quality at 1920x1080 in a window, XeFG x4 on, and another project's XeFG
+capture proxy in front of `libxess_fg.dll` (left as it was). So NR through FSR 3.1, B at 0.4
+(768x448); the release roots `nr-rel\dx12-waits-7423213` and, for 0.0.6, `nr-rel\cache-3ce573a`
+with `cache=0` (0.0.6's daemon and proxy). Screen unlocked, on AC, best performance;
+`nr-game\hogwarts-fsr-test.ps1`, the save loaded with `game-click.ps1` and put back to one view
+with `game-reload.ps1` (the pause menu's Restart from last save). Every frame answered, none
+declined. Standing in the save's room, the same view; the frame from the capture's per-frame log
+(`camera.txt`'s QPC), the rest from the daemon's lines:
+
+| | the game's frame | the daemon's | prep | compose | network |
+| --- | --- | --- | --- | --- | --- |
+| 0.0.6 | 66.6 ms (15.0 a second) | 66 | 6.17 | 2.56 | 26 |
+| `dx12-waits` | 62.4 ms (16.0 a second) | 62 | 3.46 | 2.52 | 26 |
+| NR off | 28.1 ms (35.6 a second) | | | | |
+
+On the title screen 51 -> 49 ms, 19.2 -> 20.2 frames a second.
+
+**The game's word against the cut test:** 318 frames of play, turns up to ~130 degrees in a
+third of a second: no reset, no cut-over, the cut at most 0.052. The game resets when the save
+starts loading (3 frames), when the load ends (2), and when the pause menu opens (2) and closes
+(1). The cut passed its limit without the game's reset only right after two of those: the menu
+into the loading screen (0.44, 0.97, 0.36) and four frames after the pause menu closed (0.59, 0.58,
+twice). There the history is now kept, as NVIDIA's NR would keep it, having only the game's
+flag. Whether those few frames show anything is for the eye. The game saved itself at every
+load (`HL-00-10` to `-14`, the save list); the saves from before are in each test's folder.
+
 **Next on Linux:** once this is on GitHub, `make test` in both memory modes and CTest:
 `image_compose.comp` and `image_history.comp` include `history_sample.glsl` (the Makefile and
-CMake know), and the D3D12 parts build only on Windows. **Next on Windows:** Hogwarts Legacy with
-the owner on this branch's build, the ` game-reset` and ` cut-over` counts; then the owner's word.
+CMake know), and the D3D12 parts build only on Windows. **Next on Windows:** the owner's word on
+the cut-overs after menus, and on merging.
 
 ## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
 
