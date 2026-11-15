@@ -215,8 +215,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
 - The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
   local branch `edit-cache`: run in Hogwarts on 11-15, it works and barely speeds the game up
-  (15.0 -> 15.9 frames a second at N = 2: its own passes cost 13-21 ms a frame). The owner's word
-  on the clip and on whether to make the passes cheaper. Below, 11-13.
+  (15.0 -> 15.9 frames a second at N = 2: its own passes cost 13-21 ms a frame, MATCH half of a
+  carried frame's); a crash with the cache on from the first frame, fixed. The owner's word on
+  the clip and on whether to make the passes cheaper. Below, 11-13.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -379,8 +380,22 @@ MATCH's 3x3 neighbourhood and REDUCE's one thread a cell are where to look. A cl
 the cache flipped every 5 s in a slow pan, labelled: `nr-game\release-tests\hogwarts-cache-1115\
 toggle-cache.mp4`. The numbers and the levers are in DESIGN.md.
 
+**Then timed, and a crash found** (`d7d8cc6`, `8d71705`). With `cache=` set from the start, as
+Install NR writes it when the setup window's checkbox is ticked, the upscaler's first execute
+read the GPU's marker before the cut had made it (`completed()` on a null `nr.marker`): the game
+would have gone down at its first frame. The game run above turned the cache on while the game
+ran and never met it; `replay_nr_xess` with the cache on from the first frame did. Fixed, with a
+check in `test_nr_xess` (all passed); the test root's two DLLs were rebuilt at `8d71705` and run
+in the game with `cache=2` from the start. `cache_profile=1` (off by default) puts a barrier and
+a timestamp after each step of a carried frame, and the means in the log;
+`replay_nr_xess --cache N --cache-profile` runs it without the game. A carried frame in play,
+ms: copies 1.1, DEPTH 0.33, CLEAR and CLAIM 1.6, TRACK 1.2-1.4, **MATCH 6.7-7.2**, REDUCE 0.85,
+APPLY 1.2; 13.1-13.6 in all, the 13 the frame times said. MATCH is half, and works out each
+pixel's likeness nine times (its 3x3 range); in the replay (1920x1200, no depth, the GPU
+otherwise idle) it is 2.5 of 8.6-9.6. DESIGN.md has the table and the levers.
+
 **Next on Windows:** the owner's eye on the clip, and the owner's word on making the passes cheaper
-(timestamps around each pass first) or leaving the cache. **Next on Linux:** nothing until it is
+(MATCH's likeness once a pixel first) or leaving the cache. **Next on Linux:** nothing until it is
 pushed; `test_windows_wizard.py` runs there.
 
 ## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
