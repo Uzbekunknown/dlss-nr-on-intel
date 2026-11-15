@@ -214,8 +214,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   asked about), FidelityFX SDK 2.0's loader, FSR 3's own frame generation; and whether the setup
   window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
 - The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
-  local branch `edit-cache`: Hogwarts with the owner, on and off in one power mode, then the
-  owner's word on merging it. Below, 11-13.
+  local branch `edit-cache`: run in Hogwarts on 11-15, it works and barely speeds the game up
+  (15.0 -> 15.9 frames a second at N = 2: its own passes cost 13-21 ms a frame). The owner's word
+  on the clip and on whether to make the passes cheaper. Below, 11-13.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -318,7 +319,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## The edit cache: NR on every other frame in DirectX 12, its edit carried along the game's motion; built, not yet run in a game (2026-11-13, branch `edit-cache`)
+## The edit cache: NR on every other frame in DirectX 12, its edit carried along the game's motion; built, then run in Hogwarts Legacy (2026-11-13 and 11-15, branch `edit-cache`)
 
 The owner, 11-12 and 11-13, after Skynizz's edit cache (`optiscaler-dlss5`): can NR answer one
 frame in N in the DirectX 12 proxy, its edit carried to the frames between; measure it, then build
@@ -359,16 +360,28 @@ refreshes whole, B carried within 0.0012 of the CPU's ratio, C refreshes decline
 at one half, D none; the stand-in asked for A and C only; C's offsets lead back to A);
 `test_windows_wizard` 104 OK, one skipped; the window's self-test, 91 controls and 201 keys.
 
-**Not run:** a game; the carried frame's GPU time, so the gain in frames is an estimate (Hogwarts
-at 1920x1080 and 0.4, 18 a second today: about 24 at every other frame); the in-game panel; Linux.
+**Not run then:** a game; the carried frame's GPU time, so the gain in frames was an estimate
+(about 24 a second at every other frame against 18); the in-game panel; Linux.
 
-**Next on Windows:** Hogwarts through its FSR 3.1 with the owner: the test root
-`C:\Users\Uzbekunknown\nr-rel\cache-3ce573a\dlss-nr-windows` (0.0.6's build root with this
-branch's two DLLs and setup) through `nr-game\hogwarts-fsr-test.ps1 -Rel`, the power mode the same
-for every run, `cache=2` and `cache=0` written into `nr-xess.txt` beside the executable while the
-game runs; frames a second from the proxy's log (`edit cache: R refreshes and C carried frames in
-5.0 s` against `NR: N frames in 5 s`), and the owner's eye on the refresh's pulse and on fast
-turns. **Next on Linux:** nothing until it is pushed; `test_windows_wizard.py` runs there.
+**Run in Hogwarts Legacy, 11-15 evening** (the owner away; the game started from
+`nr-game\hogwarts-fsr-test.ps1 -Rel C:\Users\Uzbekunknown\nr-rel\cache-3ce573a\dlss-nr-windows`).
+The game as set: FSR 3 Quality at 1920x1080 in a window, XeFG x4 on; B at 0.4. `cache=` flipped
+live in `nr-xess.txt` is taken within a second, the cache reads FSR's depth (1284x724, reversed),
+every refresh is answered. It speeds the game up little. Real frame times from a per-frame log
+of the game's frame generation, standing still, one view: NR off 28.1 ms (35.6 a second); NR on
+every frame 66.6 (15.0); `cache=2` 84 and 41 ms in turn (15.9 a second); `cache=3` 85, 49, 41
+(17.2). A carried frame costs the game's frame + 13 ms, one that also fades the older change
++ 21, and a refresh NR's frame + 18 (TRACK, CAPTURE, and the fade's MATCH, REDUCE and APPLY in
+place of COMPOSE): the "about 2 ms" the estimate took was 6-10 times low. The step between a
+refresh and a carried frame is there as expected. The passes are not yet timed one by one; by the
+code, the two 16.6 MB copies of the output (texture to buffer and back), CLEAR, CLAIM's atomics,
+MATCH's 3x3 neighbourhood and REDUCE's one thread a cell are where to look. A clip for the eye,
+the cache flipped every 5 s in a slow pan, labelled: `nr-game\release-tests\hogwarts-cache-1115\
+toggle-cache.mp4`. The numbers and the levers are in DESIGN.md.
+
+**Next on Windows:** the owner's eye on the clip, and the owner's word on making the passes cheaper
+(timestamps around each pass first) or leaving the cache. **Next on Linux:** nothing until it is
+pushed; `test_windows_wizard.py` runs there.
 
 ## FSR 3.1 without OptiScaler, run in Hogwarts Legacy; the GPU report runs NR's own network (2026-11-12, late evening, branch `alchemist`)
 
