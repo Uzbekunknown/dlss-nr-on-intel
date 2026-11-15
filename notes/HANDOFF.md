@@ -379,6 +379,14 @@ a process each, three rounds alternating; `perf-1115\frames_series.py`):
 network; the network is the figure.) With `dx12-waits`' passes around the network (WQHD 51.7 ->
 48.8 there) the two would be ~46 ms at 2560x1440.
 
+**What is left in the window block** (knocked out on this branch's kernel, the full-resolution
+call 2.98 ms, two rounds): Q and K's normalisation 0.16, the bias's load 0.08, the softmax's
+transform 0.08, the skip's second read 0.07, the gathered row's E4M3 0.04, the output's publish
+nothing. No piece is large; the rest, ~2.5 ms, is its structure (barriers, the matrix steps'
+chains, the shared-memory round trips). The E4M3 by a magic constant (`NR_E4M3_MAGIC`) is exact
+and was 10-22 % slower on this driver in October (`notes/improve-e4m3-probe-20261013.md`): not
+tried again.
+
 **Not run:** Linux (the same shaders run on Mesa, where `improve-b.md` saw a by-column tile spill
 in the staged GEMM: worth a timing there; a driver switch would be a specialisation constant), a
 game, CTest at this head (the three kernels' tests and the heads ran with the SPIR-V loaded from
