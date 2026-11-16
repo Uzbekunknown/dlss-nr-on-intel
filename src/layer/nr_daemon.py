@@ -1265,10 +1265,12 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     # places, and a quarter of the rows moves it by about a part in five hundred. Taken
     # after the answer has gone where nothing writes into `composed` before then.
     changed = None
-    if held is not None and CHANGE_METRIC:
-        if full is None:
+    if held is not None:
+        if full is None and CHANGE_METRIC:
             # the restore below writes into the composition itself
             changed = float(np.abs(composed[::4] - colour[::4]).mean())
+        # The restore is not part of the metric and runs with it off: tied to
+        # NR_CHANGE_METRIC, it stopped when the metric went off by default (64c0e0f).
         # The control mask reaches `compose_head`, but `compose_detail` runs *after* it
         # and re-weights the whole frame: with either strength away from 1 it moved 89.6%
         # of the masked pixels, so the interface protection silently stopped working the
