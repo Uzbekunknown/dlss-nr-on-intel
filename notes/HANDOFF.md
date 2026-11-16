@@ -172,16 +172,16 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   test-gpu`, and CTest on Linux only when CMake changes. Archive, 11-05.
 
 **Linux**
-- Owed on Mesa from the weights by column, `e4m3-weights` and `fused-bycol`, whose `make test`
-  and CTest are green at GitHub's `2c7580d` (archive, 11-16, latest):
-  - `XMX_WEIGHTS_BY_COLUMN=1`, one timing on Mesa (archive, 11-12);
-  - `test_gemm_e4m3.py` once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values,
-    B's 320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both
-    ways (archive, 11-08, evening);
-  - `frame_profile.py --size 576 1024 --weights work/mlxw/dlssnr-b-logical.safetensors` against
-    `0624ccc`, for the by-column fused kernels on Mesa (archive, 11-16 and 11-15, night).
-- `a6699b6`, the interface restore with the change metric off (archive, 11-16, latest): the owner's
-  word on pushing it. Python only, nothing for Windows to build.
+- ~~Owed on Mesa from the weights by column, `e4m3-weights` and `fused-bycol`: their timings~~:
+  done (below, 11-16, night). The wide weights by column and the E4M3 bytes are exact on Mesa and
+  gain nothing there; they stay off, as they are by default. The by-column fused kernels cost it
+  7-10 %, the next line.
+- **`fused-bycol` costs Mesa 7-10 % of B's network** (below, 11-16, night): the fused kernels read
+  their weights by column on every driver, and on Mesa that is slower. The way out the entry of
+  11-15 named: a specialisation constant, by column on Intel's Windows driver, by row elsewhere.
+  Not started; the owner's word.
+- ~~`a6699b6`, the interface restore with the change metric off: the owner's word on pushing it~~:
+  pushed at the owner's word, 11-16, with `master`, `newnr` and `alchemist` at `f9ad754`.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
   staged GEMM's walk (`6ef670e`), are not started. Archive, 11-04 evening.
@@ -494,6 +494,64 @@ builds there).
 
 **Next on Windows:** a build for #46's reporter, the owner's call, then their answer. **Next on
 Linux:** nothing.
+
+## Timed on Mesa: `fused-bycol` 7-10 % slower; the weights by column and the E4M3 bytes gain nothing (2026-11-16, night, branch `newnr`)
+
+The owner, 11-16: push (`a6699b6` and its entry, `master`, `newnr` and `alchemist` at `f9ad754` on
+GitHub) and run the timings owed on Linux. Mesa 26.2.6, swap empty, on AC. `frame_profile.py
+--warm 25 --runs 5 --calls 40`, a process a run, five rounds with the order swapped each round;
+device ms, the band over the five. The series driver is the session's own (not in the tree).
+
+**`fused-bycol` against `0624ccc`.** Between the two the network differs only in `ffn_fused.comp`
+and `window_block.comp` (`19679e9`), so `0624ccc`'s two were built with the Makefile's command and
+loaded through `XMX_FFN_SPV` and `XMX_WINDOW_BLOCK_SPV`, the tree otherwise the head's; the head's
+two built the same way are `work/`'s byte for byte. Network B; this series ran quiet, before
+another application started (below).
+
+| ms | `0624ccc` | head |
+| --- | --- | --- |
+| 1024x576, the device | 43.27-44.86 | 47.95-48.97 |
+| 1024x576, the fused feed-forwards | 6.93-7.44 | 10.04-10.19 |
+| 1024x576, the window blocks | 11.89-12.05 | 13.18-13.29 |
+| 512x320, the device | 15.22-16.13 | 16.59-17.17 |
+| 512x320, the fused feed-forwards | 2.12-2.46 | 3.14-3.38 |
+| 512x320, the window blocks | 3.46-3.66 | 3.82-3.91 |
+
+So on Mesa the by-column fused kernels cost 4.4 ms of B's network at 2560x1440 and 0.4 (+10 %) and
+~1.2 ms at 1280x720 (+7 %), where Intel's Windows driver gained 4 %. The feed-forwards lose most,
++40 %. The same bytes: `frame_replay.py` heads of B with `0624ccc`'s two shaders and the head's are
+the same at 576x1024 (`edcbf478`, `acbd05d9`, which are Windows' too, so the two drivers agree
+bit for bit) and at 320x512 (`df409ac4`, `b6d9870b`).
+
+**The wide weights by column (`XMX_WEIGHTS_BY_COLUMN`) and the E4M3 bytes (`XMX_E4M3_WEIGHTS`) on
+Mesa.** Both exact here: `test_gemm_e4m3.py` with `XMX_E4M3_WEIGHTS=1` decodes all 254 values (82
+cases), `test_gemm_by_column.py` with `XMX_WEIGHTS_BY_COLUMN=1` 150 cases, and with both 274, and
+the runtime takes both (its start-up checks pass). The heads of A and B at 320x512 and 768x1344 are
+the same with each of the four settings. Timed, each against Mesa's default (both off); from
+20:34:52 an IDE started and took 5-19 % of a core, so these bands are wider than the first table's,
+but the order alternated:
+
+| ms, the device (staged GEMM; the bottleneck's four GEMMs) | default | by column | E4M3 |
+| --- | --- | --- | --- |
+| B 512x320 | 16.41-17.33 (7.99-8.67) | 17.48-17.60 (8.80-9.17) | |
+| B 1024x576 | 48.01-48.71 (19.90-20.40) | 49.74-50.61 (21.75-22.16) | |
+| A 512x320 | 32.64-33.93 (19.73-20.37) | 33.60-34.78 (20.42-21.24) | |
+| A 1024x576 | 89.06-94.44 (48.45-51.41) | 95.02-95.31 (53.41-54.45) | |
+| B 512x320, E4M3 run | 16.44-17.10 (3.26-3.66) | | 17.06-17.31 (3.61-3.73) |
+| B 768x448 | 31.10-32.26 (4.98-5.38) | | 31.44-33.18 (5.60-5.82) |
+| A 512x320 | 31.31-33.31 (3.46-4.33) | | 31.99-34.61 (3.90-4.29) |
+| A 768x448 | 58.60-61.12 (6.04-6.51) | | 59.60-61.36 (6.29-6.63) |
+
+By column, the staged GEMM takes 1-5 ms more and the network 2-6 % (`improve-b.md` expected no
+gain); with the E4M3 bytes the bottleneck takes up to 0.6 ms more. **Mesa's defaults are the right
+ones for both**, and nothing changes.
+
+**What follows.** `fused-bycol` is the one that costs Linux, and it is unconditional. A
+specialisation constant, by column on Intel's Windows driver and by row elsewhere, as libxmx does
+for the wide weights and the staged walk, would give Mesa its 4.4 ms back; the owner's word.
+
+**Next on Linux:** that constant, if the owner wants it. **Next on Windows:** nothing; the constant
+would keep Windows' kernels as they are.
 
 ---
 
