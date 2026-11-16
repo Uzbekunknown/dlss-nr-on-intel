@@ -273,9 +273,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - ~~`NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
   default, or a row in the panel or the setup window, is the owner's call~~: off by default, and a
   checkbox in the setup window turns it on to collect data (the owner, 11-15; `64c0e0f`, below).
-- `dx12-waits` (below, 11-15): local, not pushed. Run in Hogwarts Legacy the same evening: 15.0 ->
+- ~~`dx12-waits` (below, 11-15): local, not pushed. Run in Hogwarts Legacy the same evening: 15.0 ->
   16.0 frames a second; the game's resets and the cut test part only right after menus. The
-  owner's word on that, and on merging it.
+  owner's word on that, and on merging it~~: the game's flag decides, and it is on GitHub with
+  `fused-bycol` since 11-16 (below). In no release yet; Linux's `make test` and CTest at that
+  head are owed.
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -316,17 +318,18 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Taking each load out in turn, as window attention's cost was found, for every other kernel that
   runs one subgroup to a workgroup (archive, 09-25).
 - `fused-bycol` (below, 11-15): the 32-channel blocks' fused kernels with their B fragments
-  column-major in shared memory, 4 % of a frame at 1920x1080 and 2560x1440. Local, not pushed;
-  Linux has not timed it (the shaders are the same on Mesa, where by-column tiles once spilt),
-  then the owner's word.
+  column-major in shared memory, 4 % of a frame at 1920x1080 and 2560x1440. On GitHub since 11-16
+  at the owner's word, before Linux timed it (the shaders are the same on Mesa, where by-column
+  tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
 
 ## `dx12-waits` and `fused-bycol` in one tree: 12 % of a frame at 2560x1440, 8 % at 1920x1080 against 0.0.6 (2026-11-16, branch `waits-bycol`)
 
 The owner, 11-16: yes to one tree of the two for a game. `waits-bycol` is `dx12-waits` (`1ab6ecf`)
-with `fused-bycol` (`836001e`) merged in, commit `8f69ff3`; local, nothing pushed. The two touch
-different code and met only in this file. Arc 140V, Intel 101.9150, on AC, best performance.
+with `fused-bycol` (`836001e`) merged in, commit `8f69ff3`. The two touch different code and met
+only in this file. **Pushed** at the owner's word the same evening, after the game run below:
+`master`, `newnr` and `alchemist` fast-forwarded together from `0624ccc`, before Linux's tests. Arc 140V, Intel 101.9150, on AC, best performance.
 
 - Green on Windows at `8f69ff3`: MSVC `build_win.bat` and `build_xess.bat` with no warning, CTest
   71 of 71 on MinGW's libraries and on MSVC's, `test_nr_xess`, `test_gpu_d3d12.py` with and
@@ -374,8 +377,11 @@ no input was sent by the session.
   wrote its saves `HL-00-12` to `-14` and the save list; the copy from before is in the test's
   folder.
 
-**Next on Linux:** as the two entries below say, on this branch once it is on GitHub. **Next on
-Windows:** the owner's word on pushing.
+**Next on Linux:** at GitHub's head, `make test` in both memory modes and CTest
+(`image_compose.comp` and `image_history.comp` include `history_sample.glsl`; the D3D12 parts
+build only on Windows), and `frame_profile.py --size 576 1024 --weights
+work/mlxw/dlssnr-b-logical.safetensors` against `0624ccc` for the by-column fused kernels on
+Mesa. **Next on Windows:** nothing owed; a release with this is the owner's to name.
 
 ## The 32-channel blocks' weights by column in shared memory: 4 % of a frame at 1080p and 1440p, the same bytes (2026-11-15, night, branch `fused-bycol`)
 
