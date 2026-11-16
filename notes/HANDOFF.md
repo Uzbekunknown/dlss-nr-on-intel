@@ -322,6 +322,37 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## `dx12-waits` and `fused-bycol` in one tree: 12 % of a frame at 2560x1440, 8 % at 1920x1080 against 0.0.6 (2026-11-16, branch `waits-bycol`)
+
+The owner, 11-16: yes to one tree of the two for a game. `waits-bycol` is `dx12-waits` (`1ab6ecf`)
+with `fused-bycol` (`836001e`) merged in, commit `8f69ff3`; local, nothing pushed. The two touch
+different code and met only in this file. Arc 140V, Intel 101.9150, on AC, best performance.
+
+- Green on Windows at `8f69ff3`: MSVC `build_win.bat` and `build_xess.bat` with no warning, CTest
+  71 of 71 on MinGW's libraries and on MSVC's, `test_nr_xess`, `test_gpu_d3d12.py` with and
+  without the network. `frame_replay.py --size 576 1024` with network B gives the heads both
+  branches gave (`edcbf478...`, `acbd05d9...`).
+- Whole frames of the daemon's pipeline on a device buffer (no motion, network B at 0.4, 40 frames
+  after 25, three rounds alternating with the 0.0.6 tree), ms:
+
+  | | 0.0.6 (`0624ccc`) | `waits-bycol` |
+  | --- | --- | --- |
+  | 2560x1440 frame | 50.4-51.2 | 44.2-45.1 |
+  | before the network / network / composition | 3.5-3.6 / 41.7-42.8 / 4.1-4.2 | 2.5-2.7 / 39.6-40.1 / 2.3-2.4 |
+  | 1920x1080 frame | 29.3-30.5 | 27.4-27.7 |
+  | before the network / network / composition | 2.1-2.4 / 24.7-25.3 / 2.4-2.5 | 1.6-1.9 / 24.0-24.5 / 1.4-1.5 |
+
+  Windows was not quiet by `quiet-check.ps1`, before and after (a browser at 2-3 % of the cores,
+  Defender and the search indexer running): the two trees alternated, so the difference stands
+  and the absolute figures are a little high or low. Part of the gain around the network is the
+  change metric, off by default on this branch.
+- The release folder from `8f69ff3`: `%USERPROFILE%\nr-rel\waits-bycol-8f69ff3\dlss-nr-windows`.
+  On the stand-in (`nr-game\standin-release-check.ps1`): 772 frames with none rejected, the speed
+  test of A then B, the report's 19 checks, the folder as before.
+
+**Next on Linux:** as the two entries below say, on this branch once it is on GitHub. **Next on
+Windows:** a game from that folder, then the owner's word on pushing.
+
 ## The 32-channel blocks' weights by column in shared memory: 4 % of a frame at 1080p and 1440p, the same bytes (2026-11-15, night, branch `fused-bycol`)
 
 The owner, 11-15: focus on high resolutions ("if it works at WQHD, the low ones gain too"), and,
