@@ -81,6 +81,7 @@ static struct {
 	int weights_by_column;    /* the graph keeps its wide weights by column, N x K (xmx_init) */
 	int shape_unoffered;      /* the device runs the network's 8x16x16 without offering it */
 	int prefer_tiled;         /* plain GEMMs on the tiled kernel, not the staged one (xmx_init) */
+	int fused_by_column;      /* the fused kernels' shared-memory B by column, constant 4 */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -347,14 +348,15 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 			      const VkSpecializationInfo *specialization)
 {
 	/* Every pipeline also gets constant 1, half_round's spelling (publish.glsl), constant 2,
-	 * staged operand copies, and constant 3, the staged GEMM's walk order (gemm_staged.comp).
+	 * staged operand copies, constant 3, the staged GEMM's walk order (gemm_staged.comp), and
+	 * constant 4, the fused kernels' weights by column (ffn_fused.comp, window_block.comp).
 	 * All are fixed in xmx_init; a shader that does not declare one ignores its entry. */
-	VkSpecializationMapEntry entries[5];
-	unsigned char data[36];
+	VkSpecializationMapEntry entries[6];
+	unsigned char data[40];
 	uint32_t count = 0, size = 0;
 	if (specialization) {
-		if (specialization->mapEntryCount > sizeof entries / sizeof *entries - 3
-		    || specialization->dataSize > sizeof data - 3 * sizeof(VkBool32))
+		if (specialization->mapEntryCount > sizeof entries / sizeof *entries - 4
+		    || specialization->dataSize > sizeof data - 4 * sizeof(VkBool32))
 			FAIL("specialization too large", 0);
 		count = specialization->mapEntryCount;
 		size = (uint32_t)specialization->dataSize;
@@ -373,6 +375,11 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 	entries[count++] = (VkSpecializationMapEntry){ .constantID = 3, .offset = size, .size = sizeof walk };
 	memcpy(data + size, &walk, sizeof walk);
 	size += sizeof walk;
+	VkBool32 fused_column = g.fused_by_column ? VK_TRUE : VK_FALSE;
+	entries[count++] = (VkSpecializationMapEntry){ .constantID = 4, .offset = size,
+						       .size = sizeof fused_column };
+	memcpy(data + size, &fused_column, sizeof fused_column);
+	size += sizeof fused_column;
 	VkSpecializationInfo constants = { .mapEntryCount = count, .pMapEntries = entries,
 					   .dataSize = size, .pData = data };
 
@@ -673,6 +680,10 @@ int xmx_prefer_tiled_set(unsigned on)
 
 /* GEMMs recorded on the staged kernel, the 64-row build and the 32-row ones together. */
 unsigned xmx_staged_calls(void) { return g.staged_calls; }
+
+/* Whether the fused kernels keep their weights by column in shared memory and load every B
+ * fragment there column-major, constant 4 (ffn_fused.comp, window_block.comp; xmx_init). */
+int xmx_fused_by_column(void) { return g.fused_by_column; }
 
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
@@ -1098,6 +1109,19 @@ int xmx_init(const char *spv_path)
 		if (!strcmp(by_column, "1")) g.weights_by_column = 1;
 		else if (!strcmp(by_column, "0")) g.weights_by_column = 0;
 		else FAIL("XMX_WEIGHTS_BY_COLUMN must be 0 or 1", 0);
+	}
+	/* The 32-channel blocks' fused kernels keep their weights in shared memory, and the window
+	 * block its V. By column, every B fragment loads column-major: on Intel's Windows driver
+	 * B's network at 1024x576 took 4 % less (HANDOFF 2026-11-15, night); on Mesa it took
+	 * 7-10 % more, the feed-forwards 40 % (2026-11-16, night). The same values in every
+	 * fragment, so the same bytes either way. `XMX_FUSED_BY_COLUMN=0|1` sets it on any driver.
+	 * Fixed before any pipelines are created. */
+	g.fused_by_column = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+	const char *fused_column = getenv("XMX_FUSED_BY_COLUMN");
+	if (fused_column) {
+		if (!strcmp(fused_column, "1")) g.fused_by_column = 1;
+		else if (!strcmp(fused_column, "0")) g.fused_by_column = 0;
+		else FAIL("XMX_FUSED_BY_COLUMN must be 0 or 1", 0);
 	}
 	VkPhysicalDeviceVulkan13Features v13 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &cm,

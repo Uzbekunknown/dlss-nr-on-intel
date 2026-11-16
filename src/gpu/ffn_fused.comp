@@ -102,11 +102,14 @@ layout(buffer_reference, scalar, buffer_reference_align = 16) buffer Uvec4Buf { 
 /* 32 KB, every view the same bytes: the expand weights at 0 and the projection's at 8 KB
  * (staged shapes only), then subgroup s's kilobyte at 16 KB + 1 KB * s.
  *
- * The two weight matrices are kept here by column, each column's K values in a row, and their
- * B fragments are loaded column-major: on Intel's Windows driver a row-major B fragment from
- * shared memory cost ~0.6 ms of this pass at a 1024x576 network (B), a column-major one next to
- * nothing, as the staged GEMM found for its weights (`gemm_staged.comp`, bit 0x8000000). Each
- * fragment holds the values it held by row, so the multiply-adds are the same. */
+ * With FUSED_BY_COLUMN the two weight matrices are kept here by column, each column's K values
+ * in a row, and their B fragments are loaded column-major: on Intel's Windows driver a row-major
+ * B fragment from shared memory cost ~0.6 ms of this pass at a 1024x576 network (B), a
+ * column-major one next to nothing, as the staged GEMM found for its weights
+ * (`gemm_staged.comp`, bit 0x8000000). On Mesa it is the other way: by column this pass took
+ * 40 % longer there (HANDOFF, 2026-11-16, night). Each fragment holds the same values either
+ * way, so the multiply-adds are the same. */
+layout(constant_id = 4) const bool FUSED_BY_COLUMN = false;   /* libxmx, xmx_fused_by_column */
 layout(scalar) shared AsHalf  { float16_t h16[16384]; };
 layout(scalar) shared AsFloat { float     f32[8192]; };
 layout(scalar) shared AsUint  { uint      u32[8192]; };
@@ -138,7 +141,13 @@ void main() {
     uint group = gl_WorkGroupID.y;
     uint expand_base = group * pc.sa, project_base = group * pc.sb;
     HalfBuf projection = HalfBuf(pc.projection);
-    if (staged()) {
+    if (staged() && !FUSED_BY_COLUMN) {
+        /* By row, as they are in memory: the expand's 8 KB, then the projection's. */
+        uint lane = gl_LocalInvocationIndex;
+        u4[lane] = Uvec4Buf(uint64_t(pc.b) + uint64_t(expand_base) * 2ul).u4[lane];
+        u4[512u + lane] = Uvec4Buf(pc.projection + uint64_t(project_base) * 2ul).u4[lane];
+        barrier();
+    } else if (staged()) {
         /* By column, the bits moved as they are: a lane takes eight columns of two adjacent
          * rows, k and k + 1, and stores each column's pair as one word, k's half low. Lanes
          * 0-255 the expand (32 x 128, so columns of 32), 256-511 the projection (128 x 32,
@@ -243,9 +252,12 @@ void main() {
             }
             coopmat<float16_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> w[2];
             for (uint j = 0; j < 2u; j++) {
-                if (staged())                   // by column: column n's K values at n * 32
+                if (staged() && FUSED_BY_COLUMN)  // column n's K values at n * 32
                     coopMatLoad(w[j], h16, (chunk + j * TN) * cin + kk, cin,
                                 gl_CooperativeMatrixLayoutColumnMajor);
+                else if (staged())
+                    coopMatLoad(w[j], h16, kk * width + chunk + j * TN, width,
+                                gl_CooperativeMatrixLayoutRowMajor);
                 else
                     coopMatLoad(w[j], pc.b.v, expand_base + kk * width + chunk + j * TN, width,
                                 gl_CooperativeMatrixLayoutRowMajor);
@@ -274,9 +286,12 @@ void main() {
                             gl_CooperativeMatrixLayoutRowMajor);
             coopmat<float16_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> p[2];
             for (uint j = 0; j < 2u; j++) {
-                if (staged())                   // by column: column n's K values at n * 128
+                if (staged() && FUSED_BY_COLUMN)  // column n's K values at n * 128
                     coopMatLoad(p[j], h16, PROJECTION + (j * TN) * width + chunk + kk * TK,
                                 width, gl_CooperativeMatrixLayoutColumnMajor);
+                else if (staged())
+                    coopMatLoad(p[j], h16, PROJECTION + (chunk + kk * TK) * OUT + j * TN,
+                                OUT, gl_CooperativeMatrixLayoutRowMajor);
                 else
                     coopMatLoad(p[j], projection.v, project_base + (chunk + kk * TK) * OUT + j * TN,
                                 OUT, gl_CooperativeMatrixLayoutRowMajor);

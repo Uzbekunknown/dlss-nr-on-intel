@@ -1840,6 +1840,9 @@ def run_owned(args):
             # the wide weights by column: libxmx's choice for this driver and the runtime's
             # check that it reads them to the same bytes (xmxres.Runtime.weights_by_column)
             ("XMX_WEIGHTS_BY_COLUMN", "weights_by_column"),
+            # the fused kernels' weights by column in shared memory: libxmx's choice for
+            # this driver, the same bytes either way (xmxres.Runtime.fused_by_column)
+            ("XMX_FUSED_BY_COLUMN", "fused_by_column"),
             # plain GEMMs on the tiled kernel: the experimental switch for Arc A-series cards
             # (libxmx `prefer_tiled`; the setup window's and the panel's checkbox)
             ("XMX_PREFER_TILED", "prefer_tiled"))),

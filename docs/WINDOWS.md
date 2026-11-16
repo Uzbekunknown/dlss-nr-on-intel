@@ -189,7 +189,12 @@ first checks that this driver reads a matrix both ways to the same bytes, or kee
 by row. On Arc 140V with driver 101.9150 a frame at render scale 0.4 went from 19.1-19.4 to
 15.7-16.1 ms at 1280x720 with network B and from 32.7-33.8 to 27.7-28.8 ms with A, and at
 1920x1080 from 34.0-34.2 to 31.3 ms and from 62.1-62.5 to 55.0-55.3 ms.
-`XMX_WEIGHTS_BY_COLUMN=0` keeps them by row, `=1` takes them by column on any driver. Rebuild both
+`XMX_WEIGHTS_BY_COLUMN=0` keeps them by row, `=1` takes them by column on any driver. Since
+2026-11-16 the 32-channel blocks' fused kernels (`ffn_fused.comp`, `window_block.comp`) keep their
+weights by column in shared memory on the same driver, and every B fragment there loads
+column-major: B's network at a 1024x576 field took 4 % less here, and 7-10 % more on Mesa, which
+keeps them by row. The same bytes either way; `XMX_FUSED_BY_COLUMN=0|1` sets it on any driver.
+Rebuild both
 `libxmx` and the three staged shaders
 in the checkout named by the game's `NR_ROOT`; changing another checkout does not update
 an already running daemon or a separate MSVC build.

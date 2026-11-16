@@ -15,11 +15,12 @@ real logical weights instead, to check that on a machine that has them.
 
 The lines it prints are the ones `nr_gpu_probe.exe` copies into `nr-gpu-report.txt`. On Intel's
 Windows driver the runtime keeps the weights as E4M3 bytes and by column where its start-up
-checks pass; a second process with `XMX_E4M3_WEIGHTS=0` and `XMX_WEIGHTS_BY_COLUMN=0` times them
-as 0.0.5 kept them, half and by row, so a report says what those forms do on its card. On an Arc
-A-series card the second process runs `XMX_PREFER_TILED=1` instead, the experimental switch: plain
-GEMMs on the tiled kernel, where an A770's staged kernel was the slower (OUCO86's
-notes/staged-vs-tiled-a770.md), the same bytes; its report says what the switch gives. The
+checks pass, and the fused kernels theirs by column; a second process with `XMX_E4M3_WEIGHTS=0`,
+`XMX_WEIGHTS_BY_COLUMN=0` and `XMX_FUSED_BY_COLUMN=0` times them as 0.0.5 kept them, half and by
+row, so a report says what those forms do on its card. On an Arc A-series card the second process
+runs `XMX_PREFER_TILED=1` instead, the experimental switch: plain GEMMs on the tiled kernel, where
+an A770's staged kernel was the slower (OUCO86's notes/staged-vs-tiled-a770.md), the same bytes;
+its report says what the switch gives. The
 per-pass profile of network B at 1280x720 says where that frame's time goes, pass by pass: on
 an A770 the network pays ~55 us a pass whatever the field (`notes/players-20261103.md`), and
 whether that is the passes or the gaps between them is what such a profile tells.
@@ -179,7 +180,7 @@ def child_compare(args):
     A-series card the experimental tiled kernel. It reports what took."""
     runtime, _ = runtime_or_exit()
     out = {"e4m3": bool(runtime.e4m3_weights), "by_column": bool(runtime.weights_by_column),
-           "prefer_tiled": bool(runtime.prefer_tiled)}
+           "fused_by_column": runtime.fused_by_column, "prefer_tiled": bool(runtime.prefer_tiled)}
     for network in args.networks:
         weights = real(args.weights, network) if args.weights else synthetic(network)
         times, _ = measure(runtime, weights, [f for f in FIELDS if f[0] == COMPARE],
@@ -253,7 +254,8 @@ def main():
             env = dict(os.environ, XMX_PREFER_TILED="1")
             title = "with the experimental switch, the tiled kernel"
         else:
-            env = dict(os.environ, XMX_E4M3_WEIGHTS="0", XMX_WEIGHTS_BY_COLUMN="0")
+            env = dict(os.environ, XMX_E4M3_WEIGHTS="0", XMX_WEIGHTS_BY_COLUMN="0",
+                       XMX_FUSED_BY_COLUMN="0")
             title = "with the weights as 0.0.5 kept them"
         command = [sys.executable, os.path.abspath(__file__), "--child-compare",
                    "--networks", ",".join(args.networks), "--frames", str(args.frames),
@@ -269,7 +271,8 @@ def main():
                 forms = ("tiled kernel, " if got.get("prefer_tiled") else "staged kernel, ") + (
                     "half, by row" if not (got["e4m3"] or got["by_column"])
                     else ", ".join(f for f, on in (("E4M3 bytes", got["e4m3"]),
-                                                   ("by column", got["by_column"])) if on))
+                                                   ("by column", got["by_column"])) if on)) + (
+                    ", the fused kernels by column" if got.get("fused_by_column") else "")
                 print("  %s (%s): %s at 1280x720"
                       % (title, forms, ", ".join(f"{n} {got[n]:.1f} ms" for n in args.networks if n in got)))
         except subprocess.TimeoutExpired:

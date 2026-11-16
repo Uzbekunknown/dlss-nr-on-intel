@@ -166,7 +166,8 @@ def _load():
             ("xmx_buf_mark_e4m3", [ctypes.c_int]),
             ("xmx_e4m3_weights", []),
             ("xmx_buf_mark_by_column", [ctypes.c_int]),
-            ("xmx_weights_by_column", [])):
+            ("xmx_weights_by_column", []),
+            ("xmx_fused_by_column", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -961,6 +962,13 @@ class Runtime:
         """Whether `weight` keeps a wide matrix by column on this device
         (`xmx_weights_by_column`, `XMX_WEIGHTS_BY_COLUMN`)."""
         return self._by_column
+
+    @property
+    def fused_by_column(self):
+        """Whether the fused kernels keep their weights by column in shared memory, constant 4
+        of `ffn_fused.comp` and `window_block.comp` (`xmx_fused_by_column`,
+        `XMX_FUSED_BY_COLUMN`): the same bytes either way, a layout per driver."""
+        return bool(self.lib.xmx_fused_by_column())
 
     def weight(self, array, *, e4m3=False, by_column=None):
         """A weight matrix as a GEMM's B, and nothing else's operand: `array` is
