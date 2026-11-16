@@ -350,8 +350,32 @@ different code and met only in this file. Arc 140V, Intel 101.9150, on AC, best 
   On the stand-in (`nr-game\standin-release-check.ps1`): 772 frames with none rejected, the speed
   test of A then B, the report's 19 checks, the folder as before.
 
+**Hogwarts Legacy from that folder, 11-16 19:45-19:54** (FSR 3.1 path as on 11-15, the game at
+1920x1080 with XeFG, `nr-game\release-tests\hogwarts-waits-bycol-1116`). The owner, asked about
+the cut-overs after menus: the game's flag decides, with no guard of ours beside it (the test
+is computed either way, so the choice costs no time). Then the owner took the game and played;
+no input was sent by the session.
+
+- The 11-15 view standing still, network B at 0.4: 78-80 frames in every 5 s (15.8 a second),
+  the daemon's line 51 ms with the network 26; `dx12-waits` alone on 11-15 gave 80-81 (16.0-16.2).
+  What `fused-bycol` gives at a 768x448 network, about 1 %, is under the difference between two
+  days, and no control ran the same day: the game shows nothing of it at this size, for or
+  against.
+- 4705 frames of the game, none declined, no error in the daemon's log. From the panel the owner
+  moved the render scale between 0.15 and 1.0 (10 ms of network at 320x320, 166 at 1920x1152),
+  tried the `cinematic` and `hogwarts` profiles and network A and back to B, all in the running
+  game. The folder's `nr_settings.json` is left as the owner set it (0.3, `cinematic`).
+- The game's resets: 22, in 10 places, and 20 of them came with the cut under the 0.15 limit
+  (0.09-0.14, camera changes the old test would have carried the history across). One frame past
+  the limit without a reset, the fifth of the session (0.35, before the title screen); in play
+  none, the cut at most 0.134.
+- Closed with WM_CLOSE, Remove NR through setup; the executable's and XeSS's folders as before but
+  for `xefg-capture.log` (another project's capture proxy, which appends at every run). The game
+  wrote its saves `HL-00-12` to `-14` and the save list; the copy from before is in the test's
+  folder.
+
 **Next on Linux:** as the two entries below say, on this branch once it is on GitHub. **Next on
-Windows:** a game from that folder, then the owner's word on pushing.
+Windows:** the owner's word on pushing.
 
 ## The 32-channel blocks' weights by column in shared memory: 4 % of a frame at 1080p and 1440p, the same bytes (2026-11-15, night, branch `fused-bycol`)
 
