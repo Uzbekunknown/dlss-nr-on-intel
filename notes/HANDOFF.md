@@ -176,19 +176,17 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   GPU of its runner, `attention.comp`, libxmx and `nr_resident`, and three tests changed (below,
   11-09 and 11-08; archive, 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
   later).
-- The weights by column (below, 11-12): `make test` in both memory modes and CTest, with the two
-  items after this one; `newnr` holds all three on GitHub since 11-12 (`2ae1d82`), and 0.0.6 is
-  built from them. `test_gemm_by_column.py` runs on Mesa as it is; `XMX_WEIGHTS_BY_COLUMN=1` is
-  worth one timing there.
-- `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
-  in both memory modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. It is off on Mesa unless
-  `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
-  it is off; run it once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values, B's
-  320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both ways.
-  `gemm_staged.comp`, `libxmx.c`, `xmxres.py` and `nr_resident.py` changed.
-- `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
-  modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
-  `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
+- ~~The weights by column, `e4m3-weights`, `perf-1108`, `dx12-waits` and `fused-bycol`: `make test`
+  in both memory modes and CTest~~: green at GitHub's `2c7580d` with `a6699b6`, the one failure
+  there a real bug (below, 11-16, latest). Still owed from them:
+  - `XMX_WEIGHTS_BY_COLUMN=1`, one timing on Mesa (below, 11-12);
+  - `test_gemm_e4m3.py` once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values,
+    B's 320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both
+    ways (below, 11-08, evening);
+  - `frame_profile.py --size 576 1024 --weights work/mlxw/dlssnr-b-logical.safetensors` against
+    `0624ccc`, for the by-column fused kernels on Mesa (below, 11-16 and 11-15, night).
+- `a6699b6`, the interface restore with the change metric off (below, 11-16, latest): the owner's
+  word on pushing it. Python only, nothing for Windows to build.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
   staged GEMM's walk (`6ef670e`), are not started. Archive, 11-04 evening.
@@ -277,7 +275,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   16.0 frames a second; the game's resets and the cut test part only right after menus. The
   owner's word on that, and on merging it~~: the game's flag decides, and it is on GitHub with
   `fused-bycol` since 11-16 (below). In no release yet; Linux's `make test` and CTest at that
-  head are owed.
+  head are green, with `a6699b6` (below, 11-16, latest).
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -323,6 +321,40 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## Checked on Linux: GitHub's `2c7580d`, and the interface restore tied to the change metric (2026-11-16, latest, branch `newnr`)
+
+The owner, 11-16: pull everything and run `make test` and CTest. `master`, `newnr` and `alchemist`
+fast-forwarded from `c22f798` to GitHub's `2c7580d`. No daemon, swap empty, a quiet CPU; Mesa
+26.2.6.
+
+**At `2c7580d`, `make test`: 72 of 73, one real failure.** `test_ui_mask.py`, "the mask holds when a
+strength knob is moved", every run. `9aefe63` put `and CHANGE_METRIC` on the whole block after the
+composition in `nr_daemon.process`, and that block holds the interface restore as well as the
+metric: the original wire bytes put back over the masked pixels, which is what keeps them exact
+once a strength knob is away from 1. Since `64c0e0f` turned the metric off by default, a masked
+frame on the CPU path with detail or colour strength away from 1 came back with its interface
+moved. In no release: 0.0.6 is before both.
+
+**The fix, `a6699b6`:** the restore runs whenever there is a mask; only the metric's figure waits on
+`CHANGE_METRIC`. `test_ui_mask.py` passes with `NR_CHANGE_METRIC` unset and set to 1.
+
+**At `a6699b6`:**
+- `make test` 73 of 73, in 1 min 29 s;
+- `XMX_STAGING=1 make test` 73 of 73, in 1 min 34 s, the seven GPU suites that print the mode
+  saying `staging=True`;
+- CMake builds with no warning, and CTest passes 72 of 72;
+- skipped: nothing.
+
+**Not run:** the timings still owed (Open items, Linux).
+
+**Also, for this checkout only:** a SessionStart hook keeps the Linux checkout on `newnr` (the
+owner, 11-16: a new session's context comes from `newnr`). `.claude/hooks/newnr-context.sh`,
+untracked: it fetches `origin/newnr`, fast-forwards it and switches to it, and leaves the checkout
+alone when it has uncommitted changes or another session in it, saying so.
+
+**Next on Linux:** the timings in Open items. **Next on Windows:** nothing for this; pushing `a6699b6`
+is the owner's word.
 
 ## `dx12-waits` and `fused-bycol` in one tree: 12 % of a frame at 2560x1440, 8 % at 1920x1080 against 0.0.6 (2026-11-16, branch `waits-bycol`)
 
