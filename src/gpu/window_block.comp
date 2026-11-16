@@ -113,10 +113,23 @@ void main() {
 
     /* The QKV weights, 6 KB, into the bytes K and V will take — free until every subgroup
      * has projected its row. Read from memory by row, a B fragment's pairs of K were two
-     * 16-bit loads each: 1.6 ms of 7.1 at 1280x768. From shared memory they cost little. */
-    u4[gl_LocalInvocationIndex] = Uvec4Buf(uint64_t(pc.b)).v[gl_LocalInvocationIndex];
-    if (gl_LocalInvocationIndex < 128u)
-        u4[256u + gl_LocalInvocationIndex] = Uvec4Buf(uint64_t(pc.b)).v[256u + gl_LocalInvocationIndex];
+     * 16-bit loads each: 1.6 ms of 7.1 at 1280x768. From shared memory they cost little,
+     * and less again by column: kept so, each column's 32 K values in a row, and loaded
+     * column-major, as `ffn_fused.comp` keeps its weights (on Intel's Windows driver a
+     * row-major B fragment from shared memory is the dearer one). A lane takes eight columns
+     * of rows k and k + 1 and stores each column's pair as one word, k's half low: the bits
+     * as they are, the same values in every fragment. */
+    if (gl_LocalInvocationIndex < 192u) {
+        uint l = gl_LocalInvocationIndex;
+        uint k = (l % 16u) * 2u, n0 = (l / 16u) * 8u;
+        uvec4 upper = Uvec4Buf(uint64_t(pc.b)).v[(k * 96u + n0) >> 3];
+        uvec4 lower = Uvec4Buf(uint64_t(pc.b)).v[((k + 1u) * 96u + n0) >> 3];
+        for (uint e = 0u; e < 8u; e++) {
+            uint shift = 16u * (e & 1u);
+            u32[((n0 + e) * 32u + k) >> 1] =
+                ((upper[e >> 1] >> shift) & 0xffffu) | (((lower[e >> 1] >> shift) & 0xffffu) << 16);
+        }
+    }
 
     /* The row, gathered: a lane eight channels of one token, published to E4M3 as the
      * projection's loader publishes them — the projection reads the feed-forward output
@@ -152,8 +165,8 @@ void main() {
         for (uint kk = 0u; kk < 2u; kk++)
             for (uint j = 0u; j < 2u; j++) {
                 coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> w;
-                coopMatLoad(w, h16, kk * 16u * 96u + part * 32u + j * 16u, 96u,
-                            gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(w, h16, (part * 32u + j * 16u) * 32u + kk * 16u, 32u,
+                            gl_CooperativeMatrixLayoutColumnMajor);
                 acc[j] = coopMatMulAdd(rows[kk], w, acc[j]);
             }
         subgroupMemoryBarrierShared();           // the row's halves are in registers
@@ -221,7 +234,17 @@ void main() {
     for (uint g = 0u; g < 4u; g++) {
         uint r = local / 4u, l = local % 4u;
         u32[((row + r) * 32u + g * 8u + 2u * l) / 2u] = keys[g];
-        u32[(VALUES + (row + r) * 32u + g * 8u + 2u * l) / 2u] = values[g];
+        /* V by channel, each channel's 64 tokens in a row, so PV loads its B fragments
+         * column-major: this lane and the lane of the token beside it (four lanes on) swap
+         * words, and the even token's lane stores both tokens' halves of the lower channel,
+         * the odd token's those of the upper one: the bits as they are. */
+        uint beside = subgroupShuffleXor(values[g], 4u);
+        uint odd = r & 1u;
+        uint first = odd == 0u ? values[g] : beside;       // token r & ~1
+        uint second = odd == 0u ? beside : values[g];      // token r | 1
+        uint shift = 16u * odd;
+        u32[(VALUES + (g * 8u + 2u * l + odd) * 64u + row + (r & ~1u)) / 2u] =
+            ((first >> shift) & 0xffffu) | (((second >> shift) & 0xffffu) << 16);
     }
     barrier();                                   // every row's K and V in place
 
@@ -266,9 +289,19 @@ void main() {
     }
     barrier();
     /* The output projection's weights, 2 KB, into K's bytes past the reciprocals: every
-     * QK^T is done, and the barrier the denominators need is the one that publishes them. */
-    if (gl_LocalInvocationIndex < 128u)
-        u4[64u + gl_LocalInvocationIndex] = Uvec4Buf(pc.projection).v[gl_LocalInvocationIndex];
+     * QK^T is done, and the barrier the denominators need is the one that publishes them.
+     * By column, as the QKV weights are: column n's 32 K values at 512 + 32 n. */
+    if (gl_LocalInvocationIndex < 64u) {
+        uint l = gl_LocalInvocationIndex;
+        uint k = (l % 16u) * 2u, n0 = (l / 16u) * 8u;
+        uvec4 upper = Uvec4Buf(pc.projection).v[(k * 32u + n0) >> 3];
+        uvec4 lower = Uvec4Buf(pc.projection).v[((k + 1u) * 32u + n0) >> 3];
+        for (uint e = 0u; e < 8u; e++) {
+            uint shift = 16u * (e & 1u);
+            u32[(512u + (n0 + e) * 32u + k) >> 1] =
+                ((upper[e >> 1] >> shift) & 0xffffu) | (((lower[e >> 1] >> shift) & 0xffffu) << 16);
+        }
+    }
     /* and block 70's head weights, 1 KB, in the last of K's bytes */
     if ((operation_flags() & 0x1000000u) != 0u && gl_LocalInvocationIndex < 64u)
         u4[192u + gl_LocalInvocationIndex] = Uvec4Buf(pc.pooled).v[gl_LocalInvocationIndex];
@@ -305,8 +338,8 @@ void main() {
         coopMatLoad(p, h16, scratch * 2u + c, 64u, gl_CooperativeMatrixLayoutRowMajor);
         for (uint j = 0u; j < 2u; j++) {
             coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> v;
-            coopMatLoad(v, h16, VALUES + c * 32u + j * 16u, 32u,
-                        gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(v, h16, VALUES + (j * 16u) * 64u + c, 64u,
+                        gl_CooperativeMatrixLayoutColumnMajor);
             context[j] = coopMatMulAdd(p, v, context[j]);
         }
     }
@@ -339,8 +372,8 @@ void main() {
     for (uint kk = 0u; kk < 2u; kk++)
         for (uint j = 0u; j < 2u; j++) {
             coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> w;
-            coopMatLoad(w, h16, 512u + kk * 16u * 32u + j * 16u, 32u,
-                        gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(w, h16, 512u + (j * 16u) * 32u + kk * 16u, 32u,
+                        gl_CooperativeMatrixLayoutColumnMajor);
             projected[j] = coopMatMulAdd(attended[kk], w, projected[j]);
         }
     subgroupMemoryBarrierShared();

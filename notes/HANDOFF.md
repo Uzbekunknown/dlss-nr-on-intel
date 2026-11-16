@@ -315,8 +315,89 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   `cl_intel_subgroup_2d_block_io`, untried (archive, "1. Do this first").
 - Taking each load out in turn, as window attention's cost was found, for every other kernel that
   runs one subgroup to a workgroup (archive, 09-25).
+- `fused-bycol` (below, 11-15): the 32-channel blocks' fused kernels with their B fragments
+  column-major in shared memory, 4 % of a frame at 1920x1080 and 2560x1440. Local, not pushed;
+  Linux has not timed it (the shaders are the same on Mesa, where by-column tiles once spilt),
+  then the owner's word.
 
 ---
+
+## The 32-channel blocks' weights by column in shared memory: 4 % of a frame at 1080p and 1440p, the same bytes (2026-11-15, night, branch `fused-bycol`)
+
+The owner, 11-15: focus on high resolutions ("if it works at WQHD, the low ones gain too"), and,
+away that evening, run the experiments without him. One commit (`19679e9`) on the local branch
+`fused-bycol` from `0624ccc`, in a worktree of the session's; nothing pushed. Arc 140V, Intel
+101.9150, on AC, quiet before and after.
+
+**Where B's time goes at WQHD** (`frame_profile.py --size 576 1024 --weights
+work/mlxw/dlssnr-b-logical.safetensors`, the network at 2560x1440 and 0.4; the script takes A's
+weights unless `--weights` says otherwise, whatever `NR_PRESET` is): 42.95 ms on the device; the
+four full-resolution passes 12.8 (the window blocks 3.38 and 3.27, the feed-forwards 3.27 and
+2.91), the 32-channel passes at half resolution 4.7 more. By arithmetic a full-resolution
+feed-forward is ~0.3 ms of matrix work and ~0.9 of memory at its 160 bytes a token; it takes 3.
+
+**Knocked out in turn inside B's frame** (a scratch driver compiles variants of a kernel and loads
+them through `XMX_FFN_SPV`, `XMX_WINDOW_BLOCK_SPV` and `XMX_WINDOW_SPV`; the tree untouched; the
+merged feed-forward, 2.91-2.92 ms, the steadiest call): the projection's multiply-adds and their B
+loads 0.63 ms; the expand's 0.47; the hidden layer's gate and E4M3 publish 0.46; the output's
+publish nothing; the hidden chunk's round trip as the projection's A 0.05. The B fragments loaded
+column-major from the same shared memory (values wrong): 2.92 -> 2.29 ms, and with no B loads at
+all 2.26. **On Intel's Windows driver a B fragment loaded row-major from shared memory is most of
+a matrix step's cost, and a column-major one next to nothing**: the staged GEMM's own by-column
+weights (`7376056`, 11-12) gained partly from this, and the fused kernels had kept their weights
+by row.
+
+**What changed** (`19679e9`; every fragment holds the values it held, so each multiply-add is the
+same):
+- `ffn_fused.comp`: the expand's 32 x 128 and the projection's 128 x 32 go into shared memory by
+  column, the bits moved as they are: a lane takes eight columns of two adjacent rows and stores
+  each column's pair as one word. Their B fragments are loaded column-major.
+- `window_block.comp`: the QKV weights and the output projection's the same way; V stored by
+  channel (a lane swaps its words with the lane of the token beside it, four lanes on), so PV
+  loads V column-major. The keys were column-major already.
+- `window_attention.comp` (the C >= 64 levels) with V by channel was timed too: no change, not
+  kept.
+
+**The same bytes:** `test_ffn_fused.py` (144 narrow, 24 branched), `test_glue.py` (its merged and
+stem feed-forwards among 282 cases) and `test_window_block.py` (240, 32 pooled, 64 with the head)
+bit-exact with the new SPIR-V; each fails on a column-major load of weights still kept by row (a
+control: 1913 bytes, 2048 of 2048 values). `frame_replay.py` heads, original and changed input,
+byte for byte the same: B at 576x1024 (`edcbf478...`, `acbd05d9...`) and 320x512, A at 320x512.
+
+**Inside the frame** (B, 1024x576, three rounds alternating): the full-resolution feed-forward
+2.91 -> 2.39 ms, the half-resolution set 1.48 -> 1.29; the full-resolution window block 3.23-3.28 ->
+2.96-2.99 (by-column weights alone 3.06-3.08), the pooled one 3.41 -> 3.14, the half-resolution
+ones 0.75 -> 0.71. **Whole frames** (the daemon's pipeline on a device buffer, B at 0.4, 120 frames,
+a process each, three rounds alternating; `perf-1115\frames_series.py`):
+
+| ms | 0.0.6 | `fused-bycol` |
+| --- | --- | --- |
+| 2560x1440, the frame | 51.14-51.34 | 48.94-49.30 |
+| 2560x1440, the network | 41.55-41.69 | 39.56-39.77 |
+| 1920x1080, the frame | 32.05-32.32 | 30.87-30.99 |
+| 1920x1080, the network | 25.19-25.35 | 24.08-24.14 |
+| 1280x720, the network | 12.97-13.46 | 12.32-12.80 |
+
+(At 1280x720 the frame itself was bimodal in both builds, 16-18 ms, from the passes around the
+network; the network is the figure.) With `dx12-waits`' passes around the network (WQHD 51.7 ->
+48.8 there) the two would be ~46 ms at 2560x1440.
+
+**What is left in the window block** (knocked out on this branch's kernel, the full-resolution
+call 2.98 ms, two rounds): Q and K's normalisation 0.16, the bias's load 0.08, the softmax's
+transform 0.08, the skip's second read 0.07, the gathered row's E4M3 0.04, the output's publish
+nothing. No piece is large; the rest, ~2.5 ms, is its structure (barriers, the matrix steps'
+chains, the shared-memory round trips). The E4M3 by a magic constant (`NR_E4M3_MAGIC`) is exact
+and was 10-22 % slower on this driver in October (`notes/improve-e4m3-probe-20261013.md`): not
+tried again.
+
+**Not run:** Linux (the same shaders run on Mesa, where `improve-b.md` saw a by-column tile spill
+in the staged GEMM: worth a timing there; a driver switch would be a specialisation constant), a
+game, CTest at this head (the three kernels' tests and the heads ran with the SPIR-V loaded from
+the scratchpad through the variables above).
+
+**Next on Linux:** `make test` in both memory modes, CTest, and `frame_profile.py --size 576 1024
+--weights work/mlxw/dlssnr-b-logical.safetensors` against `0624ccc`. **Next on Windows:** the owner's
+word; with `dx12-waits`, a release root for a game.
 
 ## DirectX 12 on the game's own data, the change metric off, and where WQHD's time goes (2026-11-15, branch `dx12-waits`)
 
