@@ -176,10 +176,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   done (below, 11-16, night). The wide weights by column and the E4M3 bytes are exact on Mesa and
   gain nothing there; they stay off, as they are by default. The by-column fused kernels cost it
   7-10 %, the next line.
-- **`fused-bycol` costs Mesa 7-10 % of B's network** (below, 11-16, night): the fused kernels read
-  their weights by column on every driver, and on Mesa that is slower. The way out the entry of
-  11-15 named: a specialisation constant, by column on Intel's Windows driver, by row elsewhere.
-  Not started; the owner's word.
+- ~~**`fused-bycol` costs Mesa 7-10 % of B's network**: a specialisation constant, by column on
+  Intel's Windows driver, by row elsewhere~~: constant 4, `8c82133` (below, 11-16, late night).
 - ~~`a6699b6`, the interface restore with the change metric off: the owner's word on pushing it~~:
   pushed at the owner's word, 11-16, with `master`, `newnr` and `alchemist` at `f9ad754`.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
@@ -197,6 +195,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
+- `8c82133`, the fused kernels' layout as specialisation constant 4, on for this driver (below,
+  11-16, late night): the MSVC build, CTest, and B's `frame_profile` at 576x1024 against
+  `XMX_FUSED_BY_COLUMN=0`, once it is on GitHub.
 - Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
   three branches since 11-19, archive, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
@@ -309,10 +310,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   `cl_intel_subgroup_2d_block_io`, untried (archive, "1. Do this first").
 - Taking each load out in turn, as window attention's cost was found, for every other kernel that
   runs one subgroup to a workgroup (archive, 09-25).
-- `fused-bycol` (archive, 11-15): the 32-channel blocks' fused kernels with their B fragments
+- ~~`fused-bycol` (archive, 11-15): the 32-channel blocks' fused kernels with their B fragments
   column-major in shared memory, 4 % of a frame at 1920x1080 and 2560x1440. On GitHub since 11-16
   at the owner's word, before Linux timed it (the shaders are the same on Mesa, where by-column
-  tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
+  tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row)~~: in
+  0.0.7; 7-10 % slower on Mesa, which keeps them by row since `8c82133` (below, 11-16, night and
+  late night).
 
 ---
 
@@ -494,6 +497,55 @@ builds there).
 
 **Next on Windows:** a build for #46's reporter, the owner's call, then their answer. **Next on
 Linux:** nothing.
+
+## The fused kernels' layout per driver, constant 4: Mesa back to 0624ccc's speed (2026-11-16, late night, branch `newnr`)
+
+The owner, 11-16, on the entry below: do it. `7944836`, local; `8c82133` since 11-21 (below).
+
+**What changed.** `ffn_fused.comp` and `window_block.comp` take specialisation constant 4,
+`FUSED_BY_COLUMN`: by column as `19679e9` made them, or by row as `0624ccc` had them; every
+fragment holds the same values either way. libxmx gives it to every pipeline beside constants 1-3:
+on for Intel's Windows driver, off elsewhere, `XMX_FUSED_BY_COLUMN=0|1` on any driver.
+`xmx_fused_by_column()`, `Runtime.fused_by_column`, and the daemon's `runtime options` line say
+which ran. `gpu_report_network.py`'s comparison process turns it off with the E4M3 bytes and the
+wide weights by column, as 0.0.5 had them. `docs/WINDOWS.md` names it.
+
+**The same bytes.** `test_ffn_fused.py`, `test_glue.py` and `test_window_block.py` bit-exact with
+the constant 0 and 1. The heads are the same both ways and as before: B at 576x1024
+(`edcbf478`, `acbd05d9`) and 320x512 (`df409ac4`, `b6d9870b`), A at 320x512 (`3e37b87c`,
+`29d613d2`). Both shaders carry one `SpecId 4`.
+
+**Timed on Mesa**, as below, three ways alternating; an IDE held ~20 % of a core throughout, so
+the figures are ~3 ms above the quiet ones below, the order the same:
+
+| ms, the device | `0624ccc`'s shaders | constant 0 | constant 1 |
+| --- | --- | --- | --- |
+| B 1024x576 | 46.62-47.21 | 46.63-47.63 | 50.89-51.27 |
+| B 512x320 | 15.43-16.35 | 15.55-16.26 | 17.12-17.72 |
+| A 1024x576 | 86.75-88.12 | 87.57-89.62 | 93.25-95.90 |
+| A 512x320 | 30.57-32.27 | 31.67-32.85 | 33.13-34.15 |
+
+Constant 0 runs as `0624ccc` did, so Mesa has its 4-6 ms back at 1024x576 and 1.5 at 512x320.
+
+**Checked on Linux:** `make test` 73 of 73 in both memory modes, CTest 72 of 72, CMake with no
+warning, and `XMX_FUSED_BY_COLUMN=1 make test-gpu` 43 of 43, the path Windows now takes.
+
+**Carried onto 0.0.7's head**, 11-21: GitHub had gone from `f9ad754` to `ecdce7b` (0.0.7), so
+the three local commits were rebased onto it, the code as `8c82133`; `backup-20261121-newnr-before-pull`
+keeps them as they were. The Arc A-series switch (`XMX_PREFER_TILED`) had come into the same
+places, and both are kept: in libxmx the constant beside `prefer_tiled` (on or off with the driver,
+whatever that switch says); in the daemon's `runtime options` line `XMX_FUSED_BY_COLUMN` before
+`XMX_PREFER_TILED`; in `gpu_report_network.py` all three forms are turned off only where the second
+process compares with 0.0.5's weights. An A-series card's second process compares the kernels with
+the fused layout as its driver has it, and its line adds `the fused kernels by column` when they
+are. The checks above ran at the old base, and none has run at `8c82133` yet.
+
+**Not run:** Intel's Windows driver, where the constant is on and the kernels should compile to
+what `19679e9` gave.
+
+**Next on Windows:** once this is on GitHub, the MSVC build and CTest, and one `frame_profile.py
+--size 576 1024 --weights work/mlxw/dlssnr-b-logical.safetensors` against `XMX_FUSED_BY_COLUMN=0`,
+to see the 4 % is still there. **Next on Linux:** nothing for this.
 
 ## Timed on Mesa: `fused-bycol` 7-10 % slower; the weights by column and the E4M3 bytes gain nothing (2026-11-16, night, branch `newnr`)
 
