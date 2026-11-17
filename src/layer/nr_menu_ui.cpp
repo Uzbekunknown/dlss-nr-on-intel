@@ -263,14 +263,13 @@ static const float kKnobField = 86.0f;
 static const float kKnobSpacing = 8.0f;          /* ImGui's default ItemSpacing.x */
 static const float kKnobTextColumn = kKnobSlider + kKnobSpacing + kKnobField + kKnobSpacing;
 static const float kPanelGraphGap = 10.0f;
-/* **The panel's plot is the slider's width, not the whole control row's.** It was
- * `kKnobTextColumn - kPanelGraphGap` (282 px), which ran from the panel's left edge past the end
- * of every slider and value box under it - measured in Desk Job as a plot at x=33..314 over
- * sliders ending at x=222 and value boxes at 231..316, so the picture stuck 92 px out past the
- * column it is supposed to head. The graphs are the shape of the numbers on the line above them,
- * and that line starts where the row does; the slider is what the eye follows down the panel, so
- * the plot ends where it does and the name/axis column starts after the value box. */
-static const float kPanelGraphWidth = kKnobSlider;
+/* **The panel's plot spans the slider AND the value box, so the name lands in the text column.**
+ * 282 = 190 slider + 8 gap + 86 field - 2, and `SameLine(0, kPanelGraphGap)` puts the name at
+ * 292, which is `kKnobTextColumn` exactly - the same column every knob label below sits in. It
+ * looks too wide beside a bare slider, which is what led to a change that made it 190 and left
+ * the name floating 86 px to the right of the plot: the value box is part of the control row even
+ * on the two rows that have no value box, and the row is what the plot has to match. */
+static const float kPanelGraphWidth = kKnobTextColumn - kPanelGraphGap;   /* 282 */
 static const float kPanelGraphHeight = 30.0f;
 
 
@@ -381,11 +380,11 @@ static void draw_one_graph(const char *id, const char *name, const float *series
                     IM_COL32(140, 140, 150, 200), why);
     }
     if (label_right) {
-        /* To the RIGHT of the plot, at the column the knob rows put their LABELS in - which is
-         * past the value box, not past the slider. `SameLine(0, gap)` would put the name where the
-         * value box is; the offset is measured from the plot's right edge to that column. */
-        const float offset = kKnobTextColumn - (width + kKnobSpacing);
-        ImGui::SameLine(0.0f, offset > 0.0f ? offset : kPanelGraphGap);
+        /* To the RIGHT of the plot, centred on its height - the same order the knob rows use, and
+         * the reason the panel no longer reads as two blocks of text with a box between them. The
+         * plot is `kKnobTextColumn - kPanelGraphGap` wide, so one `kPanelGraphGap` lands the name
+         * exactly on the column every knob label below it uses. */
+        ImGui::SameLine(0.0f, kPanelGraphGap);
         ImGui::BeginGroup();
         const float line = ImGui::GetTextLineHeight();
         const float pad = (height - line * 2.0f) * 0.5f;
