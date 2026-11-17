@@ -1,4 +1,4 @@
-param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
+﻿param([string]$Root = '', [switch]$SelfTest, [string]$ControlSchema = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 # Drawn by the CPU: the window is text and buttons, and on an integrated GPU the game and the
