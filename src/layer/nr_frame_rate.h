@@ -154,6 +154,15 @@ typedef struct nr_frame_rates {
 	/* The present before this one, so a frame's own milliseconds are a difference rather than a
 	 * rate over half a second: the graph wants the frame, the counter wants the second. */
 	double previous;
+	/* The host's totals at the present before this one, for the graph's two series. A frame's
+	 * network time is a difference of two sums like its milliseconds are a difference of two
+	 * clocks: `previous` alone cannot make it per frame, because the totals move on presents of
+	 * their own and a difference against a reading half a second old is a mean. See the sample
+	 * below. */
+	nr_frame_counts prior;
+	/* Whether `prior` means anything yet: the sample that starts the readings has nothing to
+	 * subtract from, and the frame after a restart has no baseline either. */
+	int prior_valid;
 } nr_frame_rates;
 
 static inline void nr_frame_rates_reset(nr_frame_rates *r)
@@ -163,6 +172,8 @@ static inline void nr_frame_rates_reset(nr_frame_rates *r)
 	r->network_ms = -1.0;
 	nr_frame_graph_reset(&r->graph);
 	r->previous = -1.0;
+	memset(&r->prior, 0, sizeof r->prior);
+	r->prior_valid = 0;
 }
 
 static inline int nr_frame_counts_behind(const nr_frame_counts *now, const nr_frame_counts *then)
@@ -198,28 +209,40 @@ static inline void nr_frame_rates_sample(nr_frame_rates *r, double now, const nr
 	 * A sample whose total did not move is a repeat of a held frame, not a new one - the panel runs
 	 * every present and so does this, but only a present that the screen counted is a frame.
 	 *
-	 * **The frame series is per frame; the network series is not.** The host's counters carry a
-	 * SUM of the answers' times, not a per-frame figure, so the only per-point value available is
-	 * `(sum - sum_at_the_last_reading) / (frames - frames_at_the_last_reading)` - a mean over the
-	 * half-second reading window, repeated on every present inside it. The blue line is therefore
-	 * a staircase with half-second steps, not a per-frame measurement, and it is drawn that way
-	 * rather than smoothed to hide it: a step down means the network got cheaper in that half
-	 * second, and the flat run after it means nothing was measured in between. Adding a per-frame
-	 * figure to the wire would be the way to change that; the trailer carries one number per
-	 * frame, but on the CPU path it is the frame's whole round trip, not the network alone. */
+	 * **Both series are per frame, against the present before this one.** The host's counters
+	 * carry a SUM of the answers' times, not a per-frame figure, so a frame's own network time can
+	 * only be a difference of two sums; the question is which two. Against the last *reading* it
+	 * was a mean over half a second, repeated on every present inside it: the blue line was a
+	 * staircase of half-second steps, each step thirty points of the same value at 60 fps, and a
+	 * change inside a step could not be seen at all. Against the last *present* it is the frames
+	 * the network answered between one present and the next - one, normally, which makes it that
+	 * frame's own time, and the same figure the counter reports once a second, only resolved.
+	 *
+	 * The counts that report a network time are not the presents that carry it: in asynchronous
+	 * mode the answer for one present is counted at a later one, so a present with no new answer
+	 * appends no net point (`-1`, which draws nothing) rather than repeating the last figure as
+	 * if it had been measured again. */
 	const int presented_now = counts->presented > r->seen[r->kept - 1].presented;
 	if (presented_now) {
 		const double frame_ms = (r->previous > 0.0 && now > r->previous)
 			? (now - r->previous) * 1000.0 : -1.0;
-		const uint64_t net_frames_now = counts->network_frames - r->seen[r->kept - 1].network_frames;
+		const int have_baseline = r->prior_valid && !nr_frame_counts_behind(counts, &r->prior);
+		const uint64_t net_frames_now = have_baseline
+			? counts->network_frames - r->prior.network_frames : 0;
 		const double net_ms = net_frames_now
-			? (double)(counts->network_us - r->seen[r->kept - 1].network_us)
+			? (double)(counts->network_us - r->prior.network_us)
 			  / (double)net_frames_now / 1000.0 : -1.0;
-		if (frame_ms >= 0.0) nr_frame_graph_add(&r->graph, (float)frame_ms, (float)net_ms);
-		r->previous = now;
-	} else {
-		r->previous = now;
+		if (frame_ms >= 0.0) {
+			nr_frame_graph_add(&r->graph, (float)frame_ms, (float)net_ms);
+			/* The baseline moves with the point it produced, never without one: an interval
+			 * whose point was not drawn carries its answers into the next point rather than
+			 * dropping them, and the division by the frames in that longer interval keeps the
+			 * figure a mean over exactly the frames it covers. */
+			r->prior = *counts;
+			r->prior_valid = 1;
+		}
 	}
+	r->previous = now;
 	r->last = now;
 	if (now - r->at[r->kept - 1] < NR_RATE_STEP) return;
 	if (r->kept == NR_RATE_SAMPLES) {

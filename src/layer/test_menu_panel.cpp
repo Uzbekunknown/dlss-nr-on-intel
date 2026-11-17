@@ -580,6 +580,68 @@ int main(void)
             check(nn == 2 && out[0] > 7.9f && out[0] < 8.1f && out[1] < 0.0f,
                   "a frame without a network time leaves a gap, not a zero", detail);
 
+            /* **The net series is per frame too, against the present before this one.** The same
+             * stream as the rates above - 60 presents a second, an answer on every other one,
+             * 24.5 ms each - is only 30 answers in 60 presents. Read against the last *reading*
+             * every point in a half-second window was the same mean; read against the last
+             * *present* each answer is its own frame's time, so the points that carry one all say
+             * 24.5 and the presents that carry none say nothing at all. */
+            nr_frame_rates rn;
+            nr_frame_rates_reset(&rn);
+            nr_frame_counts nc = {0, 0, 0, 0};
+            nr_frame_rates_sample(&rn, 0.0, &nc);
+            for (int i = 1; i <= 150; ++i) {
+                nc.presented++;
+                if (i % 2 == 0) { nc.nr_frames++; nc.network_us += 24500; nc.network_frames++; }
+                nr_frame_rates_sample(&rn, i / 60.0, &nc);
+            }
+            float net[NR_GRAPH_SAMPLES];
+            const int net_points = nr_frame_graph_net(&rn.graph, net, NR_GRAPH_SAMPLES);
+            int with_time = 0, gaps = 0, wrong = 0;
+            float lowest = 1e9f, highest = -1e9f;
+            for (int i = 0; i < net_points; ++i) {
+                if (net[i] < 0.0f) { ++gaps; continue; }
+                ++with_time;
+                if (fabsf(net[i] - 24.5f) > 0.01f) ++wrong;
+                if (net[i] < lowest) lowest = net[i];
+                if (net[i] > highest) highest = net[i];
+            }
+            snprintf(detail, sizeof detail,
+                     "%d points, %d with a time (%d wrong, %.2f..%.2f), %d gaps", net_points, with_time,
+                     wrong, (double)lowest, (double)highest, gaps);
+            /* An answer every other present, over the ring's own depth: 120 points hold 60 answers
+             * and 60 presents that carried none. Read against the half-second reading instead,
+             * all 120 points would have carried a time. */
+            check(with_time >= 55 && with_time <= 65 && wrong == 0 && gaps > 0 && highest - lowest < 0.02f,
+                  "a frame's network time is that frame's answer, not half a second's mean", detail);
+
+            /* And it is not a staircase: consecutive answers are the same value here *because the
+             * fixture feeds the same value*, so the check above cannot tell a per-frame series
+             * from a flat one. Feeding answers that move proves the points follow them. */
+            nr_frame_rates rm;
+            nr_frame_rates_reset(&rm);
+            nr_frame_counts mc = {0, 0, 0, 0};
+            nr_frame_rates_sample(&rm, 0.0, &mc);
+            for (int i = 1; i <= 60; ++i) {
+                mc.presented++;
+                mc.nr_frames++;
+                mc.network_us += (uint64_t)(i * 1000);   /* 1 ms, 2 ms, 3 ms... */
+                mc.network_frames++;
+                nr_frame_rates_sample(&rm, i / 60.0, &mc);
+            }
+            float moved[NR_GRAPH_SAMPLES];
+            const int mn = nr_frame_graph_net(&rm.graph, moved, NR_GRAPH_SAMPLES);
+            int distinct = 0;
+            float last = -2.0f;
+            for (int i = 0; i < mn; ++i) {
+                if (moved[i] >= 0.0f && fabsf(moved[i] - last) > 0.5f) { ++distinct; last = moved[i]; }
+            }
+            snprintf(detail, sizeof detail, "%d points, %d distinct values, last %.2f ms", mn, distinct,
+                     mn > 0 ? (double)moved[mn - 1] : -1.0);
+            check(mn >= 55 && distinct >= 50,
+                  "each frame's own answer lands in its own point, so sixty answers make sixty steps",
+                  detail);
+
             /* Filled past its depth: the count stops at the ring's size and the oldest go. */
             for (int i = 0; i < NR_GRAPH_SAMPLES + 40; ++i)
                 nr_frame_graph_add(&g, (float)(i % 30) + 1.0f, -1.0f);
