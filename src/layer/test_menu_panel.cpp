@@ -905,6 +905,52 @@ int main(void)
             check(!captured && !hovered, "a click on the corner is not the corner's", detail);
         }
 
+        /* **The corner's plots take the window's width, not a fixed box.** The window sizes itself
+         * to its line (`AlwaysAutoResize`), and the plot is measured from the CONTENT REGION rather
+         * than re-measured with `CalcTextSize`. That difference is the bug this holds down: a CJK
+         * line's glyphs enter the font atlas only when first drawn, so a re-measure on the frame
+         * before that answers with the fallback advance, comes out under the 180 px floor, and the
+         * plot is drawn at the floor while the text above it is wider - measured in Desk Job at
+         * 263 px of text over a 180 px box, 77 px of window with nothing under it.
+         *
+         * Three lines of very different lengths: a width that is really the floor gives three
+         * nearly equal windows, and the second assertion fails. */
+        {
+            static float wide[60];
+            for (int i = 0; i < 60; ++i) wide[i] = 12.0f + (float)(i % 7);
+            const char *lines[] = {
+                "Screen 60.0 fps   NR 30.0 fps",
+                "Screen 75.0 fps   NR 75.0 fps   network 5.4 ms",
+                "Screen 144.0 fps   NR 72.0 fps   network 24.5 ms",
+            };
+            float windows[3] = {0.0f, 0.0f, 0.0f};
+            float texts[3] = {0.0f, 0.0f, 0.0f};
+            for (int k = 0; k < 3; ++k) {
+                for (int pass = 0; pass < 3; ++pass) {
+                    ImGuiIO &dio = ImGui::GetIO();
+                    dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                    dio.DeltaTime = 1.0f / 60.0f;
+                    ImGui::NewFrame();
+                    nrex_counter(nullptr, nullptr, nullptr, 2, lines[k], wide, 60, wide, 60, 1);
+                    ImGui::Render();
+                }
+                ImGuiWindow *win = ImGui::FindWindowByName("##nr_frame_counter");
+                windows[k] = win ? win->Size.x : 0.0f;
+                texts[k] = ImGui::CalcTextSize(lines[k]).x;
+            }
+            snprintf(detail, sizeof detail,
+                     "window %.0f/%.0f/%.0f px for text %.0f/%.0f/%.0f",
+                     (double)windows[0], (double)windows[1], (double)windows[2],
+                     (double)texts[0], (double)texts[1], (double)texts[2]);
+            /* The window is the text plus its padding (7 px each side), so it is always at least
+             * as wide as the line it holds; and it grows with the line, which a floor-only width
+             * would not. */
+            check(windows[0] >= texts[0] && windows[1] >= texts[1] && windows[2] >= texts[2],
+                  "the corner's window is never narrower than its line", detail);
+            check(windows[1] > windows[0] + 100.0f && windows[2] > windows[1] + 10.0f,
+                  "the corner's window grows with its line", detail);
+        }
+
         /* In the panel's place the counter's place is nowhere: nothing is drawn. */
         ImGui::NewFrame();
         nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps", nullptr, 0, nullptr, 0, 1);

@@ -263,7 +263,14 @@ static const float kKnobField = 86.0f;
 static const float kKnobSpacing = 8.0f;          /* ImGui's default ItemSpacing.x */
 static const float kKnobTextColumn = kKnobSlider + kKnobSpacing + kKnobField + kKnobSpacing;
 static const float kPanelGraphGap = 10.0f;
-static const float kPanelGraphWidth = kKnobTextColumn - kPanelGraphGap;   /* 282 */
+/* **The panel's plot is the slider's width, not the whole control row's.** It was
+ * `kKnobTextColumn - kPanelGraphGap` (282 px), which ran from the panel's left edge past the end
+ * of every slider and value box under it - measured in Desk Job as a plot at x=33..314 over
+ * sliders ending at x=222 and value boxes at 231..316, so the picture stuck 92 px out past the
+ * column it is supposed to head. The graphs are the shape of the numbers on the line above them,
+ * and that line starts where the row does; the slider is what the eye follows down the panel, so
+ * the plot ends where it does and the name/axis column starts after the value box. */
+static const float kPanelGraphWidth = kKnobSlider;
 static const float kPanelGraphHeight = 30.0f;
 
 
@@ -374,9 +381,11 @@ static void draw_one_graph(const char *id, const char *name, const float *series
                     IM_COL32(140, 140, 150, 200), why);
     }
     if (label_right) {
-        /* To the RIGHT of the plot, centred on its height - the same order the knob rows use, and
-         * the reason the panel no longer reads as two blocks of text with a box between them. */
-        ImGui::SameLine(0.0f, kPanelGraphGap);
+        /* To the RIGHT of the plot, at the column the knob rows put their LABELS in - which is
+         * past the value box, not past the slider. `SameLine(0, gap)` would put the name where the
+         * value box is; the offset is measured from the plot's right edge to that column. */
+        const float offset = kKnobTextColumn - (width + kKnobSpacing);
+        ImGui::SameLine(0.0f, offset > 0.0f ? offset : kPanelGraphGap);
         ImGui::BeginGroup();
         const float line = ImGui::GetTextLineHeight();
         const float pad = (height - line * 2.0f) * 0.5f;
@@ -1028,18 +1037,26 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
          * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
          * the reader knows what the height means. */
         if (g_corner_graphs) {
-            /* **As wide as the numbers above it, when they are wider.** The plots were a fixed
-             * 180 px under a counter line that grows with the language and the figures - so at
-             * "Screen 119 fps NR 119 fps network 4.7 ms" the window was a line of text with a
-             * shorter box hanging off its left and a bare strip of background under the rest.
-             * The width is the wider of the two now, measured this frame, so the picture ends
-             * where the text ends and the box under it is one shape.
+            /* **As wide as the window it sits in.** The plots were a fixed 180 px under a counter
+             * line that grows with the language and the figures, so the window was a line of text
+             * with a shorter box hanging off its left and a bare strip of background under the
+             * rest.
              *
-             * With the graphs OFF nothing here runs and the window is the text alone, which is
-             * the point of the switch: it should look like the counter it was before the graphs
-             * existed. */
-            const float text_width = ImGui::CalcTextSize(corner_line).x;
-            const float graph_width = text_width > kGraphWidth ? text_width : kGraphWidth;
+             * The width is the CONTENT REGION rather than `CalcTextSize(corner_line)` measured
+             * beside it, and that is the difference between a fix that holds and one that does
+             * not. A CJK line's glyphs are added to the font atlas the first time they are drawn,
+             * so on the frame before they are there `CalcTextSize` answers with the fallback
+             * advance and comes back under the 180 px floor: the box is drawn at the floor, the
+             * glyphs land, and the text is wider than the box it is supposed to fill - measured
+             * in Desk Job at 263 px of text over a 180 px plot, 77 px of window with nothing
+             * under it. The content region is what the text has already made the window wide, so
+             * it cannot disagree with it: the window sizes to the text (AlwaysAutoResize, above)
+             * and the plot takes whatever that came to.
+             *
+             * `GetContentRegionAvail` is 0 on the frame the window is created, before anything
+             * has been laid out; the floor covers that one frame, and the next is correct. */
+            const float avail = ImGui::GetContentRegionAvail().x;
+            const float graph_width = avail > kGraphWidth ? avail : kGraphWidth;
             draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
                         graph_width, 0, kGraphHeight);
         }
