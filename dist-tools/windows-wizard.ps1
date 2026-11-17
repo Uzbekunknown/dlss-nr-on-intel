@@ -353,6 +353,7 @@ $script:SettingsStateKey = 'SettingsLoading'
          <ComboBox x:Name="EveryFrame" Grid.Column="1" Margin="8,0,0,0" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="Every1" Tag="1" Content=""/><ComboBoxItem x:Name="Every2" Tag="2" Content=""/><ComboBoxItem x:Name="Every3" Tag="3" Content=""/><ComboBoxItem x:Name="Every4" Tag="4" Content=""/></ComboBox>
         </Grid>
         <CheckBox x:Name="ChangeMetric" Content="" ToolTip="" Margin="0,8,0,0"/>
+        <CheckBox x:Name="TiledKernel" Content="" ToolTip="" Margin="0,8,0,0"/>
         <TextBlock x:Name="PacingNote" Style="{StaticResource Note}" Margin="0,8,0,0"/>
        </StackPanel>
       </Border>
@@ -409,7 +410,7 @@ foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','B
 # knob, which names the model file directly and hot-swaps). A second chooser here
 # answered the same question with a second value and the two disagreed; NR_PRESET
 # stays what the profile says (A) and the saved settings decide the rest.
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -551,6 +552,8 @@ $script:Strings=@{
   GpuImagePathTip='Frames stay on the GPU from capture to the screen, with no copy through the CPU. Needs the game and the network on the same Arc, and a game on Vulkan 1.1 or newer, as DirectX games through DXVK are. Where that is not so, NR takes its usual path, and Save report says why.'
   ChangeMetric='Measure how much NR changes each frame'
   ChangeMetricTip='Writes into the daemon''s log how far NR moved each frame, for reports and tuning. Costs about 0.3 ms a frame at 1280x720 and 1 to 1.5 ms at 1920x1080, so leave it off unless you are collecting data.'
+  TiledKernel='Experimental: another matrix kernel for Arc A-series'
+  TiledKernelTip='Runs the network''s plain matrix multiplications on the tiled kernel instead of the staged one. On an Arc A770 the staged kernel measured slower, so this may be faster on A-series cards (A770, A750, A580, A380); on Arc B-series and Core Ultra it is slower. The picture is the same either way. Takes effect at the next start of the game. If you try it, please send a GPU report (nr_gpu_probe.exe) and your frame rates with it on and off.'
   GpuImageNote='Takes effect at the next game start. NR then works on every frame, in step: asynchronous mode and every Nth frame wait until this is off.'
   EveryLabel='Network on'; EveryTip='The frames between repeat the last result: the game runs faster, and the picture changes only on the network''s frames.'
   Every1='every frame'; Every2='every 2nd frame'; Every3='every 3rd frame'; Every4='every 4th frame'
@@ -668,6 +671,8 @@ $script:Strings=@{
   GpuImagePathTip='Кадры остаются на GPU от захвата до экрана, без копии через процессор. Нужны игра и сеть на одной Arc и игра на Vulkan 1.1 или новее, как игры DirectX через DXVK. Где это не так, NR идёт обычным путём, а «Сохранить отчёт» говорит почему.'
   ChangeMetric='Считать, насколько NR меняет каждый кадр'
   ChangeMetricTip='Пишет в журнал демона, насколько NR изменил каждый кадр, — для отчётов и настройки. Стоит около 0,3 мс на кадр в 1280x720 и 1–1,5 мс в 1920x1080, поэтому включайте только для сбора данных.'
+  TiledKernel='Эксперимент: другое матричное ядро для Arc A-серии'
+  TiledKernelTip='Простые матричные умножения сети идут через ядро tiled вместо staged. На Arc A770 ядро staged оказалось медленнее, поэтому на картах A-серии (A770, A750, A580, A380) так может быть быстрее; на Arc B-серии и Core Ultra — медленнее. Картинка в обоих случаях та же. Действует со следующего запуска игры. Если попробуете, пришлите, пожалуйста, отчёт GPU (nr_gpu_probe.exe) и частоту кадров с переключателем и без него.'
   GpuImageNote='Применится при следующем запуске игры. NR тогда работает на каждом кадре, синхронно: асинхронный режим и сеть на каждом N-м кадре ждут, пока это выключено.'
   EveryLabel='Сеть на'; EveryTip='Кадры между ними повторяют последний результат: игра идёт быстрее, а картинка меняется только на кадрах сети.'
   Every1='каждом кадре'; Every2='каждом 2-м кадре'; Every3='каждом 3-м кадре'; Every4='каждом 4-м кадре'
@@ -785,6 +790,8 @@ $script:Strings=@{
   GpuImagePathTip='Los fotogramas permanecen en la GPU desde la captura hasta la pantalla, sin copia por la CPU. Requiere el juego y la red en la misma Arc, y un juego con Vulkan 1.1 o posterior, como los juegos DirectX a través de DXVK. Si no es así, NR usa su ruta habitual y «Guardar informe» dice por qué.'
   ChangeMetric='Medir cuánto cambia NR cada fotograma'
   ChangeMetricTip='Escribe en el registro del daemon cuánto cambió NR cada fotograma, para informes y ajustes. Cuesta unos 0,3 ms por fotograma a 1280x720 y de 1 a 1,5 ms a 1920x1080, así que déjelo desactivado salvo para recoger datos.'
+  TiledKernel='Experimental: otro núcleo de matrices para las Arc de la serie A'
+  TiledKernelTip='Ejecuta las multiplicaciones de matrices simples de la red en el núcleo tiled en lugar del staged. En una Arc A770 el núcleo staged resultó más lento, así que puede ser más rápido en las tarjetas de la serie A (A770, A750, A580, A380); en las Arc de la serie B y Core Ultra es más lento. La imagen es la misma en ambos casos. Se aplica en el próximo inicio del juego. Si lo prueba, envíe un informe de GPU (nr_gpu_probe.exe) y sus fotogramas por segundo con la opción activada y desactivada.'
   GpuImageNote='Se aplica al próximo inicio del juego. NR trabaja entonces en cada fotograma y en sincronía: el modo asíncrono y la red cada N fotogramas esperan a que esto se desactive.'
   EveryLabel='Red en'; EveryTip='Los fotogramas intermedios repiten el último resultado: el juego va más rápido, y la imagen cambia solo en los fotogramas de la red.'
   Every1='cada fotograma'; Every2='uno de cada 2 fotogramas'; Every3='uno de cada 3 fotogramas'; Every4='uno de cada 4 fotogramas'
@@ -902,6 +909,8 @@ $script:Strings=@{
    GpuImagePathTip='帧保留在 GPU 上，从捕获到屏幕都不经过 CPU 拷贝。需要游戏与网络在同一块 Arc 上，且游戏使用 Vulkan 1.1 或更高版本（DirectX 游戏经 DXVK 即属于此）。如果不能如此，NR 会走常规路径，保存报告会说明原因。'
    ChangeMetric='统计 NR 对每帧的改变量'
    ChangeMetricTip='在守护进程日志中写入 NR 对每帧的改变量，用于报告和调校。在 1280x720 下每帧约耗 0.3 毫秒，在 1920x1080 下约 1 至 1.5 毫秒，因此仅在收集数据时开启。'
+   TiledKernel='实验：Arc A 系列的另一种矩阵内核'
+   TiledKernelTip='网络的普通矩阵乘法改用 tiled 内核而不是 staged 内核。在 Arc A770 上 staged 内核测得较慢，因此在 A 系列显卡（A770、A750、A580、A380）上可能更快；在 Arc B 系列和 Core Ultra 上会更慢。两种方式的画面完全相同。下次启动游戏时生效。如果您试用，请发送 GPU 报告（nr_gpu_probe.exe）以及开启和关闭时的帧率。'
    GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
    PresetHeading='网络'; PresetA='A：NR 一直运行的模型'; PresetB='B：nvngx_dlssnr.dll 310.9.16 中的更快模型'
    PresetTip='nvngx_dlssnr.dll 310.9.16 携带两个网络：A，NR 一直运行的模型；B，NVIDIA 后来加入的更小网络，在这块 GPU 上耗时约为 A 的一半。「安装 NR」会把 B 从该 DLL 中提取出来，与 A 并存。'
@@ -951,7 +960,7 @@ $script:ContentBindings=@{
  ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ApiD3d12='ApiD3d12'; Fossilize='Fossilize'
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
- AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; ChangeMetric='ChangeMetric'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
+ AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; ChangeMetric='ChangeMetric'; TiledKernel='TiledKernel'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
  PresetA='PresetA'; PresetB='PresetB'
  OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
  OpenUpdate='OpenUpdate'; UpdateAtStart='UpdateAtStart'
@@ -959,7 +968,7 @@ $script:ContentBindings=@{
 $script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings';AboutTab='AboutTab'}
 $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
  PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'; SpeedTest='SpeedTestTip'
- AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; ChangeMetric='ChangeMetricTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
+ AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; ChangeMetric='ChangeMetricTip'; TiledKernel='TiledKernelTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
  PresetChoice='PresetTip'}
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
@@ -1182,7 +1191,7 @@ function Profile-FromWindow {
     return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(switch($script:Ui.Api.SelectedIndex){ 1 {'dxvk'} 2 {'d3d12'} default {'vulkan'} }); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked
         nr_async=[bool]$script:Ui.AsyncMode.IsChecked; nr_every=[int]$script:Ui.EveryFrame.SelectedItem.Tag;
         gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag;
-        change_metric=[bool]$script:Ui.ChangeMetric.IsChecked}
+        change_metric=[bool]$script:Ui.ChangeMetric.IsChecked; prefer_tiled=[bool]$script:Ui.TiledKernel.IsChecked}
 }
 function Apply-Profile($Profile) {
     if($null -eq $Profile) { return }
@@ -1200,6 +1209,7 @@ function Apply-Profile($Profile) {
         $script:Ui.GpuImagePath.IsChecked=[bool]$Profile.gpu_image_path
         # A profile from before the checkbox measured nothing.
         $script:Ui.ChangeMetric.IsChecked=[bool]$Profile.change_metric
+        $script:Ui.TiledKernel.IsChecked=[bool]$Profile.prefer_tiled
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.
@@ -1251,7 +1261,7 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
 function Merge-PacingFromProfile($RequestValues, $LastProfile, $Fresh) {
     if(-not $Fresh) { return $RequestValues }
     # The upscaler NR stands in front of in a DirectX 12 game has no control here either.
-    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric')) {
+    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled')) {
         if(-not ($Fresh.PSObject.Properties.Name -contains $key)) { continue }
         $was=$null
         if($LastProfile -and ($LastProfile.PSObject.Properties.Name -contains $key)) {
@@ -1279,7 +1289,7 @@ function Request-Pacing([string]$Action='pacing') {
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','ChangeMetric','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','ChangeMetric','TiledKernel','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
     Update-PacingState $Busy
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
@@ -1684,15 +1694,15 @@ if($SelfTest) {
         if($script:Ui.SpeedState.Text) { throw 'No speed test left words behind' }
         # Frame pacing reaches the backend, a profile without it is every frame in step, and
         # neither a profile applied to the window nor a change during an action starts a save.
-        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true;change_metric=$true})
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true;change_metric=$true;prefer_tiled=$true})
         $sent=Profile-FromWindow
-        if(-not $sent.nr_async -or $sent.nr_every -ne 3 -or -not $sent.gpu_image_path -or -not $sent.change_metric -or $script:PacingDue) { throw 'Frame pacing, the GPU image choice or the change metric did not reach the profile' }
+        if(-not $sent.nr_async -or $sent.nr_every -ne 3 -or -not $sent.gpu_image_path -or -not $sent.change_metric -or -not $sent.prefer_tiled -or $script:PacingDue) { throw 'Frame pacing, the GPU image choice, the change metric or the tiled kernel did not reach the profile' }
         if($script:Ui.AsyncMode.IsEnabled -or $script:Ui.EveryFrame.IsEnabled) { throw 'The GPU image path left asynchronous mode or every Nth frame to choose' }
         Set-Busy $true; Set-Busy $false
         if($script:Ui.AsyncMode.IsEnabled -or $script:Ui.EveryFrame.IsEnabled) { throw 'An action''s end opened asynchronous mode or every Nth frame under the GPU image path' }
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true})
         $sent=Profile-FromWindow
-        if($sent.nr_async -or $sent.nr_every -ne 1 -or $sent.gpu_image_path -or $sent.change_metric) { throw 'An older profile was not every frame, in step, with GPU image path and the change metric off' }
+        if($sent.nr_async -or $sent.nr_every -ne 1 -or $sent.gpu_image_path -or $sent.change_metric -or $sent.prefer_tiled) { throw 'An older profile was not every frame, in step, with GPU image path, the change metric and the tiled kernel off' }
         if(-not $script:Ui.AsyncMode.IsEnabled -or -not $script:Ui.EveryFrame.IsEnabled) { throw 'Asynchronous mode or every Nth frame stayed greyed with the GPU image path off' }
         Set-Progress 'ChooseFiles'
         $script:ApplyingProfile=$true; Request-Pacing; $script:ApplyingProfile=$false
@@ -1813,6 +1823,8 @@ $script:Ui.GpuImagePath.Add_Unchecked({ Update-PacingState; Request-Pacing })
 # The change metric is read by the daemon when the game starts it, so it is saved as the pacing is.
 $script:Ui.ChangeMetric.Add_Checked({ Request-Pacing })
 $script:Ui.ChangeMetric.Add_Unchecked({ Request-Pacing })
+$script:Ui.TiledKernel.Add_Checked({ Request-Pacing })
+$script:Ui.TiledKernel.Add_Unchecked({ Request-Pacing })
 $script:Ui.EveryFrame.Add_SelectionChanged({ Request-Pacing })
 $script:Ui.PresetChoice.Add_SelectionChanged({ Request-Pacing 'preset' })
 $script:Ui.Theme.Add_Click({

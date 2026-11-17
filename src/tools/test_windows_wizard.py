@@ -858,6 +858,39 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(values()["NR_CHANGE_METRIC"], "0")
         self.assertTrue(core.uninstall(self.profile)["ok"])
 
+    def test_the_tiled_kernel_is_off_unless_the_experimental_switch_asks_for_it(self):
+        # Off by default, and a profile from before the switch ran the staged kernel.
+        self.assertFalse(self.profile.prefer_tiled)
+        old = self.profile.to_dict()
+        del old["prefer_tiled"]
+        self.assertEqual(core.Profile.from_dict(old), self.profile)
+        for value in ("1", 1, None, ["yes"]):
+            with self.assertRaises(ValueError, msg=value):
+                core.Profile.from_dict({**old, "prefer_tiled": value})
+        # Said either way, so a value the game inherits cannot turn it on.
+        with patch.dict(os.environ, {"XMX_PREFER_TILED": "1"}):
+            self.assertEqual(core.runtime_env(self.profile)["XMX_PREFER_TILED"], "0")
+        tiled = replace(self.profile, prefer_tiled=True)
+        self.assertEqual(core.Profile.from_dict(tiled.to_dict()), tiled)
+        self.assertEqual(core.layer_environment(tiled)["XMX_PREFER_TILED"], "1")
+        # The switch reaches an installed game's file, as the pacing does, and back.
+        self.assertTrue(core.install(self.profile)["ok"])
+        path = core.installed_path(self.profile) / core.ENV_FILE
+
+        def values():
+            return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line and not line.startswith("#"))
+
+        self.assertEqual(values()["XMX_PREFER_TILED"], "0")
+        others = {k: v for k, v in values().items() if k != "XMX_PREFER_TILED"}
+        self.assertTrue(core.set_pacing(tiled)["applied"])
+        self.assertTrue(core.load_profile(self.root).prefer_tiled)
+        self.assertEqual(values()["XMX_PREFER_TILED"], "1")
+        self.assertEqual({k: v for k, v in values().items() if k != "XMX_PREFER_TILED"}, others)
+        core.set_pacing(self.profile)
+        self.assertEqual(values()["XMX_PREFER_TILED"], "0")
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
     def preset_b_weights(self):
         return self.root / core.PRESETS["B"][0]
 

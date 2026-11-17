@@ -238,6 +238,9 @@ struct nr_menu_bridge {
     int pacing_async;
     int pacing_gpu_image;
     int pacing_every;
+    /* `XMX_PREFER_TILED`, the experimental switch for Arc A-series cards: a start-up setting
+     * like the three above, kept in the same file and the profile the same way. */
+    int pacing_tiled;
     /* **A is 0, B is 1, and `preset` is PREVIEWED state, not a pacing write.**
      *
      * Both are seeded from `NR_PRESET` in `nr-env.txt` at load, because that is what the layer will
@@ -405,6 +408,8 @@ static const char *const pacing_keys[] = {
      * pacing change rewrites the line with `preset_saved`, which is what the file already said,
      * so only Save or the setup window moves it. It is the one place the network is kept. */
     "NR_PRESET",
+    /* The experimental GEMM kernel for Arc A-series cards, which the daemon's libxmx reads. */
+    "XMX_PREFER_TILED",
 };
 #define NR_PACING_KEYS (sizeof pacing_keys / sizeof pacing_keys[0])
 
@@ -485,6 +490,7 @@ static void read_pacing(nr_menu_bridge *b)
     b->pacing_async = 0;
     b->pacing_gpu_image = 0;
     b->pacing_every = 1;
+    b->pacing_tiled = 0;
     b->preset = 0;
     b->preset_saved = 0;
     b->release_root[0] = 0;
@@ -518,6 +524,9 @@ static void read_pacing(nr_menu_bridge *b)
                            strncmp(at, "NR_LAYER_LIVE", name_len) == 0) {
                     int every = atoi(value);
                     b->pacing_every = (every >= 1 && every <= 4) ? every : 1;
+                } else if (name_len == strlen("XMX_PREFER_TILED") &&
+                           strncmp(at, "XMX_PREFER_TILED", name_len) == 0) {
+                    b->pacing_tiled = on;
                 } else if (name_len == strlen("NR_PRESET") &&
                            strncmp(at, "NR_PRESET", name_len) == 0) {
                     /* A is 0, B is 1. Anything else reads as A, which is what the daemon does
@@ -589,12 +598,14 @@ static int write_pacing(nr_menu_bridge *b)
                          "NR_GPU_TRANSPORT=%d\n"
                          "NR_GPU_ONLY=0\n"
                          "NR_LAYER_LIVE=%d\n"
-                         "NR_PRESET=%s\n",
+                         "NR_PRESET=%s\n"
+                         "XMX_PREFER_TILED=%d\n",
                          b->pacing_async ? 1 : 0,
                          b->pacing_gpu_image ? 1 : 0,
                          b->pacing_gpu_image ? 1 : 0,
                          b->pacing_every,
-                         b->preset_saved ? "B" : "A");
+                         b->preset_saved ? "B" : "A",
+                         b->pacing_tiled ? 1 : 0);
     if (added < 0 || used + (size_t)added >= sizeof out) return 0;
     used += (size_t)added;
     return nr_write_file_atomic(b->env_path, out, used);
@@ -641,8 +652,9 @@ static int write_profile_pacing(const nr_menu_bridge *b)
 
     /* One key per line in the file, so each is replaced where it stands and everything else is
      * copied through untouched. A key that is absent is appended before the closing brace. */
-    static const char *const keys[4] = {"nr_async", "nr_every", "gpu_image_path", "preset"};
-    char values[4][16];
+    static const char *const keys[5] = {"nr_async", "nr_every", "gpu_image_path", "preset",
+                                        "prefer_tiled"};
+    char values[5][16];
     snprintf(values[0], sizeof values[0], "%s", b->pacing_async ? "true" : "false");
     snprintf(values[1], sizeof values[1], "%d", b->pacing_every);
     snprintf(values[2], sizeof values[2], "%s", b->pacing_gpu_image ? "true" : "false");
@@ -652,6 +664,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * `NR_PRESET` from it. So it is the SAVED letter, the one `nr-env.txt` carries: the previewed
      * one here would make an unsaved switch the window's choice. */
     snprintf(values[3], sizeof values[3], "\"%s\"", b->preset_saved ? "B" : "A");
+    snprintf(values[4], sizeof values[4], "%s", b->pacing_tiled ? "true" : "false");
 
     char out[16384];
     size_t used = 0;
@@ -662,7 +675,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         while (*end && *end != '\n' && *end != '\r') ++end;
         size_t len = (size_t)(end - at);
         int replaced = 0;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             /* `  "nr_every": 4,` - the quote is what distinguishes the key from a value. */
             char quoted[32];
             int n = snprintf(quoted, sizeof quoted, "\"%s\"", keys[i]);
@@ -710,7 +723,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * The comma TRAILS the line before it rather than leading the new one. Both are valid JSON,
      * but every other line in this file ends in its comma and a file written half one way and
      * half the other is hard to read - and reading it by eye is how the last bug here was found. */
-    if (seen != 15) {   /* 2^4 - 1: every key present */
+    if (seen != 31) {   /* 2^5 - 1: every key present */
         size_t close = used;
         while (close > 0 && out[close - 1] != '}') --close;
         if (close == 0) return 0;               /* no object to add to */
@@ -721,7 +734,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         char added[512];
         size_t n = 0;
         int first = 1;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (seen & (1 << i)) continue;
             int step = snprintf(added + n, sizeof added - n, "%s  \"%s\": %s",
                                 first ? "" : ",\n", keys[i], values[i]);
@@ -1721,6 +1734,7 @@ int nr_menu_bridge_pacing_available(const nr_menu_bridge *b)
 int nr_menu_bridge_pacing_async(const nr_menu_bridge *b) { return b ? b->pacing_async : 0; }
 int nr_menu_bridge_pacing_gpu_image(const nr_menu_bridge *b) { return b ? b->pacing_gpu_image : 0; }
 int nr_menu_bridge_pacing_every(const nr_menu_bridge *b) { return b ? b->pacing_every : 1; }
+int nr_menu_bridge_pacing_tiled(const nr_menu_bridge *b) { return b ? b->pacing_tiled : 0; }
 
 int nr_menu_bridge_set_pacing(nr_menu_bridge *b, int what, int value)
 {
@@ -1752,6 +1766,11 @@ int nr_menu_bridge_set_pacing(nr_menu_bridge *b, int what, int value)
         if (every > 1) b->pacing_gpu_image = 0;
         break;
     }
+    case NR_PACING_TILED:
+        /* No constraint with the rows above: the kernel that runs the GEMMs, nothing about when
+         * a frame is taken. Read by the daemon's libxmx at its next start. */
+        b->pacing_tiled = value ? 1 : 0;
+        break;
     case NR_PACING_PRESET:
         /* **A preview, not a pacing write, and the early return is what says so.** The panel calls
          * this entry point because the Network row sits among the pacing rows, but nothing in

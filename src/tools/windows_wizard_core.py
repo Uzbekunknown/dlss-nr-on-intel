@@ -51,9 +51,10 @@ PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
 PROXY_NAME = "vulkan-1.dll"
 ENV_FILE = "nr-env.txt"
 # The variables set_pacing rewrites in ENV_FILE (Profile.nr_async, nr_every, gpu_image_path,
-# preset and change_metric), and the most presents one network frame may cover in the window.
+# preset, change_metric and prefer_tiled), and the most presents one network frame may cover in
+# the window.
 PACING = ("NR_LAYER_LIVE", "NR_LAYER_ASYNC", "NR_GPU_IMAGE", "NR_GPU_TRANSPORT", "NR_GPU_ONLY",
-          "NR_PRESET", "NR_CHANGE_METRIC")
+          "NR_PRESET", "NR_CHANGE_METRIC", "XMX_PREFER_TILED")
 MAX_EVERY = 4
 # The networks nvngx_dlssnr.dll carries, which NR_PRESET picks (notes/phase72-preset-b.md): A, the
 # original, and B, the faster one, from 310.9.16.0 on. Each one's logical weights, and their count.
@@ -149,6 +150,11 @@ class Profile:
     # NR_CHANGE_METRIC: how much NR changed each frame, in the daemon's log, for players' reports.
     # Off unless asked for (the owner, 2026-11-15): 0.3 ms of a 1280x720 frame, 1-1.5 at 1920x1080.
     change_metric: bool = False
+    # XMX_PREFER_TILED: the experimental switch for Arc A-series cards, the network's plain GEMMs
+    # on the tiled kernel rather than the staged one (libxmx `prefer_tiled`), which an A770 ran
+    # slower; the same picture either way, and slower on Arc B-series and Core Ultra. Off unless
+    # asked for (the owner, 2026-11-18), until A-series reports say what it gives.
+    prefer_tiled: bool = False
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -165,7 +171,8 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler, "change_metric": self.change_metric}
+                "upscaler": self.upscaler, "change_metric": self.change_metric,
+                "prefer_tiled": self.prefer_tiled}
 
     @classmethod
     def from_dict(cls, values):
@@ -197,6 +204,10 @@ class Profile:
         change_metric = values.get("change_metric", False)
         if not isinstance(change_metric, bool):
             raise ValueError("change_metric must be a boolean")
+        # A profile from before the experimental switch ran the staged kernel: off.
+        prefer_tiled = values.get("prefer_tiled", False)
+        if not isinstance(prefer_tiled, bool):
+            raise ValueError("prefer_tiled must be a boolean")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -205,7 +216,8 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler, change_metric=change_metric)
+                   preset=preset, upscaler=upscaler, change_metric=change_metric,
+                   prefer_tiled=prefer_tiled)
 
 
 def profile_path(root):
@@ -456,6 +468,8 @@ def layer_environment(profile):
     values["NR_PRESET"] = profile.preset
     # Said either way, as the pacing is, so a value the game inherits cannot decide it.
     values["NR_CHANGE_METRIC"] = "1" if profile.change_metric else "0"
+    # The daemon's libxmx reads it at start; said either way, as the change metric is.
+    values["XMX_PREFER_TILED"] = "1" if profile.prefer_tiled else "0"
     return values
 
 

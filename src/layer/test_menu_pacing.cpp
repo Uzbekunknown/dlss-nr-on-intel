@@ -677,6 +677,38 @@ int main(void)
               "and the real installation is reachable again", detail);
     }
 
+    /* ---- the experimental GEMM kernel for Arc A-series cards ----
+     *
+     * `XMX_PREFER_TILED`, which the daemon's libxmx reads at its start: a start-up setting like
+     * the three above, so the row writes the file at once and the setup window's profile follows
+     * (`prefer_tiled`), and a bridge made afterwards reads it back. */
+    {
+        char env[32] = "", prof[32] = "";
+        snprintf(detail, sizeof detail, "tiled=%d", nr_menu_bridge_pacing_tiled(b));
+        check(nr_menu_bridge_pacing_tiled(b) == 0,
+              "the experimental kernel reads off on an installation without its line", detail);
+        int wrote = nr_menu_bridge_set_pacing(b, NR_PACING_TILED, 1);
+        env_line(root, "XMX_PREFER_TILED", env, sizeof env);
+        int have = profile_raw(root, "prefer_tiled", prof, sizeof prof);
+        snprintf(detail, sizeof detail, "wrote=%d env=%s profile=%s, %d lines", wrote, env,
+                 have ? prof : "ABSENT", env_mentions_count(root, "XMX_PREFER_TILED"));
+        check(wrote && strcmp(env, "1") == 0 && have && strcmp(prof, "true") == 0
+                  && env_mentions_count(root, "XMX_PREFER_TILED") == 1,
+              "turning it on writes XMX_PREFER_TILED=1 once, and the profile's prefer_tiled",
+              detail);
+        nr_menu_bridge *again = nr_menu_bridge_create_headless(settings, 0);
+        snprintf(detail, sizeof detail, "tiled=%d", again ? nr_menu_bridge_pacing_tiled(again) : -1);
+        check(again && nr_menu_bridge_pacing_tiled(again) == 1,
+              "a bridge made afterwards reads it back from the file", detail);
+        if (again) nr_menu_bridge_destroy(again);
+        nr_menu_bridge_set_pacing(b, NR_PACING_TILED, 0);
+        env_line(root, "XMX_PREFER_TILED", env, sizeof env);
+        have = profile_raw(root, "prefer_tiled", prof, sizeof prof);
+        snprintf(detail, sizeof detail, "env=%s profile=%s", env, have ? prof : "ABSENT");
+        check(strcmp(env, "0") == 0 && have && strcmp(prof, "false") == 0,
+              "and turning it off writes both back", detail);
+    }
+
     /* ---- the profile follows the file the panel owns ---- */
     {
         /* Two writers used to share the five pacing lines of `nr-env.txt` with nothing ordering

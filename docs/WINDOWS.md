@@ -34,6 +34,16 @@ off`. The setup window's checkbox "Measure how much NR changes each frame" write
 `NR_CHANGE_METRIC=1` into `dlss-nr\nr-env.txt` (so does the daemon's environment) to collect it;
 the answer and the history are the same bytes either way.
 
+Arc A-series cards (A770, A750, A580, A380) run the network's matrix shape without offering it,
+and there the staged GEMM kernel measured slower than the tiled one on an A770 (OUCO86's
+`notes/staged-vs-tiled-a770.md`), where on Xe2 it is the faster. The checkbox "Experimental:
+another matrix kernel for Arc A-series", in the setup window's frame pacing card and in the
+in-game panel, writes `XMX_PREFER_TILED=1` into `dlss-nr\nr-env.txt`: from the next start the
+daemon's plain GEMMs run on the tiled kernel, the E4M3 bytes and the weights by column with them
+off. The picture is the same bytes either way (`src/gpu/test_prefer_tiled.py`); on Arc B-series
+and Core Ultra it is slower (B at 512x320 on an Arc 140V: 13.0 ms on the device against 18.7).
+On an A-series card the GPU report times the network with it off and on.
+
 In a DirectX 12 game the history follows the game's own word since 2026-11-15: its upscaler's
 reset (XeSS's `resetHistory`, FSR's `reset`) drops it, and a frame the game did not reset keeps
 the one its motion leads back to, where the daemon's cut test used to decide alone. The test is

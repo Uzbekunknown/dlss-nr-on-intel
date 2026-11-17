@@ -67,6 +67,11 @@ EXTRA = {
     "gpu_image_hint": (None,           "Requires asynchronous mode off and every frame processed, "
                                        "or the effect is skipped in this mode. "
                                        "Takes effect at the next game start."),
+    # The experimental GEMM kernel for Arc A-series cards: the setup window's checkbox, the same
+    # words in the panel's row (`XMX_PREFER_TILED`).
+    "tiled":          ("TiledKernel",  "Experimental: another matrix kernel for Arc A-series"),
+    "tiled_hint":     ("TiledKernelTip", "Runs the network's plain matrix multiplications on the "
+                                         "tiled kernel. Takes effect at the next game start."),
     "every":          (None,           "Network runs on"),
     "every_hint":     (None,           "The frames between repeat the last result, so the game "
                                        "runs faster and the picture changes only when the network "

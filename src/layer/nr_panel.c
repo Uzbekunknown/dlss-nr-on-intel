@@ -530,6 +530,22 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 			data->row_what[n] = NR_PACING_PRESET;
 			n++;
 		}
+		/* The experimental switch for Arc A-series cards, after the network: like it, a start-up
+		 * setting kept in `nr-env.txt` (`XMX_PREFER_TILED`) and the setup window's profile, where
+		 * the window offers the same checkbox with the same words. The picture is the same either
+		 * way; what it changes is which GEMM kernel the daemon's libxmx runs, from the next start. */
+		if (n < capacity && n < MENU_UI_MAX_ROWS) {
+			nrex_row *r = &out[n];
+			memset(r, 0, sizeof *r);
+			int tiled = nr_menu_bridge_pacing_tiled(data->menu_bridge);
+			r->label = nr_menu_text(language, NR_STR_TILED);
+			r->hint = nr_menu_text(language, NR_STR_TILED_HINT);
+			r->kind = NREX_KIND_FLAG;
+			r->choice_index = tiled ? 1 : 0;
+			r->value = tiled ? "on" : "off";
+			data->row_what[n] = NR_PACING_TILED;
+			n++;
+		}
 	}
 
 	/* Where the frame counter is shown: in the panel only, or in a corner of the screen as well,
