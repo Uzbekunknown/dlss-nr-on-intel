@@ -1774,7 +1774,10 @@ def run_owned(args):
             ("XMX_E4M3_WEIGHTS", "e4m3_weights"),
             # the wide weights by column: libxmx's choice for this driver and the runtime's
             # check that it reads them to the same bytes (xmxres.Runtime.weights_by_column)
-            ("XMX_WEIGHTS_BY_COLUMN", "weights_by_column"))),
+            ("XMX_WEIGHTS_BY_COLUMN", "weights_by_column"),
+            # plain GEMMs on the tiled kernel: the experimental switch for Arc A-series cards
+            # (libxmx `prefer_tiled`; the setup window's and the panel's checkbox)
+            ("XMX_PREFER_TILED", "prefer_tiled"))),
           flush=True)
     if not CHANGE_METRIC:
         print("change metric off (NR_CHANGE_METRIC=1 turns it on): frame lines read `change off`",

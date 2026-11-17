@@ -149,6 +149,7 @@ CHECKS = [
     py("src/gpu/test_staged_packed.py", kind="gpu"),
     py("src/gpu/test_gemm_e4m3.py", kind="gpu"),
     py("src/gpu/test_gemm_by_column.py", kind="gpu"),
+    py("src/gpu/test_prefer_tiled.py", kind="gpu"),
     py("src/gpu/test_gpu_report_network.py", kind="gpu"),
     py("src/gpu/test_epilogue.py", kind="gpu"),
     py("src/gpu/test_specialization.py", kind="gpu"),
