@@ -202,6 +202,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
+- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, branch
+  `arc-a-tiled`, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
+  A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
+  default. Not run on an A-series card: there is none here. The request to them is drafted in
+  `work\pr-replies\arc-a-tiled-call.md`, for the owner to post with a build that carries it.
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in 0.0.5 (archive, 11-05 evening).
   Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no XeSS of
@@ -322,7 +327,81 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## Checked on Linux: GitHub's `2c7580d`, and the interface restore tied to the change metric (2026-11-16, latest, branch `newnr`)
+## Arc A-series: an experimental switch for the tiled GEMM kernel, the same bytes; the head's enlargement measured and not kept (2026-11-18, branch `arc-a-tiled`)
+
+The owner, 11-18: first make life a little better for Arc A-series owners, then "simply give an
+experimental switch in the panel and in the installer, and ask the Arc A users to send reports".
+Local branch `arc-a-tiled` from `newnr` (`f9ad754`); nothing pushed. Arc 140V, Intel 101.9150.
+
+**Why.** All eleven A-series cards in the GPU reports run the network's float16 8x16x16 at 32
+lanes exactly without offering it (they offer 8x8x16), and an A770 pays ~55 us a pass against a
+B580's 9-10 and this laptop's 23-26: 57-60 % of its network at 512x320
+(`notes/players-20261103.md`). On an A770 the staged GEMM kernel ran at 0.40-0.60 of the tiled
+kernel's rate on the frame's own shapes (OUCO86/dlss-nr-on-a770, `notes/staged-vs-tiled-a770.md`,
+2026-10-10, Apache-2.0), before this tree's walk order (`6ef670e`), E4M3 bytes and weights by
+column. On Xe2 the staged kernel is the faster: B at 512x320 here, 13.0 ms on the device against
+18.7 with every plain GEMM tiled (126 staged passes at 53 us against 110 tiled at 98 and 16 staged
+at 113). So a switch, not a default, until A-series reports say what it gives there.
+
+**What changed:**
+- libxmx: `XMX_PREFER_TILED=0|1` (`prefer_tiled`, off by default everywhere): plain GEMMs on the
+  tiled kernel; the staged kernel keeps the window gather, the pooled window residual and an E4M3
+  B; the E4M3 bytes and the weights by column, the staged loader's forms, default off with it.
+  `xmx_shape_unoffered` (the device runs the shape without offering it: every A-series card),
+  `xmx_staged_calls` and `xmx_prefer_tiled_set` (between recordings, for the test). The daemon's
+  `runtime options` line names `XMX_PREFER_TILED`.
+- The setup window's checkbox "Experimental: another matrix kernel for Arc A-series", in the frame
+  pacing card, in four languages: `Profile.prefer_tiled`, `XMX_PREFER_TILED` in `nr-env.txt`
+  (`PACING`, said either way). The in-game panel's flag row after the network, with the window's
+  words (`gen_menu_strings.py` takes `TiledKernel` and `TiledKernelTip` from the window), written
+  at once into `nr-env.txt` and the profile like the pacing rows. Both take effect at the next
+  start; the DirectX 12 proxy starts its daemon from the same `nr-env.txt` (`env=`).
+- The GPU report: on a card that runs the shape unoffered, its second process runs
+  `XMX_PREFER_TILED=1`, so an A-series report has B and A at 1280x720 with the switch off and on;
+  with the switch set, the second process times the default.
+- `docs/WINDOWS.md`: what the switch does and where.
+
+**The same bytes:** `test_prefer_tiled.py` (new; CTest `gpu_prefer_tiled`, `run_tests.py`): 127
+cases bit-identical with the switch off and on (plain, published, under the gate, both residuals,
+the ViT's QKV epilogue, specialised and not, the bottleneck's and the levels' shapes, a partial
+block, the 32-row builds' sizes, and the staged kernel on E4M3 bytes by column against the tiled
+one on half by row), none of them recorded staged with it on; the window-gathered QKV and an E4M3
+B stay staged. `frame_replay.py` heads, original and changed input, the switch off and on: B at
+320x512 (`df409ac4...`, `b6d9870b...`), 576x1024 (`edcbf478...`, `acbd05d9...`, 11-16's) and
+768x1344, A at the same three: each pair the same.
+
+**Checked on Windows:** MinGW (the 198 warnings `newnr` has) and MSVC `build_win.bat` and
+`build_xess.bat` with no warning; CTest 72 of 72 on MSVC's libraries; the seven menu fixtures
+(`test_menu_pacing` gains the row's file and profile round trip), `test_nr_xess`,
+`test_xess_panel`; `test_windows_wizard.py` 105 (1 skipped, the new test among them) and
+`test_windows_setup.py` 14; `gen_menu_strings.py` writes the tree's tables; a release from
+`deploy.bat --release` and the window's self-test from it (91 controls, 202 keys); the GPU report
+here prints the staged kernel and, with the switch set, the default beside it.
+
+**Not run:** an A-series card; a game; Linux.
+
+**The head's enlargement, measured and not kept** (11-18, before the above). Below render scale 1
+the daemon enlarges the network's head bilinearly before composing it with the full frame, and the
+owner saw a slight glow at 0.5 on 10-28. A joint-bilateral enlargement over the same four taps,
+guided by `inner` (the frame the network saw) against the full frame, sigma 0.03-0.12, on four
+Hogwarts Legacy frames (three 1920x1200, one 1280x720 with faces) through the daemon's own still
+path on the GPU, against the same frame at 1.0: the distance to 1.0 moves by under 0.5 % (B at
+0.4: 3.138 -> 3.133 levels; A at 0.4: 4.664 -> 4.659), at the edges by under 1 %; only the high
+band's alignment with 1.0's rises (B: 0.56 -> 0.62-0.72), and side by side the crops look the same.
+Least-squares gains for the change's low and high bands differ frame to frame (1.45 and 1.14
+against 0.67 and 0.55) and, fitted to each frame, cut the distance by 2-14 %. What 0.4 loses
+against 1.0 is the network's own detail at a smaller field (pores, freckles, hair; on one frame a
+redder skin), which no enlargement brings back (`notes/phase37-neural-upstream.md`). Not built.
+The other ports' answers to the same question (the 11-18 survey: wilsjo2's enlargement modes and
+generate-before/apply-after with a private upscaler, F5's guided reconstruction with band gains)
+are in the Windows session's memory, not here.
+
+**Next on Linux:** once on GitHub, `make test` in both memory modes and CTest:
+`test_prefer_tiled.py` runs on Mesa as it is (the switch is any device's); the panel and the setup
+window are Windows-only. **Next on Windows:** the owner's word on pushing, and on a release or a
+test build with the switch; then the request to A-series owners.
+
+## Checked on Linux: GitHub's `2c7580d`, and the interface restore tied to the change metric (2026-11-16, branch `newnr`)
 
 The owner, 11-16: pull everything and run `make test` and CTest. `master`, `newnr` and `alchemist`
 fast-forwarded from `c22f798` to GitHub's `2c7580d`. No daemon, swap empty, a quiet CPU; Mesa
