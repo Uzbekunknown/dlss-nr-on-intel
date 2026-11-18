@@ -55,8 +55,11 @@ such move; what it still leaves open becomes a line of its own.
   green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04 later),
   0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's is owed (Open items, Linux). Linux
   users build from source (README).
-- **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` are level
-  since 11-11 and move together, each push a fast-forward of all three; `media` holds the README's
+- **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` were level
+  from 11-11 and moved together, each push a fast-forward of all three. **Since 11-18 `alchemist`
+  is ahead**, at the owner's word: our work goes there while Paimonshen finishes PR #45 (rebased
+  on `newnr` at `f9ad754`), so that `master` and `newnr` stay still under it; once #45 is done we
+  merge it ourselves and bring the three level again (below, 11-18). `media` holds the README's
   pictures; `improve-int8` is kept for INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -202,8 +205,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
-- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, branch
-  `arc-a-tiled`, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
+- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on
+  `alchemist`, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
   default. Not run on an A-series card: there is none here. The request to them is drafted in
   `work\pr-replies\arc-a-tiled-call.md`, for the owner to post with a build that carries it.
@@ -327,11 +330,13 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## Arc A-series: an experimental switch for the tiled GEMM kernel, the same bytes; the head's enlargement measured and not kept (2026-11-18, branch `arc-a-tiled`)
+## Arc A-series: an experimental switch for the tiled GEMM kernel, the same bytes; the head's enlargement measured and not kept (2026-11-18, branch `alchemist`)
 
 The owner, 11-18: first make life a little better for Arc A-series owners, then "simply give an
 experimental switch in the panel and in the installer, and ask the Arc A users to send reports".
-Local branch `arc-a-tiled` from `newnr` (`f9ad754`); nothing pushed. Arc 140V, Intel 101.9150.
+Made on the local branch `arc-a-tiled` from `newnr` (`f9ad754`) and pushed to `alchemist` alone,
+at the owner's word: `master` and `newnr` stay at `f9ad754` until #45 is merged (Next on Windows,
+below). Arc 140V, Intel 101.9150.
 
 **Why.** All eleven A-series cards in the GPU reports run the network's float16 8x16x16 at 32
 lanes exactly without offering it (they offer 8x8x16), and an A770 pays ~55 us a pass against a
@@ -396,10 +401,17 @@ The other ports' answers to the same question (the 11-18 survey: wilsjo2's enlar
 generate-before/apply-after with a private upscaler, F5's guided reconstruction with band gains)
 are in the Windows session's memory, not here.
 
-**Next on Linux:** once on GitHub, `make test` in both memory modes and CTest:
+**Next on Linux:** `make test` in both memory modes and CTest at `alchemist`'s head:
 `test_prefer_tiled.py` runs on Mesa as it is (the switch is any device's); the panel and the setup
-window are Windows-only. **Next on Windows:** the owner's word on pushing, and on a release or a
-test build with the switch; then the request to A-series owners.
+window are Windows-only. A session that keeps to `newnr` will not see this entry until the merge
+below. **Next on Windows:** when Paimonshen says #45 is done, merge it into `newnr` at the owner's
+word, then `alchemist` with it, and `master` level with both. A test merge of this branch's
+`ac1d7aa` with #45's `6f5691f` (`git merge-tree`) conflicts in `windows-wizard.ps1`,
+`nr_menu_bridge.c`, `windows_wizard_core.py` and `nr_menu_strings.h`; `nr_menu_strings.c` and
+`.py` merge without a conflict, but their order is the generator's (this branch puts the switch's
+two strings at 27 and 28, #45 adds four at 49-52), so regenerate all three with
+`tools/gen_menu_strings.py` and check its output equals the tree. Then a release or a test build
+with the switch, the owner's call, and the request to A-series owners.
 
 ## Checked on Linux: GitHub's `2c7580d`, and the interface restore tied to the change metric (2026-11-16, branch `newnr`)
 
