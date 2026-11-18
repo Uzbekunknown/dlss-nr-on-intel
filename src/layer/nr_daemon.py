@@ -1109,13 +1109,16 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             args.image_transport = "gpu-image-host"
             started = time.perf_counter()
             answer = engine.process_host(payload, width, height, vk_format, live)
-            # The trailer rides with the pixels (see the legacy path): one write, no race
-            # with a client that peeks the moment its pixels are home. `answer` may be a
-            # memoryview over the pipeline's own buffer, which does not concatenate —
-            # bytes() of it is the copy `sendall` would need anyway.
-            connection.sendall(bytes(answer) + struct.pack(
+            # **The pixels, then the trailer**, for the reason the legacy path gives: `answer` is
+            # a view over the pipeline's own buffer and `sendall` writes it where it lies, so
+            # `bytes(answer) + ...` copied the frame before writing it. `backend.split[1]` is the
+            # network's own run, which is what the GPU cut path's `detail` carries and what the
+            # panel labels the line; `started` would have been the whole `process_host`.
+            connection.sendall(answer)
+            network_ran = backend.split[1] if backend is not None else 0.0
+            connection.sendall(struct.pack(
                 "<2I", TRAILER_MAGIC,
-                min(int(round((time.perf_counter() - started) * 1e6)), 0xFFFFFFFF)))
+                min(int(round(network_ran * 1e6)), 0xFFFFFFFF)))
             metrics = {**engine.last, "total_seconds": time.perf_counter() - started}
             print_gpu_frame(width, height, vk_format, live, metrics, "gpu-image-host")
             return
@@ -1182,7 +1185,16 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
         inner, geometry=geometry, history=history_inner,
         out=input_view(geometry.network_height, geometry.network_width) if input_view else None,
         **nr_frame.PROFILES[live.profile])
+    # **The network's own run, and only that run**, taken around the call the way the GPU
+    # path's `detail` is (`backend.split[1]` is the same figure, for the frame line). The
+    # trailer used to carry `clock` - the start of `decode` - so the panel's blue line was the
+    # whole legacy round trip: decode, features, the network, the composition and the encode,
+    # labelled "the network". That is not the same quantity the GPU path reports, and the two
+    # paths draw into the same graph, so a player comparing them was comparing two different
+    # things.
+    network_ran = time.perf_counter()
     head = geometry.crop(backend.run_features(features))
+    network_ran = time.perf_counter() - network_ran
     # The fourth channel is the temporal gate. Without history it reaches nothing —
     # carrying it through the upscale would be a quarter of that pass for nothing
     # (notes/phase48) — and with history it is what decides the blend, per pixel.
@@ -1331,9 +1343,24 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
     # log honest ("frame rejected/failed; game keeps original" would be a lie) and
     # keeps the metrics below running.
     try:
-        connection.sendall(encoded + struct.pack(
+        # **The pixels, then the trailer: two writes, because one writes a copy of the frame.**
+        # `encoded` is usually the request's own bytes that the pipeline composed into, and
+        # `sendall` hands that buffer to WriteFile as it lies - which is the whole reason
+        # `nr_pipe.sendall` exists (`98a0ad3`: the copy cost 2.7 ms of a 1280x720 frame).
+        # Concatenating the trailer onto it put that copy back on every legacy frame: measured
+        # 1.1 ms at 1280x720 and 2.5 ms at 1920x1080, twice that on `gpu-image-host` where the
+        # answer is a view and `bytes()` copies it first.
+        #
+        # Two writes were avoided at first for a reason that turned out to be wrong: the layer
+        # peeks for the trailer the moment its pixels are home, so eight bytes written after
+        # them might land on a closed pipe. It cannot - the layer holds the read open for its
+        # two-millisecond budget (`nr_link_read_nowait`) and only closes when that has passed,
+        # which is what makes a second write safe. A `BrokenPipeError` here is caught below
+        # either way, so an old client costs the same as before.
+        connection.sendall(encoded)
+        connection.sendall(struct.pack(
             "<2I", TRAILER_MAGIC,
-            min(int(round((time.perf_counter() - clock) * 1e6)), 0xFFFFFFFF)))
+            min(int(round(network_ran * 1e6)), 0xFFFFFFFF)))
     except (BrokenPipeError, ConnectionResetError):
         if not getattr(args, "trailer_refused", False):
             print("this client reads its pixels and closes: its daemon speaks a "
