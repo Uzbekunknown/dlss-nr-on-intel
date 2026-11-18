@@ -219,7 +219,12 @@ class Profile:
         graphs = values.get("menu_graphs", 1)
         if isinstance(graphs, bool) or not isinstance(graphs, int) or graphs not in (0, 1):
             raise ValueError("menu_graphs must be 0 or 1")
-        counter = values.get("menu_counter", 1)
+        # **Zero when absent, matching the panel.** Every profile written before this key
+        # existed says nothing about a corner, and `load_settings` in the panel reads a missing
+        # `menu_counter` as "the panel alone" - so a default of 1 here made the window say "top
+        # left" over a panel that was drawing nothing, and the first click on either new
+        # checkbox wrote that 1 into the file: a counter over the game nobody asked for.
+        counter = values.get("menu_counter", 0)
         if isinstance(counter, bool) or not isinstance(counter, int) or not 0 <= counter <= 4:
             raise ValueError("menu_counter must be a whole number from 0 to 4")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),

@@ -357,7 +357,7 @@ $script:SettingsStateKey = 'SettingsLoading'
         <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
          <TextBlock x:Name="CounterLabel" VerticalAlignment="Center" ToolTip=""/>
          <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
-          <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" IsChecked="True" ToolTip=""/>
+          <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" ToolTip=""/>
           <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
          </StackPanel>
         </Grid>
@@ -1254,9 +1254,15 @@ function Apply-Profile($Profile) {
         $script:Ui.GpuImagePath.IsChecked=[bool]$Profile.gpu_image_path
         # A profile from before the checkbox measured nothing.
         $script:Ui.ChangeMetric.IsChecked=[bool]$Profile.change_metric
-        # A profile from before the graphs ran them, as the corner does by default.
-        if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { $script:Ui.GraphsCheck.IsChecked = [int]$Profile.menu_graphs -ne 0 }
-        if($Profile.PSObject.Properties.Name -contains 'menu_counter') { $c=[int]$Profile.menu_counter; $script:Ui.CounterCheck.IsChecked = $c -ne 0; $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0}); $script:Ui.CounterCorner.IsEnabled = ($c -ne 0) }
+        # A profile from before the graphs ran them, as the corner does by default - and one
+        # from before the counter's place existed leaves it in the panel, 0, which is what the
+        # XAML starts at and what the panel does with a missing key. Said either way rather than
+        # only when present, so a profile applied after one that had a corner goes back to 0.
+        $script:Ui.GraphsCheck.IsChecked = $(if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { [int]$Profile.menu_graphs -ne 0 } else { $true })
+        $c = $(if($Profile.PSObject.Properties.Name -contains 'menu_counter') { [int]$Profile.menu_counter } else { 0 })
+        $script:Ui.CounterCheck.IsChecked = $c -ne 0
+        $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0})
+        $script:Ui.CounterCorner.IsEnabled = ($c -ne 0)
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.
@@ -1757,9 +1763,12 @@ if($SelfTest) {
         Set-Progress 'ChooseFiles'
         $script:ApplyingProfile=$true; Request-Pacing; $script:ApplyingProfile=$false
         if($script:PacingDue -or $script:ProgressKey -ne 'ChooseFiles') { throw 'Applying a profile asked to save frame pacing' }
-        # The corner's frame graphs and the counter's place: the window carries both, a profile
-        # without them leaves the defaults ON (an absent `menu_graphs` means the panel draws them;
-        # an absent `menu_counter` means a corner, 1), and applying a profile must not start a save
+        # The corner's frame graphs and the counter's place: the window carries both, and a
+        # profile without them leaves the panel's own defaults - an absent `menu_graphs` means
+        # the panel draws them, 1, and an absent `menu_counter` means the panel alone, 0. Both
+        # match `load_settings` in the panel, which is what actually draws; they used to be 1
+        # here for the counter, so a fresh install disagreed with itself and the first click on
+        # either checkbox wrote a corner into the file. Applying a profile must not start a save
         # - the guard is what keeps the two from fighting.
         $script:Ui.GraphsCheck.IsChecked=$false
         $script:Ui.CounterCheck.IsChecked=$true; $script:Ui.CounterCorner.SelectedIndex=2
@@ -1771,7 +1780,7 @@ if($SelfTest) {
         if($script:Ui.CounterCorner.SelectedIndex -ne 3) { throw 'A profile did not move the counter to the bottom right' }
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$false;nr_every=1;gpu_image_path=$true})
         if(-not $script:Ui.GraphsCheck.IsChecked) { throw 'A profile with no graphs key left the graphs unset' }
-        if(-not $script:Ui.CounterCheck.IsChecked) { throw 'A profile with no counter key left the counter unset' }
+        if($script:Ui.CounterCheck.IsChecked) { throw 'A profile with no counter key put the counter in a corner' }
         $script:Busy=[pscustomobject]@{Action='check'}; Request-Pacing; $script:Busy=$null
         if(-not $script:PacingDue) { throw 'Frame pacing changed during an action was not kept for later' }
         # Free, it goes to the bridge at once: here with no Python behind the fixture's path.
