@@ -135,6 +135,10 @@ EXTRA = {
     # The two graphs' names, short because they sit in a narrow column beside the plot.
     "graph_frame":          (None,     "frame"),
     "graph_net":            (None,     "NR"),
+    # What the network graph says when the host reported no time for any of its frames - every
+    # frame on the CPU path against a daemon too old to send one. It was English in all four
+    # languages, which a reader of any of the other three reads as a bug.
+    "graph_no_net":         (None,     "no network time"),
 }
 
 # Compare modes, in the order the key cycles them. OptiScaler's own names are Off / Side by side /
@@ -207,6 +211,7 @@ OWN = {
                         "corner to draw them in.",
         "graph_frame":  "frame",
         "graph_net":    "NR",
+        "graph_no_net": "no network time",
     },
     "zh": {
         "hint":          "\u4e0a/\u4e0b \u9009\u62e9  \u5de6/\u53f3 \u8c03\u6574  L \u8bed\u8a00  "
@@ -264,6 +269,7 @@ OWN = {
                         "\u5f53\u5e27\u7387\u663e\u793a\u8bbe\u4e3a\u201c\u4ec5\u9762\u677f\u201d\u65f6\u6ca1\u6709\u89d2\u843d\u53ef\u753b\u3002",
         "graph_frame":  "\u5e27",
         "graph_net":    "\u7f51\u7edc",
+        "graph_no_net": "\u672c\u5e27\u65e0\u7f51\u7edc\u65f6\u95f4",
     },
     "ru": {
         "hint":          "\u0412\u0432\u0435\u0440\u0445/\u0412\u043d\u0438\u0437 \u0432\u044b\u0431\u043e\u0440  "
@@ -355,6 +361,7 @@ OWN = {
                         "\u0441\u0442\u043e\u0438\u0442 \u00ab\u0442\u043e\u043b\u044c\u043a\u043e \u0432 \u043f\u0430\u043d\u0435\u043b\u0438\u00bb, \u0443\u0433\u043b\u0430 \u043d\u0435\u0442.",
         "graph_frame":  "\u043a\u0430\u0434\u0440",
         "graph_net":    "\u0441\u0435\u0442\u044c",
+        "graph_no_net": "\u043d\u0435\u0442 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u0441\u0435\u0442\u0438",
     },
     "es": {
         "hint":          "Arriba/Abajo elegir  Izq/Der cambiar  L idioma  Home activar  "
@@ -415,6 +422,7 @@ OWN = {
                         "de esto, y si el contador est\u00e1 solo en el panel no hay esquina.",
         "graph_frame":  "fotograma",
         "graph_net":    "red",
+        "graph_no_net": "sin tiempo de red",
     },
 }
 

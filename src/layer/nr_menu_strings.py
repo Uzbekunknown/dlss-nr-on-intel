@@ -62,6 +62,7 @@ LABELS = {
         'graphs_hint': 'Whether the two frame-time graphs are drawn in the corner window as well. They are always drawn in the panel; in the corner they follow this, and when the counter is set to the panel only there is no corner to draw them in.',
         'graph_frame': 'frame',
         'graph_net': 'NR',
+        'graph_no_net': 'no network time',
     },
     'zh': {
         'render_scale': '渲染比例',
@@ -117,6 +118,7 @@ LABELS = {
         'graphs_hint': '是否在角落浮窗中也绘制两条帧时间曲线。面板内始终绘制；角落中由此项决定，当帧率显示设为“仅面板”时没有角落可画。',
         'graph_frame': '帧',
         'graph_net': '网络',
+        'graph_no_net': '本帧无网络时间',
     },
     'ru': {
         'render_scale': 'Масштаб сети',
@@ -172,6 +174,7 @@ LABELS = {
         'graphs_hint': 'Рисовать ли два графика времени кадра также в углу. В панели они рисуются всегда; в углу это зависит от этой настройки, а если счётчик стоит «только в панели», угла нет.',
         'graph_frame': 'кадр',
         'graph_net': 'сеть',
+        'graph_no_net': 'нет времени сети',
     },
     'es': {
         'render_scale': 'Escala de renderizado',
@@ -227,6 +230,7 @@ LABELS = {
         'graphs_hint': 'Si los dos gráficos de tiempo de fotograma se dibujan también en la esquina. En el panel se dibujan siempre; en la esquina dependen de esto, y si el contador está solo en el panel no hay esquina.',
         'graph_frame': 'fotograma',
         'graph_net': 'red',
+        'graph_no_net': 'sin tiempo de red',
     },
 }
 
