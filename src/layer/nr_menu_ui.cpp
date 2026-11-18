@@ -374,7 +374,7 @@ static void draw_one_graph(const char *id, const char *name, const float *series
         ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + width, at.y + height),
                                             IM_COL32(90, 90, 96, 160));
         ImDrawList *dl = ImGui::GetWindowDrawList();
-        const char *why = "no network time";
+        const char *why = nr_menu_text(g_language, NR_STR_GRAPH_NO_NET);
         ImVec2 sz = ImGui::CalcTextSize(why);
         dl->AddText(ImVec2(at.x + (width - sz.x) * 0.5f, at.y + (height - sz.y) * 0.5f),
                     IM_COL32(140, 140, 150, 200), why);
@@ -1036,26 +1036,27 @@ extern "C" NREX_API void nrex_counter(nrex_ui *ui, const char *panel_line, const
          * `ceil(max, floor)` so its own shape fills the box, and the label carries the number so
          * the reader knows what the height means. */
         if (g_corner_graphs) {
-            /* **As wide as the window it sits in.** The plots were a fixed 180 px under a counter
-             * line that grows with the language and the figures, so the window was a line of text
-             * with a shorter box hanging off its left and a bare strip of background under the
-             * rest.
+            /* **As wide as the line above it, both ways.** The plots were a fixed 180 px under a
+             * counter line that grows with the language and the figures, so the window was a line
+             * of text with a shorter box hanging off its left and a bare strip of background
+             * under the rest.
              *
-             * The width is the CONTENT REGION rather than `CalcTextSize(corner_line)` measured
-             * beside it, and that is the difference between a fix that holds and one that does
-             * not. A CJK line's glyphs are added to the font atlas the first time they are drawn,
-             * so on the frame before they are there `CalcTextSize` answers with the fallback
-             * advance and comes back under the 180 px floor: the box is drawn at the floor, the
-             * glyphs land, and the text is wider than the box it is supposed to fill - measured
-             * in Desk Job at 263 px of text over a 180 px plot, 77 px of window with nothing
-             * under it. The content region is what the text has already made the window wide, so
-             * it cannot disagree with it: the window sizes to the text (AlwaysAutoResize, above)
-             * and the plot takes whatever that came to.
+             * The width is the TEXT ITEM's own width, floored at 180. Two wrong answers came
+             * first, and both are worth knowing because they look right:
              *
-             * `GetContentRegionAvail` is 0 on the frame the window is created, before anything
-             * has been laid out; the floor covers that one frame, and the next is correct. */
-            const float avail = ImGui::GetContentRegionAvail().x;
-            const float graph_width = avail > kGraphWidth ? avail : kGraphWidth;
+             *   - `CalcTextSize(corner_line)` re-measured beside the plot. A CJK line's glyphs
+             *     enter the atlas only when first drawn, so on the frame before they are there
+             *     the measure falls back to a narrower advance, comes in under the floor, and the
+             *     box is drawn too narrow for the glyphs that then land.
+             *   - `GetContentRegionAvail().x`. In an `AlwaysAutoResize` window that is the width
+             *     the window ALREADY HAS, so taking it makes the plot a ratchet: measured by the
+             *     reviewer at 194 px for "Screen 60.0 fps   NR off", 462 px for a long line, and
+             *     still 462 px after thirty frames of the short one.
+             *
+             * `GetItemRectSize().x` is the line just drawn, which is the thing the plot sits
+             * under; the floor keeps a very short line from a box too small to read. */
+            const float text_width = ImGui::GetItemRectSize().x;
+            const float graph_width = text_width > kGraphWidth ? text_width : kGraphWidth;
             draw_graphs(g_graph_frame, g_graph_frame_count, g_graph_net, g_graph_net_count,
                         graph_width, 0, kGraphHeight);
         }

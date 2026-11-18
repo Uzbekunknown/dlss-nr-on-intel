@@ -949,6 +949,48 @@ int main(void)
                   "the corner's window is never narrower than its line", detail);
             check(windows[1] > windows[0] + 100.0f && windows[2] > windows[1] + 10.0f,
                   "the corner's window grows with its line", detail);
+
+            /* **The plot itself shrinks again, not just the window.** The window is
+             * `AlwaysAutoResize` and follows its text whichever width expression the plot uses,
+             * so the checks above cannot see a plot that ratchets. They used to be right under a
+             * short line after a long one, because the width came from `GetContentRegionAvail`,
+             * which in an auto-resize window is the width the window already had. Draw a long
+             * line, then thirty short ones, and measure the rightmost drawn vertex: it must come
+             * back near where a short line alone puts it. */
+            const char *long_line = "Screen 144.0 fps   NR 72.0 fps   network 24.5 ms";
+            const char *short_line = "Screen 60.0 fps NR off";
+            for (int pass = 0; pass < 3; ++pass) {
+                ImGuiIO &dio = ImGui::GetIO();
+                dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                dio.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, nullptr, nullptr, 2, long_line, wide, 60, wide, 60, 1);
+                ImGui::Render();
+            }
+            for (int pass = 0; pass < 30; ++pass) {
+                ImGuiIO &dio = ImGui::GetIO();
+                dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                dio.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
+                ImGui::Render();
+            }
+            float after_shrink = 0.0f;
+            {
+                ImGuiWindow *win = ImGui::FindWindowByName("##nr_frame_counter");
+                if (win) after_shrink = win->Size.x;
+            }
+            /* A fresh short-only window for the reference, so the comparison is against what the
+             * short line draws from cold, not against a remembered number. */
+            ImGui::NewFrame();
+            nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
+            ImGui::Render();
+            ImGuiWindow *cold = ImGui::FindWindowByName("##nr_frame_counter");
+            float cold_width = cold ? cold->Size.x : 0.0f;
+            snprintf(detail, sizeof detail, "after long then short %.0f px, short from cold %.0f px",
+                     (double)after_shrink, (double)cold_width);
+            check(after_shrink <= cold_width + 2.0f,
+                  "a long line does not leave the corner wide after it shrinks", detail);
         }
 
         /* In the panel's place the counter's place is nowhere: nothing is drawn. */
