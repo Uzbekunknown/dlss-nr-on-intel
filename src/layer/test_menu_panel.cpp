@@ -52,12 +52,17 @@ static void fill_rows(void)
         rows[i].label = labels[i];
         rows[i].hint = "";
         rows[i].hint_id = -1;
-        if (i == 2 || i == 10) {
+        if (i == 2) {
             rows[i].kind = NREX_KIND_CHOICE;
             rows[i].choices = choice_names;
             rows[i].choice_count = 3;
             rows[i].choice_index = 0;
             snprintf(shown[i], sizeof shown[i], "standard");
+        } else if (i == 10) {
+            /* A flag, which the panel draws as a checkbox: the corner's frame graphs are one. */
+            rows[i].kind = NREX_KIND_FLAG;
+            rows[i].choice_index = 1;
+            snprintf(shown[i], sizeof shown[i], "on");
         } else {
             /* A range wide enough that a second of holding cannot reach either end: the panel
              * stops reporting a step once the value clamps, so a narrow range measures the clamp
@@ -549,6 +554,251 @@ int main(void)
         check(r.ready && r.network_ms < 0.0 && !strstr(line, "network"),
               "no time reported, none shown", detail);
 
+        /* ---- the two graphs: the shape behind the numbers ---- */
+        {
+            /* A ring, oldest first, and it drops the oldest rather than refusing the newest: the
+             * right edge has to be now. A sample the ring never used must not be drawn as zero -
+             * that would read as a perfect frame. */
+            nr_frame_graph g;
+            nr_frame_graph_reset(&g);
+            float out[NR_GRAPH_SAMPLES];
+            check(nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES) == 0,
+                  "a fresh graph has no points to draw", "");
+
+            nr_frame_graph_add(&g, 16.0f, 8.0f);
+            nr_frame_graph_add(&g, 20.0f, -1.0f);   /* no network time for this one */
+            int n = nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "n=%d first=%.1f second=%.1f", n,
+                     (double)out[0], (double)out[1]);
+            check(n == 2 && out[0] > 15.9f && out[0] < 16.1f && out[1] > 19.9f && out[1] < 20.1f,
+                  "the graph keeps frames in the order they arrived", detail);
+
+            /* The net series carries the gap as -1, which the drawing side skips rather than
+             * plotting at zero. */
+            int nn = nr_frame_graph_net(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "net n=%d second=%.1f", nn, (double)out[1]);
+            check(nn == 2 && out[0] > 7.9f && out[0] < 8.1f && out[1] < 0.0f,
+                  "a frame without a network time leaves a gap, not a zero", detail);
+
+            /* **The net series is per frame too, against the present before this one.** The same
+             * stream as the rates above - 60 presents a second, an answer on every other one,
+             * 24.5 ms each - is only 30 answers in 60 presents. Read against the last *reading*
+             * every point in a half-second window was the same mean; read against the last
+             * *present* each answer is its own frame's time, so the points that carry one all say
+             * 24.5 and the presents that carry none say nothing at all. */
+            nr_frame_rates rn;
+            nr_frame_rates_reset(&rn);
+            nr_frame_counts nc = {0, 0, 0, 0};
+            nr_frame_rates_sample(&rn, 0.0, &nc);
+            for (int i = 1; i <= 150; ++i) {
+                nc.presented++;
+                if (i % 2 == 0) { nc.nr_frames++; nc.network_us += 24500; nc.network_frames++; }
+                nr_frame_rates_sample(&rn, i / 60.0, &nc);
+            }
+            float net[NR_GRAPH_SAMPLES];
+            const int net_points = nr_frame_graph_net(&rn.graph, net, NR_GRAPH_SAMPLES);
+            int with_time = 0, gaps = 0, wrong = 0;
+            float lowest = 1e9f, highest = -1e9f;
+            for (int i = 0; i < net_points; ++i) {
+                if (net[i] < 0.0f) { ++gaps; continue; }
+                ++with_time;
+                if (fabsf(net[i] - 24.5f) > 0.01f) ++wrong;
+                if (net[i] < lowest) lowest = net[i];
+                if (net[i] > highest) highest = net[i];
+            }
+            snprintf(detail, sizeof detail,
+                     "%d points, %d with a time (%d wrong, %.2f..%.2f), %d gaps", net_points, with_time,
+                     wrong, (double)lowest, (double)highest, gaps);
+            /* An answer every other present, over the ring's own depth: 120 points hold 60 answers
+             * and 60 presents that carried none. Read against the half-second reading instead,
+             * all 120 points would have carried a time. */
+            check(with_time >= 55 && with_time <= 65 && wrong == 0 && gaps > 0 && highest - lowest < 0.02f,
+                  "a frame's network time is that frame's answer, not half a second's mean", detail);
+
+            /* And it is not a staircase: consecutive answers are the same value here *because the
+             * fixture feeds the same value*, so the check above cannot tell a per-frame series
+             * from a flat one. Feeding answers that move proves the points follow them. */
+            nr_frame_rates rm;
+            nr_frame_rates_reset(&rm);
+            nr_frame_counts mc = {0, 0, 0, 0};
+            nr_frame_rates_sample(&rm, 0.0, &mc);
+            for (int i = 1; i <= 60; ++i) {
+                mc.presented++;
+                mc.nr_frames++;
+                mc.network_us += (uint64_t)(i * 1000);   /* 1 ms, 2 ms, 3 ms... */
+                mc.network_frames++;
+                nr_frame_rates_sample(&rm, i / 60.0, &mc);
+            }
+            float moved[NR_GRAPH_SAMPLES];
+            const int mn = nr_frame_graph_net(&rm.graph, moved, NR_GRAPH_SAMPLES);
+            int distinct = 0;
+            float last = -2.0f;
+            for (int i = 0; i < mn; ++i) {
+                if (moved[i] >= 0.0f && fabsf(moved[i] - last) > 0.5f) { ++distinct; last = moved[i]; }
+            }
+            snprintf(detail, sizeof detail, "%d points, %d distinct values, last %.2f ms", mn, distinct,
+                     mn > 0 ? (double)moved[mn - 1] : -1.0);
+            check(mn >= 55 && distinct >= 50,
+                  "each frame's own answer lands in its own point, so sixty answers make sixty steps",
+                  detail);
+
+            /* Filled past its depth: the count stops at the ring's size and the oldest go. */
+            for (int i = 0; i < NR_GRAPH_SAMPLES + 40; ++i)
+                nr_frame_graph_add(&g, (float)(i % 30) + 1.0f, -1.0f);
+            n = nr_frame_graph_frame(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "n=%d (ring %d)", n, NR_GRAPH_SAMPLES);
+            check(n == NR_GRAPH_SAMPLES,
+                  "the graph holds its depth and drops the oldest", detail);
+
+            /* A frame slower than the ceiling is clamped, not allowed to flatten the rest. */
+            nr_frame_graph_reset(&g);
+            nr_frame_graph_add(&g, 5000.0f, -1.0f);
+            nr_frame_graph_frame(&g, out, 1);
+            snprintf(detail, sizeof detail, "%.1f ms for a 5 s frame", (double)out[0]);
+            check(out[0] > (float)NR_GRAPH_CEIL_MS - 0.5f,
+                  "a frame past the ceiling is drawn at it", detail);
+
+            /* **The rates feed it.** A present a frame at 60 Hz is 16.7 ms a point, and the panel
+             * hands the same ring to the counter; this is the join between the counter's
+             * arithmetic and the graph's. */
+            nr_frame_rates rg;
+            nr_frame_rates_reset(&rg);
+            nr_frame_counts rc = {0, 0, 0, 0};
+            for (int i = 0; i <= 30; ++i) {
+                rc.presented++;
+                rc.nr_frames++;
+                nr_frame_rates_sample(&rg, i / 60.0, &rc);
+            }
+            float frames[NR_GRAPH_SAMPLES];
+            int got = nr_frame_graph_frame(&rg.graph, frames, NR_GRAPH_SAMPLES);
+            /* The first present has no previous, so it contributes no point; the rest are one
+             * frame each. */
+            snprintf(detail, sizeof detail, "%d points from 30 presents", got);
+            check(got >= 28 && got <= 30,
+                  "the counter's sampling fills the graph, one point a present", detail);
+            if (got > 0) {
+                float sum = 0.0f;
+                for (int i = 0; i < got; ++i) sum += frames[i];
+                const float mean = sum / (float)got;
+                snprintf(detail, sizeof detail, "mean %.2f ms, want ~16.7", (double)mean);
+                check(mean > 15.0f && mean < 18.5f,
+                      "a 60 Hz present stream reads as ~16.7 ms a frame", detail);
+            }
+        }
+
+        /* ---- the graphs' axis: percentiles, not a ceiling and not the maximum ---- */
+        {
+            /* **The case this exists for.** A steady 60 Hz stream with a millisecond of jitter,
+             * and one 200 ms stall in the window. Against a fixed `0..max` the stall pins the axis
+             * at 200 and the other 119 points are a flat line along the floor - the picture shows
+             * nothing about the frame rate it is supposed to describe. The percentiles ignore the
+             * stall and keep the band. */
+            float steady[120];
+            for (int i = 0; i < 120; ++i) steady[i] = 14.0f + (float)(i % 3) * 0.5f;  /* 14.0-15.0 */
+            steady[7] = 200.0f;                     /* one stall, past the 95th percentile */
+
+            float lo = 0.0f, hi = 0.0f;
+            nr_frame_graph_axis(steady, 120, &lo, &hi);
+            snprintf(detail, sizeof detail, "axis %.1f..%.1f over a 14-15 ms band with one 200 ms stall",
+                     (double)lo, (double)hi);
+            /* The band is what the axis must show: inside 14..15 plus the span floor, nowhere near
+             * the 200 ms outlier. */
+            check(hi > 15.0f && hi < 20.0f,
+                  "one stall does not stretch the axis to it", detail);
+            check(lo >= 12.0f && lo < 14.5f,
+                  "and the low end stays on the band", detail);
+
+            /* **And the stall is still visible**: it is past the top of the axis, so `PlotLines`
+             * clamps it to the edge. An axis that hid it would be the other failure. */
+            check(hi < 200.0f, "the stall is outside the axis, so it draws as the edge", detail);
+
+            /* An even stream must not have a tenth of a millisecond amplified to the full height:
+             * the span floor keeps it flat. */
+            float even[60];
+            for (int i = 0; i < 60; ++i) even[i] = 16.66f;
+            nr_frame_graph_axis(even, 60, &lo, &hi);
+            snprintf(detail, sizeof detail, "even stream spans %.2f ms", (double)(hi - lo));
+            check(hi - lo >= NR_GRAPH_MIN_SPAN_MS - 0.01f,
+                  "an even stream keeps the minimum span rather than its own noise", detail);
+
+            /* A gap is not a value: all-gap leaves the default, and a gap in the middle does not
+             * drag the low end to zero. */
+            float gaps[20];
+            for (int i = 0; i < 20; ++i) gaps[i] = -1.0f;
+            nr_frame_graph_axis(gaps, 20, &lo, &hi);
+            snprintf(detail, sizeof detail, "all gaps -> %.1f..%.1f", (double)lo, (double)hi);
+            check(lo == 0.0f && hi > 0.0f, "a series of gaps has no band", detail);
+
+            float mixed[20];
+            for (int i = 0; i < 20; ++i) mixed[i] = (i % 2) ? -1.0f : 14.0f;
+            nr_frame_graph_axis(mixed, 20, &lo, &hi);
+            snprintf(detail, sizeof detail, "half gaps -> %.1f..%.1f", (double)lo, (double)hi);
+            check(lo > 10.0f, "gaps do not pull the low end to zero", detail);
+
+            /* The label carries both ends, and says "-" when there is nothing to draw. */
+            char text[32];
+            nr_frame_graph_axis_text(steady, 120, text, sizeof text);
+            snprintf(detail, sizeof detail, "'%s'", text);
+            check(strchr(text, '-') != nullptr && strstr(text, "200") == nullptr,
+                  "the label shows the band, not the outlier", detail);
+            nr_frame_graph_axis_text(gaps, 20, text, sizeof text);
+            snprintf(detail, sizeof detail, "'%s'", text);
+            check(strcmp(text, "-") == 0, "no points, no numbers", detail);
+        }
+
+        /* ---- smoothing: the line is softened, the axis is not ---- */
+        {
+            /* A per-frame series at 17 fps is a hedge of one-to-three-millisecond jitter; drawn
+             * raw the trend is unreadable. A centred triangle filter fixes the line. What must NOT
+             * change is the axis, which is taken from the raw series - so a stall keeps its full
+             * height and only its width spreads by two samples either side. */
+            float noisy[60];
+            for (int i = 0; i < 60; ++i)
+                noisy[i] = 55.0f + ((i % 2) ? 3.0f : -3.0f);   /* 52, 58, 52, 58 ... */
+            float smooth[60];
+            const int got = nr_frame_graph_smooth(noisy, 60, smooth, 60);
+            snprintf(detail, sizeof detail, "%d points; first %.1f from %.1f, middle %.1f from %.1f",
+                     got, (double)smooth[0], (double)noisy[0], (double)smooth[30], (double)noisy[30]);
+            check(got == 60, "the smoother returns the whole series", detail);
+            /* An alternating 52/58 series averages to its mean 55 in the middle, where the window
+             * is full: that is the whole point. */
+            check(smooth[30] > 54.0f && smooth[30] < 56.0f,
+                  "alternating jitter averages to its mean", detail);
+
+            /* **A step is softened but not moved.** A flat 50 that steps to 70 stays 50 well
+             * before the step and 70 well after it. */
+            float step[40];
+            for (int i = 0; i < 40; ++i) step[i] = i < 20 ? 50.0f : 70.0f;
+            nr_frame_graph_smooth(step, 40, smooth, 40);
+            snprintf(detail, sizeof detail, "before %.2f, after %.2f",
+                     (double)smooth[2], (double)smooth[37]);
+            check(smooth[2] > 49.9f && smooth[2] < 50.1f && smooth[37] > 69.9f && smooth[37] < 70.1f,
+                  "a step keeps its levels away from the edge", detail);
+
+            /* A gap stays a gap: it neither takes part in the average nor gets filled in, so the
+             * drawing side still sees where the network reported nothing. */
+            float holes[10] = {10, 10, -1, -1, 10, 10, 10, 10, 10, 10};
+            nr_frame_graph_smooth(holes, 10, smooth, 10);
+            snprintf(detail, sizeof detail, "%.1f %.1f %.1f", (double)smooth[2], (double)smooth[3],
+                     (double)smooth[4]);
+            check(smooth[2] < 0.0f && smooth[3] < 0.0f,
+                  "a gap stays a gap through the filter", detail);
+            check(smooth[4] > 9.9f && smooth[4] < 10.1f,
+                  "and the values beside it are not dragged down by it", detail);
+
+            /* **The axis is unchanged by smoothing**, which is what keeps a stall at its true
+             * height: it is computed from the raw series and never from the filtered one. */
+            float filtered[60];
+            nr_frame_graph_smooth(noisy, 60, filtered, 60);
+            float lo_raw = 0.0f, hi_raw = 0.0f, lo_sm = 0.0f, hi_sm = 0.0f;
+            nr_frame_graph_axis(noisy, 60, &lo_raw, &hi_raw);
+            nr_frame_graph_axis(filtered, 60, &lo_sm, &hi_sm);
+            snprintf(detail, sizeof detail, "raw %.1f..%.1f, smoothed %.1f..%.1f",
+                     (double)lo_raw, (double)hi_raw, (double)lo_sm, (double)hi_sm);
+            check(hi_sm <= hi_raw + 0.01f,
+                  "smoothing never raises the top of the axis", detail);
+        }
+
         /* The corner, as the shut panel draws it: no panel window, the counter alone, and no
          * pointer handed to ImGui. AlwaysAutoResize hides a window its first frame, so two. */
         static nrex_ui drawn;
@@ -558,7 +808,7 @@ int main(void)
             dio.DisplaySize = ImVec2(800.0f, 600.0f);
             dio.DeltaTime = 1.0f / 60.0f;
             ImGui::NewFrame();
-            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms");
+            nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps   network 24.5 ms", nullptr, 0, nullptr, 0, 1);
             ImGui::Render();
         }
         int any = nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600);
@@ -572,6 +822,67 @@ int main(void)
               (corner->Flags & ImGuiWindowFlags_NoFocusOnAppearing),
               "the corner is a window that takes no input and no focus");
 
+        /* ---- the corner's graphs are a switch; the panel's are not ---- */
+        {
+            /* Two frames of the same data, once with `corner_graphs` on and once off. The corner
+             * window's height is what changes: the numbers are the same line either way, so a
+             * difference there can only be the graphs. This is the whole of the user's switch, and
+             * it is checked on the drawn window rather than on the flag the caller passed. */
+            static float series[60];
+            for (int i = 0; i < 60; ++i) series[i] = 12.0f + (float)(i % 7);
+            float corner_height_on = 0.0f, corner_height_off = 0.0f;
+            for (int pass = 0; pass < 2; ++pass) {
+                float *net = (pass == 0) ? series : nullptr;
+                int net_count = (pass == 0) ? 60 : 0;
+                for (int i = 0; i < 2; ++i) {
+                    ImGuiIO &dio = ImGui::GetIO();
+                    dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                    dio.DeltaTime = 1.0f / 60.0f;
+                    ImGui::NewFrame();
+                    /* pass 0: corner graphs on; pass 1: off, and no net series so the second
+                     * graph would be absent anyway - the frame graph alone is the test. */
+                    nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps",
+                                 series, 60, net, net_count, pass == 0 ? 1 : 0);
+                    ImGui::Render();
+                }
+                ImGuiWindow *w = ImGui::FindWindowByName("##nr_frame_counter");
+                float h = w ? w->Size.y : 0.0f;
+                if (pass == 0) corner_height_on = h; else corner_height_off = h;
+            }
+            snprintf(detail, sizeof detail, "corner %.0f px with graphs, %.0f px without",
+                     (double)corner_height_on, (double)corner_height_off);
+            check(corner_height_on > corner_height_off + 40.0f,
+                  "the corner draws the graphs when asked, and not when not", detail);
+
+            /* **And the panel's are unconditional.** The same data with `corner_graphs` off must
+             * still draw them in the panel's header - the switch is the corner's alone. A panel
+             * frame with no graphs and one with graphs differ in vertex count; the open panel is
+             * where that shows. */
+            int verts_panel_off = 0, verts_panel_none = 0;
+            for (int pass = 0; pass < 2; ++pass) {
+                ImGuiIO &pio2 = ImGui::GetIO();
+                pio2.DisplaySize = ImVec2(800.0f, 600.0f);
+                pio2.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps", "what they are", 0,
+                             nullptr, (pass == 0) ? series : nullptr, (pass == 0) ? 60 : 0,
+                             nullptr, 0, 0);   /* corner off - it must not matter here */
+                nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
+                nrex_rows(nullptr, rows, ROWS, 0);
+                nrex_end_panel(nullptr);
+                ImGui::Render();
+                int v = 0;
+                ImDrawData *dd2 = ImGui::GetDrawData();
+                if (dd2)
+                    for (int i = 0; i < dd2->CmdListsCount; ++i) v += dd2->CmdLists[i]->VtxBuffer.Size;
+                if (pass == 0) verts_panel_off = v; else verts_panel_none = v;
+            }
+            snprintf(detail, sizeof detail, "%d vertices with the graphs, %d without",
+                     verts_panel_off, verts_panel_none);
+            check(verts_panel_off > verts_panel_none,
+                  "the panel draws the graphs even with the corner's switch off", detail);
+        }
+
         /* A pointer over it, pressed: it is not hovered, it asks for no mouse, nothing is reported. */
         if (corner) {
             ImGuiIO &mio = ImGui::GetIO();
@@ -581,7 +892,7 @@ int main(void)
             int captured = 0, hovered = 0;
             for (int i = 0; i < 2; ++i) {
                 ImGui::NewFrame();
-                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps");
+                nrex_counter(nullptr, nullptr, nullptr, 2, "Screen 60.0 fps   NR 30.0 fps", nullptr, 0, nullptr, 0, 1);
                 captured |= mio.WantCaptureMouse ? 1 : 0;
                 hovered |= ImGui::GetCurrentContext()->HoveredWindow == corner ? 1 : 0;
                 ImGui::Render();
@@ -594,9 +905,97 @@ int main(void)
             check(!captured && !hovered, "a click on the corner is not the corner's", detail);
         }
 
+        /* **The corner's plots take the window's width, not a fixed box.** The window sizes itself
+         * to its line (`AlwaysAutoResize`), and the plot is measured from the CONTENT REGION rather
+         * than re-measured with `CalcTextSize`. That difference is the bug this holds down: a CJK
+         * line's glyphs enter the font atlas only when first drawn, so a re-measure on the frame
+         * before that answers with the fallback advance, comes out under the 180 px floor, and the
+         * plot is drawn at the floor while the text above it is wider - measured in Desk Job at
+         * 263 px of text over a 180 px box, 77 px of window with nothing under it.
+         *
+         * Three lines of very different lengths: a width that is really the floor gives three
+         * nearly equal windows, and the second assertion fails. */
+        {
+            static float wide[60];
+            for (int i = 0; i < 60; ++i) wide[i] = 12.0f + (float)(i % 7);
+            const char *lines[] = {
+                "Screen 60.0 fps   NR 30.0 fps",
+                "Screen 75.0 fps   NR 75.0 fps   network 5.4 ms",
+                "Screen 144.0 fps   NR 72.0 fps   network 24.5 ms",
+            };
+            float windows[3] = {0.0f, 0.0f, 0.0f};
+            float texts[3] = {0.0f, 0.0f, 0.0f};
+            for (int k = 0; k < 3; ++k) {
+                for (int pass = 0; pass < 3; ++pass) {
+                    ImGuiIO &dio = ImGui::GetIO();
+                    dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                    dio.DeltaTime = 1.0f / 60.0f;
+                    ImGui::NewFrame();
+                    nrex_counter(nullptr, nullptr, nullptr, 2, lines[k], wide, 60, wide, 60, 1);
+                    ImGui::Render();
+                }
+                ImGuiWindow *win = ImGui::FindWindowByName("##nr_frame_counter");
+                windows[k] = win ? win->Size.x : 0.0f;
+                texts[k] = ImGui::CalcTextSize(lines[k]).x;
+            }
+            snprintf(detail, sizeof detail,
+                     "window %.0f/%.0f/%.0f px for text %.0f/%.0f/%.0f",
+                     (double)windows[0], (double)windows[1], (double)windows[2],
+                     (double)texts[0], (double)texts[1], (double)texts[2]);
+            /* The window is the text plus its padding (7 px each side), so it is always at least
+             * as wide as the line it holds; and it grows with the line, which a floor-only width
+             * would not. */
+            check(windows[0] >= texts[0] && windows[1] >= texts[1] && windows[2] >= texts[2],
+                  "the corner's window is never narrower than its line", detail);
+            check(windows[1] > windows[0] + 100.0f && windows[2] > windows[1] + 10.0f,
+                  "the corner's window grows with its line", detail);
+
+            /* **The plot itself shrinks again, not just the window.** The window is
+             * `AlwaysAutoResize` and follows its text whichever width expression the plot uses,
+             * so the checks above cannot see a plot that ratchets. They used to be right under a
+             * short line after a long one, because the width came from `GetContentRegionAvail`,
+             * which in an auto-resize window is the width the window already had. Draw a long
+             * line, then thirty short ones, and measure the rightmost drawn vertex: it must come
+             * back near where a short line alone puts it. */
+            const char *long_line = "Screen 144.0 fps   NR 72.0 fps   network 24.5 ms";
+            const char *short_line = "Screen 60.0 fps NR off";
+            for (int pass = 0; pass < 3; ++pass) {
+                ImGuiIO &dio = ImGui::GetIO();
+                dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                dio.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, nullptr, nullptr, 2, long_line, wide, 60, wide, 60, 1);
+                ImGui::Render();
+            }
+            for (int pass = 0; pass < 30; ++pass) {
+                ImGuiIO &dio = ImGui::GetIO();
+                dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                dio.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
+                ImGui::Render();
+            }
+            float after_shrink = 0.0f;
+            {
+                ImGuiWindow *win = ImGui::FindWindowByName("##nr_frame_counter");
+                if (win) after_shrink = win->Size.x;
+            }
+            /* A fresh short-only window for the reference, so the comparison is against what the
+             * short line draws from cold, not against a remembered number. */
+            ImGui::NewFrame();
+            nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
+            ImGui::Render();
+            ImGuiWindow *cold = ImGui::FindWindowByName("##nr_frame_counter");
+            float cold_width = cold ? cold->Size.x : 0.0f;
+            snprintf(detail, sizeof detail, "after long then short %.0f px, short from cold %.0f px",
+                     (double)after_shrink, (double)cold_width);
+            check(after_shrink <= cold_width + 2.0f,
+                  "a long line does not leave the corner wide after it shrinks", detail);
+        }
+
         /* In the panel's place the counter's place is nowhere: nothing is drawn. */
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps");
+        nrex_counter(nullptr, nullptr, nullptr, 0, "Screen 60.0 fps", nullptr, 0, nullptr, 0, 1);
         ImGui::Render();
         check(!nrex_note_drawn(&drawn, ImGui::GetDrawData(), 800, 600),
               "with the counter in the panel, a shut panel draws nothing");
@@ -608,7 +1007,7 @@ int main(void)
         pio.DeltaTime = 1.0f / 60.0f;
         ImGui::NewFrame();
         nrex_counter(nullptr, "Screen 60.0 fps    NR 30.0 fps    network 24.5 ms", "what they are", 0,
-                     nullptr);
+                     nullptr, nullptr, 0, nullptr, 0, 1);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         int with_line = nrex_end_panel(nullptr);
@@ -618,7 +1017,7 @@ int main(void)
         if (dd)
             for (int i = 0; i < dd->CmdListsCount; ++i) verts_line += dd->CmdLists[i]->VtxBuffer.Size;
         ImGui::NewFrame();
-        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr);
+        nrex_counter(nullptr, nullptr, nullptr, 0, nullptr, nullptr, 0, nullptr, 0, 1);
         nrex_begin_panel(nullptr, "DLSS-NR on Intel", 0, NULL);
         nrex_rows(nullptr, rows, ROWS, 0);
         nrex_end_panel(nullptr);
@@ -631,6 +1030,57 @@ int main(void)
         check(verts_line > verts_plain, "the open panel draws the counter's line", detail);
         check(with_line == plain, "and reports what it did without it",
               "identical actions with and without the line");
+    }
+
+    /* ---- a checkbox row: the corner's frame graphs ---- */
+    {
+        /* **A FLAG row is drawn as a checkbox, and its state comes from `choice_index`.** The
+         * corner's frame graphs are the panel's first flag, so this is the first time the row kind
+         * has been exercised at all.
+         *
+         * What is checked is what can be measured without a real pointer: the row reports the
+         * state it was given (not a raw index), and a ticked row and an unticked one draw different
+         * pictures - which is the checkbox showing the difference rather than ignoring it. */
+        char detail[256];
+        const int row = 10;                 /* the flag, from `fill_rows` */
+
+        rows[row].choice_index = 1;         /* ticked */
+        rows[row].disabled = 0;
+        clear_edits();
+        frame(0);
+        ImDrawData *ticked = ImGui::GetDrawData();
+        int verts_ticked = ticked ? ticked->TotalVtxCount : 0;
+
+        rows[row].choice_index = 0;         /* unticked */
+        clear_edits();
+        frame(0);
+        ImDrawData *unticked = ImGui::GetDrawData();
+        int verts_unticked = unticked ? unticked->TotalVtxCount : 0;
+
+        snprintf(detail, sizeof detail, "%d vertices ticked, %d unticked",
+                 verts_ticked, verts_unticked);
+        /* Both draw the box; the tick mark is what differs, so the counts differ. */
+        check(verts_ticked != verts_unticked,
+              "a flag row draws differently ticked and unticked", detail);
+        check(verts_ticked > 0 && verts_unticked > 0, "and draws in both states", detail);
+
+        /* **A disabled row refuses the keyboard and takes no click.** The graphs' checkbox is
+         * disabled when the counter is in the panel alone, and the mechanism is `nrex_row.disabled`
+         * - `BeginDisabled` around the whole row - so a disabled one must report no change however
+         * it is pressed. */
+        rows[row].choice_index = 1;
+        rows[row].disabled = 1;
+        clear_edits();
+        ImGuiIO &dio = ImGui::GetIO();
+        dio.AddKeyEvent(ImGuiKey_RightArrow, true);
+        frame(0);
+        dio.AddKeyEvent(ImGuiKey_RightArrow, false);
+        int acted_disabled = frame(0);
+        snprintf(detail, sizeof detail, "changed=%d value_i=%d acted=%d",
+                 rows[row].changed, rows[row].value_i, acted_disabled);
+        check(!rows[row].changed,
+              "a disabled flag row reports nothing", detail);
+        rows[row].disabled = 0;
     }
 
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);

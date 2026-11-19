@@ -85,6 +85,14 @@ void nr_menu_bridge_close(nr_menu_bridge *bridge);
  * this routes through `nr_menu_inject_reset` so the key and this call cannot diverge. */
 void nr_menu_bridge_reset(nr_menu_bridge *bridge);
 
+/* Pretend the panel is open, on a bridge with no menu.
+ *
+ * `nr_menu_bridge_create_headless` has no menu, so every frame looks like the panel is shut and the
+ * open-only paths - the knob reload on a changed stamp among them - are unreachable from a settings
+ * test. This sets the one flag those paths ask about, so a fixture can write the file with the
+ * panel shut, then open it, and see what the user would see. It draws nothing and takes no keys;
+ * it is for the headless fixtures and the scripted runs, not for the layer. */
+void nr_menu_bridge_set_open(nr_menu_bridge *bridge, int open);
 /* Revert to the SAVED settings, on a bridge with no menu. Through `nr_menu_inject_revert` when
  * there is one, so a button and this call cannot diverge. */
 void nr_menu_bridge_revert(nr_menu_bridge *bridge);
@@ -136,6 +144,12 @@ enum { NR_COUNTER_PANEL = 0, NR_COUNTER_TOP_LEFT = 1, NR_COUNTER_TOP_RIGHT = 2,
        NR_COUNTER_BOTTOM_LEFT = 3, NR_COUNTER_BOTTOM_RIGHT = 4, NR_COUNTER_PLACES = 5 };
 int nr_menu_bridge_counter(const nr_menu_bridge *bridge);
 void nr_menu_bridge_set_counter(nr_menu_bridge *bridge, int where);
+
+/* Whether the corner window draws the two frame-time graphs as well. The panel always draws them,
+ * so this is only ever about the corner - and a corner exists only when `counter` puts it
+ * somewhere. Default on; saved as `menu_graphs`. */
+int nr_menu_bridge_graphs(const nr_menu_bridge *bridge);
+void nr_menu_bridge_set_graphs(nr_menu_bridge *bridge, int on);
 int nr_menu_bridge_pacing_async(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_gpu_image(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_every(const nr_menu_bridge *bridge);

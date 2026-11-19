@@ -5,7 +5,7 @@
 nr-gpu-report.txt
 /dist/
 # Variant builds beside the shipped ones, for measuring one shader against another without
-# editing the tree (`analysis_e/_team/ACC16重测.md`). The .spv are covered by the *.spv rule
+# editing the tree (`analysis_e/_team/ACC16分析.md`). The .spv are covered by the *.spv rule
 # below; the .comp copies are throwaway derivatives of src/gpu/*.comp and must not be taken
 # for real sources — a second `gemm_staged.comp` in the tree is exactly the confusion this
 # project has been bitten by before.
@@ -51,3 +51,12 @@ __pycache__/
 # The daemon's own log, written beside the tree.
 nr_daemon.log
 *.obj
+
+# The setup window's bridge, copied here from src/tools by a release build
+# (build_release.py's WINDOWS_TOOLS). A developer running dist-tools/windows-wizard.ps1
+# against this tree needs them beside the tree; they are generated, not sources.
+/scripts/windows_wizard.py
+/scripts/windows_wizard_core.py
+/scripts/windows_launch.py
+/scripts/windows-wizard.ps1
+test_nr_xess.log

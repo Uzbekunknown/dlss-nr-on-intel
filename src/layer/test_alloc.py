@@ -17,7 +17,9 @@ import argparse
 import hashlib
 import os
 import pathlib
+import struct
 import sys
+import time
 import threading
 
 import numpy as np
@@ -141,7 +143,17 @@ def allocator():
 
 
 class Exchange:
-    """One frame as the layer sends it, and the answer as the daemon writes it."""
+    """One frame as the layer sends it, and the answer as the daemon writes it.
+
+    **The answer now ends with the network time, and this takes it off.** A legacy answer is the
+    pixels and then, in a write of its own, the trailer: the magic, then the microseconds. What
+    this test compares is the PIXELS - "the same bytes with every block poisoned" is a claim about
+    the picture - and the trailer's microseconds differ between any two runs by definition, so
+    comparing it would fail on the clock rather than on the allocator. `pixels` is what a caller
+    wants; the trailer is checked for its magic where it arrives so a malformed one is noticed
+    rather than silently dropped."""
+
+    TRAILER = 8
 
     def __init__(self, request):
         self.request, self.at, self.answer = memoryview(request), 0, bytearray()
@@ -157,6 +169,26 @@ class Exchange:
 
     def sendall(self, data):
         self.answer += data
+
+    @property
+    def trailer_us(self):
+        """The microseconds in the trailer, with its magic checked. 0 when there is none."""
+        if len(self.answer) < self.TRAILER:
+            raise AssertionError("the answer is too short to carry a trailer: %d bytes"
+                                 % len(self.answer))
+        import nr_daemon   # the trailer's magic, which only the daemon defines
+        magic, us = struct.unpack_from("<2I", self.answer, len(self.answer) - self.TRAILER)
+        if magic != nr_daemon.TRAILER_MAGIC:
+            raise AssertionError("the answer's last eight bytes are not the trailer: %#x" % magic)
+        return us
+
+    @property
+    def pixels(self):
+        """`answer` without the trailer, and the trailer checked on the way past."""
+        us = self.trailer_us   # also checks the magic
+        if us == 0:
+            raise AssertionError("the answer carried a zero network time")
+        return bytes(self.answer[:-self.TRAILER])
 
 
 def daemon_frames():
@@ -197,23 +229,28 @@ def daemon_frames():
         args.history = nr_daemon.History()
         args.letterbox = nr_daemon.Letterbox()
         digests = []
+        networks = []
+        wall_ms = []
         for width, height, scale, magic, body in plan:
             args.live.render_scale = scale
             if not keep:
                 nr_daemon._INBOX.clear()       # a fresh request buffer every frame, as before
             exchange = Exchange(np.array([magic, width, height, 44], "<u4").tobytes() + body)
+            began = time.perf_counter()
             nr_daemon.process_connection(exchange, backend, args)
+            wall_ms.append((time.perf_counter() - began) * 1000.0)
             if keep:
                 nr_alloc.frame_done()
-            digests.append(hashlib.sha256(exchange.answer).hexdigest()[:16])
+            digests.append(hashlib.sha256(exchange.pixels).hexdigest()[:16])
+            networks.append(exchange.trailer_us / 1000.0)
         if keep:
             counts = nr_alloc.counts()
             nr_alloc.uninstall()
-            return digests, counts
-        return digests, None
+            return digests, counts, networks, wall_ms
+        return digests, None, networks, wall_ms
 
-    plain, _ = answers(False)
-    kept, counts = answers(True)
+    plain, _, plain_net, plain_wall = answers(False)
+    kept, counts, kept_net, kept_wall = answers(True)
     differ = [i for i, (a, b) in enumerate(zip(plain, kept)) if a != b]
     check(f"the daemon's {len(plain)} answers, the same bytes with every block poisoned "
           f"and the request buffer kept",
@@ -221,6 +258,22 @@ def daemon_frames():
     check("and the blocks were reused", counts["hits"] > counts["misses"],
           f"hits {counts['hits']}, misses {counts['misses']}, the last frame kept at most "
           f"{counts['frame_most'] / MB:.0f} MB")
+
+    # **The trailer carries the NETWORK's time, not the whole frame's.** It used to be the span
+    # from `decode` through the encode - the whole legacy round trip - while the panel's label
+    # and the GPU path's `detail` both mean the network alone. The two are visibly different in
+    # this fixture: a frame here takes `wall_ms` end to end, of which the network is a part. A
+    # trailer time at or above the whole call would mean the old clock crept back in.
+    # The first frame loads the weights into the graph and takes ~900 ms; even there the network
+    # is the larger part, so compare from the second frame on, where the frame is warm.
+    ratios = [n / w for n, w in zip(plain_net[1:], plain_wall[1:]) if w > 0]
+    check("the trailer's time is the network's run, not the whole round trip",
+          len(plain_net) > 2 and all(0 < n <= w + 0.5
+                                     for n, w in zip(plain_net[1:], plain_wall[1:]))
+          and bool(ratios) and max(ratios) < 0.90,
+          f"network {[round(x, 1) for x in plain_net[1:4]]} ms, whole call "
+          f"{[round(x, 1) for x in plain_wall[1:4]]} ms")
+
     nr_alloc.configure()
     backend.close()
 
