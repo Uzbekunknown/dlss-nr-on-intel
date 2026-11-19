@@ -85,12 +85,32 @@ def change_text(value):
     """A frame line's change figure: five places, or `off` where it was not measured."""
     return "off" if value is None else f"{value:.5f}"
 # Eight bytes a legacy answer may end with, when the client reads past its pixels: the
-# magic, then the frame's wall-clock microseconds. The magic reads "RNIT" on the wire
-# (0x54494E52 little-endian); the layer decodes the word rather than spelling it, so the
-# two ends cannot drift apart the way a spelling invites. A client that does not read
-# the trailer costs this write one broken pipe, which `process` swallows; a client that
-# does reads the panel's network graph out of it.
+# magic, then the network's own time for the frame in microseconds. The magic reads "RNIT"
+# on the wire (0x54494E52 little-endian); the layer decodes the word rather than spelling
+# it, so the two ends cannot drift apart the way a spelling invites. A client that does not
+# read the trailer costs this write one broken pipe, which `send_trailer` swallows; a client
+# that does reads the panel's network graph out of it.
 TRAILER_MAGIC = 0x54494E52
+
+
+def send_trailer(connection, args, seconds):
+    """Write the trailer after a legacy answer's pixels: the magic, then `seconds` in
+    microseconds, in a write of its own.
+
+    **A client that never reads the trailer is not a failed frame.** A layer from before the
+    trailer reads every pixel it asked for and closes, so this write can find the pipe shut: the
+    eight bytes are an offer it declined. The broken pipe is swallowed here rather than reaching
+    `serve`'s handler, whose "frame rejected/failed; game keeps original" would be a lie for a
+    frame the game did get, and the frame's line and metrics still follow. Only this write is
+    guarded: a failed write of the pixels is a failed frame, as it was before the trailer."""
+    try:
+        connection.sendall(struct.pack("<2I", TRAILER_MAGIC,
+                                       min(int(round(seconds * 1e6)), 0xFFFFFFFF)))
+    except (BrokenPipeError, ConnectionResetError):
+        if not getattr(args, "trailer_refused", False):
+            print("this client reads its pixels and closes: its daemon speaks a "
+                  "version before the network time (the graph will show none)", flush=True)
+            args.trailer_refused = True
 
 # The swapchain formats a compositor or VKD3D actually hands out. A game writes
 # sRGB-encoded values into a UNORM swapchain just as it does into an SRGB one, so both
@@ -1115,10 +1135,7 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             # network's own run, which is what the GPU cut path's `detail` carries and what the
             # panel labels the line; `started` would have been the whole `process_host`.
             connection.sendall(answer)
-            network_ran = backend.split[1] if backend is not None else 0.0
-            connection.sendall(struct.pack(
-                "<2I", TRAILER_MAGIC,
-                min(int(round(network_ran * 1e6)), 0xFFFFFFFF)))
+            send_trailer(connection, args, backend.split[1] if backend is not None else 0.0)
             metrics = {**engine.last, "total_seconds": time.perf_counter() - started}
             print_gpu_frame(width, height, vk_format, live, metrics, "gpu-image-host")
             return
@@ -1331,41 +1348,22 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
         # what it holds. Three frame copies a frame were 0.4 ms at 640x360 and 2-3 at
         # 1280x720.
         args.history.keep(shot, neural, inner, colour)
-    # The trailer rides in the SAME write as the pixels, not after them. A separate
-    # sendall loses every time: the layer reads its pixels and peeks for the trailer
-    # faster than this interpreter gets back around to its own next sendall, so the
-    # eight bytes would land on a pipe the layer had already closed. One buffer, one
-    # write, no race.
+    # **The pixels, then the trailer: two writes, because one writes a copy of the frame.**
+    # `encoded` is usually the request's own bytes that the pipeline composed into, and
+    # `sendall` hands that buffer to WriteFile as it lies - which is the whole reason
+    # `nr_pipe.sendall` exists (`98a0ad3`: the copy cost 2.7 ms of a 1280x720 frame).
+    # Concatenating the trailer onto it put that copy back on every legacy frame: measured
+    # 1.1 ms at 1280x720 and 2.5 ms at 1920x1080, twice that on `gpu-image-host` where the
+    # answer is a view and `bytes()` copies it first.
     #
-    # **A client that never reads the trailer is not a failed frame.** It read every
-    # pixel it asked for; the eight bytes are an offer it declined. Swallowing the
-    # broken pipe here - rather than letting it reach `serve`'s handler - keeps the
-    # log honest ("frame rejected/failed; game keeps original" would be a lie) and
-    # keeps the metrics below running.
-    try:
-        # **The pixels, then the trailer: two writes, because one writes a copy of the frame.**
-        # `encoded` is usually the request's own bytes that the pipeline composed into, and
-        # `sendall` hands that buffer to WriteFile as it lies - which is the whole reason
-        # `nr_pipe.sendall` exists (`98a0ad3`: the copy cost 2.7 ms of a 1280x720 frame).
-        # Concatenating the trailer onto it put that copy back on every legacy frame: measured
-        # 1.1 ms at 1280x720 and 2.5 ms at 1920x1080, twice that on `gpu-image-host` where the
-        # answer is a view and `bytes()` copies it first.
-        #
-        # Two writes were avoided at first for a reason that turned out to be wrong: the layer
-        # peeks for the trailer the moment its pixels are home, so eight bytes written after
-        # them might land on a closed pipe. It cannot - the layer holds the read open for its
-        # two-millisecond budget (`nr_link_read_nowait`) and only closes when that has passed,
-        # which is what makes a second write safe. A `BrokenPipeError` here is caught below
-        # either way, so an old client costs the same as before.
-        connection.sendall(encoded)
-        connection.sendall(struct.pack(
-            "<2I", TRAILER_MAGIC,
-            min(int(round(network_ran * 1e6)), 0xFFFFFFFF)))
-    except (BrokenPipeError, ConnectionResetError):
-        if not getattr(args, "trailer_refused", False):
-            print("this client reads its pixels and closes: its daemon speaks a "
-                  "version before the network time (the graph will show none)", flush=True)
-            args.trailer_refused = True
+    # Two writes were avoided at first for a reason that turned out to be wrong: the layer
+    # peeks for the trailer the moment its pixels are home, so eight bytes written after
+    # them might land on a closed pipe. It cannot - the layer holds the read open for its
+    # two-millisecond budget (`nr_link_read_nowait`) and only closes when that has passed,
+    # which is what makes a second write safe. A client that does not read the trailer is
+    # `send_trailer`'s to absorb, so an old client costs the same as before.
+    connection.sendall(encoded)
+    send_trailer(connection, args, network_ran)
     if changed is None and CHANGE_METRIC:
         changed = float(np.abs(composed[::4] - colour[::4]).mean())
     # What the game was handed at the active region, for the dump below.

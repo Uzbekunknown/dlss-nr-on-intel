@@ -469,17 +469,25 @@ static void test_a_moved_knob_survives_a_reopen(void)
  * panel showed the old render scale, the arrows stepped from it, and the next Save wrote it back.
  *
  * This is that sequence, at the file level: shut, write the file from outside, tick; open, tick;
- * the knob must show what the file says. */
+ * the knob must show what the file says.
+ *
+ * **On a headless MENU, not a headless bridge.** A bridge without a menu does no per-frame work -
+ * `nr_menu_bridge_update` returns before the poll - so on one neither read below runs, and the
+ * case failed at the corner's check with the fix and without it alike. A headless menu draws
+ * nothing and reads no keys, and `nr_menu_inject_open` is what the panel's key does, so this is
+ * the code the layer runs. With the shut read advancing the knobs' stamp again (the bug), the
+ * render scale reads 0.4 at the end. */
 static void test_an_outside_edit_reaches_the_knobs_when_the_panel_opens(void)
 {
     char settings[1088];
     path_of(settings, sizeof settings, "outside.json");
     write_text(settings, "{\n  \"render_scale\": 0.4,\n  \"intensity\": 1.0\n}\n");
 
-    nr_menu_bridge *bridge = nr_menu_bridge_create_headless(settings, NR_MENU_LANG_EN);
+    nr_menu *menu = nr_menu_create_headless();
+    assert(menu);
+    nr_menu_bridge *bridge = nr_menu_bridge_create(menu, settings, NR_MENU_LANG_EN);
     assert(bridge);
-    /* Shut, as a bridge with no menu is: the counter and the graphs are read, nothing else. */
-    nr_menu_bridge_set_open(bridge, 0);
+    /* Shut: the counter and the graphs are read, nothing else. */
     nr_menu_bridge_update(bridge, 1.0f / 60.0f);
     assert(nr_menu_bridge_counter(bridge) == NR_COUNTER_PANEL);
 
@@ -494,21 +502,30 @@ static void test_an_outside_edit_reaches_the_knobs_when_the_panel_opens(void)
 #endif
     nr_menu_bridge_update(bridge, 1.0f / 60.0f);
     /* The corner followed the file, which is what the shut read is for. */
-    assert(nr_menu_bridge_counter(bridge) == NR_COUNTER_TOP_RIGHT);
+    if (nr_menu_bridge_counter(bridge) != NR_COUNTER_TOP_RIGHT) {
+        printf("  FAIL the corner did not follow an outside edit made with the panel shut "
+               "(counter place %d, the file says %d)\n", nr_menu_bridge_counter(bridge),
+               NR_COUNTER_TOP_RIGHT);
+        nr_menu_bridge_destroy(bridge);
+        nr_menu_destroy(menu);
+        exit(1);
+    }
 
     /* Now the panel opens. The knobs have NOT been read since the file moved, so this is where
      * they catch up - and the bug was that they did not. */
-    nr_menu_bridge_set_open(bridge, 1);
-    nr_menu_bridge_update(bridge, 1.0f / 60.0f);
+    nr_menu_inject_open(menu, 1);
+    for (int frame = 0; frame < 3; ++frame) nr_menu_bridge_update(bridge, 1.0f / 60.0f);
     const char *shown = nr_menu_bridge_row_value(bridge, ROW_RENDER_SCALE);
     assert(shown != NULL);
     if (strcmp(shown, "0.65") != 0) {
         printf("  FAIL the knobs did not follow an outside edit made with the panel shut "
                "(render scale reads '%s', the file says 0.65)\n", shown);
         nr_menu_bridge_destroy(bridge);
+        nr_menu_destroy(menu);
         exit(1);
     }
     nr_menu_bridge_destroy(bridge);
+    nr_menu_destroy(menu);
     printf("  ok  an outside edit reaches the knobs when the panel opens (render scale 0.65)\n");
 }
 
@@ -525,7 +542,13 @@ static void test_every_knob_moves_and_survives(void)
     nr_menu_bridge *probe = nr_menu_bridge_create_headless(settings, NR_MENU_LANG_EN);
     assert(probe);
     int count = nr_menu_bridge_row_count(probe);
-    assert(count == 11);
+    /* Ten, `nr_knobs.py`'s table. It said eleven from the weights knob (`c484c5d`) until that knob
+     * went in PR #20's narrowing, and nothing built this fixture on Windows to notice. */
+    if (count != 10) {
+        printf("  FAIL the bridge has %d knobs, this test moves ten\n", count);
+        nr_menu_bridge_destroy(probe);
+        exit(1);
+    }
 
     for (int row = 0; row < count; ++row) {
         const char *before = nr_menu_bridge_row_value(probe, row);

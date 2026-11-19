@@ -234,9 +234,6 @@ struct nr_menu_bridge {
      * the arrows stepped from it. Two stamps, two questions: `stamp` is "have the KNOBS been
      * read", `corner_stamp` is "has the CORNER been read". 0 until each has been read once. */
     long long corner_stamp;
-    /* Whether a bridge with no menu is to be treated as open. Only `nr_menu_bridge_set_open`
-     * writes it; see that function for why the headless fixtures need it. */
-    int headless_open;
     /* When the settings file was last polled, in `nr_when_ms`'s clock. The poll is a
      * GetFileAttributesEx, and it used to run once a frame while the panel was OPEN -
      * which was free enough. It runs with the panel SHUT too now, because the corner's
@@ -1437,19 +1434,6 @@ void nr_menu_bridge_set_language(nr_menu_bridge *b, int language)
     b->language_pending = language;
 }
 
-/* **Say whether the panel is open, on a bridge with no menu.** A bridge with a real menu answers
- * from the menu and ignores this. The headless fixtures are why it exists: with one, every frame
- * looks like the panel is shut, so the paths that only run with the panel OPEN - the knob reload on
- * a changed file stamp among them - cannot be reached from a settings test at all. See the header
- * for what a fixture does with it. */
-void nr_menu_bridge_set_open(nr_menu_bridge *b, int open)
-{
-    /* A bridge with a menu takes its answer from the menu, so this would be a second writer of
-     * the same fact. */
-    if (!b || b->menu) return;
-    b->headless_open = open ? 1 : 0;
-}
-
 /* Close the panel, on a bridge with no menu.
  *
  * The Close button's semantics, and the user's rule for them: close the panel, KEEP the unsaved
@@ -1469,7 +1453,6 @@ void nr_menu_bridge_close(nr_menu_bridge *b)
      * on a state change the next frame would report. */
     write_live_settings(b);
     b->dirty = 1;
-    b->headless_open = 0;
 }
 
 /* Reset the knobs to their defaults, on a bridge with no menu.
@@ -1645,14 +1628,6 @@ static unsigned long long poll_clock_ms(void)
  *
  * A file that will not parse, or one without the keys, leaves both as they are rather than
  * resetting them to defaults: an outside write we cannot read is not an instruction to reset. */
-/* **Is the panel open, from this bridge's point of view?** A real menu answers for itself. One
- * without a menu is never open - except that `nr_menu_bridge_set_open` can say it is, so the
- * settings fixtures can reach the open-only paths (the knob reload on a changed stamp). */
-static int menu_open(const nr_menu_bridge *b)
-{
-    return b && b->menu ? nr_menu_is_open(b->menu) : (b ? b->headless_open : 0);
-}
-
 static void reload_corner_settings(nr_menu_bridge *b)
 {
     char *text = NULL;
@@ -1744,7 +1719,10 @@ int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
      * never shows up in a profile and is wrong all the same. An open panel keeps the old
      * immediacy - the row is on screen and must follow the file.
      */
-    const int open = menu_open(b);
+    /* A bridge without a menu returned above, so the menu answers: a settings fixture that wants
+     * the open-only paths drives a headless menu (`nr_menu_create_headless`, `nr_menu_inject_open`),
+     * which is the code the layer runs. */
+    const int open = nr_menu_is_open(b->menu);
     const unsigned long long now_ms = poll_clock_ms();
     if (open || !b->polled_ms || now_ms - b->polled_ms >= 1000u) {
         b->polled_ms = now_ms;

@@ -5,7 +5,7 @@
 nr-gpu-report.txt
 /dist/
 # Variant builds beside the shipped ones, for measuring one shader against another without
-# editing the tree (`analysis_e/_team/ACC16分析.md`). The .spv are covered by the *.spv rule
+# editing the tree (`analysis_e/_team/ACC16重测.md`). The .spv are covered by the *.spv rule
 # below; the .comp copies are throwaway derivatives of src/gpu/*.comp and must not be taken
 # for real sources — a second `gemm_staged.comp` in the tree is exactly the confusion this
 # project has been bitten by before.

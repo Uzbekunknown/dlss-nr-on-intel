@@ -85,14 +85,6 @@ void nr_menu_bridge_close(nr_menu_bridge *bridge);
  * this routes through `nr_menu_inject_reset` so the key and this call cannot diverge. */
 void nr_menu_bridge_reset(nr_menu_bridge *bridge);
 
-/* Pretend the panel is open, on a bridge with no menu.
- *
- * `nr_menu_bridge_create_headless` has no menu, so every frame looks like the panel is shut and the
- * open-only paths - the knob reload on a changed stamp among them - are unreachable from a settings
- * test. This sets the one flag those paths ask about, so a fixture can write the file with the
- * panel shut, then open it, and see what the user would see. It draws nothing and takes no keys;
- * it is for the headless fixtures and the scripted runs, not for the layer. */
-void nr_menu_bridge_set_open(nr_menu_bridge *bridge, int open);
 /* Revert to the SAVED settings, on a bridge with no menu. Through `nr_menu_inject_revert` when
  * there is one, so a button and this call cannot diverge. */
 void nr_menu_bridge_revert(nr_menu_bridge *bridge);

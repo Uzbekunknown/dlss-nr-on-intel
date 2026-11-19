@@ -34,11 +34,9 @@
 #include <windows.h>
 #include <stdio.h>   /* snprintf, used by both arms */
 
-/* How long the layer gives a daemon it has never met to follow its pixels with a trailer, and how
- * many times it is worth yielding the CPU before asking the scheduler for a whole tick. See
- * `nr_link_read_nowait`, which is where both are used and where the reasoning is. */
+/* How long the layer gives a daemon it has never met to follow its pixels with a trailer. See
+ * `nr_link_read_nowait`, which is where it is used and where the reasoning is. */
 #define NR_LINK_TRAILER_BUDGET_US 2000
-#define NR_LINK_BUSY_YIELDS 64
 
 /* One connected endpoint. `handle` is a pipe handle; `deadline` is the same
  * whole-exchange budget the Unix build gives SO_SNDTIMEO/SO_RCVTIMEO. */
@@ -177,14 +175,22 @@ NR_UNUSED static int nr_link_read_nowait(nr_link *link, void *data, size_t count
 	 * QueryPerformanceCounter is the machine's high-resolution counter and costs about what
 	 * GetTickCount does. The budget below is really two milliseconds.
 	 *
-	 * Both branches stay: `Sleep(0)` yields the rest of this thread's slice (right when another
-	 * thread wants the CPU, wrong when it does not), and after NR_LINK_BUSY_YIELDS of them a
-	 * `Sleep(1)` gives the daemon's process a real chance to be scheduled - without it, a
-	 * single-core or otherwise saturated machine can starve the writer for the whole budget. */
+	 * **And nothing inside the budget sleeps a tick.** A `Sleep(1)` here, after a few dozen
+	 * `Sleep(0)`, was meant to let a starved writer run; but `Sleep(1)` sleeps to the next
+	 * scheduler tick, 15.6 ms unless the process has raised its timer resolution (the layer
+	 * never does, a game may or may not), and the clock above is read only when it wakes.
+	 * The few dozen yields end well inside two milliseconds, so every frame without a trailer
+	 * reached it. Measured on 11-19 (Arc 140V): this function on a connected pipe that holds
+	 * nothing and stays open, 200 calls back to back, median: 15.7 ms with the `Sleep(1)` (2.9
+	 * once the process has set a 1 ms timer, as some games do), 16.0 with GetTickCount, 2.00
+	 * with `Sleep(0)` alone, with either timer. A writer starved for the whole budget costs one
+	 * frame's trailer, which is all the budget is for. */
 	LARGE_INTEGER freq, started;
-	QueryPerformanceFrequency(&freq);
+	if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) {
+		/* No clock to bound the wait by: take what is there and do not wait at all. */
+		freq.QuadPart = 0;
+	}
 	QueryPerformanceCounter(&started);
-	int yields = 0;
 	while (count > 0) {
 		DWORD available = 0;
 		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
@@ -199,13 +205,13 @@ NR_UNUSED static int nr_link_read_nowait(nr_link *link, void *data, size_t count
 			 * TWO milliseconds, once, for a daemon that will never send a trailer
 			 * at all: that is the price of asking a version we cannot identify,
 			 * against the seven-plus milliseconds of network work before it. */
+			if (!freq.QuadPart) return 1;
 			LARGE_INTEGER now;
 			QueryPerformanceCounter(&now);
-			const LONGLONG elapsed_us = freq.QuadPart
-				? (now.QuadPart - started.QuadPart) * 1000000 / freq.QuadPart : 0;
+			const LONGLONG elapsed_us =
+				(now.QuadPart - started.QuadPart) * 1000000 / freq.QuadPart;
 			if (elapsed_us >= NR_LINK_TRAILER_BUDGET_US) return 1;
-			if (++yields < NR_LINK_BUSY_YIELDS) Sleep(0);
-			else Sleep(1);
+			Sleep(0);
 			continue;
 		}
 		DWORD want = (DWORD)(count < available ? count : available);

@@ -955,8 +955,8 @@ int main(void)
              * so the checks above cannot see a plot that ratchets. They used to be right under a
              * short line after a long one, because the width came from `GetContentRegionAvail`,
              * which in an auto-resize window is the width the window already had. Draw a long
-             * line, then thirty short ones, and measure the rightmost drawn vertex: it must come
-             * back near where a short line alone puts it. */
+             * line, then thirty short ones, and measure the window: it must come back to the
+             * width a short line alone gives it. */
             const char *long_line = "Screen 144.0 fps   NR 72.0 fps   network 24.5 ms";
             const char *short_line = "Screen 60.0 fps NR off";
             for (int pass = 0; pass < 3; ++pass) {
@@ -980,13 +980,31 @@ int main(void)
                 ImGuiWindow *win = ImGui::FindWindowByName("##nr_frame_counter");
                 if (win) after_shrink = win->Size.x;
             }
-            /* A fresh short-only window for the reference, so the comparison is against what the
-             * short line draws from cold, not against a remembered number. */
-            ImGui::NewFrame();
-            nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
-            ImGui::Render();
-            ImGuiWindow *cold = ImGui::FindWindowByName("##nr_frame_counter");
-            float cold_width = cold ? cold->Size.x : 0.0f;
+            /* The reference is the short line drawn from cold, in an ImGui context of its own that
+             * shares this one's font atlas, so the glyphs measure the same. One more frame in THIS
+             * context would measure the same window again: with the old width (the content region)
+             * the check read "350 px against 350" and passed on the very code it was written
+             * against. */
+            float cold_width = 0.0f;
+            {
+                ImGuiContext *panel_context = ImGui::GetCurrentContext();
+                ImGuiContext *fresh = ImGui::CreateContext(ImGui::GetIO().Fonts);
+                ImGui::SetCurrentContext(fresh);
+                ImGui::GetIO().IniFilename = nullptr;
+                ImGui::StyleColorsDark();
+                for (int pass = 0; pass < 3; ++pass) {
+                    ImGuiIO &dio = ImGui::GetIO();
+                    dio.DisplaySize = ImVec2(800.0f, 600.0f);
+                    dio.DeltaTime = 1.0f / 60.0f;
+                    ImGui::NewFrame();
+                    nrex_counter(nullptr, nullptr, nullptr, 2, short_line, wide, 60, wide, 60, 1);
+                    ImGui::Render();
+                }
+                ImGuiWindow *cold = ImGui::FindWindowByName("##nr_frame_counter");
+                if (cold) cold_width = cold->Size.x;
+                ImGui::DestroyContext(fresh);
+                ImGui::SetCurrentContext(panel_context);
+            }
             snprintf(detail, sizeof detail, "after long then short %.0f px, short from cold %.0f px",
                      (double)after_shrink, (double)cold_width);
             check(after_shrink <= cold_width + 2.0f,
