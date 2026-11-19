@@ -225,6 +225,21 @@ struct nr_menu_bridge {
     int preview_confirmed;
     int dirty;
     long long stamp;
+    /* **The corner's own record of the file, apart from `stamp`.** The two settings the corner
+     * reads live in the same file as the knobs, but a shut panel may only act on those two - a
+     * `load_settings` there would throw away unsaved edits (see the poll below). Sharing one
+     * stamp meant the shut read marked the whole file as seen, so when the panel opened the
+     * stamp already matched and `load_settings` never ran: an edit the setup window made while
+     * the panel was shut never reached the knobs, and the panel showed the old render scale while
+     * the arrows stepped from it. Two stamps, two questions: `stamp` is "have the KNOBS been
+     * read", `corner_stamp` is "has the CORNER been read". 0 until each has been read once. */
+    long long corner_stamp;
+    /* When the settings file was last polled, in `nr_when_ms`'s clock. The poll is a
+     * GetFileAttributesEx, and it used to run once a frame while the panel was OPEN -
+     * which was free enough. It runs with the panel SHUT too now, because the corner's
+     * graphs switch lives here, so it is throttled to a second: an edit from setup does
+     * not need a 16 ms answer, and a 60 Hz game should not pay a syscall a frame for it. */
+    unsigned long long polled_ms;
     /* Whether the settings file says the effect is on. The CHECKBOX is a view of the
      * layer's trigger - the layer passes the live state in every frame - but Save has to
      * remember the choice for the next launch, and this is where it goes while the panel is
@@ -262,6 +277,13 @@ struct nr_menu_bridge {
      * writes it as `menu_counter`, and Revert brings back `counter_saved`, what the file says. */
     int counter;
     int counter_saved;
+    /* **Whether the corner window draws the two frame-time graphs as well.** The panel always
+     * draws them; this is about the corner, which only exists when `counter` puts it somewhere.
+     * Saved as `menu_graphs`, and like the counter's place it is a panel preference rather than a
+     * knob: the daemon never reads it and Reset leaves it. Default on, because a counter in a
+     * corner with no graph is the number without the shape. */
+    int graphs;
+    int graphs_saved;
     char env_path[1088];
     /* `NR_ROOT` from the same file: where the release lives, and so where the setup window's
      * profile is. Empty when the line is absent, and then nothing is written back. */
@@ -652,9 +674,15 @@ static int write_profile_pacing(const nr_menu_bridge *b)
 
     /* One key per line in the file, so each is replaced where it stands and everything else is
      * copied through untouched. A key that is absent is appended before the closing brace. */
-    static const char *const keys[5] = {"nr_async", "nr_every", "gpu_image_path", "preset",
-                                        "prefer_tiled"};
-    char values[5][16];
+    /* **The panel's two preferences travel with the pacing ones.** The setup window's
+     * `Apply-Profile` is the only place it learns these, and it reads
+     * `windows-profile.json` - so a Save in the game's panel that did not write them here left
+     * the window showing its previous value, and the next tick of either control wrote that old
+     * value back over the newer one. The window's `settings-save` path does not go through
+     * `Merge-PacingFromProfile`, so wiring them there alone was not enough. */
+    static const char *const keys[7] = {"nr_async", "nr_every", "gpu_image_path", "preset",
+                                        "prefer_tiled", "menu_graphs", "menu_counter"};
+    char values[7][16];
     snprintf(values[0], sizeof values[0], "%s", b->pacing_async ? "true" : "false");
     snprintf(values[1], sizeof values[1], "%d", b->pacing_every);
     snprintf(values[2], sizeof values[2], "%s", b->pacing_gpu_image ? "true" : "false");
@@ -665,6 +693,10 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * one here would make an unsaved switch the window's choice. */
     snprintf(values[3], sizeof values[3], "\"%s\"", b->preset_saved ? "B" : "A");
     snprintf(values[4], sizeof values[4], "%s", b->pacing_tiled ? "true" : "false");
+    /* The SAVED panel preferences, like `preset` above: an unsaved tick of the graphs switch is
+     * a preview, and the window should go on showing what the file says. */
+    snprintf(values[5], sizeof values[5], "%d", b->graphs_saved ? 1 : 0);
+    snprintf(values[6], sizeof values[6], "%d", b->counter_saved);
 
     char out[16384];
     size_t used = 0;
@@ -675,7 +707,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         while (*end && *end != '\n' && *end != '\r') ++end;
         size_t len = (size_t)(end - at);
         int replaced = 0;
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 7; ++i) {
             /* `  "nr_every": 4,` - the quote is what distinguishes the key from a value. */
             char quoted[32];
             int n = snprintf(quoted, sizeof quoted, "\"%s\"", keys[i]);
@@ -734,7 +766,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         char added[512];
         size_t n = 0;
         int first = 1;
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 7; ++i) {
             if (seen & (1 << i)) continue;
             int step = snprintf(added + n, sizeof added - n, "%s  \"%s\": %s",
                                 first ? "" : ",\n", keys[i], values[i]);
@@ -812,15 +844,36 @@ static int load_settings(nr_menu_bridge *b)
 
     /* A file that is not there is not an error: the menu then shows the defaults and writes
      * nothing until the user moves something. Creating the file on open would be a menu that
-     * changed the daemon's behaviour by being looked at. */
+     * changed the daemon's behaviour by being looked at.
+     *
+     * **This branch returns 0, and it has already reset the values.** That is right at startup,
+     * where the caller's rows are built from whatever this left behind. It is also why the
+     * outside-edit path only calls this while the panel is OPEN: a mid-session unlink that landed
+     * here would reset every knob's value while the rows still showed the old text, and the next
+     * Save would write the defaults. Straight after a reload the row text is rebuilt
+     * (`nr_menu_bridge_refresh`), so an open panel tells the truth either way. */
     char *text = NULL;
     size_t size = 0;
+    const long long read_stamp = nr_file_stamp(b->settings_path);   /* before the bytes: see below */
     if (!nr_read_file(b->settings_path, &text, &size)) {
         b->stamp = 0;
+        b->corner_stamp = 0;
         /* No file says nothing about the counter either: it is in the panel, the default. */
         b->counter = b->counter_saved = NR_COUNTER_PANEL;
+        /* And the graphs: on, which is the default and the useful setting - a counter in a corner
+         * with no graph is the number without the shape behind it. */
+        b->graphs = b->graphs_saved = 1;
         return 0;
     }
+
+    /* The corner's graphs, defaulted BEFORE the parse: a file that exists but fails to
+     * parse never reaches the branch below, and the calloc'd zero would read — and then,
+     * through the next Save, be written back — as "graphs off". Same default as the
+     * no-file branch above: absent or unreadable means on. The parse-success branch
+     * overwrites both from the file's own `menu_graphs`, so the default here is only
+     * what a corrupt file falls back to. */
+    b->graphs_saved = 1;
+    b->graphs = 1;
 
     nr_settings settings;
     if (nr_settings_parse(text, &settings)) {
@@ -851,6 +904,22 @@ static int load_settings(nr_menu_bridge *b)
         }
         b->counter = b->counter_saved;
 
+        /* And whether the corner draws the graphs. Absent is ON: a file written before this
+         * setting existed gets the graphs, which is what its counter in a corner looks best with -
+         * and turning them off is the explicit act, not leaving them off by omission. A value
+         * that is not a whole number falls back to the default rather than to off. Stricter
+         * than the knob branch below, on purpose: a knob's strtod takes a trailing "mm" as
+         * its number and a knob has a range to clamp into, while this switch has two states
+         * and no range, so anything but exactly an integer is a file someone hand-edited
+         * into nonsense - and the default is the safe reading of that. */
+        int graphs_at = nr_settings_find(&settings, "menu_graphs");
+        if (graphs_at >= 0) {
+            char *end = NULL;
+            long parsed = strtol(settings.value[graphs_at], &end, 10);
+            if (end != settings.value[graphs_at] && *end == '\0')
+                b->graphs_saved = parsed ? 1 : 0;
+        }
+        b->graphs = b->graphs_saved;
         for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
             const nr_knob_def *k = &knobs[i];
             int at = nr_settings_find(&settings, k->key);
@@ -875,7 +944,17 @@ static int load_settings(nr_menu_bridge *b)
         }
     }
 
-    b->stamp = nr_file_stamp(b->settings_path);
+    b->stamp = read_stamp;
+    /* The corner read the same bytes, so its record moves with the knobs'. Said apart from
+     * `stamp` because the two are advanced by different branches of the poll. */
+    b->corner_stamp = read_stamp;
+    /* **The stamp is taken BEFORE the bytes, not after.** The other order records the stamp of a
+     * file that a concurrent writer may have replaced in the window between the `fopen` and the
+     * `GetFileAttributesEx` - so that write is counted as "already seen" and never picked up
+     * until somebody writes again. The daemon's settings poll has the same rule for the same
+     * reason (`nr_daemon`, `os.stat` before `open`).
+     *
+     * The stamp was taken at the top of this function, before the read. */
     free(text);
     return 1;
 }
@@ -1058,6 +1137,9 @@ static int save_language_only(nr_menu_bridge *b)
     free(existing);
     if (!ok) return 0;
     b->stamp = nr_file_stamp(b->settings_path);
+    /* Both records move: this write put the corner's two keys in the file too, and a shut poll
+     * that still compared an older `corner_stamp` would reload what we just wrote. */
+    b->corner_stamp = b->stamp;
     return 1;
 }
 
@@ -1079,6 +1161,7 @@ static int save_settings(nr_menu_bridge *b)
     int wrote_language = 0;
     int wrote_nr = 0;
     int wrote_counter = 0;
+    int wrote_graphs = 0;
 
     /* Whether a field has already been emitted, so the comma goes BEFORE a field rather than after
      * it. Writing `"key": value,\n` for every field and closing with `}` leaves a trailing comma
@@ -1133,6 +1216,14 @@ static int save_settings(nr_menu_bridge *b)
                 continue;
             }
 
+            /* And whether the corner draws the graphs. */
+            if (strcmp(name, "menu_graphs") == 0) {
+                snprintf(moved_text, sizeof moved_text, "%d", b->graphs ? 1 : 0);
+                NR_EMIT("  \"%s\": %s", name, moved_text);
+                wrote_graphs = 1;
+                continue;
+            }
+
             /* **Not the network.** It lives in `NR_PRESET`, written below; a `preset` key that
              * round ten's Save left here is dropped, so no file keeps a second answer. */
             if (strcmp(name, "preset") == 0) continue;
@@ -1168,6 +1259,11 @@ static int save_settings(nr_menu_bridge *b)
     if (!wrote_counter && b->counter != NR_COUNTER_PANEL)
         NR_EMIT("  \"menu_counter\": %d", b->counter);
 
+    /* And the graphs, by the same rule but the other default: ON is what an absent key means, so
+     * the key is written only when the user turned it off. */
+    if (!wrote_graphs && !b->graphs)
+        NR_EMIT("  \"menu_graphs\": 0");
+
     /* Append the keys the user moved that were not already there. */
     for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
         if (written[i] || !b->moved[i]) continue;
@@ -1190,7 +1286,9 @@ static int save_settings(nr_menu_bridge *b)
     if (!ok) return 0;
 
     b->stamp = nr_file_stamp(b->settings_path);
+    b->corner_stamp = b->stamp;
     b->counter_saved = b->counter;
+    b->graphs_saved = b->graphs;
 
     /* **The network goes where the setup window keeps it**: `NR_PRESET` in `nr-env.txt`, which the
      * layer reads at the next start, and the profile the window shows. Round ten wrote a `preset`
@@ -1201,6 +1299,11 @@ static int save_settings(nr_menu_bridge *b)
         b->preset_saved = b->preset;
         if (!write_pacing(b)) {
             b->preset_saved = was;
+            /* **The settings file is already written and its stamp taken; this Save is still
+             * partial.** Returning 0 tells the caller not to mark the preview confirmed, which is
+             * right - the network did not move even though the knobs did. The alternative, rolling
+             * the stamp back, would make the next update reload the file we just wrote and discard
+             * the preview that is now the only copy of the knobs the user saved. */
             return 0;
         }
         write_profile_pacing(b);
@@ -1518,6 +1621,47 @@ static int step_row(nr_menu_bridge *b, int row, int direction)
     return 1;
 }
 
+/* Milliseconds on a monotonic clock, for the settings poll's throttle. Monotonic, not wall:
+ * a clock that steps (DST, an NTP correction) must not make the next poll wait an hour. */
+static unsigned long long poll_clock_ms(void)
+{
+#ifdef _WIN32
+    return (unsigned long long)GetTickCount64();
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (unsigned long long)ts.tv_sec * 1000ull + (unsigned long long)(ts.tv_nsec / 1000000);
+#endif
+}
+
+/* The two settings the corner reads while the panel is shut: its place and whether the graphs
+ * are drawn there. Read straight out of the settings file, so an edit from the setup window
+ * reaches the corner without reloading - and without discarding - anything the panel is holding.
+ *
+ * A file that will not parse, or one without the keys, leaves both as they are rather than
+ * resetting them to defaults: an outside write we cannot read is not an instruction to reset. */
+static void reload_corner_settings(nr_menu_bridge *b)
+{
+    char *text = NULL;
+    size_t size = 0;
+    if (!nr_read_file(b->settings_path, &text, &size)) return;
+    nr_settings settings;
+    if (nr_settings_parse(text, &settings)) {
+        int counter_at = nr_settings_find(&settings, "menu_counter");
+        if (counter_at >= 0) {
+            int where = atoi(settings.value[counter_at]);
+            if (where >= 0 && where < NR_COUNTER_PLACES) b->counter = where;
+        }
+        int graphs_at = nr_settings_find(&settings, "menu_graphs");
+        if (graphs_at >= 0) {
+            char *end = NULL;
+            long parsed = strtol(settings.value[graphs_at], &end, 10);
+            if (end != settings.value[graphs_at] && *end == '\0') b->graphs = parsed ? 1 : 0;
+        }
+    }
+    free(text);
+}
+
 int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
 {
     if (!b) return 0;
@@ -1566,14 +1710,56 @@ int nr_menu_bridge_update(nr_menu_bridge *b, float frame_seconds)
         nr_menu_set_split(b->menu, split);
     }
 
-    if (!nr_menu_is_open(b->menu)) return state;
-
-    /* An edit from outside while the game runs - Notepad, or a tool - is picked up here. The stamp
-     * only moves when somebody else wrote it, so this does not fight our own saves. */
-    long long now = nr_file_stamp(b->settings_path);
-    if (now && now != b->stamp) {
-        if (load_settings(b)) nr_menu_bridge_refresh(b);
+    /* **An edit from outside while the game runs, picked up two different ways.**
+     *
+     * The corner's counter place and its graphs switch live here, and the setup window writes
+     * them while the panel is SHUT. They are two integers in a file, so they are read directly
+     * and nothing else is touched.
+     *
+     * The panel's own state is a different question, and the first version of this got it wrong:
+     * it called `load_settings` for both cases, which reloads every knob, clears `moved[]` and
+     * leaves `preview_confirmed` set - so a write from setup, with the panel shut, silently threw
+     * away the unsaved edits the "closing keeps them" rule (see the close handling below) exists
+     * to keep. The panel then showed the file's old values while the picture still ran the
+     * unsaved preview, and the next Save committed the old values. For the two corner settings a
+     * direct read is both sufficient and honest; the knobs are only reloaded while the panel is
+     * OPEN, where a reload is what the stamp has always meant.
+     *
+     * **A second apart, not a frame**, for the shut-panel case: this used to run every frame and
+     * was affordable only because the panel's own drawing dwarfed one GetFileAttributesEx. A
+     * 60 Hz game paying a syscall a frame for a setting nobody changes more than once a second
+     * never shows up in a profile and is wrong all the same. An open panel keeps the old
+     * immediacy - the row is on screen and must follow the file.
+     */
+    /* A bridge without a menu returned above, so the menu answers: a settings fixture that wants
+     * the open-only paths drives a headless menu (`nr_menu_create_headless`, `nr_menu_inject_open`),
+     * which is the code the layer runs. */
+    const int open = nr_menu_is_open(b->menu);
+    const unsigned long long now_ms = poll_clock_ms();
+    if (open || !b->polled_ms || now_ms - b->polled_ms >= 1000u) {
+        b->polled_ms = now_ms;
+        long long outside = nr_file_stamp(b->settings_path);
+        /* **Two stamps, so a shut read does not answer an open panel's question.** The shut
+         * branch may only touch the corner's two keys, but it used to advance `b->stamp` as well -
+         * which is the record of whether the KNOBS have been read - so opening the panel
+         * afterwards found the stamp already matching and never reloaded: an edit made in the
+         * setup window while the panel was shut never reached the knobs. Each branch advances its
+         * own record now, and both start at 0 so the first look always reads. */
+        if (outside) {
+            if (open) {
+                if (outside != b->stamp) {
+                    b->stamp = outside;
+                    if (load_settings(b)) nr_menu_bridge_refresh(b);
+                }
+            } else if (outside != b->corner_stamp) {
+                b->corner_stamp = outside;
+                reload_corner_settings(b);
+            }
+        }
     }
+
+    if (!open) return state;
+
 
     int language;
     if (nr_menu_take_language_change(b->menu, &language)) {
@@ -1723,6 +1909,20 @@ void nr_menu_bridge_set_counter(nr_menu_bridge *b, int where)
     if (!b || where < 0 || where >= NR_COUNTER_PLACES) return;
     /* Shown at once, written by the next Save: nothing here goes to the daemon. */
     b->counter = where;
+    b->dirty = 1;
+}
+
+/* Whether the corner window draws the two frame-time graphs as well. The panel's own header
+ * always draws them, so this is only ever asked about the corner. */
+int nr_menu_bridge_graphs(const nr_menu_bridge *b)
+{
+    return b ? (b->graphs ? 1 : 0) : 1;
+}
+
+void nr_menu_bridge_set_graphs(nr_menu_bridge *b, int on)
+{
+    if (!b) return;
+    b->graphs = on ? 1 : 0;
     b->dirty = 1;
 }
 

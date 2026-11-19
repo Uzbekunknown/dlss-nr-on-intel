@@ -355,6 +355,19 @@ $script:SettingsStateKey = 'SettingsLoading'
         <CheckBox x:Name="ChangeMetric" Content="" ToolTip="" Margin="0,8,0,0"/>
         <CheckBox x:Name="TiledKernel" Content="" ToolTip="" Margin="0,8,0,0"/>
         <TextBlock x:Name="PacingNote" Style="{StaticResource Note}" Margin="0,8,0,0"/>
+        <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="CounterLabel" VerticalAlignment="Center" ToolTip=""/>
+         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+          <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" ToolTip=""/>
+          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
+         </StackPanel>
+        </Grid>
+        <TextBlock x:Name="CounterNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
+<Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="GraphsLabel" VerticalAlignment="Center" ToolTip=""/>
+         <CheckBox x:Name="GraphsCheck" Grid.Column="1" Margin="8,0,0,0" IsChecked="True" ToolTip=""/>
+        </Grid>
+        <TextBlock x:Name="GraphsNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
        </StackPanel>
       </Border>
       <Border Style="{StaticResource CardBox}">
@@ -410,7 +423,7 @@ foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','B
 # knob, which names the model file directly and hot-swaps). A second chooser here
 # answered the same question with a second value and the two disagreed; NR_PRESET
 # stays what the profile says (A) and the saved settings decide the rest.
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','PacingNote','GraphsLabel','GraphsCheck','CounterLabel','CounterCheck','CounterCorner','CounterTL','CounterTR','CounterBL','CounterBR','CounterNote','GraphsNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -546,6 +559,9 @@ $script:Strings=@{
   SpeedCase='{0}×{1} {2} ms (up to {3} fps)'
   SpeedNote='Taking each frame from the game and giving it back takes time too, and the game draws on the same GPU: in a game the frame rate is lower than these.'
   PacingHeading='Frame pacing'; PacingNote='Takes effect when the game starts next.'
+  CounterLabel='Frame counter'; CounterTL='top left'; CounterTR='top right'; CounterBL='bottom left'; CounterBR='bottom right'; CounterCheck='Show in a corner'; CounterNote='The frames-per-second line, drawn over the corner you pick. Untick it and only the panel carries it.';
+  GraphsCheck='Show the graphs in the corner too'; GraphsLabel='Frame graphs'
+  GraphsNote='Two graphs under the frame counter: the milliseconds between frames, and the network''s own time. Always drawn in the panel; this is whether the corner window draws them too.'
   AsyncMode='Asynchronous: the network works while the game draws its next frame'
   AsyncModeTip='More frames a second, and what is on screen is one processed frame behind.'
   GpuImagePath='Keep frames on the GPU'
@@ -665,6 +681,9 @@ $script:Strings=@{
   SpeedCase='{0}×{1} — {2} мс (до {3} fps)'
   SpeedNote='Захват кадра из игры и его возврат тоже занимают время, а игра рисует на той же видеокарте, поэтому fps в игре будет ниже этих значений.'
   PacingHeading='Подача кадров'; PacingNote='Применится при следующем запуске игры.'
+  CounterLabel='Счётчик кадров'; CounterTL='сверху слева'; CounterTR='сверху справа'; CounterBL='снизу слева'; CounterBR='снизу справа'; CounterCheck='Показывать в углу'; CounterNote='Строка кадров в секунду поверх выбранного угла. Сними отметку — останется только панель.';
+  GraphsCheck='Показывать графики и в углу'; GraphsLabel='Графики времени кадра'
+  GraphsNote='Два графика под счётчиком кадров: миллисекунды между кадрами и время самой сети. В панели рисуются всегда; здесь — рисует ли их также окно в углу.'
   AsyncMode='Асинхронно: сеть работает, пока игра рисует следующий кадр'
   AsyncModeTip='Больше кадров в секунду, а на экране результат на один обработанный кадр позже.'
   GpuImagePath='Кадры остаются на GPU'
@@ -784,6 +803,9 @@ $script:Strings=@{
   SpeedCase='{0}×{1} {2} ms (hasta {3} fps)'
   SpeedNote='Tomar cada fotograma del juego y devolverlo también lleva tiempo, y el juego dibuja en la misma GPU: en un juego los FPS son más bajos que estos.'
   PacingHeading='Ritmo de fotogramas'; PacingNote='Se aplica la próxima vez que se inicie el juego.'
+  CounterLabel='Contador de fotogramas'; CounterTL='arriba a la izquierda'; CounterTR='arriba a la derecha'; CounterBL='abajo a la izquierda'; CounterBR='abajo a la derecha'; CounterCheck='Mostrar en una esquina'; CounterNote='La línea de fotogramas por segundo sobre la esquina que elijas. Desmárcala y solo el panel la lleva.';
+  GraphsCheck='Mostrar los gráficos también en la esquina'; GraphsLabel='Gráficos de tiempo de fotograma'
+  GraphsNote='Dos gráficos bajo el contador de fotogramas: los milisegundos entre fotogramas y el tiempo de la propia red. En el panel se dibujan siempre; esto decide si la ventana de la esquina también los dibuja.'
   AsyncMode='Asíncrono: la red trabaja mientras el juego dibuja el siguiente fotograma'
   AsyncModeTip='Más fotogramas por segundo, y lo que se ve va un fotograma procesado por detrás.'
   GpuImagePath='Los fotogramas permanecen en la GPU'
@@ -903,6 +925,9 @@ $script:Strings=@{
    SpeedCase='{0}×{1} {2} 毫秒（最高 {3} fps）'
    SpeedNote='从游戏取每一帧再交回去也要花时间，而且游戏在同一块 GPU 上绘制：在游戏中的帧率会低于这些数字。'
    PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
+  CounterLabel='帧率显示'; CounterTL='左上角'; CounterTR='右上角'; CounterBL='左下角'; CounterBR='右下角'; CounterCheck='在角落中显示'; CounterNote='每秒帧数一行，绘制在所选的角落上。取消勾选则仅面板中显示。';
+  GraphsCheck='角落中也显示曲线'; GraphsLabel='帧时间曲线'
+  GraphsNote='帧率计数器下方的两条曲线：帧与帧之间的毫秒数，以及网络自身的时间。面板内始终绘制；此项决定角落浮窗是否也绘制。'
    AsyncMode='异步：网络在游戏绘制下一帧时工作'
    AsyncModeTip='每秒帧数更多，而屏幕上显示的比处理结果落后一帧。'
    GpuImagePath='帧保留在 GPU 上'
@@ -951,7 +976,7 @@ $script:TextBindings=@{
  ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'
  ArgsLabel='ArgsLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
  FpsHint='FpsHint'; ControlsHeading='ControlsHeading'
- PacingHeading='PacingHeading'; EveryLabel='EveryLabel'; PacingNote='PacingNote'; GpuImageNote='GpuImageNote'
+ PacingHeading='PacingHeading'; EveryLabel='EveryLabel'; PacingNote='PacingNote'; GpuImageNote='GpuImageNote'; CounterLabel='CounterLabel'; CounterNote='CounterNote'; GraphsLabel='GraphsLabel'; GraphsNote='GraphsNote'
  PresetHeading='PresetHeading'; PresetNote='PresetNote'
  AboutText='AboutText'; UpdatesHeading='UpdatesHeading'; UpdateNote='UpdateNote'; CreditsHeading='CreditsHeading'; CreditsText='CreditsText'
 }
@@ -961,6 +986,7 @@ $script:ContentBindings=@{
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
  AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; ChangeMetric='ChangeMetric'; TiledKernel='TiledKernel'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
+ CounterCheck='CounterCheck'; GraphsCheck='GraphsCheck'; CounterTL='CounterTL'; CounterTR='CounterTR'; CounterBL='CounterBL'; CounterBR='CounterBR'
  PresetA='PresetA'; PresetB='PresetB'
  OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
  OpenUpdate='OpenUpdate'; UpdateAtStart='UpdateAtStart'
@@ -1124,6 +1150,33 @@ function Reset-NrSettings([string[]]$Names=@()) {
     $resetPayload=$(if($Names.Count){@{reset=@($Names)}}else{$null})
     Start-Bridge 'settings-reset' '' $false $resetPayload
 }
+function Save-PanelGraphs {
+    # The panel's own keys, saved on their own: `Save-NrSettings` returns early when no KNOB is
+    # pending, and these are not knobs. Same bridge action, a `panel` block instead of `settings`.
+    #
+    # **Busy means later, not never.** This used to `return` while an action was running, which
+    # threw the edit away silently while the two controls still showed the new value - and the
+    # next edit would then save the newer state, so the window and the game's panel could
+    # disagree for the rest of the session. `Save-NrSettings` already queues into
+    # `PendingSettings` for the same reason; this queues the panel block into its own, and the
+    # queued block is sent when the action ends.
+    $panel=@{}
+    $on=0; if($script:Ui.GraphsCheck.IsChecked) { $on=1 }
+    $corner=1; if($script:Ui.CounterCheck.IsChecked) { $corner=[int]$script:Ui.CounterCorner.SelectedItem.Tag }
+    $panel['menu_graphs']=$on
+    $panel['menu_counter']=$(if($script:Ui.CounterCheck.IsChecked){$corner}else{0})
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    $script:PendingPanel=$null
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
+}
+function Flush-PendingPanel {
+    # Sent by whatever ends a busy action, once, and only if a panel edit waited through it.
+    if(-not $script:PendingPanel) { return }
+    $panel=$script:PendingPanel
+    $script:PendingPanel=$null
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
+}
 function Restore-SettingsFailure($Job) {
     if($Job -and $Job.Action -in @('settings','settings-save','settings-reset')) { Set-SettingsState 'SettingsFailed' }
     if($Job -and $Job.SettingsPatch) {
@@ -1191,7 +1244,8 @@ function Profile-FromWindow {
     return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(switch($script:Ui.Api.SelectedIndex){ 1 {'dxvk'} 2 {'d3d12'} default {'vulkan'} }); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked
         nr_async=[bool]$script:Ui.AsyncMode.IsChecked; nr_every=[int]$script:Ui.EveryFrame.SelectedItem.Tag;
         gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag;
-        change_metric=[bool]$script:Ui.ChangeMetric.IsChecked; prefer_tiled=[bool]$script:Ui.TiledKernel.IsChecked}
+        change_metric=[bool]$script:Ui.ChangeMetric.IsChecked; prefer_tiled=[bool]$script:Ui.TiledKernel.IsChecked;
+        menu_graphs=$(if($script:Ui.GraphsCheck.IsChecked){1}else{0}); menu_counter=$(if($script:Ui.CounterCheck.IsChecked){[int]$script:Ui.CounterCorner.SelectedItem.Tag}else{0})}
 }
 function Apply-Profile($Profile) {
     if($null -eq $Profile) { return }
@@ -1210,6 +1264,15 @@ function Apply-Profile($Profile) {
         # A profile from before the checkbox measured nothing.
         $script:Ui.ChangeMetric.IsChecked=[bool]$Profile.change_metric
         $script:Ui.TiledKernel.IsChecked=[bool]$Profile.prefer_tiled
+        # A profile from before the graphs ran them, as the corner does by default - and one
+        # from before the counter's place existed leaves it in the panel, 0, which is what the
+        # XAML starts at and what the panel does with a missing key. Said either way rather than
+        # only when present, so a profile applied after one that had a corner goes back to 0.
+        $script:Ui.GraphsCheck.IsChecked = $(if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { [int]$Profile.menu_graphs -ne 0 } else { $true })
+        $c = $(if($Profile.PSObject.Properties.Name -contains 'menu_counter') { [int]$Profile.menu_counter } else { 0 })
+        $script:Ui.CounterCheck.IsChecked = $c -ne 0
+        $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0})
+        $script:Ui.CounterCorner.IsEnabled = ($c -ne 0)
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.
@@ -1261,7 +1324,7 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
 function Merge-PacingFromProfile($RequestValues, $LastProfile, $Fresh) {
     if(-not $Fresh) { return $RequestValues }
     # The upscaler NR stands in front of in a DirectX 12 game has no control here either.
-    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled')) {
+    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled','menu_graphs','menu_counter')) {
         if(-not ($Fresh.PSObject.Properties.Name -contains $key)) { continue }
         $was=$null
         if($LastProfile -and ($LastProfile.PSObject.Properties.Name -contains $key)) {
@@ -1289,8 +1352,11 @@ function Request-Pacing([string]$Action='pacing') {
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','ChangeMetric','TiledKernel','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','ChangeMetric','TiledKernel','PresetChoice','GraphsCheck','CounterCheck','CounterCorner')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    # A panel edit made while an action ran waited in PendingPanel; this is where it goes out.
+    if(-not $Busy) { Flush-PendingPanel }
     Update-PacingState $Busy
+    if(-not $Busy) { $script:Ui.CounterCorner.IsEnabled = [bool]$script:Ui.CounterCheck.IsChecked }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
     $script:Ui.Spinner.IsIndeterminate=$Busy
@@ -1707,6 +1773,24 @@ if($SelfTest) {
         Set-Progress 'ChooseFiles'
         $script:ApplyingProfile=$true; Request-Pacing; $script:ApplyingProfile=$false
         if($script:PacingDue -or $script:ProgressKey -ne 'ChooseFiles') { throw 'Applying a profile asked to save frame pacing' }
+        # The corner's frame graphs and the counter's place: the window carries both, and a
+        # profile without them leaves the panel's own defaults - an absent `menu_graphs` means
+        # the panel draws them, 1, and an absent `menu_counter` means the panel alone, 0. Both
+        # match `load_settings` in the panel, which is what actually draws; they used to be 1
+        # here for the counter, so a fresh install disagreed with itself and the first click on
+        # either checkbox wrote a corner into the file. Applying a profile must not start a save
+        # - the guard is what keeps the two from fighting.
+        $script:Ui.GraphsCheck.IsChecked=$false
+        $script:Ui.CounterCheck.IsChecked=$true; $script:Ui.CounterCorner.SelectedIndex=2
+        $sent=Profile-FromWindow
+        if($sent.menu_graphs -ne 0) { throw 'The graphs choice did not reach the profile' }
+        if($sent.menu_counter -ne 3) { throw 'The counter place did not reach the profile' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$false;nr_every=1;gpu_image_path=$true;menu_graphs=1;menu_counter=4})
+        if(-not $script:Ui.GraphsCheck.IsChecked) { throw 'A profile did not turn the corner graphs back on' }
+        if($script:Ui.CounterCorner.SelectedIndex -ne 3) { throw 'A profile did not move the counter to the bottom right' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$false;nr_every=1;gpu_image_path=$true})
+        if(-not $script:Ui.GraphsCheck.IsChecked) { throw 'A profile with no graphs key left the graphs unset' }
+        if($script:Ui.CounterCheck.IsChecked) { throw 'A profile with no counter key put the counter in a corner' }
         $script:Busy=[pscustomobject]@{Action='check'}; Request-Pacing; $script:Busy=$null
         if(-not $script:PacingDue) { throw 'Frame pacing changed during an action was not kept for later' }
         # Free, it goes to the bridge at once: here with no Python behind the fixture's path.
@@ -1827,6 +1911,16 @@ $script:Ui.TiledKernel.Add_Checked({ Request-Pacing })
 $script:Ui.TiledKernel.Add_Unchecked({ Request-Pacing })
 $script:Ui.EveryFrame.Add_SelectionChanged({ Request-Pacing })
 $script:Ui.PresetChoice.Add_SelectionChanged({ Request-Pacing 'preset' })
+# The corner's frame graphs: a panel preference, so it goes to the settings file rather than to
+# the launch profile, and it is saved as soon as it is chosen - there is no "apply" for it, and a
+# choice that only took effect after a Save would read as one that did nothing.
+$script:Ui.GraphsCheck.Add_Checked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.GraphsCheck.Add_Unchecked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Checked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Unchecked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Checked({ $script:Ui.CounterCorner.IsEnabled = [bool]$script:Ui.CounterCheck.IsChecked })
+$script:Ui.CounterCheck.Add_Unchecked({ $script:Ui.CounterCorner.IsEnabled = $false })
+$script:Ui.CounterCorner.Add_SelectionChanged({ if(-not $script:ApplyingProfile -and $script:Ui.CounterCheck.IsChecked) { Save-PanelGraphs } })
 $script:Ui.Theme.Add_Click({
     Set-Theme $(if($script:Theme -eq 'dark'){'light'}else{'dark'})
     Save-UiPrefs

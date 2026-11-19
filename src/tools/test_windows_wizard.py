@@ -941,6 +941,30 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(values()["NR_PRESET"], "A")
         self.assertTrue(core.uninstall(self.profile)["ok"])
 
+    def test_a_profile_without_the_panels_keys_gets_the_panels_own_defaults(self):
+        """The window and the panel must agree about a profile that predates both keys.
+
+        `load_settings` in the panel reads a missing `menu_counter` as "the panel alone", 0,
+        because a counter nobody asked for must not appear over a game. The window read the
+        same absence as 1 - `Profile.from_dict`'s default and `CounterCheck IsChecked="True"`
+        in its XAML - so a fresh install said "top left" over a panel that was drawing nothing,
+        and the first click on either new checkbox wrote that 1 into `nr_settings.json`.
+        `menu_graphs` is the other way round on purpose: the panel draws the graphs unless told
+        not to, so absent means 1 on both sides.
+        """
+        old = self.profile.to_dict()
+        del old["menu_counter"]
+        del old["menu_graphs"]
+        got = core.Profile.from_dict(old)
+        self.assertEqual(got.menu_counter, 0, "an absent counter key must mean the panel alone")
+        self.assertEqual(got.menu_graphs, 1, "an absent graphs key must mean the corner draws them")
+        # And a file that says 0 round-trips as 0 rather than being read as absent.
+        self.assertEqual(core.Profile.from_dict({**old, "menu_counter": 0}).menu_counter, 0)
+        self.assertEqual(core.Profile.from_dict({**old, "menu_counter": 4}).menu_counter, 4)
+        for bad in (5, -1, "2", 1.0, True, None):
+            with self.assertRaises(ValueError, msg=bad):
+                core.Profile.from_dict({**old, "menu_counter": bad})
+
     def test_the_window_does_not_write_a_stale_pacing_over_the_panel(self):
         """The ordering that made this window stop writing nr-env.txt in the first place.
 

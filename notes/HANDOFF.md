@@ -56,11 +56,11 @@ such move; what it still leaves open becomes a line of its own.
   0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's is owed (Open items, Linux). Linux
   users build from source (README).
 - **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` were level
-  from 11-11 and moved together, each push a fast-forward of all three. **Since 11-18 `alchemist`
-  is ahead**, at the owner's word: our work goes there while Paimonshen finishes PR #45 (rebased
-  on `newnr` at `f9ad754`), so that `master` and `newnr` stay still under it; once #45 is done we
-  merge it ourselves and bring the three level again (below, 11-18). `media` holds the README's
-  pictures; `improve-int8` is kept for INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
+  from 11-11 and moved together, each push a fast-forward of all three. From 11-18 `alchemist`
+  ran ahead with the A-series switch while Paimonshen finished PR #45; on 11-19 #45 went into
+  `newnr` and `master` with our fixes, and `alchemist` was merged with them, so the three are
+  level again (below, 11-19). `media` holds the README's pictures; `improve-int8` is kept for
+  INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
   `experiment-bgra8-pipeline`. All were already in `master` or `newnr`, except one merge commit and
@@ -329,6 +329,77 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## PR #45 merged with our fixes: the frame graphs, and the network's time on the pipe path (2026-11-19, branch `newnr`)
+
+The owner, 11-19: Paimonshen's fix round on #45 (`5983626`) was checked on Windows, and the three
+things still wrong were answered in the PR (issuecomment-6999190177). At the owner's word we fix
+them ourselves at the merge: `84e6b6a` merges #45 into `newnr` at `f9ad754`, and `dc5744d` is ours on
+top. #42's head (`1179f96`) is in #45's history, so `newnr` on GitHub with this merge marks both
+PRs merged. Arc 140V, Intel 101.9150, on battery.
+
+**What #45 brings:**
+- two frame-time graphs in the panel, and in the corner by a switch;
+- on the pipe path, the network's own time from the daemon: an 8-byte trailer after the pixels,
+  the magic and then microseconds, so the graph's network line works there as on the GPU path;
+- the setup window's checkboxes for the graphs and for the counter's corner (an absent
+  `menu_counter` is 0, the panel alone);
+- the corner window following its line both ways.
+
+**Ours at the merge (`dc5744d`):**
+- The layer's wait for a trailer no longer sleeps a tick. A `Sleep(1)` inside the 2 ms budget slept
+  to the next scheduler tick. The function on a connected pipe that holds nothing and stays open,
+  200 calls back to back, median: 15.7 ms with the `Sleep(1)`, or 2.9 once the process has set a
+  1 ms timer as some games do; 16.0 for #45's first version, on GetTickCount; 2.00 ms now, with
+  either timer.
+- `test_menu_persist`'s outside-edit case drives a headless menu. On a headless bridge,
+  `nr_menu_bridge_update` returns before the poll, so the case failed with the fix and without it.
+  `nr_menu_bridge_set_open`, which could not reach the poll, is gone.
+- `build_win.bat` builds `test_menu_persist`. The Makefile names it for Windows and `run_tests.py`
+  runs it there, but nothing built it on Windows. Its knob count said eleven, from the weights knob
+  that PR #20's narrowing removed; it is ten again.
+- `test_menu_panel`'s shrink check compares with the short line drawn in an ImGui context of its
+  own. Its reference had been the same window one frame later, so it passed on the ratcheting
+  width it was written against.
+- `send_trailer` writes the trailer on both pipe paths and swallows only that write's broken
+  pipe. On `gpu-image-host`, a client from before #45 made it raise and log a failed frame. On the
+  legacy path a failed write of the pixels is a failed frame again.
+- Stale comments are corrected, and `.gitignore`'s line is as `newnr` has it.
+
+**Checked on Windows**, at `dc5744d`:
+- MinGW: the build, with the same warnings as before the fixes, and CTest 71 of 71.
+- MSVC: `build_win.bat` and `build_xess.bat` with no warning, and CTest 71 of 71.
+- The eight menu fixtures, `test_menu_persist` among them, `test_nr_xess` and `test_xess_panel`.
+- `test_windows_wizard` 105 (1 skipped) and `test_windows_setup` 14.
+- `gen_menu_strings.py` writes the tree's tables.
+- A release from `deploy.bat --release`, and the window's self-test from it (101 controls, 210
+  keys).
+- vkcube under the validation layer, the panel open and shut: 0 errors. `test_gpu_present` with
+  the panel open and in a corner, under synchronization validation: 0 errors.
+- The controls: with the shut read advancing the knobs' stamp again, `test_menu_persist` fails at
+  the new case (0.4 against 0.65). Against `6f5691f`'s `nr_menu_ui.cpp`, `test_menu_panel` fails
+  the shrink check (350 px against 194).
+- The wire, with three stand-in daemons against a client from before #45 and against #45's, plain
+  and masked: all 360 exchanges right. The three daemons send the pixels alone, the pixels and the
+  trailer in one write, or the trailer in a write of its own.
+
+**Speed:** #45 touches no network, libxmx, shader or GPU-transport file. We ran `test_gpu_present
+--run` (network A at 0.4, the shared transport) for three rounds, alternating `f9ad754` and
+`5983626`, at 1280x720 and 1920x1080, with the panel shut and with the corner. No difference showed
+above the 5-7 ms by which the same build moves on battery. The corner's graphs cost 7 µs of CPU a
+frame and about 1100 vertices, and are drawn only with the corner counter and its graphs on, or the
+panel open.
+
+**Not run:** Linux; a game.
+
+**Next on Linux:** `make test` in both memory modes, and CTest, at `newnr`'s head. Nothing of the
+menu builds there. `nr_transport.h`'s Unix arm is #45's, read in review and not run. `test_alloc.py`
+and the daemon's two writes run as they are.
+
+**Next on Windows:** once this is pushed, see that #45 and #42 show as merged. Then merge
+`alchemist`, the A-series switch, with `newnr`. `git merge-tree` shows conflicts in `windows-wizard.ps1`, `nr_menu_bridge.c`,
+`nr_menu_strings.h` and `windows_wizard_core.py`; regenerate the string tables with
+`tools/gen_menu_strings.py`. Then a build for A-series owners, as the owner decides.
 
 ## Arc A-series: an experimental switch for the tiled GEMM kernel, the same bytes; the head's enlargement measured and not kept (2026-11-18, branch `alchemist`)
 

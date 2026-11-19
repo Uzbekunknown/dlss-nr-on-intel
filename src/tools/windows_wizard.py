@@ -108,9 +108,25 @@ def main() -> int:
             if args.action == 'settings':
                 result = core.get_settings(args.root)
             elif args.action == 'settings-save':
-                if 'settings' not in values:
+                # **A panel save carries no knobs, and must not be validated as one.** The two
+                # used to be one call with `settings: {}`, which still ran `save_settings`'s
+                # whole-table validation - so a single hand-edited knob sitting out of range in
+                # the file made "show the graphs in the corner" fail with
+                # "render_scale must be between 0.1 and 1". The keys are independent; the
+                # calls are too.
+                panel = values.get('panel')
+                knobs = values.get('settings')
+                if knobs:
+                    result = core.save_settings(args.root, knobs)
+                elif panel:
+                    result = core.get_settings(args.root)
+                else:
                     raise ValueError('Specify the runtime settings to save.')
-                result = core.save_settings(args.root, values['settings'])
+                # The panel's own keys, when the window carried them: separate from the knobs
+                # because a daemon never reads them, and separate from the launch profile because
+                # they belong to the panel rather than to how the game is started.
+                if panel:
+                    core.save_panel_preferences(args.root, panel)
             else:
                 result = core.reset_settings(args.root, values.get('reset'))
         else:

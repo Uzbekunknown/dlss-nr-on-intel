@@ -84,6 +84,33 @@ CHANGE_METRIC = os.environ.get("NR_CHANGE_METRIC", "0") != "0"
 def change_text(value):
     """A frame line's change figure: five places, or `off` where it was not measured."""
     return "off" if value is None else f"{value:.5f}"
+# Eight bytes a legacy answer may end with, when the client reads past its pixels: the
+# magic, then the network's own time for the frame in microseconds. The magic reads "RNIT"
+# on the wire (0x54494E52 little-endian); the layer decodes the word rather than spelling
+# it, so the two ends cannot drift apart the way a spelling invites. A client that does not
+# read the trailer costs this write one broken pipe, which `send_trailer` swallows; a client
+# that does reads the panel's network graph out of it.
+TRAILER_MAGIC = 0x54494E52
+
+
+def send_trailer(connection, args, seconds):
+    """Write the trailer after a legacy answer's pixels: the magic, then `seconds` in
+    microseconds, in a write of its own.
+
+    **A client that never reads the trailer is not a failed frame.** A layer from before the
+    trailer reads every pixel it asked for and closes, so this write can find the pipe shut: the
+    eight bytes are an offer it declined. The broken pipe is swallowed here rather than reaching
+    `serve`'s handler, whose "frame rejected/failed; game keeps original" would be a lie for a
+    frame the game did get, and the frame's line and metrics still follow. Only this write is
+    guarded: a failed write of the pixels is a failed frame, as it was before the trailer."""
+    try:
+        connection.sendall(struct.pack("<2I", TRAILER_MAGIC,
+                                       min(int(round(seconds * 1e6)), 0xFFFFFFFF)))
+    except (BrokenPipeError, ConnectionResetError):
+        if not getattr(args, "trailer_refused", False):
+            print("this client reads its pixels and closes: its daemon speaks a "
+                  "version before the network time (the graph will show none)", flush=True)
+            args.trailer_refused = True
 
 # The swapchain formats a compositor or VKD3D actually hands out. A game writes
 # sRGB-encoded values into a UNORM swapchain just as it does into an SRGB one, so both
@@ -1102,7 +1129,13 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             args.image_transport = "gpu-image-host"
             started = time.perf_counter()
             answer = engine.process_host(payload, width, height, vk_format, live)
+            # **The pixels, then the trailer**, for the reason the legacy path gives: `answer` is
+            # a view over the pipeline's own buffer and `sendall` writes it where it lies, so
+            # `bytes(answer) + ...` copied the frame before writing it. `backend.split[1]` is the
+            # network's own run, which is what the GPU cut path's `detail` carries and what the
+            # panel labels the line; `started` would have been the whole `process_host`.
             connection.sendall(answer)
+            send_trailer(connection, args, backend.split[1] if backend is not None else 0.0)
             metrics = {**engine.last, "total_seconds": time.perf_counter() - started}
             print_gpu_frame(width, height, vk_format, live, metrics, "gpu-image-host")
             return
@@ -1169,7 +1202,16 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
         inner, geometry=geometry, history=history_inner,
         out=input_view(geometry.network_height, geometry.network_width) if input_view else None,
         **nr_frame.PROFILES[live.profile])
+    # **The network's own run, and only that run**, taken around the call the way the GPU
+    # path's `detail` is (`backend.split[1]` is the same figure, for the frame line). The
+    # trailer used to carry `clock` - the start of `decode` - so the panel's blue line was the
+    # whole legacy round trip: decode, features, the network, the composition and the encode,
+    # labelled "the network". That is not the same quantity the GPU path reports, and the two
+    # paths draw into the same graph, so a player comparing them was comparing two different
+    # things.
+    network_ran = time.perf_counter()
     head = geometry.crop(backend.run_features(features))
+    network_ran = time.perf_counter() - network_ran
     # The fourth channel is the temporal gate. Without history it reaches nothing —
     # carrying it through the upscale would be a quarter of that pass for nothing
     # (notes/phase48) — and with history it is what decides the blend, per pixel.
@@ -1289,11 +1331,14 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
             encoded = protected.tobytes()
         # so a --dump shows what was actually sent
         (full[top:bottom, left:right] if full is not None else composed)[held] = colour[held]
-    connection.sendall(encoded)
-    if changed is None and CHANGE_METRIC:
-        changed = float(np.abs(composed[::4] - colour[::4]).mean())
-    # What the game was handed at the active region, for the dump below.
-    active = full[top:bottom, left:right] if full is not None else composed
+    # **The history before the answer leaves.** A client that does not read the trailer
+    # closes after its pixels, so the eight extra bytes can raise BrokenPipeError on a
+    # pipe the client has already shut. That must not skip what this frame owes the
+    # next one: `history.keep` is the temporal state the NEXT frame's network runs on,
+    # and losing it puts this client in a different mode (no history, so the gate
+    # never opens) for the rest of the session. Measured in review, not in a game -
+    # the old order was written for a client that always read, and the compatibility
+    # path is exactly the one that does not.
     if live.temporal > 0:
         # What is carried forward is the vendor's history, the prediction before anything
         # after the network — not what the game received, which the intensity, the grade,
@@ -1303,6 +1348,26 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
         # what it holds. Three frame copies a frame were 0.4 ms at 640x360 and 2-3 at
         # 1280x720.
         args.history.keep(shot, neural, inner, colour)
+    # **The pixels, then the trailer: two writes, because one writes a copy of the frame.**
+    # `encoded` is usually the request's own bytes that the pipeline composed into, and
+    # `sendall` hands that buffer to WriteFile as it lies - which is the whole reason
+    # `nr_pipe.sendall` exists (`98a0ad3`: the copy cost 2.7 ms of a 1280x720 frame).
+    # Concatenating the trailer onto it put that copy back on every legacy frame: measured
+    # 1.1 ms at 1280x720 and 2.5 ms at 1920x1080, twice that on `gpu-image-host` where the
+    # answer is a view and `bytes()` copies it first.
+    #
+    # Two writes were avoided at first for a reason that turned out to be wrong: the layer
+    # peeks for the trailer the moment its pixels are home, so eight bytes written after
+    # them might land on a closed pipe. It cannot - the layer holds the read open for its
+    # two-millisecond budget (`nr_link_read_nowait`) and only closes when that has passed,
+    # which is what makes a second write safe. A client that does not read the trailer is
+    # `send_trailer`'s to absorb, so an old client costs the same as before.
+    connection.sendall(encoded)
+    send_trailer(connection, args, network_ran)
+    if changed is None and CHANGE_METRIC:
+        changed = float(np.abs(composed[::4] - colour[::4]).mean())
+    # What the game was handed at the active region, for the dump below.
+    active = full[top:bottom, left:right] if full is not None else composed
     if args.dump:
         import json as _json
 
