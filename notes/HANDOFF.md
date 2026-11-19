@@ -205,8 +205,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
-- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on
-  `alchemist`, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
+- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
+  three branches since 11-19, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
   default. Not run on an A-series card: there is none here. The request to them is drafted in
   `work\pr-replies\arc-a-tiled-call.md`, for the owner to post with a build that carries it.
@@ -329,6 +329,48 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## `alchemist` merged with `newnr`: the A-series switch beside #45, and a key count in the profile write (2026-11-19, later, branch `alchemist`)
+
+The owner, 11-19, after #45 went into `newnr` and `master`: merge `alchemist` with them. `146151d`
+merges `newnr` (`45f97d5`) into `alchemist` (`eb09b33`); `07f2cc1` is the fix below. Five files
+met:
+- the setup window, which keeps both checkboxes, both sets of profile keys and both sets of names;
+- its Python core, with `prefer_tiled` beside `menu_graphs` and `menu_counter`;
+- the bridge's profile write, which takes all seven keys;
+- the menu string tables, regenerated with `tools/gen_menu_strings.py` (56 keys); the generator
+  now writes the tree's tables unchanged;
+- this file, with both entries, newest first.
+
+**A bug from #45, found at the merge (`07f2cc1`).** `write_profile_pacing` replaces the keys it
+finds in `windows-profile.json` and appends the ones it does not. It tells the two apart with a mask
+of the keys seen. #45 grew the table from four keys to six, and the mask stayed 2^4 - 1:
+- With only the old keys in the profile, `menu_graphs` and `menu_counter` were never appended.
+- With every key present (the setup window writes them all since #45), the write returned before
+  it reached the disk, so the panel stopped updating the profile.
+
+The count now comes from the table. `test_menu_pacing` checks that the profile carries every key
+the panel writes, and that a change still lands once they are all there. Against the merge's bridge
+(mask 31, seven keys) it fails six checks; with the fix, none. In no release; `newnr` at `45f97d5`
+has it in its six-key form.
+
+**Checked on Windows**, at `07f2cc1`:
+- MinGW: the build, with no warning the merged branches' own builds lacked, and CTest 72 of 72.
+- MSVC: `build_win.bat` and `build_xess.bat` with no warning, and CTest 72 of 72, with
+  `gpu_prefer_tiled`.
+- The eight menu fixtures, `test_nr_xess` and `test_xess_panel`.
+- `test_windows_wizard` 106 (1 skipped) and `test_windows_setup` 14.
+- A release from `deploy.bat --release`, and the window's self-test from it (102 controls, 212
+  keys).
+- vkcube under the validation layer, the panel open and shut, and `test_gpu_present` with the panel
+  open and in a corner under synchronization validation: 0 errors.
+
+**Not run:** Linux; a game; an A-series card.
+
+**Next on Linux:** `make test` in both memory modes, and CTest, at this head. It covers the 11-18
+entry's `test_prefer_tiled.py` and the 11-19 entry's list. **Next on Windows:** a build carrying the
+A-series switch, the owner's call. Then the request to A-series owners
+(`work\pr-replies\arc-a-tiled-call.md`).
 
 ## PR #45 merged with our fixes: the frame graphs, and the network's time on the pipe path (2026-11-19, branch `newnr`)
 
