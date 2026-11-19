@@ -680,9 +680,16 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * the window showing its previous value, and the next tick of either control wrote that old
      * value back over the newer one. The window's `settings-save` path does not go through
      * `Merge-PacingFromProfile`, so wiring them there alone was not enough. */
-    static const char *const keys[7] = {"nr_async", "nr_every", "gpu_image_path", "preset",
-                                        "prefer_tiled", "menu_graphs", "menu_counter"};
-    char values[7][16];
+    static const char *const keys[] = {"nr_async", "nr_every", "gpu_image_path", "preset",
+                                       "prefer_tiled", "menu_graphs", "menu_counter"};
+    /* **The count comes from the table, everywhere it is used.** It was written out four times -
+     * the array, the two loops and the "every key present" mask below - and #45 grew the table
+     * from four keys to six while the mask stayed 2^4 - 1. With all six in the profile (which the
+     * setup window writes since #45) the mask never matched, the append below found nothing to
+     * add and returned before the write: the panel's pacing, network and corner never reached the
+     * profile again. With only the first four, the two new keys were never added. */
+    enum { profile_keys = (int)(sizeof keys / sizeof keys[0]) };
+    char values[profile_keys][16];
     snprintf(values[0], sizeof values[0], "%s", b->pacing_async ? "true" : "false");
     snprintf(values[1], sizeof values[1], "%d", b->pacing_every);
     snprintf(values[2], sizeof values[2], "%s", b->pacing_gpu_image ? "true" : "false");
@@ -707,7 +714,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         while (*end && *end != '\n' && *end != '\r') ++end;
         size_t len = (size_t)(end - at);
         int replaced = 0;
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < profile_keys; ++i) {
             /* `  "nr_every": 4,` - the quote is what distinguishes the key from a value. */
             char quoted[32];
             int n = snprintf(quoted, sizeof quoted, "\"%s\"", keys[i]);
@@ -755,7 +762,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
      * The comma TRAILS the line before it rather than leading the new one. Both are valid JSON,
      * but every other line in this file ends in its comma and a file written half one way and
      * half the other is hard to read - and reading it by eye is how the last bug here was found. */
-    if (seen != 31) {   /* 2^5 - 1: every key present */
+    if (seen != (1 << profile_keys) - 1) {   /* every key present */
         size_t close = used;
         while (close > 0 && out[close - 1] != '}') --close;
         if (close == 0) return 0;               /* no object to add to */
@@ -766,7 +773,7 @@ static int write_profile_pacing(const nr_menu_bridge *b)
         char added[512];
         size_t n = 0;
         int first = 1;
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < profile_keys; ++i) {
             if (seen & (1 << i)) continue;
             int step = snprintf(added + n, sizeof added - n, "%s  \"%s\": %s",
                                 first ? "" : ",\n", keys[i], values[i]);

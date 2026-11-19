@@ -763,6 +763,29 @@ int main(void)
               strcmp(every_env, "1") == 0,
               "and the file and the profile say the same thing", detail);
 
+        /* **Every key the panel owns is in the profile, and a write still lands once they all
+         * are.** The write replaces the keys it finds and appends the rest, and tells the two
+         * apart with a mask of the keys seen. PR #45 grew the table from four keys to six while
+         * the mask stayed 2^4 - 1: the panel's graphs and corner were never appended, and a
+         * profile holding all six - the setup window writes them - made every write return before
+         * it reached the disk. The writes above appended what this fixture's profile lacked, so
+         * the change below runs with every key present. */
+        char graphs_prof[32] = "", counter_prof[32] = "", tiled_prof[32] = "";
+        int have_graphs = profile_raw(root, "menu_graphs", graphs_prof, sizeof graphs_prof);
+        int have_counter = profile_raw(root, "menu_counter", counter_prof, sizeof counter_prof);
+        int have_tiled = profile_raw(root, "prefer_tiled", tiled_prof, sizeof tiled_prof);
+        snprintf(detail, sizeof detail, "menu_graphs=%s menu_counter=%s prefer_tiled=%s",
+                 have_graphs ? graphs_prof : "ABSENT", have_counter ? counter_prof : "ABSENT",
+                 have_tiled ? tiled_prof : "ABSENT");
+        check(have_graphs && have_counter && have_tiled,
+              "the profile carries every key the panel writes", detail);
+        nr_menu_bridge_set_pacing(b, NR_PACING_TILED, 1);
+        have_tiled = profile_raw(root, "prefer_tiled", tiled_prof, sizeof tiled_prof);
+        snprintf(detail, sizeof detail, "prefer_tiled=%s", have_tiled ? tiled_prof : "ABSENT");
+        check(have_tiled && strcmp(tiled_prof, "true") == 0,
+              "and with every key present, a change still reaches it", detail);
+        nr_menu_bridge_set_pacing(b, NR_PACING_TILED, 0);
+
         /* The file must still be JSON. Replacing a value used to eat the comma after it, so the
          * profile came out as
          *     "nr_async": false
