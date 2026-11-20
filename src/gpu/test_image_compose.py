@@ -387,11 +387,12 @@ class DeviceChecks(unittest.TestCase):
         rt = xmxres.Runtime()
         if not xmxres.image_path_exact(rt.lib):
             self.skipTest(xmxres.IMAGE_PATH_EXACT_ONLY)
-        try:
-            import cv2  # noqa: F401  (OpenCV's blur sums in its own order)
-            cpu_blur_is_numpy = False
-        except ImportError:
-            cpu_blur_is_numpy = True
+        # MLX-DLSS's `blur` takes OpenCV's sepFilter2D where cv2 imports, and that sums the taps in
+        # its own order. The release's Python has no OpenCV, so the CPU side here is NumPy's blur
+        # on every machine: with cv2 hidden, `import cv2` raises ImportError inside `blur`.
+        hidden = mock.patch.dict(sys.modules, {"cv2": None})
+        hidden.start()
+        self.addCleanup(hidden.stop)
         rng = np.random.default_rng(20261121)
         checks = anchored = 0
         for vk_format in (37, 44):
@@ -454,7 +455,7 @@ class DeviceChecks(unittest.TestCase):
                     # The history the next frame runs on is the prediction before the strengths.
                     np.testing.assert_array_equal(composer.neural.download().reshape(neural.shape),
                                                   neural, err_msg=label + " pre-grade history")
-                    if head_size == active_size and cpu_blur_is_numpy:
+                    if head_size == active_size:
                         # And that is the daemon's CPU path: `nr_frame.compose` with the strengths.
                         cpu = nr_frame.compose(
                             head, colour, detail_strength=detail, colour_strength=colour_strength,
