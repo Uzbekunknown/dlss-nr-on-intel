@@ -236,9 +236,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   release; 0.0.7 is built from it (below, 11-21, later).
 - ~~0.0.7, built and checked on the local `release-0.0.7` (below, 11-21, later): the owner's word
   on publishing it~~: published at the owner's word, 11-21 (below, later).
-- After 0.0.7, each at the owner's word: #46's answer (8-bit outputs are in the release), and the
-  request to A-series owners (`work\pr-replies\arc-a-tiled-call.md`, "the next build" to become
-  0.0.7). Below, 11-21, later.
+- After 0.0.7, each at the owner's word: ~~#46's answer (8-bit outputs are in the release)~~:
+  posted 11-21 (issuecomment-7048686859: update, and `nr-xess.log` if NR still does not start);
+  the request to A-series owners (`work\pr-replies\arc-a-tiled-call.md`, "the next build" to
+  become 0.0.7). Below, 11-21, later.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
