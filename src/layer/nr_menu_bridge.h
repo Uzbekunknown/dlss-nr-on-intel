@@ -158,16 +158,6 @@ int nr_menu_bridge_pacing_tiled(const nr_menu_bridge *bridge);
  * file stays the panel's own and the profile follows it. See `write_profile_pacing`. */
 int nr_menu_bridge_set_pacing(nr_menu_bridge *bridge, int what, int value);
 
-/* Why the GPU image path will not run, in the words the setup window uses, or NULL when it will.
- *
- * This is the half of the refusal the PANEL can see by itself: the daemon also declines a frame
- * whose `detail_strength` or `colour_strength` is not 1 ("GPU composition requires detail and
- * colour strength 1"), and that reason goes to the daemon's log, where nobody looks. A row that
- * reads "on" while the fallback is silently in use is the same shape as issue #17, so the row
- * says which of the two settings is holding it back.
- *
- * Returns NULL when the path is off, because then there is nothing to explain. */
-const char *nr_menu_bridge_pacing_gpu_blocker(const nr_menu_bridge *bridge, int language);
 int  nr_menu_bridge_nr_saved(const nr_menu_bridge *bridge);
 
 /* Which row the cursor is on, and where it is. */

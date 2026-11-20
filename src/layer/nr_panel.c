@@ -413,13 +413,10 @@ static int menu_ui_rows(struct nr_panel *data, nrex_row *out, int capacity)
 			nrex_row *r = &out[n];
 			memset(r, 0, sizeof *r);
 			r->label = nr_menu_text(language, NR_STR_GPU_IMAGE);
-			/* The hint says why the path cannot run when the panel can see a reason. The daemon
-			 * declines a frame whose detail or colour strength is not 1, and that refusal used to
-			 * appear only in the daemon's log: the row read "on" while every frame was composed
-			 * on the CPU. Same shape as issue #17, so the row says it. */
-			const char *blocker = nr_menu_bridge_pacing_gpu_blocker(
-				data->menu_bridge, language);
-			r->hint = blocker ? blocker : nr_menu_text(language, NR_STR_GPU_IMAGE_HINT);
+			/* Until 2026-11-21 the hint said so when detail or colour strength was not 1, which the
+			 * GPU composition refused (on the CPU path in Vulkan, no NR at all in DirectX 12). It
+			 * composes both since, and no knob the panel shows holds the path back. */
+			r->hint = nr_menu_text(language, NR_STR_GPU_IMAGE_HINT);
 			r->kind = NREX_KIND_FLAG;
 			r->choice_index = gpu ? 1 : 0;
 			r->value = gpu ? "on" : "off";

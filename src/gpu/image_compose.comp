@@ -29,8 +29,75 @@ layout(push_constant, scalar) uniform Push {
  * read back: the motion's address in p[12] and p[13], STALE's float bits in p[11].
  * PREVIOUS_RAW=512 (with PREVIOUS, without MOVED): d is the game's last frame as the bytes it
  * came in, at the frame's extent, decoded here through the same table as this frame's `rgb`,
- * the decode pass's values exactly, where a float32 copy of it was kept for this read. */
+ * the decode pass's values exactly, where a float32 copy of it was kept for this read.
+ *
+ * Detail and colour strength away from 1 (`compose_detail`, MLX-DLSS composition.py, which the
+ * CPU path runs after this composition): source + colour * lowpass(change) + detail *
+ * (change - lowpass(change)), clipped, the change being the composition less the frame, the low
+ * pass a separable Gaussian with the frame's edges repeated. Three dispatches, the CPU's float32
+ * order in each (NumPy's fallback, which is what runs where OpenCV is not, as in the release):
+ *   CHANGE=4096, on this composition: g gets the change, v - rgb, where COMPOSED puts v.
+ *   ROWS=1024, one invocation an active pixel: c gets the rows' pass of g's change, each sum
+ *     from zero with the next tap's product added, no fused multiply-add. f holds the p[13]
+ *     float32 weights, p[14] either side.
+ *   COLUMNS=2048: the columns' pass of c, then the sum with colour strength p[11] and detail
+ *     strength p[12] (float bits), in the CPU's order; g gets the composition (the change
+ *     metric's), e the bytes, the game's alpha kept. */
 float unit(float v) { return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v; }
+uint channel_byte(uint raw, uint c, bool bgra) { return (raw >> ((bgra ? 2u - c : c) * 8u)) & 255u; }
+void detail(uint index, uint flags) {
+    uint frame_width = pc.p[0];
+    uint left = pc.p[2], top = pc.p[3], width = pc.p[4], height = pc.p[5];
+    if (index >= width * height) return;
+    uint x = index % width, y = index / width;
+    bool bgra = (flags & 1u) != 0u;
+    FloatBuf weights = FloatBuf(pc.f), change = FloatBuf(pc.g), rows = FloatBuf(pc.c);
+    uint taps = pc.p[13], reach = pc.p[14];
+    if ((flags & 1024u) != 0u) {
+        precise vec3 sum = vec3(0.0);
+        for (uint k = 0u; k < taps; ++k) {
+            uint at = uint(clamp(int(x + k) - int(reach), 0, int(width) - 1));
+            uint from = 3u * (y * width + at);
+            float w = weights.v[k];
+            for (uint c = 0u; c < 3u; ++c) {
+                precise float term = w * change.v[from + c];
+                sum[c] = sum[c] + term;
+            }
+        }
+        for (uint c = 0u; c < 3u; ++c) rows.v[3u * index + c] = sum[c];
+        return;
+    }
+    precise vec3 low = vec3(0.0);
+    for (uint k = 0u; k < taps; ++k) {
+        uint at = uint(clamp(int(y + k) - int(reach), 0, int(height) - 1));
+        uint from = 3u * (at * width + x);
+        float w = weights.v[k];
+        for (uint c = 0u; c < 3u; ++c) {
+            precise float term = w * rows.v[from + c];
+            low[c] = low[c] + term;
+        }
+    }
+    uint frame_index = (top + y) * frame_width + left + x;
+    uint here = UintBuf(pc.a).v[frame_index];
+    FloatBuf settings = FloatBuf(pc.h);
+    float colour_strength = uintBitsToFloat(pc.p[11]), detail_strength = uintBitsToFloat(pc.p[12]);
+    uint packed = here & 0xff000000u;
+    for (uint c = 0u; c < 3u; ++c) {
+        float source = settings.v[16u + channel_byte(here, c, bgra)];
+        precise float moved = change.v[3u * index + c];
+        precise float coloured = colour_strength * low[c];
+        precise float base = source + coloured;
+        precise float high = moved - low[c];
+        precise float detailed = detail_strength * high;
+        precise float v = unit(base + detailed);
+        change.v[3u * index + c] = v;
+        float safe = isnan(v) ? 0.0 : unit(v);
+        precise float scaled = safe * 255.0;
+        precise float rounded = scaled + 0.5;
+        packed |= uint(rounded) << ((bgra ? 2u - c : c) * 8u);
+    }
+    UintBuf(pc.e).v[frame_index] = packed;
+}
 /* Intel's native FDiv is approximate. One residual correction recovers the
  * correctly-rounded scalar division used by the CPU colour grade. Explicit fma
  * here measures the quotient's residual; the surrounding grade stays precise. */
@@ -100,6 +167,7 @@ void main() {
      * that fits in one dimension is unchanged, because the y row is then always zero. */
     uint index = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * gl_WorkGroupSize.x
                + gl_LocalInvocationID.x;
+    if ((pc.p[10] & (1024u | 2048u)) != 0u) { detail(index, pc.p[10]); return; }
     uint frame_width = pc.p[0], frame_height = pc.p[1];
     if (index >= frame_width * frame_height) return;
     uint x = index % frame_width, y = index / frame_width;
@@ -199,7 +267,10 @@ void main() {
     uint packed = raw & 0xff000000u;
     for (uint c = 0u; c < 3u; ++c) {
         precise float v = unit(rgb[c] + blend * (predicted[c] - rgb[c]));
-        if ((flags & 32u) != 0u) composition.v[3u * pixel + c] = v;
+        if ((flags & 4096u) != 0u) {
+            precise float moved = v - rgb[c];
+            composition.v[3u * pixel + c] = moved;
+        } else if ((flags & 32u) != 0u) composition.v[3u * pixel + c] = v;
         float safe = isnan(v) ? 0.0 : unit(v);
         uint byte_value = uint(safe * 255.0 + 0.5);
         packed |= byte_value << ((bgra ? 2u - c : c) * 8u);

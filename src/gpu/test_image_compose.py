@@ -160,7 +160,10 @@ class HostChecks(unittest.TestCase):
     def test_fallback_and_geometry(self):
         self.assertIsNone(G.fallback_reason(vk_format=37))
         self.assertIn("SDR", G.fallback_reason(vk_format=64))
-        self.assertIn("strength", G.fallback_reason(vk_format=44, detail_strength=.7))
+        # Detail and colour strength are composed here since 2026-11-21; only a strength that is
+        # not a number is still a reason.
+        self.assertIsNone(G.fallback_reason(vk_format=44, detail_strength=.7, colour_strength=1.3))
+        self.assertIn("finite", G.fallback_reason(vk_format=44, detail_strength=float("nan")))
         self.assertIn("masks", G.fallback_reason(vk_format=44, interface=True))
         with mock.patch.object(xmxres, "ImagePipeline"):
             with self.assertRaises(ValueError):
@@ -194,6 +197,47 @@ class HostChecks(unittest.TestCase):
             composer.close()
             with self.assertRaises(RuntimeError):
                 composer.record(raw, head)
+
+    def test_detail_passes_only_when_a_strength_moves(self):
+        """At strength 1 one dispatch, as before; away from it the composition hands on its change
+        and two more passes follow, the Gaussian's weights uploaded once for the radius."""
+        with mock.patch.object(xmxres, "ImagePipeline") as pipeline:
+            composer = G.GPUImageComposer(FakeRuntime(), frame_size=(12, 17), head_size=(6, 9),
+                                          vk_format=44, crop=(1, 11, 2, 15))
+            self.addCleanup(composer.close)
+            raw, head = FakeBuffer(12 * 17, np.uint32), FakeBuffer(6 * 9 * 4)
+            record = pipeline.return_value.record
+            composer.record(raw, head, composed=False)
+            self.assertEqual(record.call_count, 1)
+            self.assertIsNone(composer.weights)
+            composer.configure(detail_strength=1.4, colour_strength=.6)
+            weights = np.frombuffer(composer.weights.data, np.float32)[:25]
+            np.testing.assert_array_equal(weights, nr_frame.composition_mod.gaussian_kernel(4.0))
+            uploads = len(composer.weights.uploads)
+            composer.configure(detail_strength=.3, colour_strength=1.0)
+            self.assertEqual(len(composer.weights.uploads), uploads, "the same radius uploaded again")
+            record.reset_mock()
+            encoded = composer.record(raw, head, composed=False)
+            self.assertEqual(record.call_count, 3)
+            pushes = [call.args[0] for call in record.call_args_list]
+            self.assertTrue(pushes[0].params[10] & G.DETAIL_CHANGE)
+            self.assertFalse(pushes[0].params[10] & G.COMPOSED)
+            self.assertEqual(pushes[0].buffers[6], composer.composed.address)
+            for push, mode in zip(pushes[1:], (G.DETAIL_ROWS, G.DETAIL_COLUMNS)):
+                self.assertEqual(push.params[10], mode | G.BGRA)
+                self.assertEqual(list(push.params[:6]), [17, 12, 2, 1, 13, 10])
+                self.assertEqual((push.params[13], push.params[14]), (25, 12))
+                self.assertEqual(np.uint32(push.params[12]).view(np.float32), np.float32(.3))
+                self.assertEqual(np.uint32(push.params[11]).view(np.float32), np.float32(1.0))
+                self.assertEqual([push.buffers[i] for i in (0, 2, 4, 5, 6)],
+                                 [raw.address, composer.rows.address, encoded.address,
+                                  composer.weights.address, composer.composed.address])
+            # Back at 1, nothing but the composition again.
+            composer.configure()
+            record.reset_mock()
+            composer.record(raw, head, composed=False)
+            self.assertEqual(record.call_count, 1)
+            self.assertFalse(record.call_args.args[0].params[10] & G.DETAIL_CHANGE)
 
 
 class DeviceChecks(unittest.TestCase):
@@ -331,6 +375,99 @@ class DeviceChecks(unittest.TestCase):
             buf.free()
         composer.close()
         print(f"image composition: {checks} exact CPU/device byte/history comparisons")
+
+    def test_detail_and_colour_strength(self):
+        """`compose_detail` on the device, against the CPU's: the composition's change, a Gaussian
+        of 25 taps by rows and then by columns with the active rectangle's edges repeated, and the
+        strengths' sum, each in NumPy's float32 order - the CPU path's blur where OpenCV is not
+        installed, as in the release. Until 2026-11-21 the GPU path refused these strengths, and a
+        DirectX 12 game, which has no CPU path, got no NR while either was moved."""
+        if nr_image.library() is None:
+            self.skipTest("native CPU image library is missing")
+        rt = xmxres.Runtime()
+        if not xmxres.image_path_exact(rt.lib):
+            self.skipTest(xmxres.IMAGE_PATH_EXACT_ONLY)
+        try:
+            import cv2  # noqa: F401  (OpenCV's blur sums in its own order)
+            cpu_blur_is_numpy = False
+        except ImportError:
+            cpu_blur_is_numpy = True
+        rng = np.random.default_rng(20261121)
+        checks = anchored = 0
+        for vk_format in (37, 44):
+            for crop, head_size, row_width, channels in (
+                    ((0, 23, 0, 37), (23, 37), 37, 4),
+                    ((2, 21, 3, 34), (8, 13), 16, 16),
+                    ((1, 40, 2, 70), (39, 68), 68, 4)):
+                height, width = (23, 37) if crop[1] <= 23 else (41, 71)
+                composer = G.GPUImageComposer(rt, frame_size=(height, width), head_size=head_size,
+                                              vk_format=vk_format, crop=crop,
+                                              head_row_width=row_width, head_channels=channels)
+                top, bottom, left, right = crop
+                active_size = (bottom - top, right - left)
+                raw = rng.integers(0, 256, (height, width, 4), dtype=np.uint8)
+                colour = nr_image.decode8(raw.tobytes(), width, height, composer.bgra)[top:bottom, left:right]
+                head = rng.normal(0, .65, (*head_size, 4)).astype(np.float32)
+                head[..., 3] = rng.uniform(-25, 25, head_size).astype(np.float32)
+                padded = np.full((head_size[0], row_width, channels), 2000, np.float32)
+                padded[:, :head_size[1], :4] = head
+                raw_device = rt.buffer_from(raw.view(np.uint32), np.uint32)
+                head_device = rt.buffer_from(padded)
+                history = nr_frame.truncate_half(rng.random((*active_size, 3), dtype=np.float32))
+                previous = np.clip(colour + np.float32(3 / 255), 0, 1)
+                history_device, previous_device = rt.buffer_from(history), rt.buffer_from(previous)
+                for detail, colour_strength, intensity, profile, temporal in (
+                        (0.0, 1.0, 1, "standard", False), (1.8, 0.4, 1.66, "natural", False),
+                        (1.0, 2.0, .5, "cinematic", True), (0.5, 0.5, 1, "standard", True),
+                        (1.25, 1.0, 1, "natural", False)):
+                    grade = nr_frame.grade_for(**nr_frame.PROFILES[profile])
+                    controls = dict(intensity=intensity, history_confidence=.7, history_hold=.8,
+                                    history_release=24, grade=grade)
+                    composer.configure(**controls, detail_strength=detail, colour_strength=colour_strength)
+                    # The composition before the strengths, which the test above holds the device
+                    # to exactly, then the CPU's compose_detail over it and the daemon's encode.
+                    neural = np.empty((*active_size, 3), np.float32)
+                    before = nr_frame.compose_encode(
+                        head, colour, raw.copy(), top=top, left=left, bgra=composer.bgra,
+                        history=history if temporal else None,
+                        history_previous=previous if temporal else None, neural=neural, **controls)
+                    expected = nr_frame.composition_mod.compose_detail(
+                        colour, before, detail_strength=detail, colour_strength=colour_strength,
+                        radius=G.DETAIL_RADIUS)
+                    quantised = np.multiply(expected, np.float32(255.0), dtype=np.float32)
+                    np.add(quantised, np.float32(0.5), out=quantised)
+                    np.clip(quantised, 0.0, 255.0, out=quantised)
+                    encoded = raw.copy()
+                    window = encoded[top:bottom, left:right]
+                    (window[..., 2::-1] if composer.bgra else window[..., :3])[:] = quantised.astype(np.uint8)
+                    rt.begin()
+                    composer.record(raw_device, head_device,
+                                    history=history_device if temporal else None,
+                                    previous=previous_device if temporal else None, composed=False)
+                    rt.submit()
+                    label = (f"fmt={vk_format},crop={crop},head={head_size},detail={detail},"
+                             f"colour={colour_strength},temporal={temporal}")
+                    np.testing.assert_array_equal(composer.encoded.download(np.uint8).reshape(raw.shape),
+                                                  encoded, err_msg=label + " wire bytes")
+                    np.testing.assert_array_equal(composer.composed.download().reshape(expected.shape),
+                                                  expected, err_msg=label + " composition")
+                    # The history the next frame runs on is the prediction before the strengths.
+                    np.testing.assert_array_equal(composer.neural.download().reshape(neural.shape),
+                                                  neural, err_msg=label + " pre-grade history")
+                    if head_size == active_size and cpu_blur_is_numpy:
+                        # And that is the daemon's CPU path: `nr_frame.compose` with the strengths.
+                        cpu = nr_frame.compose(
+                            head, colour, detail_strength=detail, colour_strength=colour_strength,
+                            history=history if temporal else None,
+                            history_previous=previous if temporal else None, **controls)
+                        np.testing.assert_array_equal(cpu, expected, err_msg=label + " CPU path")
+                        anchored += 1
+                    checks += 1
+                for buf in (raw_device, head_device, history_device, previous_device):
+                    buf.free()
+                composer.close()
+        print(f"detail and colour strength: {checks} exact device/CPU comparisons, "
+              f"{anchored} of them against nr_frame.compose itself")
 
 
 if __name__ == "__main__":

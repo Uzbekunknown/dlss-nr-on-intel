@@ -22,9 +22,10 @@
  * **The position must match the generated order**, and that is not checkable by the compiler: every
  * entry is a valid string, so a name in the wrong place returns a neighbouring key's text rather
  * than failing. That mistake was made once - the choice labels were put at the end of the list
- * while the generator emits them between `every_nth_many` and `gpu_blocked_*`, and the panel showed
- * the GPU-blocker sentence as its two Network options. `test_menu_choices.cpp` asks for that key by
- * name and is what catches it now.
+ * while the generator emits them between `every_nth_many` and the keys after them, and the panel
+ * showed the GPU-blocker sentence (a key gone since 2026-11-21) as its two Network options - and
+ * again on 2026-11-18, when the A-series switch's `tiled` and `tiled_hint` went into the table and
+ * not into the list. `test_menu_choices.cpp` asks for every name in the list by its key since.
  */
 #ifndef NR_MENU_STRINGS_EXTRA_H
 #define NR_MENU_STRINGS_EXTRA_H

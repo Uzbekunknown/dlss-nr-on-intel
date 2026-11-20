@@ -23,6 +23,13 @@ import xmxres
 SDR_FORMATS = {37: False, 43: False, 44: True, 50: True}
 BGRA, HISTORY, PREVIOUS, KEEP, GRADE, COMPOSED, MOVED = 1, 2, 4, 8, 16, 32, 64
 PREVIOUS_RAW = 512
+# Detail and colour strength (image_compose.comp): the composition hands on its change, then the
+# Gaussian's rows and its columns with the strengths' sum, as `compose_detail` on the CPU.
+DETAIL_ROWS, DETAIL_COLUMNS, DETAIL_CHANGE = 1024, 2048, 4096
+# The CPU path's radius (`nr_frame.compose`'s `detail_radius`), the sigma of its Gaussian, and the
+# most taps the weights' buffer holds: 2 * ceil(3 * sigma) + 1, so radii to 10.
+DETAIL_RADIUS = 4.0
+DETAIL_TAPS = 64
 
 
 class _Push(ctypes.Structure):
@@ -34,11 +41,16 @@ assert ctypes.sizeof(_Push) == 128
 
 def fallback_reason(*, vk_format, detail_strength=1.0, colour_strength=1.0,
                     interface=False, **_):
-    """A reason callers can log before choosing the existing CPU composition."""
+    """A reason callers can log before choosing the existing CPU composition.
+
+    Detail and colour strength away from 1 are composed here since 2026-11-21. Until then they
+    were a reason, and in DirectX 12, which has no CPU path, the daemon declined every frame while
+    either was moved: NR went off, and the panel's network graph emptied (the owner, Hogwarts
+    Legacy, 2026-11-20)."""
     if vk_format not in SDR_FORMATS:
         return "GPU composition supports SDR RGBA8/BGRA8 only"
-    if detail_strength != 1.0 or colour_strength != 1.0:
-        return "GPU composition requires detail and colour strength 1"
+    if not (math.isfinite(float(detail_strength)) and math.isfinite(float(colour_strength))):
+        return "GPU composition requires finite detail and colour strength"
     if interface:
         return "GPU composition does not yet support interface protection masks"
     return None
@@ -89,6 +101,12 @@ class GPUImageComposer:
         self._blend_scale = None
         self._settings = np.zeros(16, np.float32)
         self._uploaded_settings = None
+        # Detail and colour strength: the Gaussian's weights, and the rows' pass of the change,
+        # made when a strength first moves away from 1.
+        self.detail_strength = self.colour_strength = 1.0
+        self.weights = self.rows = None
+        self._radius = None
+        self._taps = 0
         self._closed = False
         self.configure()
 
@@ -102,17 +120,24 @@ class GPUImageComposer:
 
     def configure(self, *, intensity=1.0, history_confidence=1.0, history_hold=0.0,
                   history_release=0.0, blend_scale=nr_frame.BLEND_SCALE,
-                  grade=None, keep_neural=True):
+                  grade=None, keep_neural=True, detail_strength=1.0, colour_strength=1.0,
+                  detail_radius=DETAIL_RADIUS):
         """Upload changed controls; regenerate the gate LUT only if needed.
 
         Identical scalar bits need no staged transfer/fence. Keep/grade flags
         are push constants and still update independently of the cached bytes.
+        `detail_strength` and `colour_strength` are push constants too; the Gaussian's weights
+        for `detail_radius` are uploaded when a strength first leaves 1, and again only when
+        the radius changes.
         """
         if self._closed:
             raise RuntimeError("GPUImageComposer is closed")
-        values = (intensity, history_confidence, history_hold, history_release, blend_scale)
+        values = (intensity, history_confidence, history_hold, history_release, blend_scale,
+                  detail_strength, colour_strength, detail_radius)
         if not all(math.isfinite(float(v)) for v in values):
             raise ValueError("GPU composition settings must be finite")
+        if not detail_radius > 0:
+            raise ValueError("the detail radius must be positive")
         if not 0 <= history_hold <= 1 or not 0 <= history_release <= 255 or not 0 <= blend_scale <= 1:
             raise ValueError("hold/blend must be 0..1 and release 0..255")
         grade = None if grade is None else np.asarray(grade, np.float32)
@@ -143,6 +168,24 @@ class GPUImageComposer:
             self._uploaded_settings = self._settings.copy()
         self.keep_neural = bool(keep_neural)
         self.has_grade = grade is not None
+        # The strengths as the CPU applies them, float32; the weights first, so a failed upload
+        # leaves the strengths that were in force, never a pass without its weights.
+        detail_strength = float(np.float32(detail_strength))
+        colour_strength = float(np.float32(colour_strength))
+        if (detail_strength != 1.0 or colour_strength != 1.0) and self._radius != float(detail_radius):
+            kernel = np.asarray(nr_frame.composition_mod.gaussian_kernel(float(detail_radius)), np.float32)
+            if kernel.size > DETAIL_TAPS:
+                raise ValueError(f"a detail radius of {detail_radius} needs more than {DETAIL_TAPS} taps")
+            if self.weights is None:
+                self.weights = self.rt.buffer(DETAIL_TAPS, kind=xmxres.DEVICE)
+            self.weights.upload(kernel)
+            self._radius, self._taps = float(detail_radius), int(kernel.size)
+        self.detail_strength, self.colour_strength = detail_strength, colour_strength
+
+    @property
+    def detailed(self):
+        """Whether `compose_detail` changes anything: a strength away from 1."""
+        return self.detail_strength != 1.0 or self.colour_strength != 1.0
 
     @staticmethod
     def _check_buffer(buffer, nbytes, name):
@@ -193,14 +236,18 @@ class GPUImageComposer:
                    for buf in (raw, head, history, previous, self.neural, self.composed)):
                 raise ValueError("the encoded target must not alias an operand")
         encoded = self.encoded if target is None else target
-        if composed and self.composed is None:
+        detailed = self.detailed
+        if (composed or detailed) and self.composed is None:
             self.composed = self.rt.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)
+        if detailed and self.rows is None:
+            self.rows = self.rt.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)
         flags = ((BGRA if self.bgra else 0) | (HISTORY if history is not None else 0)
                  | (PREVIOUS if previous is not None else 0) | (KEEP if self.keep_neural else 0)
-                 | (GRADE if self.has_grade else 0) | (COMPOSED if composed else 0)
+                 | (GRADE if self.has_grade else 0)
+                 | (DETAIL_CHANGE if detailed else COMPOSED if composed else 0)
                  | (MOVED if moved is not None else 0) | (PREVIOUS_RAW if previous_raw else 0))
         operands = (raw, head, history, previous, encoded, self.neural,
-                    self.composed if composed else None, self.settings)
+                    self.composed if composed or detailed else None, self.settings)
         push = _Push()
         push.buffers[:] = [b.address if b is not None else 0 for b in operands]
         top, bottom, left, right = self.crop
@@ -211,11 +258,33 @@ class GPUImageComposer:
             push.params[11:14] = (int(np.float32(moved[1]).view(np.uint32)),
                                   moved[0] & 0xffffffff, moved[0] >> 32)
         self.pipeline.record(push, *xmxres.linear_grid(-(-self.frame_width * self.frame_height // 256)))
+        if detailed:
+            self._record_detail(raw, encoded)
         return encoded
+
+    def _record_detail(self, raw, encoded):
+        """`compose_detail` after the composition: the rows' pass of its change into `rows`, then
+        the columns' pass and the strengths' sum, the composition into `composed` (what the
+        change metric reads) and the bytes into `encoded`, the active rectangle only (the
+        composition wrote the rest). Each pass behind a barrier, as every image pass is."""
+        top, bottom, left, right = self.crop
+        grid = xmxres.linear_grid(-(-self.width * self.height // 256))
+        for mode in (DETAIL_ROWS, DETAIL_COLUMNS):
+            push = _Push()
+            operands = (raw, None, self.rows, None, encoded, self.weights, self.composed, self.settings)
+            push.buffers[:] = [b.address if b is not None else 0 for b in operands]
+            push.params[:6] = (self.frame_width, self.frame_height, left, top, self.width, self.height)
+            push.params[10] = mode | (BGRA if self.bgra else 0)
+            push.params[11] = int(np.float32(self.colour_strength).view(np.uint32))
+            push.params[12] = int(np.float32(self.detail_strength).view(np.uint32))
+            push.params[13] = self._taps
+            push.params[14] = (self._taps - 1) // 2
+            self.pipeline.record(push, *grid)
 
     def close(self):
         if not self._closed:
-            for buffer in (self.encoded, self.neural, self.composed, self.settings):
+            for buffer in (self.encoded, self.neural, self.composed, self.settings, self.weights,
+                           self.rows):
                 if buffer is not None:
                     buffer.free()
             self._closed = True

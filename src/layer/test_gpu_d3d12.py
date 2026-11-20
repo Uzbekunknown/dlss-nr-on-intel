@@ -7,8 +7,9 @@ frame on purpose, which must still move the client's fence on. --server is priva
 test.
 
 --network: the daemon itself, with the network and its GPU image path (NR_GPU_IMAGE), warmed
-up by two frames of the host path at the same extent, and the client's frames through it. It
-needs the weights in work/mlxw. Never run either concurrently with GPU tests.
+up by two frames of the host path at the same extent, and the client's frames through it
+twice: at detail and colour strength 1, then with both away from 1. It needs the weights in
+work/mlxw. Never run either concurrently with GPU tests.
 """
 from __future__ import annotations
 import argparse
@@ -170,16 +171,28 @@ def network(executable):
                     if not piece:
                         raise RuntimeError("the daemon refused the warm-up frame:\n" + tail(log))
                     got += len(piece)
-        result = subprocess.run([str(executable), path, "--network"], cwd=ROOT, env=env,
-                                text=True, encoding="utf-8", errors="replace", capture_output=True,
-                                timeout=120, creationflags=subprocess.CREATE_NO_WINDOW)
-        print(result.stdout, end="")
-        if result.returncode:
-            raise RuntimeError(f"client exited {result.returncode}: {result.stderr}\n" + tail(log))
-        lines = [line for line in tail(log).splitlines() if "transport=gpu-shared-d3d12" in line]
-        if len(lines) != frames:
-            raise AssertionError(f"the daemon logged {len(lines)} protocol 3 frames, not {frames}:\n" + tail(log))
-        print("Daemon:", lines[-1], flush=True)
+        # Then the same frames with detail and colour strength away from 1, the panel's two sliders.
+        # Until 2026-11-21 the GPU image path refused them, and protocol 3 has no CPU path, so the
+        # daemon declined every such frame and the client's first CHECK on the reply failed (the
+        # owner, Hogwarts Legacy, 2026-11-20: NR went off while either slider was moved).
+        for round_, strengths in enumerate(({}, {"detail_strength": 0.6, "colour_strength": 1.4})):
+            if strengths:
+                settings.write_text(json.dumps({"render_scale": 0.5, "min_extent": 320, **strengths}),
+                                    encoding="utf-8")
+            result = subprocess.run([str(executable), path, "--network"], cwd=ROOT, env=env,
+                                    text=True, encoding="utf-8", errors="replace", capture_output=True,
+                                    timeout=120, creationflags=subprocess.CREATE_NO_WINDOW)
+            print(result.stdout, end="")
+            if result.returncode:
+                raise RuntimeError(f"client exited {result.returncode} with {strengths or 'strength 1'}: "
+                                   f"{result.stderr}\n" + tail(log))
+            lines = [line for line in tail(log, 1 << 22).splitlines() if "transport=gpu-shared-d3d12" in line]
+            if len(lines) != frames * (round_ + 1):
+                raise AssertionError(f"the daemon logged {len(lines)} protocol 3 frames, not "
+                                     f"{frames * (round_ + 1)}:\n" + tail(log))
+            if strengths and "detail_strength=0.6, colour_strength=1.4" not in tail(log, 1 << 22):
+                raise AssertionError("the daemon never took the strengths:\n" + tail(log))
+            print("Daemon:", lines[-1], flush=True)
     finally:
         if daemon is not None and daemon.poll() is None:
             daemon.terminate()

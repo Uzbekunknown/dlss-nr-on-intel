@@ -869,12 +869,10 @@ int main(void)
             NR_STR_ASYNC, NR_STR_ASYNC_HINT, NR_STR_GPU_IMAGE, NR_STR_GPU_IMAGE_HINT,
             NR_STR_EVERY, NR_STR_EVERY_HINT, NR_STR_EVERY_FRAME,
             NR_STR_EVERY_NTH_FEW, NR_STR_EVERY_NTH_MANY,
-            NR_STR_GPU_BLOCKED_BOTH, NR_STR_GPU_BLOCKED_DETAIL, NR_STR_GPU_BLOCKED_COLOUR,
         };
         static const char *const key_names[] = {
             "async", "async_hint", "gpu_image", "gpu_image_hint", "every", "every_hint",
-            "every_frame", "every_nth_few", "every_nth_many", "gpu_blocked_both",
-            "gpu_blocked_detail", "gpu_blocked_colour",
+            "every_frame", "every_nth_few", "every_nth_many",
         };
         int count = (int)(sizeof keys / sizeof keys[0]);
         for (int i = 0; i < count; ++i) {
@@ -967,48 +965,9 @@ int main(void)
               strstr(ru_few, "\u043a\u0430\u0434\u0440\u0430") ? "кадра" : "NOT кадра");
     }
 
-    /* ---- the GPU row explains itself when the path cannot run ---- */
-    {
-        /* The daemon declines a frame whose detail or colour strength is not 1, with a sentence
-         * that used to go only to its log. The row read "on" while every frame was composed on
-         * the CPU - the same shape as issue #17, where the reason was in a place nobody reads. */
-        nr_menu_bridge_set_pacing(b, NR_PACING_GPU_IMAGE, 1);
-        snprintf(detail, sizeof detail, "blocker with both at 1: %s",
-                 nr_menu_bridge_pacing_gpu_blocker(b, 0) ? "SOMETHING" : "none");
-        check(nr_menu_bridge_pacing_gpu_blocker(b, 0) == NULL,
-              "the GPU path has nothing to explain while both strengths are 1", detail);
-
-        int row = -1;
-        for (int i = 0; i < nr_menu_bridge_knob_count(); ++i)
-            if (strcmp(nr_menu_bridge_knob_name(i), "detail_strength") == 0) row = i;
-        snprintf(detail, sizeof detail, "detail_strength is knob %d", row);
-        check(row >= 0, "the detail knob is in the table", detail);
-
-        /* Default 1.0, and 1.05 is "not 1" - the value the daemon refuses. Set rather than moved:
-         * `nr_menu_bridge_move` writes the daemon's live preview as well, which this fixture has
-         * no installation for, so it reports failure for a reason that has nothing to do with the
-         * row's value. The path must be ON for the row to have anything to explain, and the block
-         * above left it off. */
-        int turned_on = nr_menu_bridge_set_pacing(b, NR_PACING_GPU_IMAGE, 1);
-        nr_menu_bridge_set(b, row, 1.05f);
-        const char *why = nr_menu_bridge_pacing_gpu_blocker(b, 0);
-        snprintf(detail, sizeof detail, "on=%d detail=%s gpu=%d blocker=%s", turned_on,
-                 nr_menu_bridge_row_value(b, row), nr_menu_bridge_pacing_gpu_image(b),
-                 why ? "reported" : "NONE");
-        check(why && strstr(why, "Detail strength") != NULL,
-              "and says so when detail strength is not 1", detail);
-        const char *why_zh = nr_menu_bridge_pacing_gpu_blocker(b, 1);
-        check(why_zh && why_zh != why, "in the panel's own language",
-              why_zh ? "translated" : "ENGLISH ONLY");
-
-        /* Off, there is nothing to explain: the row already says "off". */
-        nr_menu_bridge_set_pacing(b, NR_PACING_GPU_IMAGE, 0);
-        snprintf(detail, sizeof detail, "blocker while off: %s",
-                 nr_menu_bridge_pacing_gpu_blocker(b, 0) ? "SOMETHING" : "none");
-        check(nr_menu_bridge_pacing_gpu_blocker(b, 0) == NULL,
-              "and says nothing while the path is off", detail);
-        nr_menu_bridge_set(b, row, 1.0f);
-    }
+    /* The GPU row's reason for a detail or colour strength away from 1 is gone with the reason
+     * itself (2026-11-21): the GPU composition takes both strengths, so the row has nothing to
+     * explain. */
 
     /* ---- the pacing rows do not depend on the settings file ---- */
     {

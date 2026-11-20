@@ -140,7 +140,8 @@ class GPUImagePipeline:
         self.compose.configure(intensity=live.intensity,history_confidence=live.temporal,
             history_hold=live.hold,history_release=live.release,
             blend_scale=getattr(self.backend,"blend_scale",nr_frame.BLEND_SCALE),
-            grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0)
+            grade=nr_frame.grade_for(**nr_frame.PROFILES[live.profile]),keep_neural=live.temporal>0,
+            detail_strength=live.detail_strength,colour_strength=live.colour_strength)
         return ih,iw,ah,aw
 
     def process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None,

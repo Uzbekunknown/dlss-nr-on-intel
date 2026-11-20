@@ -21,6 +21,7 @@
 #include "nr_menu.h"
 #include "nr_menu_bridge.h"
 #include "nr_menu_strings.h"   /* NR_LANG_EN, and the labels the choice list is filled with */
+#include "nr_menu_strings_extra.h"   /* nr_menu_extra_key_for */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -261,6 +262,55 @@ int main(void)
         nr_menu_bridge_destroy(b);
         nr_menu_bridge_use_env_file(NULL);
         remove(settings);
+    }
+
+    /* ---- 3. every name the extra lookup spells answers its own key ----
+     *
+     * `nr_menu_extra_key_for` returns `NR_MENU_KNOB_COUNT + position`, so its hand-written list
+     * has to follow the generated table. It fell behind twice: the choice labels written at its
+     * end, and on 2026-11-18 the A-series switch's two keys left out after `gpu_image_hint`, so
+     * every name from `every` on answered a key two places early, and nothing failed. Each name
+     * here is asked for and held to its enum, so a key the generator puts in the middle without a
+     * name in the list moves every later answer and fails here. */
+    {
+        static const struct { const char *name; int key; } names[] = {
+            {"title", NR_STR_TITLE}, {"saved", NR_STR_SAVED}, {"reset", NR_STR_RESET},
+            {"hint", NR_STR_HINT}, {"toggle_nr", NR_STR_TOGGLE_NR}, {"compare", NR_STR_COMPARE},
+            {"compare_split", NR_STR_COMPARE_SPLIT}, {"compare_zoom", NR_STR_COMPARE_ZOOM},
+            {"language", NR_STR_LANGUAGE}, {"shortcut", NR_STR_SHORTCUT}, {"on", NR_STR_ON},
+            {"off", NR_STR_OFF}, {"async", NR_STR_ASYNC}, {"async_hint", NR_STR_ASYNC_HINT},
+            {"gpu_image", NR_STR_GPU_IMAGE}, {"gpu_image_hint", NR_STR_GPU_IMAGE_HINT},
+            {"tiled", NR_STR_TILED}, {"tiled_hint", NR_STR_TILED_HINT},
+            {"every", NR_STR_EVERY}, {"every_hint", NR_STR_EVERY_HINT},
+            {"every_frame", NR_STR_EVERY_FRAME}, {"every_nth_few", NR_STR_EVERY_NTH_FEW},
+            {"every_nth_many", NR_STR_EVERY_NTH_MANY},
+            {"choice_weights_ht", NR_STR_CHOICE_WEIGHTS_HT},
+            {"choice_weights_cc_small_fp8", NR_STR_CHOICE_WEIGHTS_CC_SMALL_FP8},
+            {"fps_screen", NR_STR_FPS_SCREEN}, {"fps_nr", NR_STR_FPS_NR},
+            {"fps_nr_off", NR_STR_FPS_NR_OFF}, {"fps_network", NR_STR_FPS_NETWORK},
+            {"fps_hint", NR_STR_FPS_HINT}, {"counter", NR_STR_COUNTER},
+            {"counter_hint", NR_STR_COUNTER_HINT}, {"counter_panel", NR_STR_COUNTER_PANEL},
+            {"counter_top_left", NR_STR_COUNTER_TOP_LEFT},
+            {"counter_top_right", NR_STR_COUNTER_TOP_RIGHT},
+            {"counter_bottom_left", NR_STR_COUNTER_BOTTOM_LEFT},
+            {"counter_bottom_right", NR_STR_COUNTER_BOTTOM_RIGHT},
+            {"graphs", NR_STR_GRAPHS}, {"graphs_hint", NR_STR_GRAPHS_HINT},
+            {"graph_frame", NR_STR_GRAPH_FRAME}, {"graph_net", NR_STR_GRAPH_NET},
+            {"graph_no_net", NR_STR_GRAPH_NO_NET},
+        };
+        int count = (int)(sizeof names / sizeof names[0]), wrong = 0;
+        char detail[160] = "every name its own key";
+        for (int i = 0; i < count; ++i) {
+            int got = nr_menu_extra_key_for(names[i].name);
+            if (got != names[i].key && !wrong++)
+                snprintf(detail, sizeof detail, "first wrong: %s -> %d, its key is %d",
+                         names[i].name, got, names[i].key);
+        }
+        check(!wrong, "the extra lookup's names follow the generated table", detail);
+        snprintf(detail, sizeof detail, "%d names, %d keys past the knobs", count,
+                 NR_MENU_KEY_COUNT - NR_MENU_KNOB_COUNT);
+        check(count == NR_MENU_KEY_COUNT - NR_MENU_KNOB_COUNT,
+              "and this check names every one of them", detail);
     }
 
     printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "ok", failures);

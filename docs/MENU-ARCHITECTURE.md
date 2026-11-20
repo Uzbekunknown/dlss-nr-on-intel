@@ -348,9 +348,11 @@ The setup window has no overlay, so keys like `compare` and `menu key` do not ex
 are hand-written in four languages in `gen_menu_strings.py`'s `OWN` dictionary.
 
 **The pacing keys added in round three** (`async`, `async_hint`, `gpu_image`, `gpu_image_hint`,
-`every`, `every_hint`, `every_frame`, `every_nth`, `gpu_blocked_*`) are here too — they were once
+`every`, `every_hint`, `every_frame`, `every_nth`) are here too — they were once
 hardcoded in `nr_layer.c` as `zh ? ... : ...`, which is **a two-way choice made over a four-way
-enum**, so Russian and Spanish fell into the English branch.
+enum**, so Russian and Spanish fell into the English branch. (So were `gpu_blocked_*`, the GPU
+row's reason for a detail or colour strength away from 1, until the GPU composition took both
+strengths on 2026-11-21.)
 
 **The lesson:** any `== NR_LANG_ZH ? ... : ...` is the shape of a defect. A four-language enum
 takes a table, never a ternary.

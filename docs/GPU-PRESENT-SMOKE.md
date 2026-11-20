@@ -147,7 +147,9 @@ include the driver and binary/shader hashes. Repeat with `--render-scale 1.0` fo
 the full network scale or `--fenced` to validate private-fence synchronization.
 
 Separate strict failure cases use `--gpu-only --restart-daemon --frames 8` or
-`--gpu-only --unsupported async --frames 8` / `--unsupported settings`. These
+`--gpu-only --unsupported async --frames 8` / `--unsupported meter` (the daemon's
+`--meter`, which the GPU path leaves to the CPU; until 2026-11-21 this case was
+`--unsupported settings`, a detail strength the GPU path composes now). These
 diagnostics alone sample one original pixel (four bytes), verifying exact
 retention. Strict restart also checks a fresh frame after the daemon returns,
 so that case samples two four-byte pixels. No `gpu-image-host`/CPU or unlabeled

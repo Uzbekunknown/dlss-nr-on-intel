@@ -61,19 +61,23 @@ int nr_menu_key_for(const char *knob_name)
  * the Network row's options. The build does not catch it: every entry is a valid string, so
  * nothing is missing, only wrong. `test_menu_pacing.cpp` walks the table and would catch a blank;
  * only a test that asks for a specific key by name catches this, which is what the choice-label
- * check in `test_menu_choices.cpp` now does.
+ * check in `test_menu_choices.cpp` now does. It happened again on 2026-11-18: the A-series switch put
+ * `tiled` and `tiled_hint` after `gpu_image_hint` in the table and not here, so every name from
+ * `every` on answered the key two places before its own, until 2026-11-21. `test_menu_choices.cpp`
+ * now asks for the first and the last name of each group by its enum.
  *
  * Hand-written for the same reason the other two functions are: the tables are generated and would
  * lose an edit, and this is logic. */
 static const char *const extra_names[] = {
     "title", "saved", "reset", "hint", "toggle_nr", "compare", "compare_split", "compare_zoom",
     "language", "shortcut", "on", "off", "async", "async_hint", "gpu_image", "gpu_image_hint",
+    "tiled", "tiled_hint",
     "every", "every_hint", "every_frame", "every_nth_few", "every_nth_many",
     "choice_weights_ht", "choice_weights_cc_small_fp8",
-    "gpu_blocked_both", "gpu_blocked_detail", "gpu_blocked_colour",
     "fps_screen", "fps_nr", "fps_nr_off", "fps_network", "fps_hint",
     "counter", "counter_hint", "counter_panel", "counter_top_left", "counter_top_right",
     "counter_bottom_left", "counter_bottom_right",
+    "graphs", "graphs_hint", "graph_frame", "graph_net", "graph_no_net",
 };
 
 int nr_menu_extra_key_for(const char *name)

@@ -2055,39 +2055,6 @@ int nr_menu_bridge_knob_choice_index(const nr_menu_bridge *bridge, int index)
     return here < 0 ? 0 : here;
 }
 
-/* The live value of one knob, by name. 0 when the bridge or the knob is not there, which a caller
- * reads as "nothing to say" rather than as zero - the two knobs this is used for default to 1. */
-static int knob_value_by_name(const nr_menu_bridge *b, const char *name, float *out)
-{
-    if (!b || !name) return 0;
-    for (int i = 0; i < NR_KNOBS_COUNT; ++i) {
-        if (strcmp(knobs[i].key, name) != 0) continue;
-        if (knobs[i].kind != 0) return 0;
-        if (out) *out = b->values[i];
-        return 1;
-    }
-    return 0;
-}
-
-const char *nr_menu_bridge_pacing_gpu_blocker(const nr_menu_bridge *b, int language)
-{
-    if (!b || !b->pacing_ok) return NULL;
-    /* Only when the path is ON: off, the row is already saying "off" and a reason would be noise. */
-    if (!b->pacing_gpu_image) return NULL;
-    float detail = 1.0f, colour = 1.0f;
-    int have_detail = knob_value_by_name(b, "detail_strength", &detail);
-    int have_colour = knob_value_by_name(b, "colour_strength", &colour);
-    int detail_off = have_detail && detail != 1.0f;
-    int colour_off = have_colour && colour != 1.0f;
-    /* From the table, like every other string the panel shows. These were `zh ? ... : ...`, which
-     * is a two-language choice over a four-language enum: Russian and Spanish players read the
-     * reason in English, next to knobs that were translated. */
-    if (detail_off && colour_off) return nr_menu_text(language, NR_STR_GPU_BLOCKED_BOTH);
-    if (detail_off) return nr_menu_text(language, NR_STR_GPU_BLOCKED_DETAIL);
-    if (colour_off) return nr_menu_text(language, NR_STR_GPU_BLOCKED_COLOUR);
-    return NULL;
-}
-
 int nr_menu_bridge_knob_min_extent(const nr_menu_bridge *b)
 {
     if (!b) return 320;

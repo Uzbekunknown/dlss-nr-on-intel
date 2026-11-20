@@ -199,7 +199,9 @@ def main():
     parser.add_argument("--render-scale", type=float, default=0.4)
     parser.add_argument("--warmup", type=int, default=0, help="exclude the first N presents per phase from timing")
     parser.add_argument("--gpu-only", action="store_true", help="forbid CPU pixel fallback; failures retain the original")
-    parser.add_argument("--unsupported", choices=("async", "settings"),
+    # "meter" was "settings" until 2026-11-21: a detail strength of 0.5, which the GPU path
+    # composes since then. The daemon's --meter is a choice the GPU path still leaves to the CPU.
+    parser.add_argument("--unsupported", choices=("async", "meter"),
                         help="GPU-only diagnostic: unsupported mode must retain the original without CPU pixels")
     parser.add_argument("--pause-ms", type=int, default=None, help="0..1000 ms per frame; controls default to 100")
     parser.add_argument("--exercise-controls", action="store_true", help="test owned trigger off/on and render-scale changes")
@@ -262,6 +264,8 @@ def main():
     daemon_command = [str(native_python), "-u", str(ROOT / "src/layer/nr_daemon.py"),
                       "--socket", endpoint, "--root", str(ROOT), "--settings", str(settings),
                       "--render-scale", str(args.render_scale), "--min-extent", "128"]
+    if args.unsupported == "meter":
+        daemon_command.append("--meter")
     fixture_command = [str(fixture), "--frames", str(args.frames), "--pause-ms", str(pause_ms),
                        "--extent", "%dx%d" % args.extent, "--resize-extent", "%dx%d" % args.resize_extent]
     if not args.no_validation:
@@ -301,7 +305,7 @@ def main():
     # The panel's place for the frame counter, 2 being the top right corner (`nr_menu_bridge.h`).
     panel_settings = {"menu_counter": 2} if args.panel == "corner" else {}
     atomic_json(settings, {"render_scale": args.render_scale, "min_extent": 128, "profile": "standard",
-                           "detail_strength": 0.5 if args.unsupported == "settings" else 1, "colour_strength": 1,
+                           "detail_strength": 1, "colour_strength": 1,
                            **panel_settings})
     trigger.touch()
     environment = {name: value for name, value in os.environ.items()
