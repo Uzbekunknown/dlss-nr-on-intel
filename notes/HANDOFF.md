@@ -41,7 +41,8 @@ such move; what it still leaves open becomes a line of its own.
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
   (`86a5799`, 11-01), v0.0.3.1 (`c0b7f9d`, 11-01), v0.0.4 (`8232603`, 11-05), v0.0.5 (`bb9317b`,
-  11-06) and **v0.0.6** (`c473048`, 11-12, the latest), a ZIP with the setup window, DXVK 3.1.1,
+  11-06), v0.0.6 (`c473048`, 11-12) and **v0.0.7** (`921d975`, 11-21, the latest), a ZIP with the
+  setup window, DXVK 3.1.1,
   both layers, a `vulkan-1.dll` proxy, NR's `libxess.dll` as `nr_xess.dll`, since 0.0.4 its own
   Python, and since 0.0.6 NR's `amd_fidelityfx_dx12.dll` as `nr_ffx.dll`.
   0.0.4 brings that Python and the staged GEMM's walk, which takes 9-19 % off the network on
@@ -49,18 +50,23 @@ such move; what it still leaves open becomes a line of its own.
   profile, Hogwarts Legacy's own tuning, the panel's frame counter and OptiScaler's XeSS in setup
   (archive, 11-06, morning). 0.0.6 brings the network's weights as Intel's Windows driver reads
   them fastest (the E4M3 bytes and the weights by column), the GPU path's frame 9 % shorter, FSR
-  3.1 without OptiScaler and the GPU report's network (below, 11-12). What 0.0.2 to 0.0.3.1
+  3.1 without OptiScaler and the GPU report's network (below, 11-12). 0.0.7 brings the DirectX 12
+  speed-up ("Faster, experimental", the edit cache), a frame 8-12 % shorter at 1080p and 1440p,
+  the panel's frame graphs, the A-series kernel switch and the 8-bit outputs (below, 11-21,
+  later). What 0.0.2 to 0.0.3.1
   brought is in the archive (10-31, 11-01) and on the release pages. The last six went out on the
   owner's word before Linux's `make test` at their heads, as 0.0.1.3 did, and Linux has run five
   green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04 later),
-  0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's is owed (Open items, Linux). Linux
+  0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's and 0.0.7's are owed (Open items,
+  Linux). Linux
   users build from source (README).
 - **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` were level
   from 11-11 and moved together, each push a fast-forward of all three. From 11-18 `alchemist`
   ran ahead with the A-series switch while Paimonshen finished PR #45; on 11-19 #45 went into
   `newnr` and `master` with our fixes, and `alchemist` was merged with them, so the three are
   level again (below, 11-19). On 11-20 `alchemist` went ahead alone with the 8-bit outputs of the
-  DirectX 12 proxies (below, 11-20). `media` holds the README's pictures; `improve-int8` is kept for
+  DirectX 12 proxies (below, 11-20), and on 11-21 the three were level again at 0.0.7's head
+  (below, 11-21, later). `media` holds the README's pictures; `improve-int8` is kept for
   INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -228,8 +234,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   three fixes and the strengths in a game, then the word on merging it into `alchemist` for
   0.0.7. Below, 11-21 and 11-13~~: the owner played it in Hogwarts on 11-21 and named the
   release; 0.0.7 is built from it (below, 11-21, later).
-- 0.0.7, built and checked on the local `release-0.0.7` (below, 11-21, later): the owner's word
-  on publishing it.
+- ~~0.0.7, built and checked on the local `release-0.0.7` (below, 11-21, later): the owner's word
+  on publishing it~~: published at the owner's word, 11-21 (below, later).
+- After 0.0.7, each at the owner's word: #46's answer (8-bit outputs are in the release), and the
+  request to A-series owners (`work\pr-replies\arc-a-tiled-call.md`, "the next build" to become
+  0.0.7). Below, 11-21, later.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -346,7 +355,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## 0.0.7 built and checked: the edit cache, the panel's graphs and fixes, the A-series switch, 8-bit outputs (2026-11-21, later, branch `release-0.0.7`)
+## 0.0.7 built, checked and published: the edit cache, the panel's graphs and fixes, the A-series switch, 8-bit outputs (2026-11-21, later, branch `release-0.0.7`)
 
 The owner, 11-21, after playing the edit-cache build in Hogwarts Legacy (02:25-02:31, NR turned
 off and on from the panel 22 times, its screenshot at render scale 0.2 reading NR 22.9 fps; a
@@ -385,13 +394,18 @@ counter and graph fixes and detail and colour strength on the GPU (the entries b
 `nr-rel\cache-2aeed03`; Mortal Kombat 11 from the ZIP waits for the owner's word, the script takes
 `-Game`); Linux; an A-series card; a game with an 8-bit upscaler output.
 
-**Next on Windows:** the owner's word on publishing: `alchemist` fast-forwarded to
-`release-0.0.7` (in the owner's checkout, `merge --ff-only`) and pushed, `master` and `newnr`
-fast-forwarded to it, the lightweight tag `v0.0.7` at `921d975`, the release "DLSS-NR 0.0.7 for
-Windows" with the ZIP and the notes without their draft comment. Then, each at the owner's word:
-#46's answer (8-bit outputs are in), and the request to A-series owners
-(`work\pr-replies\arc-a-tiled-call.md`, "the next build" becoming 0.0.7). **Next on Linux:** once
-it is pushed, `make test` in both memory modes and CTest at the head: `image_compose.comp`
+**Published** at the owner's word ("these lines are not needed; take them out and publish"),
+11-21 03:51 +0900: `alchemist` fast-forwarded to `release-0.0.7` in the owner's checkout and
+pushed, `master` and `newnr` fast-forwarded to it on GitHub (`8296864`, then this entry), the
+lightweight tag `v0.0.7` at `921d975`, and the release "DLSS-NR 0.0.7 for Windows", Latest, with
+the ZIP (GitHub's digest `sha256:a0a5a8d3...0537`, the ZIP's own) and the notes without their
+draft comment. At the owner's word the notes lost three lines before publishing: the DirectX 12
+history following the game's resets, the strengths on the GPU, and the list of fixes.
+
+**Next on Windows:** each at the owner's word, #46's answer (8-bit outputs are in), and the
+request to A-series owners (`work\pr-replies\arc-a-tiled-call.md`, "the next build" becoming
+0.0.7). **Next on Linux:** `git fetch`, fast-forward `master`, `newnr` and `alchemist` to GitHub's,
+then `make test` in both memory modes and CTest at the head: `image_compose.comp`
 changed, and `test_image_compose.py`'s strengths case runs on Mesa.
 
 ## The edit cache for 0.0.7: merged with `alchemist`, its fade a choice; the panel's pointer, counter and graph; detail and colour strength on the GPU (2026-11-20 and 11-21, branch `edit-cache-1120`)
