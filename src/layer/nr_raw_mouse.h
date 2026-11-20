@@ -26,6 +26,13 @@
 int nr_raw_mouse_start(void);
 void nr_raw_mouse_stop(void);
 
+/* Called each frame the panel holds the pointer: where the game has registered its own window over
+ * ours, or removed ours, since `start` - a game may turn its raw mouse off and on with its window's
+ * activation, and the panel does not see every such change (no frame comes while a screenshot's
+ * overlay covers the game) - what the game registered is kept for `stop` to put back and ours goes
+ * in again. Returns 1 when it had to. */
+int nr_raw_mouse_keep(void);
+
 /* The movement accumulated since the last call, in device units - the same units a game mouse look
  * uses. Returns 1 when something moved. */
 int nr_raw_mouse_take(int *dx, int *dy);

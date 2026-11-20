@@ -162,6 +162,61 @@ int main(void)
     check(kbd_left, "the keyboard registration is untouched",
           kbd_left ? "still there" : "GONE - the layer took more than the mouse");
 
+    /* ---- the game taking its registration back while the panel holds the pointer ----
+     *
+     * Unreal turns its raw mouse off and on with its window's activation: `RIDEV_REMOVE`, then its
+     * own window again. A process holds one registration per usage, so either takes the panel's -
+     * and a Win+Shift+S over Hogwarts Legacy did both while the panel saw no frame of it, so its
+     * pointer stood still until another change of focus (the owner, 2026-11-20).
+     * `nr_raw_mouse_keep` takes it back each frame, and keeps what the game registered last for
+     * `stop` to give back. */
+    {
+        char detail[160];
+        RAWINPUTDEVICE now;
+        nr_raw_mouse_start();
+        int in = read_registration(0x01, 0x02, &now);
+        HWND panel = in ? now.hwndTarget : NULL;
+        check(panel && panel != game, "the panel's registration goes in over the game's",
+              panel && panel != game ? "its own window" : "NOT IN");
+        check(!nr_raw_mouse_keep(), "while it stays the panel's, there is nothing to take back", "");
+
+        RAWINPUTDEVICE again = game_device;
+        again.dwFlags = 0;   /* the game's own window again, with other flags than at the start */
+        check(RegisterRawInputDevices(&again, 1, sizeof again) != 0,
+              "the game registers its own window over the panel's", "");
+        int taken = nr_raw_mouse_keep();
+        in = read_registration(0x01, 0x02, &now);
+        snprintf(detail, sizeof detail, "kept %d, target %s", taken,
+                 !in ? "none" : now.hwndTarget == panel ? "the panel's" : now.hwndTarget == game ? "the game's" : "other");
+        check(taken && in && now.hwndTarget == panel, "the panel takes it back", detail);
+
+        RAWINPUTDEVICE removed;
+        removed.usUsagePage = 0x01;
+        removed.usUsage = 0x02;
+        removed.dwFlags = RIDEV_REMOVE;
+        removed.hwndTarget = NULL;
+        check(RegisterRawInputDevices(&removed, 1, sizeof removed) != 0,
+              "the game turns its raw mouse off, which removes the panel's", "");
+        taken = nr_raw_mouse_keep();
+        in = read_registration(0x01, 0x02, &now);
+        snprintf(detail, sizeof detail, "kept %d, target %s", taken,
+                 !in ? "none" : now.hwndTarget == panel ? "the panel's" : "other");
+        check(taken && in && now.hwndTarget == panel, "and takes that back too", detail);
+
+        RegisterRawInputDevices(&again, 1, sizeof again);   /* the game's raw mouse on again */
+        nr_raw_mouse_keep();
+        nr_raw_mouse_stop();
+        in = read_registration(0x01, 0x02, &now);
+        snprintf(detail, sizeof detail, "target %s, flags 0x%lx",
+                 !in ? "none" : now.hwndTarget == game ? "the game's" : "other", in ? (unsigned long)now.dwFlags : 0ul);
+        check(in && now.hwndTarget == game && now.dwFlags == 0,
+              "closing gives the game what it registered last, not what it had at the start", detail);
+        in = read_registration(0x01, 0x06, &now);
+        check(in && now.hwndTarget == game && now.dwFlags == kbd_device.dwFlags,
+              "and the keyboard's, which the game left alone, as it was",
+              in ? (now.hwndTarget == game ? "the game's" : "other") : "none");
+    }
+
     DestroyWindow(game);
     UnregisterClassA("NrRawMouseProbe", wc.hInstance);
 

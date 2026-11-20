@@ -46,12 +46,20 @@ int nr_window_is_foreground(void *hwnd);
 void nr_clip_guard_start(void *hwnd);
 void nr_clip_guard_stop(void);
 
+/* Whether the guard has seen another window in front since it started or since the last call, which
+ * clears it. The layer runs on the game's frames, and a game may present none while it is not in
+ * front - covered by a screenshot's overlay, say - so the layer can find the game in front on every
+ * frame it sees and still have lost the focus in between; the panel then takes the pointer afresh,
+ * as after any change of focus. */
+int nr_clip_guard_left(void);
+
 #else
 
 static inline int nr_window_is_ours(void *h) { (void)h; return 1; }
 static inline int nr_window_is_foreground(void *hwnd) { (void)hwnd; return 1; }
 static inline void nr_clip_guard_start(void *hwnd) { (void)hwnd; }
 static inline void nr_clip_guard_stop(void) { }
+static inline int nr_clip_guard_left(void) { return 0; }
 
 #endif /* _WIN32 */
 

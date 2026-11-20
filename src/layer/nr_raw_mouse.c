@@ -152,6 +152,59 @@ int nr_raw_mouse_start(void)
     return 1;
 }
 
+/* Whether ours is still the process's registration for `usage`: the one whose target is our window.
+ * 0 when another window holds it, or nothing does. */
+static int ours_in_place(USHORT usage)
+{
+    RAWINPUTDEVICE local[16];
+    RAWINPUTDEVICE *devices = local;
+    UINT count = (UINT)(sizeof local / sizeof local[0]);
+    UINT got = GetRegisteredRawInputDevices(devices, &count, sizeof(RAWINPUTDEVICE));
+    if (got == (UINT)-1) {
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || !count) return 1;   /* cannot tell: leave it */
+        devices = (RAWINPUTDEVICE *)HeapAlloc(GetProcessHeap(), 0, count * sizeof(RAWINPUTDEVICE));
+        if (!devices) return 1;
+        got = GetRegisteredRawInputDevices(devices, &count, sizeof(RAWINPUTDEVICE));
+        if (got == (UINT)-1) {
+            HeapFree(GetProcessHeap(), 0, devices);
+            return 1;
+        }
+    }
+    int ours = 0;
+    for (UINT i = 0; i < got; ++i)
+        if (devices[i].usUsagePage == 0x01 && devices[i].usUsage == usage) {
+            ours = devices[i].hwndTarget == g_window;
+            break;
+        }
+    if (devices != local) HeapFree(GetProcessHeap(), 0, devices);
+    return ours;
+}
+
+int nr_raw_mouse_keep(void)
+{
+    if (!g_registered) return 0;
+    int taken = 0;
+    for (int which = RAW_MOUSE; which <= RAW_KEYBOARD; ++which) {
+        if (g_have_saved[which] < 0) continue;          /* ours never went in for this one */
+        if (ours_in_place(g_usage[which])) continue;
+        /* The game registered over ours, or removed it: Unreal turns its high-precision mouse off
+         * and on with its window's activation (`RIDEV_REMOVE`, then its own window), and a
+         * Win+Shift+S over the game did exactly that while the panel saw no frame of it - the
+         * panel's pointer stood still, and the game, whose WM_INPUT the panel holds, did not move
+         * either, until another change of focus (the owner, Hogwarts Legacy, 2026-11-20). What the
+         * game registered last is what it gets back when the panel lets go. */
+        save_game_registration(which);
+        RAWINPUTDEVICE device;
+        device.usUsagePage = 0x01;
+        device.usUsage = g_usage[which];
+        device.dwFlags = RIDEV_INPUTSINK;
+        device.hwndTarget = g_window;
+        if (RegisterRawInputDevices(&device, 1, sizeof device)) taken = 1;
+        else if (which == RAW_KEYBOARD) g_have_saved[RAW_KEYBOARD] = -1;
+    }
+    return taken;
+}
+
 void nr_raw_mouse_stop(void)
 {
     if (!g_registered) return;
@@ -232,6 +285,7 @@ int nr_raw_mouse_take(int *dx, int *dy)
 #else /* not Windows */
 
 int nr_raw_mouse_start(void) { return 0; }
+int nr_raw_mouse_keep(void) { return 0; }
 void nr_raw_mouse_stop(void) { }
 int nr_raw_mouse_take(int *dx, int *dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
 

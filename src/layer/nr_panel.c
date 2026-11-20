@@ -930,7 +930,24 @@ static void menu_ui_mouse(struct nr_panel *data, uint32_t width, uint32_t height
 		 *
 		 * With the panel closed none of this runs - the pin is lifted and the game gets its
 		 * cursor back as it had it (see the release in `menu_read_keys`).
+		 *
+		 * **A change of focus this frame did not see.** The gate above lets go whenever another
+		 * window is in front on a frame, but a game covered by a screenshot's overlay
+		 * (Win+Shift+S) may present nothing until it is gone, so every frame the panel saw had the
+		 * game in front while the game's window was deactivated and activated in between - and
+		 * Unreal turns its raw mouse off and on with that, taking the registration the panel reads
+		 * movement from. The pointer then stood still until another change of focus (the owner,
+		 * Hogwarts Legacy, 2026-11-20). The clip guard sees such a change on its own thread
+		 * (`nr_clip_guard_left`): the panel lets go and takes the pointer afresh, as on the first
+		 * frame after any other one. And whatever the cause, a registration that is no longer ours
+		 * is taken back on every frame (`nr_raw_mouse_keep`).
 		 */
+		if (data->menu_ui_have_pointer && nr_clip_guard_left()) {
+			LAYER_TRACE("[mouse] the game lost the focus between two frames; the pointer is taken afresh\n");
+			menu_cursor_free(data, 0);
+		}
+		if (data->menu_ui_have_pointer && nr_raw_mouse_keep())
+			LAYER_TRACE("[mouse] the game's raw input registration had replaced ours; taken back\n");
 		if (!data->menu_ui_have_pointer) {
 			/* Seed from the real pointer, once, so the panel's starts where the hand is, and
 			 * start listening for raw movement before the first delta is asked for. */

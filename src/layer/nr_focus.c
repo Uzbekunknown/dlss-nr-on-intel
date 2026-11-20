@@ -39,12 +39,19 @@ int nr_window_is_foreground(void *hwnd)
 static volatile LONG g_guarding;
 static HWND volatile g_guarded;
 static HANDLE g_guard;
+/* Set when the guard has seen another window in front, cleared by `nr_clip_guard_left`. The layer
+ * itself may never see that moment: it runs on the game's frames, and a game covered by a
+ * screenshot's overlay (Win+Shift+S) may present none until the overlay is gone. */
+static volatile LONG g_left;
 
 static DWORD WINAPI clip_guard(LPVOID unused)
 {
 	(void)unused;
 	while (g_guarding) {
-		if (!nr_window_is_foreground(g_guarded)) ClipCursor(NULL);
+		if (!nr_window_is_foreground(g_guarded)) {
+			ClipCursor(NULL);
+			InterlockedExchange(&g_left, 1);
+		}
 		Sleep(25);
 	}
 	return 0;
@@ -54,9 +61,15 @@ void nr_clip_guard_start(void *hwnd)
 {
 	g_guarded = (HWND)hwnd;
 	if (g_guard) return;
+	InterlockedExchange(&g_left, 0);
 	InterlockedExchange(&g_guarding, 1);
 	g_guard = CreateThread(NULL, 0, clip_guard, NULL, 0, NULL);
 	if (!g_guard) InterlockedExchange(&g_guarding, 0);
+}
+
+int nr_clip_guard_left(void)
+{
+	return InterlockedExchange(&g_left, 0) != 0;
 }
 
 void nr_clip_guard_stop(void)

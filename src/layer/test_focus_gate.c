@@ -92,7 +92,16 @@ int main(void)
         nr_clip_guard_start(NULL);   /* a null window is never in front */
         Sleep(200);
         GetClipCursor(&after);
+        /* And it says so, for the frame that did not see it: a game covered by a screenshot's
+         * overlay may present nothing while it is not in front (Win+Shift+S over Hogwarts Legacy,
+         * 2026-11-20), and the panel takes the pointer afresh on its word. Read once, it is said
+         * again while the window is still not in front; a stopped guard says nothing. */
+        const int left = nr_clip_guard_left();
+        Sleep(100);
+        const int left_again = nr_clip_guard_left();
         nr_clip_guard_stop();
+        (void)nr_clip_guard_left();  /* whatever it said before it stopped */
+        const int left_stopped = nr_clip_guard_left();
         nr_clip_guard_stop();        /* twice, as a panel closing after its device went does */
         ClipCursor(NULL);
         if (held.right != box.right) {
@@ -101,6 +110,24 @@ int main(void)
             CHECK("the clip guard lets go of a clip while the window is not in front",
                   after.right != box.right);
         }
+        CHECK("the guard says the window left the front, for a frame that did not see it", left);
+        CHECK("and says it again while the window is still not in front", left_again);
+        CHECK("a stopped guard says nothing", !left_stopped);
+    }
+
+    /* With its window in front the guard has nothing to say, whatever an earlier one left. */
+    SetForegroundWindow(ours);
+    Sleep(150);
+    if (GetForegroundWindow() == ours) {
+        nr_clip_guard_start(NULL);   /* one that says "left" at once */
+        Sleep(60);
+        nr_clip_guard_stop();
+        nr_clip_guard_start(ours);   /* a new start clears it */
+        Sleep(150);
+        CHECK("with its window in front, a new guard says nothing", !nr_clip_guard_left());
+        nr_clip_guard_stop();
+    } else {
+        printf("  (this process could not take the foreground; the guard's quiet case is not exercised)\n");
     }
 
     DestroyWindow(ours);
