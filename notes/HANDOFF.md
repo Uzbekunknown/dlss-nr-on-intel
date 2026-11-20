@@ -59,7 +59,8 @@ such move; what it still leaves open becomes a line of its own.
   from 11-11 and moved together, each push a fast-forward of all three. From 11-18 `alchemist`
   ran ahead with the A-series switch while Paimonshen finished PR #45; on 11-19 #45 went into
   `newnr` and `master` with our fixes, and `alchemist` was merged with them, so the three are
-  level again (below, 11-19). `media` holds the README's pictures; `improve-int8` is kept for
+  level again (below, 11-19). On 11-20 `alchemist` went ahead alone with the 8-bit outputs of the
+  DirectX 12 proxies (below, 11-20). `media` holds the README's pictures; `improve-int8` is kept for
   INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -264,7 +265,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
-  out as 2.0's. Archive, 10-30 evening.
+  out as 2.0's. Archive, 10-30 evening. #46 (below, 11-20): Cyberpunk 2077's XeSS 1.3.0.28 on an
+  A750 never reached the proxy's HELLO, cause unknown until its reporter sends `nr-xess.log`; an
+  upscaler's 8-bit output is taken since then, and no game with one has run.
+- How the proxy reads a 10-bit output, R10G10B10A2 as linear light (since `60a7312`), and an 8-bit
+  one, display-encoded even where FSR 3.1 was told its colour is linear: neither is confirmed by a
+  game. Below, 11-20.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc): MSVC vectorises innermost
   loops only, and inside each pixel loop is a three-channel one (`/Qvec-report:2`, reasons 1106
   and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
@@ -329,6 +335,52 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## DirectX 12: an upscaler's 8-bit output taken as a display picture, after issue #46 (2026-11-20, branch `alchemist`)
+
+Issue #46 (11-19): an Arc A750 on 0.0.6 got no frame through NR in two DirectX 12 games. It was
+answered at the owner's word (issuecomment-7037721144).
+- Assassin's Creed Black Flag Resynced, through OptiScaler's XeSS: the proxy refused every frame,
+  "XeSS's output format 28 ... is not handled". `kind_of` took RGBA16F, R11G11B10F and R10G10B10A2
+  alone, and the refusal comes before the HELLO, so no daemon was started either.
+- Cyberpunk 2077 (XeSS 1.3.0.28): the report's daemon log was last written four hours before the
+  launch it records, so the proxy never reached a HELLO. Either XeSS was not the game's upscaler,
+  or a refusal came first; the reporter is asked for `nr-xess.log` with XeSS chosen. The panel
+  opens either way, from `DllMain`.
+- The A750's "lacks the float16 8x16x16 cooperative-matrix shape" lines are every A-series card's.
+
+The owner, 11-20: take 8-bit pictures. **What changed** (`src/xess`):
+- `kind_of`: R8G8B8A8 and B8G8R8A8, UNORM, SRGB or TYPELESS, are display pictures
+  (`display_kind`): a game that upscales after its tone map, its bytes display-encoded as a
+  swapchain's (an upscaler writes through a UNORM view; no SRGB format takes a UAV). ENCODE hands
+  NR those bytes as they are, R first, with no `white` and no knee. COMPOSE puts the answer's
+  bytes in their place with the game's alpha at strength 1, and at another strength that much of
+  the change in linear light, back through the sRGB table (bound at t4 now).
+- mode=carry refuses a display picture, and says so: its passes work in scene light.
+- FSR 3.1: an 8-bit output is taken whatever the context's non-linear flag says, since a game
+  that upscales after its tone map need not set it; the flag still refuses every other format.
+- `give_texel` is ENCODE on the CPU, for the carry path's read and replay's frame dumps.
+
+**Checked on Windows** (Arc 140V, Intel 101.9150):
+- `build_xess.bat` with no warning.
+- `test_nr_xess`: all passed, with 13 new cases: the cut before XeSS with R8G8B8A8_UNORM,
+  B8G8R8A8_UNORM_SRGB, strength 0.5 and 0 and a declined frame; after XeSS with R8G8B8A8_UNORM
+  (#46's case), B8G8R8A8_UNORM and R8G8B8A8_TYPELESS; after FSR 3.1 with non-linear colour and
+  with linear; mode=carry handing the colour on; and R10G10B10A2_UNORM before and after XeSS,
+  which no case had run. A display picture's bytes come back exactly (worst error 0 at strength 1
+  and 0, 0.0041 at 0.5), and `compare` now checks every format's alpha.
+- The control: with the B/R swap and the alpha taken out of the shader, all four BGRA cases fail,
+  and every 8-bit case that writes the answer fails its alpha.
+- `test_xess_panel` passes.
+
+**Not run:** a game with an 8-bit output (none here: Hogwarts upscales into RGBA16F); the real
+daemon on such a frame (its side is the same R8G8B8A8 either way); Linux (nothing in `src/xess`
+builds there).
+
+**Pushed** to `alchemist` alone at the owner's word, 11-20; `master` and `newnr` stay at `30ec631`.
+
+**Next on Windows:** a build for #46's reporter, the owner's call, then their answer. **Next on
+Linux:** nothing.
 
 ## `alchemist` merged with `newnr`: the A-series switch beside #45, and a key count in the profile write (2026-11-19, later, branch `alchemist`)
 
