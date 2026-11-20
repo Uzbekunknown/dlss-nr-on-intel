@@ -355,6 +355,7 @@ $script:SettingsStateKey = 'SettingsLoading'
         <CheckBox x:Name="ChangeMetric" Content="" ToolTip="" Margin="0,8,0,0"/>
         <CheckBox x:Name="TiledKernel" Content="" ToolTip="" Margin="0,8,0,0"/>
         <CheckBox x:Name="EditCache" Content="" ToolTip="" Margin="0,8,0,0"/>
+        <CheckBox x:Name="EditCacheFade" Content="" ToolTip="" Margin="24,4,0,0"/>
         <TextBlock x:Name="EditCacheNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
         <TextBlock x:Name="PacingNote" Style="{StaticResource Note}" Margin="0,8,0,0"/>
         <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -425,7 +426,7 @@ foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','B
 # knob, which names the model file directly and hot-swaps). A second chooser here
 # answered the same question with a second value and the two disagreed; NR_PRESET
 # stays what the profile says (A) and the saved settings decide the rest.
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','EditCache','EditCacheNote','PacingNote','GraphsLabel','GraphsCheck','CounterLabel','CounterCheck','CounterCorner','CounterTL','CounterTR','CounterBL','CounterBR','CounterNote','GraphsNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','EditCache','EditCacheFade','EditCacheNote','PacingNote','GraphsLabel','GraphsCheck','CounterLabel','CounterCheck','CounterCorner','CounterTL','CounterTR','CounterBL','CounterBR','CounterNote','GraphsNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -576,6 +577,8 @@ $script:Strings=@{
   EditCache='Faster, experimental: the network on every other frame (DirectX 12)'
   EditCacheTip='The network answers every other frame, and its change is carried along the game''s motion onto the frame between, so the game runs faster. A fast turn of the camera is answered on every frame. Fine detail may pulse faintly.'
   EditCacheNote='Takes effect at once, in a running game too. For DirectX 12 games only.'
+  EditCacheFade='Smooth in each new answer of the network (smoother, slower)'
+  EditCacheFadeTip='With the network on every other frame, each of its new answers fades in over the frames until the next one, instead of replacing the last one at once. Fine detail pulses less, but most of the speed-up is lost.'
   EveryLabel='Network on'; EveryTip='The frames between repeat the last result: the game runs faster, and the picture changes only on the network''s frames.'
   Every1='every frame'; Every2='every 2nd frame'; Every3='every 3rd frame'; Every4='every 4th frame'
   'Loading.pacing'='Saving frame pacing…'; 'Done.pacing'='Frame pacing saved; it takes effect when the game starts next.'
@@ -701,6 +704,8 @@ $script:Strings=@{
   EditCache='Быстрее, экспериментально: сеть через кадр (DirectX 12)'
   EditCacheTip='Сеть отвечает через кадр, а её правка переносится по движению игры на кадр между ними, и игра идёт быстрее. На быстром повороте камеры сеть отвечает на каждом кадре. Мелкие детали могут слегка пульсировать.'
   EditCacheNote='Применяется сразу, и в запущенной игре тоже. Только для игр на DirectX 12.'
+  EditCacheFade='Плавно вводить каждый новый ответ сети (плавнее, но медленнее)'
+  EditCacheFadeTip='Когда сеть работает через кадр, каждый её новый ответ вводится плавно за кадры до следующего, а не сменяет прежний сразу. Мелкие детали пульсируют меньше, но большая часть ускорения теряется.'
   EveryLabel='Сеть на'; EveryTip='Кадры между ними повторяют последний результат: игра идёт быстрее, а картинка меняется только на кадрах сети.'
   Every1='каждом кадре'; Every2='каждом 2-м кадре'; Every3='каждом 3-м кадре'; Every4='каждом 4-м кадре'
   'Loading.pacing'='Сохраняем подачу кадров…'; 'Done.pacing'='Подача кадров сохранена и применится при следующем запуске игры.'
@@ -826,6 +831,8 @@ $script:Strings=@{
   EditCache='Más rápido, experimental: la red en fotogramas alternos (DirectX 12)'
   EditCacheTip='La red responde en fotogramas alternos, y su cambio se lleva con el movimiento del juego al fotograma intermedio, así que el juego va más rápido. Un giro rápido de la cámara se responde en cada fotograma. Los detalles finos pueden latir levemente.'
   EditCacheNote='Se aplica al momento, también con el juego abierto. Solo para juegos DirectX 12.'
+  EditCacheFade='Introducir poco a poco cada respuesta nueva de la red (más suave, más lento)'
+  EditCacheFadeTip='Con la red en fotogramas alternos, cada respuesta nueva entra poco a poco en los fotogramas hasta la siguiente, en lugar de sustituir a la anterior de golpe. Los detalles finos laten menos, pero se pierde la mayor parte de la mejora de velocidad.'
   EveryLabel='Red en'; EveryTip='Los fotogramas intermedios repiten el último resultado: el juego va más rápido, y la imagen cambia solo en los fotogramas de la red.'
   Every1='cada fotograma'; Every2='uno de cada 2 fotogramas'; Every3='uno de cada 3 fotogramas'; Every4='uno de cada 4 fotogramas'
   'Loading.pacing'='Guardando el ritmo de fotogramas…'; 'Done.pacing'='Ritmo de fotogramas guardado; se aplica la próxima vez que se inicie el juego.'
@@ -951,6 +958,8 @@ $script:Strings=@{
    EditCache='更快（实验性）：网络隔帧处理（DirectX 12）'
    EditCacheTip='网络每隔一帧处理一次，其改动沿游戏的运动带到中间那一帧，游戏因此更快。镜头快速转动时网络每帧都处理。细节处可能有轻微的闪动。'
    EditCacheNote='立即生效，游戏运行时也是如此。仅适用于 DirectX 12 游戏。'
+   EditCacheFade='平滑过渡网络的每个新结果（更平滑，但更慢）'
+   EditCacheFadeTip='网络隔帧处理时，每个新结果会在到下一个结果之前的几帧内逐渐过渡，而不是立即替换上一个结果。细节闪动更少，但大部分提速会失去。'
    PresetHeading='网络'; PresetA='A：NR 一直运行的模型'; PresetB='B：nvngx_dlssnr.dll 310.9.16 中的更快模型'
    PresetTip='nvngx_dlssnr.dll 310.9.16 携带两个网络：A，NR 一直运行的模型；B，NVIDIA 后来加入的更小网络，在这块 GPU 上耗时约为 A 的一半。「安装 NR」会把 B 从该 DLL 中提取出来，与 A 并存。'
    PresetNote='B 需要 310.9.16 或更新版的 nvngx_dlssnr.dll，在「安装」页选择，按「安装 NR」时生效。在游戏下次启动时生效；正在运行的 DirectX 12 游戏会立即生效。'
@@ -1002,7 +1011,7 @@ $script:ContentBindings=@{
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
  AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; ChangeMetric='ChangeMetric'; TiledKernel='TiledKernel'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
  CounterCheck='CounterCheck'; GraphsCheck='GraphsCheck'; CounterTL='CounterTL'; CounterTR='CounterTR'; CounterBL='CounterBL'; CounterBR='CounterBR'
- EditCache='EditCache'
+ EditCache='EditCache'; EditCacheFade='EditCacheFade'
  PresetA='PresetA'; PresetB='PresetB'
  OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
  OpenUpdate='OpenUpdate'; UpdateAtStart='UpdateAtStart'
@@ -1011,7 +1020,7 @@ $script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetai
 $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
  PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'; SpeedTest='SpeedTestTip'
  AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; ChangeMetric='ChangeMetricTip'; TiledKernel='TiledKernelTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
- EditCache='EditCacheTip'
+ EditCache='EditCacheTip'; EditCacheFade='EditCacheFadeTip'
  PresetChoice='PresetTip'}
 function T([string]$Key) {
     if(-not $script:Strings[$script:Language].ContainsKey($Key)) { throw "Missing translation: $Key" }
@@ -1262,7 +1271,8 @@ function Profile-FromWindow {
         nr_async=[bool]$script:Ui.AsyncMode.IsChecked; nr_every=[int]$script:Ui.EveryFrame.SelectedItem.Tag;
         gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag;
         change_metric=[bool]$script:Ui.ChangeMetric.IsChecked; prefer_tiled=[bool]$script:Ui.TiledKernel.IsChecked;
-        menu_graphs=$(if($script:Ui.GraphsCheck.IsChecked){1}else{0}); menu_counter=$(if($script:Ui.CounterCheck.IsChecked){[int]$script:Ui.CounterCorner.SelectedItem.Tag}else{0}); nr_cache=[bool]$script:Ui.EditCache.IsChecked}
+        menu_graphs=$(if($script:Ui.GraphsCheck.IsChecked){1}else{0}); menu_counter=$(if($script:Ui.CounterCheck.IsChecked){[int]$script:Ui.CounterCorner.SelectedItem.Tag}else{0}); nr_cache=[bool]$script:Ui.EditCache.IsChecked;
+        nr_cache_fade=[bool]$script:Ui.EditCacheFade.IsChecked}
 }
 function Apply-Profile($Profile) {
     if($null -eq $Profile) { return }
@@ -1290,8 +1300,9 @@ function Apply-Profile($Profile) {
         $script:Ui.CounterCheck.IsChecked = $c -ne 0
         $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0})
         $script:Ui.CounterCorner.IsEnabled = ($c -ne 0)
-        # A profile from before the speed-up has it off.
+        # A profile from before the speed-up has it off, and one from before its fade fades nothing in.
         $script:Ui.EditCache.IsChecked=[bool]$Profile.nr_cache
+        $script:Ui.EditCacheFade.IsChecked=[bool]$Profile.nr_cache_fade
         $every=[int]$Profile.nr_every
         $script:Ui.EveryFrame.SelectedIndex=$(if($every -ge 1 -and $every -le $script:Ui.EveryFrame.Items.Count){$every-1}else{0})
         # A profile from before the presets ran A, the only network there was.
@@ -1316,6 +1327,8 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
     foreach($name in @('AsyncMode','EveryLabel','EveryFrame')) { $script:Ui[$name].IsEnabled=$free }
     # The speed-up is NR's DirectX 12 DLL's (src/xess/nr_xess.c `cache=`): offered there alone.
     $script:Ui.EditCache.IsEnabled=-not $Busy -and $script:Ui.Api.SelectedIndex -eq 2
+    # Its fade (`cache_fade=`) is a choice of its own, and one only with the speed-up on.
+    $script:Ui.EditCacheFade.IsEnabled=[bool]$script:Ui.EditCache.IsEnabled -and [bool]$script:Ui.EditCache.IsChecked
 }
 # Asynchronous mode and every Nth frame are read by the layer when the game starts: a change
 # is saved at once, into the installed game's nr-env.txt too, and waits for a running action.
@@ -1345,7 +1358,7 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
 function Merge-PacingFromProfile($RequestValues, $LastProfile, $Fresh) {
     if(-not $Fresh) { return $RequestValues }
     # The upscaler NR stands in front of in a DirectX 12 game has no control here either.
-    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled','menu_graphs','menu_counter','nr_cache')) {
+    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled','menu_graphs','menu_counter','nr_cache','nr_cache_fade')) {
         if(-not ($Fresh.PSObject.Properties.Name -contains $key)) { continue }
         $was=$null
         if($LastProfile -and ($LastProfile.PSObject.Properties.Name -contains $key)) {
@@ -1820,9 +1833,16 @@ if($SelfTest) {
         foreach($item in $script:Ui.EveryFrame.Items) { if(-not $item.Content) { throw 'Untranslated frame pacing choice' } }
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='d3d12';disable_fossilize=$true;nr_cache=$true})
         if(-not (Profile-FromWindow).nr_cache -or -not $script:Ui.EditCache.IsEnabled -or $script:PacingDue) { throw 'The DirectX 12 speed-up did not reach the profile, or was not offered' }
+        if((Profile-FromWindow).nr_cache_fade -or -not $script:Ui.EditCacheFade.IsEnabled) { throw 'An older profile faded the speed-up in, or its fade was not offered with it on' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='d3d12';disable_fossilize=$true;nr_cache=$true;nr_cache_fade=$true})
+        if(-not (Profile-FromWindow).nr_cache_fade -or $script:PacingDue) { throw 'The speed-up''s fade did not reach the profile' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='d3d12';disable_fossilize=$true;nr_cache=$false;nr_cache_fade=$true})
+        if($script:Ui.EditCacheFade.IsEnabled) { throw 'The fade was offered with the speed-up off' }
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true})
         if((Profile-FromWindow).nr_cache -or $script:Ui.EditCache.IsEnabled) { throw 'An older profile had the speed-up on, or a Vulkan game was offered it' }
+        if($script:Ui.EditCacheFade.IsEnabled) { throw 'A Vulkan game was offered the speed-up''s fade' }
         if(-not $script:Ui.EditCache.Content -or -not $script:Ui.EditCacheNote.Text) { throw 'Untranslated speed-up' }
+        if(-not $script:Ui.EditCacheFade.Content -or -not $script:Ui.EditCacheFade.ToolTip) { throw 'Untranslated speed-up fade' }
         # The network reaches the profile; a profile from before the presets runs A; one this
         # release has no weights for is not offered, and is not left chosen.
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;preset='B'})
@@ -1936,8 +1956,10 @@ $script:Ui.ChangeMetric.Add_Unchecked({ Request-Pacing })
 $script:Ui.TiledKernel.Add_Checked({ Request-Pacing })
 $script:Ui.TiledKernel.Add_Unchecked({ Request-Pacing })
 $script:Ui.EveryFrame.Add_SelectionChanged({ Request-Pacing })
-$script:Ui.EditCache.Add_Checked({ Request-Pacing })
-$script:Ui.EditCache.Add_Unchecked({ Request-Pacing })
+$script:Ui.EditCache.Add_Checked({ Update-PacingState; Request-Pacing })
+$script:Ui.EditCache.Add_Unchecked({ Update-PacingState; Request-Pacing })
+$script:Ui.EditCacheFade.Add_Checked({ Request-Pacing })
+$script:Ui.EditCacheFade.Add_Unchecked({ Request-Pacing })
 $script:Ui.Api.Add_SelectionChanged({ Update-PacingState })
 $script:Ui.PresetChoice.Add_SelectionChanged({ Request-Pacing 'preset' })
 # The corner's frame graphs: a panel preference, so it goes to the settings file rather than to

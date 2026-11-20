@@ -210,14 +210,17 @@ static struct {
 	 * output pixels a frame: past `cache_fast` NR answers every frame, past `cache_slow` every
 	 * other one at most. */
 	float cache_fast, cache_slow;
-	/* 1 fades a refresh's edit in over the interval, the one before it giving way; 0 takes it
-	 * whole, which shows as a pulse at the refresh. */
+	/* 1 fades a refresh's edit in over the interval, the one before it giving way; 0, the default
+	 * since 2026-11-21, takes it whole, which shows as a pulse at the refresh. The fade's MATCH
+	 * of two edits on every frame took most of the speed-up: Hogwarts Legacy at 1920x1080 and
+	 * `cache=2`, 16.7 frames a second with it and 18.8 without, 16.2 with the cache off. The
+	 * setup window writes it either way, from a checkbox of its own (the owner, 2026-11-20). */
 	int cache_fade;
 	/* `cache_profile=1`: GPU timestamps around a carried frame's steps, their means in the log
 	 * with the cache's own line. For measuring only: each step then waits for the one before. */
 	int cache_profile;
 } config = { "\\\\.\\pipe\\nr-xess", 1.0f, 1.0f, 1, 0, 1, 1, 0.02f, 0.06f, 0, 0, "", AFTER, "", 0, 60.0f,
-	     20.0f, 1 };
+	     20.0f, 0 };
 
 static volatile LONG record_asked;      /* frames to record, set by the settings, taken by the hook */
 

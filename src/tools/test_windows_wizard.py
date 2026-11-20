@@ -573,6 +573,46 @@ class WizardFixture(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.Profile.from_dict(dict(values, nr_cache="yes"))
 
+    def test_d3d12_speed_ups_fade_is_a_choice_of_its_own_and_remove_takes_the_rewritten_file(self):
+        profile, xess = self.unreal_game()
+        self.assertTrue(core.install(profile)["ok"])
+        placed, copy = xess / core.XESS_SETTINGS, core.installed_path(profile) / core.XESS_SETTINGS
+        # Off unless chosen, and written either way, so the proxy reads the choice and not its default.
+        self.assertIn("cache_fade=0", placed.read_text(encoding="utf-8").splitlines())
+        others = [line for line in placed.read_text(encoding="utf-8").splitlines()
+                  if line.split("=", 1)[0] not in core.CACHE_KEYS]
+        for cache, fade in ((True, False), (True, True), (False, True), (False, False)):
+            core.set_pacing(replace(profile, nr_cache=cache, nr_cache_fade=fade))
+            for path in (placed, copy):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                self.assertEqual([line for line in lines if line.split("=", 1)[0] in core.CACHE_KEYS],
+                                 ["cache=2" if cache else "cache=0", "cache_fade=1" if fade else "cache_fade=0"],
+                                 (path, cache, fade))
+                self.assertEqual([line for line in lines if line.split("=", 1)[0] not in core.CACHE_KEYS],
+                                 others, path)
+            self.assertEqual(core.load_profile(self.root).nr_cache_fade, fade)
+        # The checkbox clicked after Install NR rewrote the file beside the upscaler: Remove NR
+        # takes it all the same, where it used to leave it and the dlss-nr folder as "changed".
+        core.set_pacing(replace(profile, nr_cache=True, nr_cache_fade=False))
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertFalse(placed.exists())
+        self.assertFalse(core.installed_path(profile).exists())
+        # A hand edit is still the player's, and stays.
+        self.assertTrue(core.install(profile)["ok"])
+        placed.write_text(placed.read_text(encoding="utf-8") + "strength=0.5\n", encoding="utf-8")
+        core.set_pacing(replace(profile, nr_cache=True))
+        self.assertIn("strength=0.5", placed.read_text(encoding="utf-8").splitlines())
+        removed = core.uninstall(profile)
+        self.assertFalse(removed["ok"])
+        self.assertEqual(removed.get("kept"), [core.XESS_SETTINGS], removed)
+        # A profile from before it fades nothing in; one that is not a boolean is refused.
+        values = profile.to_dict()
+        del values["nr_cache_fade"]
+        self.assertFalse(core.Profile.from_dict(values).nr_cache_fade)
+        with self.assertRaises(ValueError):
+            core.Profile.from_dict(dict(values, nr_cache_fade=1))
+
     def test_d3d12_takes_only_an_xess_nrs_libxess_can_stand_in_front_of(self):
         profile, xess = self.unreal_game()
         write_pe(self.game, x64=False)

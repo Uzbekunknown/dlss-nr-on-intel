@@ -174,6 +174,12 @@ class Profile:
     # its change is carried along the game's motion to the frames between (XESS_SETTINGS' `cache=`,
     # src/xess/nr_xess.c). Off unless chosen.
     nr_cache: bool = False
+    # With the speed-up, each new answer of the network faded in over the frames until the next
+    # (`cache_fade=1`), where it otherwise replaces the last at once: fine detail pulses less, and
+    # most of the speed-up goes (Hogwarts Legacy, 1920x1080, every other frame: 16.7 frames a
+    # second against 18.8, and 16.2 with the network on every frame). A choice of its own, off
+    # unless chosen (the owner, 2026-11-20).
+    nr_cache_fade: bool = False
 
     def __post_init__(self):
         self.root = Path(self.root).expanduser().resolve()
@@ -193,7 +199,7 @@ class Profile:
                 "upscaler": self.upscaler, "change_metric": self.change_metric,
                 "prefer_tiled": self.prefer_tiled,
                 "menu_graphs": self.menu_graphs, "menu_counter": self.menu_counter,
-                "nr_cache": self.nr_cache}
+                "nr_cache": self.nr_cache, "nr_cache_fade": self.nr_cache_fade}
 
     @classmethod
     def from_dict(cls, values):
@@ -246,6 +252,10 @@ class Profile:
         cached = values.get("nr_cache", False)
         if not isinstance(cached, bool):
             raise ValueError("nr_cache must be a boolean")
+        # A profile from before the choice faded nothing in: the proxy's own default since then.
+        faded = values.get("nr_cache_fade", False)
+        if not isinstance(faded, bool):
+            raise ValueError("nr_cache_fade must be a boolean")
         return cls(root=Path(values.get("root") or Path(__file__).resolve().parents[2]),
                    python=Path(values.get("python") or sys.executable),
                    game_exe=Path(values.get("game_exe") or "."),
@@ -255,7 +265,8 @@ class Profile:
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
                    preset=preset, upscaler=upscaler, change_metric=change_metric,
-                   prefer_tiled=prefer_tiled, menu_graphs=graphs, menu_counter=counter, nr_cache=cached)
+                   prefer_tiled=prefer_tiled, menu_graphs=graphs, menu_counter=counter, nr_cache=cached,
+                   nr_cache_fade=faded)
 
 
 def profile_path(root):
@@ -1806,44 +1817,57 @@ def _write_proxy_environment(profile, stage, destination):
     (stage / ENV_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
-def _cache_line(profile):
-    """XESS_SETTINGS' line for the experimental speed-up: the network on every other frame at most,
-    or on every frame."""
-    return "cache=2" if profile.nr_cache else "cache=0"
+CACHE_KEYS = ("cache", "cache_fade")
+
+
+def _cache_lines(profile):
+    """XESS_SETTINGS' lines for the experimental speed-up: the network on every other frame at
+    most, or on every frame; and whether each new answer is faded in (`nr_cache_fade`)."""
+    return ["cache=2" if profile.nr_cache else "cache=0",
+            "cache_fade=1" if profile.nr_cache_fade else "cache_fade=0"]
 
 
 def _write_xess_settings(profile, stage, destination):
     """XESS_SETTINGS, which NR's libxess.dll or amd_fidelityfx_dx12.dll reads beside it: NR after the
     upscaler, on its output, the daemon's pipe, the ENV_FILE to start the daemon from, whose
-    trigger turns NR on and off, and the experimental speed-up (`_cache_line`)."""
+    trigger turns NR on and off, and the experimental speed-up (`_cache_lines`)."""
     lines = ["# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside it (src/xess/nr_xess.c, "
              "nr_ffx.c); Install NR writes it.",
              "mode=after", "pipe=" + layer_environment(profile)["NR_LAYER_SOCKET"],
-             "env=" + str(destination / ENV_FILE), _cache_line(profile)]
+             "env=" + str(destination / ENV_FILE)] + _cache_lines(profile)
     (stage / XESS_SETTINGS).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def _rewrite_cache_line(profile):
-    """The speed-up's line in XESS_SETTINGS where NR's DirectX 12 DLL reads it, beside the game's
+    """The speed-up's lines in XESS_SETTINGS where NR's DirectX 12 DLL reads them, beside the game's
     upscaler, and in the installation's copy: the DLL reads the file again while the game runs, so
     the change takes effect within a second. Every other line is kept as it was, and each file is
-    replaced whole, as `_rewrite_pacing_lines` replaces ENV_FILE. Returns how many were written."""
+    replaced whole, as `_rewrite_pacing_lines` replaces ENV_FILE. Returns how many were written.
+
+    **The game's record follows the file beside the upscaler.** Remove NR takes away only what is
+    as NR placed it, by its digest, and leaves what changed since. This rewrite is NR's own, so the
+    digest it leaves is the record's: before, a click on the checkbox after Install NR left
+    `nr-xess.txt` and the dlss-nr folder in the game when it was removed ("Changed since NR put
+    them there"), as a hand edit of the file does still."""
     folder = installed_path(profile)
-    paths = [folder / XESS_SETTINGS]
-    entry = _game_record(folder)["files"].get(XESS_SETTINGS)
-    if isinstance(entry, dict):
-        paths.append(_game_target(profile, XESS_SETTINGS, entry))
+    record = _game_record(folder)
+    entry = record["files"].get(XESS_SETTINGS)
+    placed = _game_target(profile, XESS_SETTINGS, entry) if isinstance(entry, dict) else None
     written = 0
-    for path in paths:
-        if not path.is_file():
+    for path in (folder / XESS_SETTINGS, placed):
+        if path is None or not path.is_file():
             continue
+        before = _sha256(path)
         kept = [line for line in path.read_text(encoding="utf-8").splitlines()
-                if line.split("=", 1)[0].strip() != "cache"]
-        kept.append(_cache_line(profile))
+                if line.split("=", 1)[0].strip() not in CACHE_KEYS]
+        kept += _cache_lines(profile)
         temporary = path.with_name(path.name + ".new")
         temporary.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
         os.replace(temporary, path)
         written += 1
+        if path == placed and entry.get("placed") and entry.get("sha256") == before:
+            entry["sha256"] = _sha256(path)
+            _atomic_json(folder / GAME_FILES, record)
     return written
 
 
