@@ -220,13 +220,16 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - FSR 3.1 without OptiScaler: a game with FSR 3.1 and no XeSS (Stellar Blade's is the case #38
   asked about), FidelityFX SDK 2.0's loader, FSR 3's own frame generation; and whether the setup
   window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
-- The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
+- ~~The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
   local branch `edit-cache-1120` (`edit-cache` with `alchemist` merged in; nothing pushed): in
   Hogwarts on 11-20, 16.2 -> 18.8 frames a second at N = 2 with its fade off and 20.4 at N = 3;
   the fade, on until then, took the gain. The owner, 11-20: take it, the fade a player's choice
   (`ce121a9`, off by default). The owner's look at a refresh without the fade, at the panel's
   three fixes and the strengths in a game, then the word on merging it into `alchemist` for
-  0.0.7. Below, 11-21 and 11-13.
+  0.0.7. Below, 11-21 and 11-13~~: the owner played it in Hogwarts on 11-21 and named the
+  release; 0.0.7 is built from it (below, 11-21, later).
+- 0.0.7, built and checked on the local `release-0.0.7` (below, 11-21, later): the owner's word
+  on publishing it.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -342,6 +345,54 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## 0.0.7 built and checked: the edit cache, the panel's graphs and fixes, the A-series switch, 8-bit outputs (2026-11-21, later, branch `release-0.0.7`)
+
+The owner, 11-21, after playing the edit-cache build in Hogwarts Legacy (02:25-02:31, NR turned
+off and on from the panel 22 times, its screenshot at render scale 0.2 reading NR 22.9 fps; a
+Win+Shift+S was saved to the screenshots folder, and its absence from Win+V turned out not to be
+NR's): "checked, all is well; we can prepare the release". The test install was taken out (Remove NR clean, the game's
+folders as before but for the XeFG capture's own log). GitHub had not moved (`alchemist` at
+`8bb67bc`, `master` and `newnr` at `30ec631`), so the local `release-0.0.7` starts at
+`edit-cache-1120`'s `2aeed03` and adds `921d975`: VERSION 0.0.7, the README's Hogwarts Legacy
+through FSR 3.1 row from 11-20 and a line on the DirectX 12 speed-up, the same in `docs/WINDOWS.md`
+and `docs/RELEASE-QUICKSTART.md` with the A-series switch and the 8-bit outputs. Nothing pushed.
+
+**What 0.0.7 brings against 0.0.6:** `dx12-waits` and `fused-bycol` (8 % of a frame at 1920x1080
+and 12 % at 2560x1440 on the GPU path, the game's own resets in DirectX 12); `a6699b6`; PR #45's
+frame graphs and the network's time on the pipe path; the Arc A-series kernel switch; the DirectX
+12 proxies' 8-bit outputs (#46); the edit cache with its fade as a choice; the panel's pointer,
+counter and graph fixes and detail and colour strength on the GPU (the entries below).
+
+**Checked on Windows** (Arc 140V, Intel 101.9150):
+- MinGW (CMake and Ninja, the layer off): the build, with the 198 warnings, and CTest 72 of 72.
+- MSVC: `build_win.bat` and `build_xess.bat` with no warning, and CTest 72 of 72 on its libraries.
+- At `24b384a`, the same code: `run_tests.py --only cpu,gpu` 65 of 71, the six Linux-only; the nine
+  native fixtures, `test_nr_xess`, `test_xess_panel`, `test_gpu_d3d12.py --network` with the
+  strengths' round.
+- The release folder from `921d975` (`deploy.bat --release`): 1374 files, against 0.0.6's 1372 only
+  `src/gpu/history_sample.glsl` and `src/gpu/test_prefer_tiled.py` more, none fewer; no weights,
+  NVIDIA DLL or home path.
+- **The ZIP**, `dlss-nr-windows-0.0.7-x64.zip`, 47 451 344 B, SHA-256
+  `a0a5a8d3311efd86f6f7622da7712a8ec43feb1c914cc4b3e34f5ecaef8f0537` (on the Windows laptop in
+  `%USERPROFILE%\nr-rel\final-0.0.7`). From its unpacked copy (`nr-game\rel007-zipcheck.ps1`,
+  `release-tests\zipcheck-0.0.7-summary.txt`): the stand-in (install in 7 s with both networks,
+  958 frames, none rejected, the speed test A/71 and B/31, Save report 19 checks, none failing,
+  the folder as before) and the window's self-test (105 controls, 217 keys).
+- The notes: `work\pr-replies\release-notes-0.0.7.md`, with this commit and SHA-256.
+
+**Not run:** a game from the ZIP (the owner's Hogwarts run was the same code from
+`nr-rel\cache-2aeed03`; Mortal Kombat 11 from the ZIP waits for the owner's word, the script takes
+`-Game`); Linux; an A-series card; a game with an 8-bit upscaler output.
+
+**Next on Windows:** the owner's word on publishing: `alchemist` fast-forwarded to
+`release-0.0.7` (in the owner's checkout, `merge --ff-only`) and pushed, `master` and `newnr`
+fast-forwarded to it, the lightweight tag `v0.0.7` at `921d975`, the release "DLSS-NR 0.0.7 for
+Windows" with the ZIP and the notes without their draft comment. Then, each at the owner's word:
+#46's answer (8-bit outputs are in), and the request to A-series owners
+(`work\pr-replies\arc-a-tiled-call.md`, "the next build" becoming 0.0.7). **Next on Linux:** once
+it is pushed, `make test` in both memory modes and CTest at the head: `image_compose.comp`
+changed, and `test_image_compose.py`'s strengths case runs on Mesa.
 
 ## The edit cache for 0.0.7: merged with `alchemist`, its fade a choice; the panel's pointer, counter and graph; detail and colour strength on the GPU (2026-11-20 and 11-21, branch `edit-cache-1120`)
 
