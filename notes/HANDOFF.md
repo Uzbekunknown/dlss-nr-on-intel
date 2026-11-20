@@ -215,8 +215,9 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
   three branches since 11-19, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
-  default. Not run on an A-series card: there is none here. The request to them is drafted in
-  `work\pr-replies\arc-a-tiled-call.md`, for the owner to post with a build that carries it.
+  default. Not run on an A-series card: there is none here. In 0.0.7; the request to them
+  (`work\pr-replies\arc-a-tiled-call.md`) went into the 13 open A-series issues on 11-21: their
+  answers are what is waited for.
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in 0.0.5 (archive, 11-05 evening).
   Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no XeSS of
@@ -236,10 +237,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   release; 0.0.7 is built from it (below, 11-21, later).
 - ~~0.0.7, built and checked on the local `release-0.0.7` (below, 11-21, later): the owner's word
   on publishing it~~: published at the owner's word, 11-21 (below, later).
-- After 0.0.7, each at the owner's word: ~~#46's answer (8-bit outputs are in the release)~~:
-  posted 11-21 (issuecomment-7048686859: update, and `nr-xess.log` if NR still does not start);
-  the request to A-series owners (`work\pr-replies\arc-a-tiled-call.md`, "the next build" to
-  become 0.0.7). Below, 11-21, later.
+- ~~After 0.0.7, each at the owner's word: #46's answer (8-bit outputs are in the release), and
+  the request to A-series owners~~: both posted 11-21. #46: issuecomment-7048686859 (update, and
+  `nr-xess.log` if NR still does not start). The A-series request, at the owner's word, in the 13
+  open A-series issues (#22-#26, #28-#33, #36, #37; #18 is closed), `arc-a-tiled-call.md`'s first
+  part with 0.0.7's link; its second part, the r/IntelArc post, is the owner's to post.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
