@@ -122,11 +122,30 @@ static void pattern(int x, int y, float *rgba)
 	rgba[3] = 0.5f;
 }
 
+/* The unsigned-normalised kinds hold half the pattern, which then spans [0, 1]. */
+static float unorm_of(float v)
+{
+	return v <= 0 ? 0 : v >= 1 ? 1 : v;
+}
+
 static void pack(int kind, const float *c, uint8_t *out)
 {
 	if (kind == KIND_RGBA16F) {
 		uint16_t h[4] = { to_half(c[0]), to_half(c[1]), to_half(c[2]), to_half(c[3]) };
 		memcpy(out, h, 8);
+		return;
+	}
+	if (kind == KIND_R10G10B10A2) {
+		uint32_t v = (uint32_t)(unorm_of(c[0] / 2) * 1023 + 0.5f) | (uint32_t)(unorm_of(c[1] / 2) * 1023 + 0.5f) << 10
+			     | (uint32_t)(unorm_of(c[2] / 2) * 1023 + 0.5f) << 20 | (uint32_t)(unorm_of(c[3]) * 3 + 0.5f) << 30;
+		memcpy(out, &v, 4);
+		return;
+	}
+	if (display_kind(kind)) {   /* display-encoded, as a game's picture after its tone map */
+		int red = kind == KIND_BGRA8 ? 2 : 0;
+		for (int i = 0; i < 3; i++)
+			out[i == 0 ? red : i == 2 ? 2 - red : 1] = srgb8[(int)(unorm_of(c[i] / 2) * SRGB_STEPS + 0.5f)];
+		out[3] = (uint8_t)(unorm_of(c[3]) * 255 + 0.5f);
 		return;
 	}
 	uint32_t r = (uint32_t)((to_half(c[0]) + 0x8) >> 4), g = (uint32_t)((to_half(c[1]) + 0x8) >> 4);
@@ -157,6 +176,25 @@ static void colour_at(int kind, int x, int y, int sx, int sy, float *rgba)
 	scene(x + BASE_X + sx, y + BASE_Y + sy, rgba);
 	pack(kind, rgba, packed);
 	load_texel(packed, kind, rgba);
+}
+
+/* What NR is given for input pixel (x, y), as the CPU makes it (`give_texel`). */
+static void given_at(int kind, int x, int y, uint8_t *out)
+{
+	float rgba[4];
+	uint8_t packed[8];
+	scene(x + BASE_X, y + BASE_Y, rgba);
+	pack(kind, rgba, packed);
+	give_texel(packed, kind, 1 / config.white, out);
+}
+
+/* A texel's alpha as its format holds it; -1 for a format with none. */
+static int alpha_of(int kind, const uint8_t *t)
+{
+	if (kind == KIND_RGBA16F) return t[6] | t[7] << 8;
+	if (kind == KIND_R11G11B10F) return -1;
+	if (kind == KIND_R10G10B10A2) return t[3] >> 6;
+	return t[3];
 }
 
 /* A texture of the given texels, in NON_PIXEL_SHADER_RESOURCE as XeSS's inputs are. */
@@ -523,21 +561,35 @@ static void expected(const struct snapshot *newest, place_fn place, const struct
 static int compare(const char *name, int kind, UINT texel, const uint8_t *mixed, int sx, int sy,
 		   float strength, const float *delta, int exact_where_zero)
 {
-	int failures = 0;
+	int failures = 0, display = display_kind(kind);
 	double worst = 0, added = 0;
 	for (int y = 0; y < IN_H; y++)
 		for (int x = 0; x < IN_W; x++) {
-			float o[4], got[4] = { 0 }, white = config.white;
+			float o[4], got[4] = { 0 }, white = display ? 1 : config.white, rgba[4];
 			colour_at(kind, x, y, sx, sy, o);
-			load_texel(mixed + nr.footprint.Offset + (size_t)y * nr.footprint.Footprint.RowPitch
-				   + (size_t)x * texel, kind, got);
+			const uint8_t *texel_at = mixed + nr.footprint.Offset + (size_t)y * nr.footprint.Footprint.RowPitch
+						  + (size_t)x * texel;
+			load_texel(texel_at, kind, got);
+			/* the game's alpha, as it was */
+			uint8_t own[8];
+			scene(x + BASE_X + sx, y + BASE_Y + sy, rgba);
+			pack(kind, rgba, own);
+			if (alpha_of(kind, texel_at) != alpha_of(kind, own) && failures++ < 3)
+				printf("FAIL %s: (%d, %d) alpha is %d, not the colour's %d\n", name, x, y,
+				       alpha_of(kind, texel_at), alpha_of(kind, own));
+			/* a display picture has no knee: its change goes in as it is */
 			float lit = (0.2126f * o[0] + 0.7152f * o[1] + 0.0722f * o[2]) / white;
-			float gain = lit > 0.75f ? lit / (0.75f + 0.25f * (1 - expf(-(lit - 0.75f) / 0.25f))) : 1;
+			float gain = !display && lit > 0.75f ? lit / (0.75f + 0.25f * (1 - expf(-(lit - 0.75f) / 0.25f))) : 1;
 			for (int c = 0; c < 3; c++) {
 				float d = delta[((size_t)y * IN_W + x) * 3 + c];
 				float want = o[c] + white * strength * gain * d;
 				if (want < 0) want = 0;
-				double tolerance = kind == KIND_RGBA16F ? 2e-3 * (1 + fabs(want)) : 4e-2 * (1 + fabs(want));
+				if (want > 1 && (display || kind == KIND_R10G10B10A2)) want = 1;   /* the format's ceiling */
+				/* A display picture is the answer's own bytes at strength 1 and the colour's at 0 (two
+				 * bytes' light is 3e-4 apart at the least), and otherwise half a level of 8-bit sRGB at
+				 * most, 0.0045 in linear light near white. */
+				double tolerance = display ? (strength == 0 || strength == 1 ? 1e-5 : 6e-3)
+						   : kind == KIND_RGBA16F ? 2e-3 * (1 + fabs(want)) : 4e-2 * (1 + fabs(want));
 				double error = fabs(got[c] - want);
 				if (exact_where_zero && (strength == 0 || d == 0) && got[c] != o[c]) error = 1e9;
 				if (error > worst) worst = error;
@@ -923,6 +975,27 @@ struct between {
 	int ran, discarded;
 };
 
+/* mode=carry and a display picture, 8 bits a channel: its passes work in scene light, so XeSS is
+ * handed the game's colour as it is, nothing is set up, and the proxy goes on. */
+static int run_carry_display(void)
+{
+	UINT texel;
+	int kind = kind_of(DXGI_FORMAT_R8G8B8A8_UNORM, &texel);
+	struct colour_how how = { kind, 0, 0 };
+	ID3D12Resource *tex = texture(DXGI_FORMAT_R8G8B8A8_UNORM, W, H, texel, fill_colour, &how);
+	if (!tex) {
+		printf("FAIL mode=carry, R8G8B8A8_UNORM: no texture\n");
+		return 1;
+	}
+	DXGI_FORMAT before = nr.format;
+	xess_d3d12_execute_params_t params = params_for(tex, NULL, NULL);
+	xessD3D12Execute((xess_context_handle_t)1, gpu.list, &params);
+	int failed = submit() != 0 || seen.pColorTexture != tex || nr.broken || nr.format != before;
+	printf("%s mode=carry, R8G8B8A8_UNORM: XeSS handed the game's colour as it is\n", failed ? "FAIL" : "ok  ");
+	ID3D12Resource_Release(tex);
+	return failed;
+}
+
 static void between_run(void *user, ID3D12CommandQueue *queue)
 {
 	struct between *b = user;
@@ -1141,11 +1214,8 @@ static int run_cut(DXGI_FORMAT format, const char *name, float strength, int dec
 	stand.decline = decline;
 	static uint8_t given[IN_W * IN_H * 4];
 	for (int y = 0; y < IN_H; y++)
-		for (int x = 0; x < IN_W; x++) {
-			float o[4];
-			colour_at(kind, x, y, 0, 0, o);
-			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
-		}
+		for (int x = 0; x < IN_W; x++)
+			given_at(kind, x, y, given + ((size_t)y * IN_W + x) * 4);
 	brighten(given, NULL, stand.answer, IN_W, IN_H);
 	xess_d3d12_execute_params_t params = params_for(tex, NULL, NULL);
 	/* The first execute of a colour closes the last session, opens one and goes to XeSS whole. */
@@ -1194,7 +1264,7 @@ static int run_cut(DXGI_FORMAT format, const char *name, float strength, int dec
 		if (i % 4 == 3) continue;
 		int d = abs((int)gpu_given[i] - (int)given[i]);
 		off += d != 0;
-		if (d > 1 && failures++ < 3)
+		if (d > (display_kind(kind) ? 0 : 1) && failures++ < 3)   /* a display picture's bytes, exactly */
 			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
 	}
 	struct nr_gpu_stamp stamp;
@@ -1330,11 +1400,8 @@ static int run_after(DXGI_FORMAT format, const char *name)
 	stand.decline = 0;
 	static uint8_t given[IN_W * IN_H * 4];
 	for (int y = 0; y < IN_H; y++)
-		for (int x = 0; x < IN_W; x++) {
-			float o[4];
-			colour_at(kind, x, y, 0, 0, o);
-			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
-		}
+		for (int x = 0; x < IN_W; x++)
+			given_at(kind, x, y, given + ((size_t)y * IN_W + x) * 4);
 	brighten(given, NULL, stand.answer, IN_W, IN_H);
 	xess_d3d12_execute_params_t params = params_for(tex, NULL, NULL);
 	params.pOutputTexture = out;
@@ -1387,7 +1454,7 @@ static int run_after(DXGI_FORMAT format, const char *name)
 		if (i % 4 == 3) continue;
 		int d = abs((int)gpu_given[i] - (int)given[i]);
 		off += d != 0;
-		if (d > 1 && failures++ < 3)
+		if (d > (display_kind(kind) ? 0 : 1) && failures++ < 3)   /* a display picture's bytes, exactly */
 			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
 	}
 	struct nr_gpu_stamp stamp;
@@ -1614,8 +1681,9 @@ static void ffx_read_output(ID3D12Resource *out, D3D12_RESOURCE_STATES held, ID3
 /* After FSR 3.1: as run_after, through ffxDispatch, with the output where FSR writes it, at (0, 0),
  * left by FSR in the state the game named, which the cut takes it from and gives it back in. Its
  * size from the dispatch, or from the context where the dispatch gives none. FSR is handed the
- * game's description as it was. */
-static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int sized)
+ * game's description as it was. The context made with `flags`: an 8-bit output is NR's with
+ * non-linear colour and, display-encoded all the same, with linear. */
+static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int sized, uint32_t flags)
 {
 	UINT texel;
 	int kind = kind_of(format, &texel), failures = 0;
@@ -1625,7 +1693,7 @@ static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int siz
 	/* output pixel (x, y) is the colour's (x, y) of compare's, at its base */
 	ID3D12Resource *out = texture_as(format, W, H, texel, fill_colour, &shifted,
 					 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, held);
-	ffxContext context = ffx_make(FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+	ffxContext context = ffx_make(flags);
 	if (!tex || !out || context != FFX_CONTEXT) {
 		printf("FAIL %s: no texture, or no context\n", name);
 		return 1;
@@ -1635,11 +1703,8 @@ static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int siz
 	stand.decline = 0;
 	static uint8_t given[IN_W * IN_H * 4];
 	for (int y = 0; y < IN_H; y++)
-		for (int x = 0; x < IN_W; x++) {
-			float o[4];
-			colour_at(kind, x, y, 0, 0, o);
-			encode_proxy(o, 1 / config.white, given + ((size_t)y * IN_W + x) * 4);
-		}
+		for (int x = 0; x < IN_W; x++)
+			given_at(kind, x, y, given + ((size_t)y * IN_W + x) * 4);
 	brighten(given, NULL, stand.answer, IN_W, IN_H);
 	struct ffx_dispatch_upscale d = ffx_upscale(tex, NULL, out, state, sized);
 	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
@@ -1678,7 +1743,7 @@ static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int siz
 	ID3D12Resource_Map(readback, 0, NULL, (void **)&raw);
 	const uint8_t *gpu_given = raw + nr.bytes, *answer = raw + nr.bytes + shared;
 	for (size_t i = 0; i < shared; i++)
-		if (i % 4 != 3 && abs((int)gpu_given[i] - (int)given[i]) > 1 && failures++ < 3)
+		if (i % 4 != 3 && abs((int)gpu_given[i] - (int)given[i]) > (display_kind(kind) ? 0 : 1) && failures++ < 3)
 			printf("FAIL %s: the GPU encoded byte %zu as %u, the CPU as %u\n", name, i, gpu_given[i], given[i]);
 	struct nr_gpu_stamp stamp;
 	memcpy(&stamp, answer + shared, sizeof stamp);
@@ -1898,6 +1963,7 @@ int main(int argc, char **argv)
 	failed += run_uncovered();
 	failed += run_rise(none);
 	failed += run_record(moving);
+	failed += run_carry_display();
 
 	/* mode=cut, with the stand-in for the daemon on a queue of its own */
 	config.cut = BEFORE;
@@ -1916,10 +1982,21 @@ int main(int argc, char **argv)
 	failed += run_cut(DXGI_FORMAT_R11G11B10_FLOAT, "cut, R11G11B10_FLOAT", 1, 0);
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, strength 0", 0, 0);
 	failed += run_cut(DXGI_FORMAT_R16G16B16A16_FLOAT, "cut, declined by the daemon", 1, 1);
+	failed += run_cut(DXGI_FORMAT_R10G10B10A2_UNORM, "cut, R10G10B10A2_UNORM", 1, 0);
+	/* a display picture, 8 bits a channel: its own bytes to NR, the answer's back */
+	failed += run_cut(DXGI_FORMAT_R8G8B8A8_UNORM, "cut, R8G8B8A8_UNORM", 1, 0);
+	failed += run_cut(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, "cut, B8G8R8A8_UNORM_SRGB", 1, 0);
+	failed += run_cut(DXGI_FORMAT_R8G8B8A8_UNORM, "cut, R8G8B8A8_UNORM, strength 0.5", 0.5f, 0);
+	failed += run_cut(DXGI_FORMAT_R8G8B8A8_UNORM, "cut, R8G8B8A8_UNORM, strength 0", 0, 0);
+	failed += run_cut(DXGI_FORMAT_B8G8R8A8_UNORM, "cut, B8G8R8A8_UNORM, declined by the daemon", 1, 1);
 	failed += run_cut_motion(moving);
 	config.cut = AFTER;
 	failed += run_after(DXGI_FORMAT_R16G16B16A16_FLOAT, "after XeSS, R16G16B16A16_FLOAT");
 	failed += run_after(DXGI_FORMAT_R11G11B10_FLOAT, "after XeSS, R11G11B10_FLOAT");
+	failed += run_after(DXGI_FORMAT_R10G10B10A2_UNORM, "after XeSS, R10G10B10A2_UNORM");
+	failed += run_after(DXGI_FORMAT_R8G8B8A8_UNORM, "after XeSS, R8G8B8A8_UNORM");
+	failed += run_after(DXGI_FORMAT_B8G8R8A8_UNORM, "after XeSS, B8G8R8A8_UNORM");
+	failed += run_after(DXGI_FORMAT_R8G8B8A8_TYPELESS, "after XeSS, R8G8B8A8_TYPELESS");
 	failed += run_reopen(moving);
 
 	/* FSR 3.1 through the FidelityFX API, on the same stand-in for the daemon */
@@ -1928,10 +2005,15 @@ int main(int argc, char **argv)
 	ffx.dispatch = stub_ffx_dispatch;
 	upscaler = "FSR 3.1";
 	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, R16G16B16A16_FLOAT, output in "
-			  "PIXEL_COMPUTE_READ, its size the context's", (1u << 3) | (1u << 2), 0);
+			  "PIXEL_COMPUTE_READ, its size the context's", (1u << 3) | (1u << 2), 0,
+			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
 	failed += run_ffx(DXGI_FORMAT_R11G11B10_FLOAT, "after FSR 3.1, R11G11B10_FLOAT, output in UNORDERED_ACCESS",
-			  1u << 1, 1);
-	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, output in COPY_DEST", 1u << 5, 1);
+			  1u << 1, 1, FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, output in COPY_DEST", 1u << 5, 1,
+			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+	failed += run_ffx(DXGI_FORMAT_R8G8B8A8_UNORM, "after FSR 3.1, R8G8B8A8_UNORM, non-linear colour", 1u << 1, 1,
+			  FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE);
+	failed += run_ffx(DXGI_FORMAT_B8G8R8A8_UNORM, "after FSR 3.1, B8G8R8A8_UNORM, LDR told linear", 1u << 1, 1, 0);
 	failed += run_ffx_motion(moving);
 	failed += run_ffx_whole();
 	printf(failed ? "FAILED\n" : "all passed\n");

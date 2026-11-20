@@ -243,11 +243,22 @@ static void cut_after_fsr(ffxContext context, const struct ffx_dispatch_upscale 
 		    d->render_size.height, d->upscale_size.width, d->upscale_size.height, d->output.state,
 		    d->motion.state, d->motion_scale.x, d->motion_scale.y, d->pre_exposure, d->sharpening,
 		    d->sharpness);
-	if (made.flags & FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE) {
+	/* Non-linear colour is NR's only as a display picture, 8 bits a channel (nr_xess.c `display_kind`),
+	 * which is taken as display-encoded whatever FSR was told, as XeSS's is with no flag to say: 8-bit
+	 * linear light bands, and a game that upscales after its tone map need not set the flag. */
+	D3D12_RESOURCE_DESC output;
+	ID3D12Resource_GetDesc((ID3D12Resource *)d->output.resource, &output);
+	UINT texel;
+	int kind = kind_of(output.Format, &texel), display = kind >= 0 && display_kind(kind);
+	int non_linear = (made.flags & FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE) != 0;
+	if (non_linear && !display) {
 		cut_said("FSR 3.1's colour is non-linear (FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE), and NR takes "
-			 "linear colour");
+			 "linear colour above 8 bits a channel");
 		return;
 	}
+	if (made.dispatches == 1 && display && !non_linear)
+		say("FSR 3.1 was told its colour is linear; its output, 8 bits a channel, is taken as display-encoded "
+		    "all the same\n");
 	if (output_at == (D3D12_RESOURCE_STATES)-1) {
 		char why[96];
 		snprintf(why, sizeof why, "FSR 3.1's output is in state 0x%x, which NR does not know", d->output.state);

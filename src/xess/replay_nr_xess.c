@@ -130,13 +130,12 @@ static void write_frame(const char *path, const uint8_t *mapped, D3D12_PLACED_SU
 	if (!file) return;
 	fprintf(file, "P6\n%u %u\n255\n", width, height);
 	uint8_t *row = malloc((size_t)width * 3);
-	float inverse_white = 1 / config.white, rgb[3];
+	float inverse_white = 1 / config.white;
 	uint8_t px[4];
 	for (UINT y = 0; y < height; y++) {
 		const uint8_t *line = mapped + f.Offset + (size_t)y * f.Footprint.RowPitch;
 		for (UINT x = 0; x < width; x++) {
-			load_texel(line + (size_t)x * texel, kind, rgb);
-			encode_proxy(rgb, inverse_white, px);
+			give_texel(line + (size_t)x * texel, kind, inverse_white, px);
 			memcpy(row + (size_t)x * 3, px, 3);
 		}
 		fwrite(row, 1, (size_t)width * 3, file);
