@@ -221,10 +221,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   asked about), FidelityFX SDK 2.0's loader, FSR 3's own frame generation; and whether the setup
   window should offer the choice of upscaler for a game with both. Below, 11-12, late evening.
 - The edit cache (`cache=N`, the setup window's "Faster, experimental" for DirectX 12), on the
-  local branch `edit-cache`: run in Hogwarts on 11-15, it works and barely speeds the game up
-  (15.0 -> 15.9 frames a second at N = 2: its own passes cost 13-21 ms a frame, MATCH half of a
-  carried frame's); a crash with the cache on from the first frame, fixed. The owner's word on
-  the clip and on whether to make the passes cheaper. Below, 11-13.
+  local branch `edit-cache-1120` (`edit-cache` with `alchemist` merged in; nothing pushed): in
+  Hogwarts on 11-20, 16.2 -> 18.8 frames a second at N = 2 with its fade off and 20.4 at N = 3;
+  the fade, on until then, took the gain. The owner, 11-20: take it, the fade a player's choice
+  (`ce121a9`, off by default). The owner's look at a refresh without the fade, at the panel's
+  three fixes and the strengths in a game, then the word on merging it into `alchemist` for
+  0.0.7. Below, 11-21 and 11-13.
 - The two Reddit posts on 0.0.5, the owner's to post: `work\pr-replies\reddit-0.0.5.md` for
   r/IntelArc and `reddit-0.0.5-technical.md`, with the video and screenshots in
   `work\pr-replies\reddit-0.0.5-media` (archive, 11-06, later).
@@ -340,6 +342,86 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## The edit cache for 0.0.7: merged with `alchemist`, its fade a choice; the panel's pointer, counter and graph; detail and colour strength on the GPU (2026-11-20 and 11-21, branch `edit-cache-1120`)
+
+The owner, 11-20, before 0.0.7: check the edit cache first. `alchemist` (`8bb67bc`) was 52
+commits ahead of `edit-cache`, so it is merged into a new local branch `edit-cache-1120`
+(`17ab4e7`) in the worktree `D:\NRonWindows\dlss-nr-cache`; `edit-cache` stays at `39f0472`.
+Nothing is pushed. Arc 140V, Intel 101.9150, on AC.
+
+**The merge** (`17ab4e7`): five files met: the setup window and its Python core (every key of
+both kept), `nr_xess.c` (the sRGB table at `composing[4]`), `nr_xess.hlsl` (COMPOSE with
+`answered()`) and this file. New with it: an upscaler's 8-bit display output never takes the
+cache, whose MATCH and APPLY work in scene light, so such an execute gets NR on every frame;
+`test_nr_xess`'s `run_cache_display` holds it (without the guard the stand-in is asked for 2 of 3
+frames and 6300 pixels are not the answer's).
+
+**Hogwarts Legacy, 11-20 20:37-20:40** (release root `%USERPROFILE%\nr-rel\cache-1120\dlss-nr-windows`;
+FSR 3.1, 1920x1080, XeFG on, network B at 0.4, standing; real frames from the XeFG capture's
+`camera.txt`, 25 s a case; `nr-game\release-tests\hogwarts-cache-1120\summary.txt`):
+
+| | frames a second | frame times, ms |
+| --- | --- | --- |
+| `cache=0` | 16.0, 16.4 | 61-62, steady |
+| `cache=2`, fade on (what the checkbox wrote) | 16.7 | 48-52 / 63-76 in turn |
+| `cache=2`, fade off | 18.8 | 44-46 / 58-62 in turn |
+| `cache=3`, fade off | 20.4 | 40, 40, ~70 |
+| NR off | 29.9 | 33 |
+
+The fade runs MATCH for two edits on every frame, and that took the gain. A carried frame costs
+the game's frame + 12 ms, as on 11-15; NR's round trip is 70 ms with the cache, 49-51 without.
+How a refresh looks without the fade (offline, 1.6-2.9x NR's own flicker) is for the eye.
+
+**The owner, 11-20:** take it, and give players the choice of the fade; and three bugs seen in
+the panel during that run.
+- `ce121a9`: the setup window's "Smooth in each new answer of the network (smoother, slower)"
+  under the speed-up, four languages, offered with the speed-up for a DirectX 12 game
+  (`Profile.nr_cache_fade`, absent = off); `cache_fade` defaults to 0 in `nr_xess.c`. And Remove
+  NR after a click: the click rewrites `nr-xess.txt`, and Remove NR, which takes away only what is
+  as NR placed it, left the file and the `dlss-nr` folder; the record follows NR's rewrite now.
+  `test_windows_wizard` 108 (1 skipped); the window's self-test 105 controls, 217 keys.
+- **Win+Shift+S with the panel open left no usable pointer** (`56efde2`). The screenshot's overlay
+  deactivates the game with no frame the panel sees, and Unreal turns its raw mouse off and on
+  (RIDEV_REMOVE, then its own window), which takes the process's one registration from the
+  panel's window. The panel takes it back each frame it holds the pointer, and the clip guard's
+  thread says when the game left the front, so the panel takes the pointer afresh.
+  `test_raw_mouse`, `test_focus_gate`. **Not run in a game.**
+- **The counter said NR 8-9 a second beside a network of 24-25 ms** (`06a66e9`): with `cache=2`
+  it counted the answers alone, half the game's rate. The carried frames count now (the network's
+  time stays the answers'), and the hint says NR's rate is not one over the network's time, the
+  game drawing on the same GPU.
+- **The graph lost the network's line**, for two reasons. A network slower than the graph's 100 ms
+  ceiling was dropped as if unmeasured, so at render scale 1.0 (166 ms at 1920x1080) every point
+  was a gap; it is drawn at the ceiling now, and the ceiling is a second (`06a66e9`,
+  `test_menu_panel`). And with detail or colour strength away from 1 the GPU composition refused
+  the frame, so in DirectX 12, which has no CPU path, NR went off whole (`24b384a`). The GPU
+  composes both strengths now, exactly as the CPU: `compose_detail` in three passes in NumPy's
+  float32 order (`test_image_compose`, 30 exact comparisons, 20 against `nr_frame.compose`; OpenCV
+  hidden for the case, `f5dc116`, since its blur sums in another order). `test_gpu_d3d12.py
+  --network` runs a second round with the strengths away from 1, which fails against the old
+  composer as the game did. The two blur passes cost 2.2 ms at 1920x1080 and 4.0 at 2560x1440,
+  only while a strength is away from 1. The panel's GPU row no longer says a strength keeps the
+  path on the CPU (`gpu_blocked_*` gone, 53 keys), and the extra lookup's names follow the table
+  again: since 11-18 every name from `every` on answered a key two places early (nothing shipped
+  read them); `test_menu_choices` holds all 42 to their keys.
+
+**Checked on Windows**, at `f5dc116`: `build_win.bat` and `build_xess.bat` with no warning;
+`test_nr_xess`, `test_xess_panel`, the nine native fixtures; `run_tests.py --only cpu,gpu` 65 of 71,
+the six failing Linux-only (the Makefile's three binaries; Unix socket paths in `test_ui_mask`,
+`test_temporal` and `test_present --negative-control`); `test_gpu_d3d12.py --network`;
+`test_gpu_present --gpu-only --unsupported meter` and `async` (`settings` leant on the old
+refusal and is `meter` now, the daemon's `--meter`).
+
+**Not run:** a game since the merge's run above, so the pointer, the counter, the graph, the
+strengths and the fade's checkbox; the window's self-test and `test_windows_setup` after
+`ce121a9` (nothing of the window changed since); Linux.
+
+**Next on Windows:** the owner's look in Hogwarts (Win+Shift+S with the panel open, the counter
+with the cache on, the strength sliders), then the word on merging `edit-cache-1120` into
+`alchemist` for 0.0.7. **Next on Linux:** once it is pushed, `make test` in both memory modes and
+CTest: `image_compose.comp` changed and `test_image_compose.py`'s new device case runs on Mesa;
+the menu and `src/xess` are Windows-only.
 
 ## DirectX 12: an upscaler's 8-bit output taken as a display picture, after issue #46 (2026-11-20, branch `alchemist`)
 
@@ -868,7 +950,7 @@ it, and let the user turn it on or off. Three commits on the local branch `edit-
 `alchemist` at `0624ccc`, in the worktree `D:\NRonWindows\dlss-nr-cache`; nothing pushed. The
 measurements, the design and the progress are in `D:\NRonWindows\nr-game\edit-cache\DESIGN.md`,
 outside the repository, with the testbed beside it and its data in
-`C:\Users\Uzbekunknown\datasets\nr-cache`.
+`%USERPROFILE%\datasets\nr-cache`.
 
 **Measured offline first.** Two Hogwarts recordings through FSR 3.1 (a fast scripted pan, 27 and
 40 output pixels a frame), network B at 0.4, every frame answered, then played as the cache would
@@ -905,7 +987,7 @@ at one half, D none; the stand-in asked for A and C only; C's offsets lead back 
 (about 24 a second at every other frame against 18); the in-game panel; Linux.
 
 **Run in Hogwarts Legacy, 11-15 evening** (the owner away; the game started from
-`nr-game\hogwarts-fsr-test.ps1 -Rel C:\Users\Uzbekunknown\nr-rel\cache-3ce573a\dlss-nr-windows`).
+`nr-game\hogwarts-fsr-test.ps1 -Rel %USERPROFILE%\nr-rel\cache-3ce573a\dlss-nr-windows`).
 The game as set: FSR 3 Quality at 1920x1080 in a window, XeFG x4 on; B at 0.4. `cache=` flipped
 live in `nr-xess.txt` is taken within a second, the cache reads FSR's depth (1284x724, reversed),
 every refresh is answered. It speeds the game up little. Real frame times from a per-frame log
