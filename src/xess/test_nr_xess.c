@@ -1623,6 +1623,7 @@ static int run_cache(void)
 	ID3D12Resource *offsets_back = make_buffer(D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE,
 						   D3D12_RESOURCE_STATE_COPY_DEST);
 	uint64_t previous_at_c = 0;
+	const LONG64 counted_before = InterlockedCompareExchange64(&panel_frames, 0, 0);
 	for (int f = 0; f < FRAMES; f++) {
 		params.pColorTexture = out[f];
 		params.pOutputTexture = out[f];
@@ -1669,6 +1670,20 @@ static int run_cache(void)
 	printf("%s edit cache: the stand-in was asked for %d, %d, %d and %d of the four frames\n",
 	       cadence ? "ok  " : "FAIL", asked[0], asked[1], asked[2], asked[3]);
 	failures += !cadence;
+	/* The panel's NR rate (panel_count_answer, panel_count_carried): A's answer and the two carried
+	 * frames, B and D, and not C, which the stand-in declined. An answer is counted on the worker
+	 * once the reply is read, which may be after the GPU has finished the frame, so it is waited
+	 * for a moment, and read again after, so a count past three is seen too. */
+	LONG64 counted = 0;
+	for (int tries = 0; tries < 100 && counted < 3; tries++) {
+		counted = InterlockedCompareExchange64(&panel_frames, 0, 0) - counted_before;
+		if (counted < 3) Sleep(10);
+	}
+	Sleep(50);
+	counted = InterlockedCompareExchange64(&panel_frames, 0, 0) - counted_before;
+	printf("%s edit cache: the panel counts %lld frames with NR in them for A answered, B and D carried "
+	       "and C declined (3)\n", counted == 3 ? "ok  " : "FAIL", (long long)counted);
+	failures += counted != 3;
 	/* C's offsets lead back to A, (-4, -2), where A had the surface on screen */
 	float *o;
 	ID3D12Resource_Map(offsets_back, 0, NULL, (void **)&o);

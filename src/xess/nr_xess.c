@@ -494,6 +494,17 @@ static void panel_count_answer(uint32_t network_us)
 	}
 }
 
+/* A frame the edit cache carried NR's newest change onto (`cache=N`, `record_carry`). It goes into
+ * the picture with NR's change in it, as an answered one does, so the counter's NR rate counts it;
+ * the network's time stays the answers' own. Counting the answers alone, the counter read NR at
+ * half the game's rate with `cache=2` - 8-9 a second beside a network of 25 ms, in Hogwarts Legacy
+ * at 17-18 frames a second (the owner, 2026-11-20). The log's "NR: N frames" lines still count
+ * the answers, and "edit cache: ... carried frames" these. */
+static void panel_count_carried(void)
+{
+	InterlockedIncrement64(&panel_frames);
+}
+
 #ifndef NR_XESS_TEST
 /* ---- The in-game panel (nr_xess_panel.cpp), INS, as in a Vulkan game ---- */
 
@@ -3440,6 +3451,7 @@ static int record_carry(ID3D12GraphicsCommandList *list, const xess_d3d12_execut
 	nr_split_restore(list, state);
 	nr_split_snapshot_free(state);
 	cache_next(0);
+	panel_count_carried();
 	return 1;
 }
 

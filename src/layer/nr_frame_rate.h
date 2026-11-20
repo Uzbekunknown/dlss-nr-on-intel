@@ -8,8 +8,11 @@
  *   the screen's  every present of the swap chain the panel is drawn on: in the Vulkan layer the
  *                 presents of its primary swapchain, in DirectX 12 the presents DXGI's hook sees,
  *                 which under XeFG are the generator's and include its frames;
- *   NR's          the frames the daemon answered and the host put into the picture, which is what
- *                 the proxy's "NR: N frames in 5 s" log line has always counted.
+ *   NR's          the frames with NR's change in them: the ones the daemon answered and the host
+ *                 put into the picture, which the proxy's "NR: N frames in 5 s" log line counts,
+ *                 and in DirectX 12 with the edit cache (`cache=N`) the ones NR's newest change
+ *                 was carried onto between answers. Not 1000 over the network's milliseconds:
+ *                 the game renders on the same GPU, and NR's rate is the game's own with NR in it.
  *
  * And the network's time for one frame, when the daemon reports it: its FRAME reply carries the
  * network's microseconds in `detail` since 2026-11-05 (nr_gpu_wire.h). The frames on the CPU path
@@ -41,7 +44,7 @@ extern "C" {
 /* What a host counts, each a total since it started counting. */
 typedef struct nr_frame_counts {
 	uint64_t presented;       /* the game's presents, of the swap chain the panel is drawn on */
-	uint64_t nr_frames;       /* frames NR answered and the host put into the picture */
+	uint64_t nr_frames;       /* frames with NR's change in them: answered, or carried onto */
 	uint64_t network_us;      /* the network's time, summed over the answers that reported it */
 	uint64_t network_frames;  /* how many answers reported it */
 } nr_frame_counts;
@@ -71,11 +74,15 @@ typedef struct nr_frame_counts {
  * anything else, so a lost frame costs one point rather than the graph.
  *
  * 120 samples is two seconds at 60 and four at 30 - long enough to see a hitch travel, short
- * enough that the right edge is now. The ring can hold the value up to `NR_GRAPH_CEIL_MS`, which
- * the drawing side scales against; a frame slower than that is drawn at the ceiling rather than
- * making every other point invisible. */
+ * enough that the right edge is now. The ring holds a value up to `NR_GRAPH_CEIL_MS`, and a frame
+ * or a network slower than that is kept AT the ceiling, never left out. The axis is the window's
+ * own percentiles (`nr_frame_graph_axis`, below), so the ceiling only bounds a stall; it is a
+ * second because a network alone can take longer than the 100 ms it was: 166 ms at render scale
+ * 1.0 and 1920x1080 on the Arc 140V, and the network's graph was empty exactly then (the owner,
+ * Hogwarts Legacy, 2026-11-20). `NR_RATE_GAP` starts the graph over after two seconds without a
+ * present, so nothing much past it reaches the ring anyway. */
 #define NR_GRAPH_SAMPLES 120
-#define NR_GRAPH_CEIL_MS 100.0
+#define NR_GRAPH_CEIL_MS 1000.0
 
 typedef struct nr_frame_graph {
 	/* Milliseconds between presents, oldest first in the ring. A slot is `-1` until it is used, so
@@ -97,14 +104,19 @@ static inline void nr_frame_graph_reset(nr_frame_graph *g)
 }
 
 /* One present: the milliseconds since the last one, and the network's time for it when the answer
- * carried one (`net_ms` below 0 appends no net point, which is every frame on the CPU path). */
+ * carried one (`net_ms` below 0 appends no net point, which is every frame on the CPU path).
+ *
+ * **A network slower than the ceiling is drawn at it, as a frame is.** It used to be dropped like a
+ * missing time, so at render scale 1.0 every point was a gap and the graph said "no network time"
+ * while the network was simply slow. Below 0 (and NaN) is the only gap. */
 static inline void nr_frame_graph_add(nr_frame_graph *g, float frame_ms, float net_ms)
 {
 	if (!g) return;
 	if (frame_ms < 0.0f) frame_ms = 0.0f;
 	if (frame_ms > (float)NR_GRAPH_CEIL_MS) frame_ms = (float)NR_GRAPH_CEIL_MS;
 	g->frame_ms[g->next] = frame_ms;
-	if (net_ms < 0.0f || net_ms > (float)NR_GRAPH_CEIL_MS) net_ms = -1.0f;
+	if (!(net_ms >= 0.0f)) net_ms = -1.0f;
+	else if (net_ms > (float)NR_GRAPH_CEIL_MS) net_ms = (float)NR_GRAPH_CEIL_MS;
 	g->net_ms[g->next] = net_ms;
 	g->next = (g->next + 1) % NR_GRAPH_SAMPLES;
 	if (g->count < NR_GRAPH_SAMPLES) g->count++;

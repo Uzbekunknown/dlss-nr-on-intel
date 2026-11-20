@@ -114,10 +114,13 @@ EXTRA = {
     "fps_nr_off":  (None,              "NR off"),
     "fps_network": (None,              "network {} ms"),
     "fps_hint":    (None,              "Screen: the frames the game presents each second, frame "
-                                       "generation's included. NR: the frames NR answered and put "
-                                       "into the picture each second. Under frame generation the "
-                                       "screen shows more frames than NR made. Network: the "
-                                       "network's time for one frame."),
+                                       "generation's included. NR: the frames with NR's change in "
+                                       "them each second; with the network on every other frame "
+                                       "(DirectX 12) that counts the frames its change is carried "
+                                       "onto too. Under frame generation the screen shows more "
+                                       "frames than NR made. Network: the network's time for one "
+                                       "answer. The game draws on the same GPU, so NR makes fewer "
+                                       "frames a second than the network's time alone would allow."),
     # Where the counter is shown: in the panel only, or in a corner of the screen as well, where it
     # stays while the panel is shut. The option's row and its five choices, in this order.
     "counter":              (None,     "Frame counter"),
@@ -196,9 +199,12 @@ OWN = {
         "fps_nr_off":    "NR off",
         "fps_network":   "network {} ms",
         "fps_hint":      "Screen: the frames the game presents each second, frame generation's "
-                         "included. NR: the frames NR answered and put into the picture each second. "
-                         "Under frame generation the screen shows more frames than NR made. "
-                         "Network: the network's time for one frame.",
+                         "included. NR: the frames with NR's change in them each second; with the "
+                         "network on every other frame (DirectX 12) that counts the frames its "
+                         "change is carried onto too. Under frame generation the screen shows more "
+                         "frames than NR made. Network: the network's time for one answer. The "
+                         "game draws on the same GPU, so NR makes fewer frames a second than the "
+                         "network's time alone would allow.",
         "counter":       "Frame counter",
         "counter_hint":  "Where the frame rates are shown. In a corner they stay on screen with the "
                          "panel closed and take no keys or clicks. Saved with the other settings.",
@@ -256,10 +262,21 @@ OWN = {
         "fps_nr":        "NR {} \u5e27/\u79d2",
         "fps_nr_off":    "NR \u5173\u95ed",
         "fps_network":   "\u7f51\u7edc {} \u6beb\u79d2",
-        "fps_hint":      "\u753b\u9762\uff1a\u6e38\u620f\u6bcf\u79d2\u5448\u73b0\u7684\u5e27\u6570\uff0c\u5305\u62ec\u5e27\u751f\u6210\u7684\u5e27\u3002"
-                         "NR\uff1aNR \u6bcf\u79d2\u5904\u7406\u5e76\u5199\u5165\u753b\u9762\u7684\u5e27\u6570\u3002"
-                         "\u5f00\u542f\u5e27\u751f\u6210\u65f6\uff0c\u753b\u9762\u663e\u793a\u7684\u5e27\u591a\u4e8e NR \u5904\u7406\u7684\u5e27\u3002"
-                         "\u7f51\u7edc\uff1a\u7f51\u7edc\u5904\u7406\u4e00\u5e27\u6240\u7528\u7684\u65f6\u95f4\u3002",
+        "fps_hint":      "\u753b\u9762\uff1a"
+                         "\u6e38\u620f\u6bcf\u79d2\u5448\u73b0\u7684\u5e27\u6570\uff0c"
+                         "\u5305\u62ec\u5e27\u751f\u6210\u7684\u5e27\u3002NR\uff1a"
+                         "\u6bcf\u79d2\u5e26\u6709 NR \u6539\u52a8\u7684\u5e27\u6570\uff1b"
+                         "\u5f00\u542f\u7f51\u7edc\u9694\u5e27\u5904\u7406\uff08DirectX "
+                         "12\uff09\u65f6\uff0c"
+                         "\u4e5f\u5305\u62ec\u6cbf\u7528\u5176\u6539\u52a8\u7684\u5e27\u3002"
+                         "\u5f00\u542f\u5e27\u751f\u6210\u65f6\uff0c"
+                         "\u753b\u9762\u663e\u793a\u7684\u5e27\u591a\u4e8e NR "
+                         "\u5904\u7406\u7684\u5e27\u3002\u7f51\u7edc\uff1a"
+                         "\u7f51\u7edc\u6bcf\u6b21\u5904\u7406\u6240\u7528\u7684\u65f6\u95f4\u3002"
+                         "\u6e38\u620f\u4e0e NR \u4f7f\u7528\u540c\u4e00\u5757\u663e\u5361\uff0c"
+                         "\u56e0\u6b64 NR "
+                         "\u7684\u5e27\u6570\u5c11\u4e8e\u4ec5\u6309\u7f51\u7edc\u65f6\u95f4\u7b97"
+                         "\u51fa\u7684\u5e27\u6570\u3002",
         "counter":       "\u5e27\u7387\u663e\u793a",
         "counter_hint":  "\u5e27\u7387\u663e\u793a\u7684\u4f4d\u7f6e\u3002\u653e\u5728\u89d2\u843d\u65f6\uff0c\u9762\u677f\u5173\u95ed\u540e\u4ecd\u4f1a\u663e\u793a\uff0c"
                          "\u4e14\u4e0d\u63a5\u6536\u6309\u952e\u6216\u70b9\u51fb\u3002\u4e0e\u5176\u4ed6\u8bbe\u7f6e\u4e00\u8d77\u4fdd\u5b58\u3002",
@@ -337,15 +354,39 @@ OWN = {
         "fps_nr":        "NR {} \u043a\u0430\u0434\u0440/\u0441",
         "fps_nr_off":    "NR \u0432\u044b\u043a\u043b.",
         "fps_network":   "\u0441\u0435\u0442\u044c {} \u043c\u0441",
-        "fps_hint":      "\u042d\u043a\u0440\u0430\u043d: \u043a\u0430\u0434\u0440\u044b, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0438\u0433\u0440\u0430 "
-                         "\u0432\u044b\u0432\u043e\u0434\u0438\u0442 \u0437\u0430 \u0441\u0435\u043a\u0443\u043d\u0434\u0443, "
-                         "\u0432\u043c\u0435\u0441\u0442\u0435 \u0441 \u043a\u0430\u0434\u0440\u0430\u043c\u0438 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438. "
-                         "NR: \u043a\u0430\u0434\u0440\u044b, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 NR \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043b "
-                         "\u0438 \u0432\u044b\u0432\u0435\u043b \u0437\u0430 \u0441\u0435\u043a\u0443\u043d\u0434\u0443. "
-                         "\u041f\u0440\u0438 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u043a\u0430\u0434\u0440\u043e\u0432 "
-                         "\u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435 \u0438\u0445 \u0431\u043e\u043b\u044c\u0448\u0435, "
-                         "\u0447\u0435\u043c \u0441\u0434\u0435\u043b\u0430\u043b NR. "
-                         "\u0421\u0435\u0442\u044c: \u0432\u0440\u0435\u043c\u044f \u0441\u0435\u0442\u0438 \u043d\u0430 \u043e\u0434\u0438\u043d \u043a\u0430\u0434\u0440.",
+        "fps_hint":      "\u042d\u043a\u0440\u0430\u043d: \u043a\u0430\u0434\u0440\u044b, "
+                         "\u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0438\u0433\u0440\u0430 "
+                         "\u0432\u044b\u0432\u043e\u0434\u0438\u0442 \u0437\u0430 "
+                         "\u0441\u0435\u043a\u0443\u043d\u0434\u0443, "
+                         "\u0432\u043c\u0435\u0441\u0442\u0435 \u0441 "
+                         "\u043a\u0430\u0434\u0440\u0430\u043c\u0438 "
+                         "\u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438. NR: "
+                         "\u043a\u0430\u0434\u0440\u044b \u0441 "
+                         "\u043f\u0440\u0430\u0432\u043a\u043e\u0439 NR \u0437\u0430 "
+                         "\u0441\u0435\u043a\u0443\u043d\u0434\u0443; \u0441 "
+                         "\u0441\u0435\u0442\u044c\u044e \u0447\u0435\u0440\u0435\u0437 "
+                         "\u043a\u0430\u0434\u0440 (DirectX 12) \u0441\u044e\u0434\u0430 "
+                         "\u0432\u0445\u043e\u0434\u044f\u0442 \u0438 "
+                         "\u043a\u0430\u0434\u0440\u044b, \u043d\u0430 "
+                         "\u043a\u043e\u0442\u043e\u0440\u044b\u0435 "
+                         "\u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 "
+                         "\u0435\u0451 \u043f\u0440\u0430\u0432\u043a\u0430. \u041f\u0440\u0438 "
+                         "\u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 "
+                         "\u043a\u0430\u0434\u0440\u043e\u0432 \u043d\u0430 "
+                         "\u044d\u043a\u0440\u0430\u043d\u0435 \u0438\u0445 "
+                         "\u0431\u043e\u043b\u044c\u0448\u0435, \u0447\u0435\u043c "
+                         "\u0441\u0434\u0435\u043b\u0430\u043b NR. \u0421\u0435\u0442\u044c: "
+                         "\u0432\u0440\u0435\u043c\u044f \u0441\u0435\u0442\u0438 \u043d\u0430 "
+                         "\u043e\u0434\u0438\u043d \u043e\u0442\u0432\u0435\u0442. "
+                         "\u0418\u0433\u0440\u0430 \u0440\u0438\u0441\u0443\u0435\u0442 "
+                         "\u043d\u0430 \u0442\u043e\u0439 \u0436\u0435 "
+                         "\u0432\u0438\u0434\u0435\u043e\u043a\u0430\u0440\u0442\u0435, "
+                         "\u043f\u043e\u044d\u0442\u043e\u043c\u0443 "
+                         "\u043a\u0430\u0434\u0440\u043e\u0432 NR "
+                         "\u043c\u0435\u043d\u044c\u0448\u0435, \u0447\u0435\u043c "
+                         "\u043f\u043e\u0437\u0432\u043e\u043b\u0438\u043b\u043e \u0431\u044b "
+                         "\u043e\u0434\u043d\u043e \u0432\u0440\u0435\u043c\u044f "
+                         "\u0441\u0435\u0442\u0438.",
         "counter":       "\u0421\u0447\u0451\u0442\u0447\u0438\u043a \u043a\u0430\u0434\u0440\u043e\u0432",
         "counter_hint":  "\u0413\u0434\u0435 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0447\u0430\u0441\u0442\u043e\u0442\u0443 \u043a\u0430\u0434\u0440\u043e\u0432. "
                          "\u0412 \u0443\u0433\u043b\u0443 \u043e\u043d\u0430 \u0432\u0438\u0434\u043d\u0430 \u0438 \u043f\u0440\u0438 "
@@ -408,10 +449,14 @@ OWN = {
         "fps_nr":        "NR {} fps",
         "fps_nr_off":    "NR desactivado",
         "fps_network":   "red {} ms",
-        "fps_hint":      "Pantalla: los fotogramas que el juego presenta por segundo, incluidos los de "
-                         "la generaci\u00f3n de fotogramas. NR: los fotogramas que NR proces\u00f3 y puso "
-                         "en la imagen por segundo. Con generaci\u00f3n de fotogramas la pantalla "
-                         "muestra m\u00e1s de los que hizo NR. Red: el tiempo de la red por fotograma.",
+        "fps_hint":      "Pantalla: los fotogramas que el juego presenta por segundo, incluidos "
+                         "los de la generaci\u00f3n de fotogramas. NR: los fotogramas con el "
+                         "cambio de NR por segundo; con la red en fotogramas alternos (DirectX 12) "
+                         "cuenta tambi\u00e9n aquellos a los que se lleva su cambio. Con "
+                         "generaci\u00f3n de fotogramas la pantalla muestra m\u00e1s de los que "
+                         "hizo NR. Red: el tiempo de la red por respuesta. El juego dibuja en la "
+                         "misma GPU, as\u00ed que NR hace menos fotogramas por segundo de los que "
+                         "permitir\u00eda solo el tiempo de la red.",
         "counter":       "Contador de fotogramas",
         "counter_hint":  "D\u00f3nde se muestran las tasas de fotogramas. En una esquina siguen en "
                          "pantalla con el panel cerrado y no toman teclas ni clics. Se guarda con los "

@@ -658,6 +658,56 @@ int main(void)
             check(out[0] > (float)NR_GRAPH_CEIL_MS - 0.5f,
                   "a frame past the ceiling is drawn at it", detail);
 
+            /* **A slow network is a time, not a gap** (the owner, Hogwarts Legacy, 2026-11-20: at
+             * render scale 1.0 the network's graph said "no network time"). Every answer over the
+             * old 100 ms ceiling was dropped as if none had been measured. 166 ms is network B at
+             * 1.0 and 1920x1080 on the 140V; a network past the ceiling is drawn at it, as a frame
+             * is; below 0 and NaN are still gaps. */
+            nr_frame_graph_reset(&g);
+            nr_frame_graph_add(&g, 180.0f, 166.0f);
+            nr_frame_graph_add(&g, 6000.0f, 5000.0f);
+            nr_frame_graph_add(&g, 180.0f, -1.0f);
+            nr_frame_graph_add(&g, 180.0f, NAN);
+            nn = nr_frame_graph_net(&g, out, NR_GRAPH_SAMPLES);
+            snprintf(detail, sizeof detail, "n=%d: %.1f %.1f %.1f %.1f", nn, (double)out[0],
+                     (double)out[1], (double)out[2], (double)out[3]);
+            check(nn == 4 && out[0] > 165.9f && out[0] < 166.1f &&
+                  out[1] > (float)NR_GRAPH_CEIL_MS - 0.5f && out[1] < (float)NR_GRAPH_CEIL_MS + 0.5f &&
+                  out[2] == -1.0f && out[3] == -1.0f,
+                  "a network slower than 100 ms keeps its points; past the ceiling it is drawn at it",
+                  detail);
+
+            /* And through the counter's sampling, which is what the panel draws: six presents a
+             * second, an answer on each, 166 ms of network apiece. */
+            {
+                nr_frame_rates rs;
+                nr_frame_rates_reset(&rs);
+                nr_frame_counts sc = {0, 0, 0, 0};
+                nr_frame_rates_sample(&rs, 0.0, &sc);
+                for (int i = 1; i <= 12; ++i) {
+                    sc.presented++;
+                    sc.nr_frames++;
+                    sc.network_us += 166000;
+                    sc.network_frames++;
+                    nr_frame_rates_sample(&rs, i / 6.0, &sc);
+                }
+                /* The first point after the start has no present before it to difference
+                 * against, so it is a gap by design; every point with a time is 166. */
+                float slow[NR_GRAPH_SAMPLES];
+                const int sn = nr_frame_graph_net(&rs.graph, slow, NR_GRAPH_SAMPLES);
+                int at166 = 0, timed = 0;
+                for (int i = 0; i < sn; ++i)
+                    if (slow[i] >= 0.0f) {
+                        ++timed;
+                        at166 += slow[i] > 165.9f && slow[i] < 166.1f;
+                    }
+                snprintf(detail, sizeof detail, "%d of %d timed points at 166 ms, %d points; line %s",
+                         at166, timed, sn,
+                         rs.network_ms > 165.9 && rs.network_ms < 166.1 ? "says 166" : "does not");
+                check(timed >= 10 && at166 == timed && rs.network_ms > 165.9 && rs.network_ms < 166.1,
+                      "a 166 ms network is on the graph and in the counter's line", detail);
+            }
+
             /* **The rates feed it.** A present a frame at 60 Hz is 16.7 ms a point, and the panel
              * hands the same ring to the counter; this is the join between the counter's
              * arithmetic and the graph's. */
