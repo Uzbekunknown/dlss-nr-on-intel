@@ -96,6 +96,10 @@ NR runs a large neural network on every frame, on the same GPU as the game.
   little less. Setup chooses it when your DLL has it.
 - **A game's frame generation** adds its frames after NR, so the screen shows about twice NR's
   rate: in Hogwarts Legacy with XeSS frame generation, 51-52 fps on screen from NR's 25-26.
+- **In a DirectX 12 game**, setup's "Faster, experimental" runs the network on every other frame
+  and carries its change along the game's motion onto the frame between: about 16 % more frames
+  in Hogwarts Legacy on an Arc 140V. Fine detail may pulse faintly; "Smooth in each new answer"
+  softens that and takes most of the speed-up back.
 - The picture is held steady from frame to frame; a little shimmer can remain where things move.
 
 Every setting, and NR's frame times on each GPU: [docs/SETTINGS.md](docs/SETTINGS.md).
@@ -109,7 +113,7 @@ date; a later release can do better or worse.
 | --- | --- | --- | --- | --- |
 | Hogwarts Legacy, after its DLSS 5 update | Arc 140V | Windows, DirectX 12 through XeSS, network B | 25-26 fps of NR's at 1280x720 and render scale 0.4, and 51-52 on screen with XeSS frame generation x2; profile `standard` or `hogwarts` | 2026-11-06 |
 | Mortal Kombat 11 | Arc 140V | Windows, DirectX 11 through DXVK, network B | 46 fps at 1280x720 and render scale 0.4, about 11.5 at render scale 1.0 | 2026-11-12 |
-| Hogwarts Legacy through FSR 3.1 | Arc 140V | Windows, DirectX 12 through the game's FSR 3.1 (FidelityFX 1.0.1), network B | about 18 fps of NR's at 1920x1080 and render scale 0.4 at the title screen, 15-22 in play, with the game's frame generation x4 too; profile `hogwarts` | 2026-11-12 |
+| Hogwarts Legacy through FSR 3.1 | Arc 140V | Windows, DirectX 12 through the game's FSR 3.1 (FidelityFX 1.0.1), network B | about 16 fps at 1920x1080 and render scale 0.4 in play, and about 19 with setup's "Faster, experimental" (the network on every other frame), the game's frame generation x4 on top; profile `hogwarts` | 2026-11-20 |
 | Hogwarts Legacy through OptiScaler 0.9.4 | Arc 140V | Windows, DirectX 12, OptiScaler's XeSS taking the game's XeSS or its FSR 3, network B | about 28 fps of NR's at 1280x720 and render scale 0.4 | 2026-11-05 |
 | Euro Truck Simulator 2 | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | 21-22 fps at 1920x1080 and render scale 0.4 with network B; 6 at full render scale | 2026-11-04 |
 | Star Wars Battlefront II (2017) | Arc A770, a player's report ([#37](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/37)) | Windows, DirectX 11 through DXVK | about 22 fps at 1920x1080 and render scale 0.4 with network B, once the player kept the PC's other Vulkan layers out (`VK_LOADER_LAYERS_DISABLE=~implicit~`) | 2026-11-04 |

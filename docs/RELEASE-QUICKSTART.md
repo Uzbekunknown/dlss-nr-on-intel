@@ -152,6 +152,18 @@ processed frames a second to 37–38 when it came, and B runs there at 46 now (1
 scale 0.4, Arc 140V). Where a game cannot keep its frames there, NR takes its usual path, and
 Save report says why.
 
+**Faster, experimental: the network on every other frame (DirectX 12)**, for DirectX 12 games
+alone, takes effect at once, in a running game too. The network answers every other frame, and
+on the frame between NR carries its change along the game's motion; a fast turn of the camera is
+answered on every frame. In Hogwarts Legacy at 1920×1080, render scale 0.4 and network B on the
+Arc 140V the game went from 16.2 frames a second to 18.8 (2026-11-20). Fine detail may pulse
+faintly. **Smooth in each new answer of the network**, under it, fades each answer in over the
+frames until the next: it pulses less, and costs most of the gain (16.7).
+
+**Experimental: another matrix kernel for Arc A-series** runs the network's plain matrix
+multiplications on another kernel, from the next game start; the picture is the same. It is
+there for A-series owners to try and report, and is slower on Arc B-series and Core Ultra.
+
 **Network.** `nvngx_dlssnr.dll` 310.9.16 carries two networks: **A**, the one NR has always
 run, and **B**, a smaller one NVIDIA added. With that DLL, **Install NR** takes B out of it
 beside A and runs B, the faster one; **NR controls** offers both under **Network**, and the

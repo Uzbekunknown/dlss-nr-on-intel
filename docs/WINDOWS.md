@@ -53,6 +53,21 @@ where its word kept a history the test would have dropped. In the Hogwarts Legac
 limit of 0.15) and was never past the limit elsewhere. `NR_DX12_CUT_TEST=1` decides by the test
 alone, as before.
 
+The setup window's "Faster, experimental: the network on every other frame (DirectX 12)" (0.0.7)
+writes `cache=2` into the proxy's `nr-xess.txt`: the network answers every other frame, and on
+the frame between the proxy carries its newest change along the game's motion and depth (the
+passes after the upscaler in `src/xess/nr_xess.hlsl`); a fast turn of the camera is answered on
+every frame. In Hogwarts Legacy at 1920x1080 and render scale 0.4 on Arc 140V it took the game from
+16.2 to 18.8 frames a second (2026-11-20). "Smooth in each new answer of the network" writes
+`cache_fade=1`: each answer fades in over the frames until the next instead of replacing the last
+at once, and that costs most of the gain (16.7). Both take effect in a running game. In the panel
+the counter's NR rate counts the carried frames too.
+
+An upscaler's output of 8 bits a channel (R8G8B8A8 or B8G8R8A8, UNORM, SRGB or TYPELESS: a game
+that upscales after its tone map, as OptiScaler's XeSS did in issue #46) is taken as a display
+picture since 0.0.7: NR is handed its bytes as they are, and the answer goes back with the game's
+alpha. Such an output never takes the edit cache, whose passes work in scene light.
+
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the
 layer and the daemon do too, from an MSVC build (`docs/WINDOWS-PORT.md`). What
