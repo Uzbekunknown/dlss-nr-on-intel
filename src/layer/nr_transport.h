@@ -18,10 +18,25 @@
 #ifndef NR_TRANSPORT_H
 #define NR_TRANSPORT_H
 
+/* A static function that some includer will not call. `-Wunused-function` is right about almost
+ * every static in this tree and wrong about the four helpers in this header, because each
+ * translation unit takes the ones it needs. See `nr_link_read_nowait`. */
+#if defined(__GNUC__) || defined(__clang__)
+#define NR_UNUSED __attribute__((unused))
+#elif defined(_MSC_VER)
+#define NR_UNUSED
+#else
+#define NR_UNUSED
+#endif
+
 #ifdef _WIN32
 
 #include <windows.h>
 #include <stdio.h>   /* snprintf, used by both arms */
+
+/* How long the layer gives a daemon it has never met to follow its pixels with a trailer. See
+ * `nr_link_read_nowait`, which is where it is used and where the reasoning is. */
+#define NR_LINK_TRAILER_BUDGET_US 2000
 
 /* One connected endpoint. `handle` is a pipe handle; `deadline` is the same
  * whole-exchange budget the Unix build gives SO_SNDTIMEO/SO_RCVTIMEO. */
@@ -102,12 +117,14 @@ static int nr_link_write(nr_link *link, const void *data, size_t count)
 static int nr_link_read(nr_link *link, void *data, size_t count)
 {
 	unsigned char *p = data;
-	DWORD waited = 0;
+	DWORD waited = 0;                  /* milliseconds spent waiting */
+	const DWORD started = GetTickCount();
 	while (count > 0) {
 		DWORD available = 0;
 		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
 			return -1;
 		if (available == 0) {
+			waited = GetTickCount() - started;
 			if (waited >= link->deadline_ms) return -1;
 			Sleep(10);
 			waited += 10;
@@ -123,6 +140,92 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 	return 0;
 }
 
+/* **Read what is already there, and give up at once if it is not.**
+ *
+ * The legacy answer's optional trailer (the network's time, appended by a daemon that
+ * has it) arrives a moment after the pixels, and whether it arrives at all says which
+ * daemon is answering. `nr_link_read` cannot tell those apart: its deadline is the
+ * exchange's whole 60-second budget, so waiting in it for bytes an old daemon will
+ * never send would hang every frame. This waits a few milliseconds at most — enough
+ * for a trailer that is in flight, nothing for one that does not exist.
+ *
+ * Returns 0 and fills `data` when `count` bytes were read; returns 1 when the peer
+ * has nothing (or not enough yet) — not an error, just no trailer this frame.
+ *
+ * **`NR_UNUSED` because a unit that includes this header need not read a trailer.** Every
+ * function here is `static` and every translation unit that wants one gets its own copy, so a
+ * file that wants `nr_link_read` and not this used to warn under MinGW: the same
+ * `-Wunused-function` the other statics give there. Marking it is the honest answer; the
+ * alternative is a per-file define that lies about how many callers there are. */
+NR_UNUSED static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	/* **A wall-clock budget, measured on a clock that can resolve it.** Two mistakes are
+	 * possible here and this function has now made both:
+	 *
+	 *   - counting Sleep(1) calls and calling the count milliseconds. Sleep(1) rounds up to
+	 *     the scheduler tick - 15.6 ms by default, and nothing in this tree calls
+	 *     timeBeginPeriod - so "30 sleeps" was anywhere from 30 ms to nearly half a second.
+	 *   - measuring with GetTickCount, which fixes the counting but not the resolution: the
+	 *     tick is the same 15.6 ms, so "2 ms" was really "somewhere in the next tick", and
+	 *     `Sleep(0)` spinning against it burned a tick's worth of presents before giving up.
+	 *     Measured by the reviewer against a stand-in that closes 10 ms after the pixels: six
+	 *     milliseconds a frame more than the client before this PR.
+	 *
+	 * QueryPerformanceCounter is the machine's high-resolution counter and costs about what
+	 * GetTickCount does. The budget below is really two milliseconds.
+	 *
+	 * **And nothing inside the budget sleeps a tick.** A `Sleep(1)` here, after a few dozen
+	 * `Sleep(0)`, was meant to let a starved writer run; but `Sleep(1)` sleeps to the next
+	 * scheduler tick, 15.6 ms unless the process has raised its timer resolution (the layer
+	 * never does, a game may or may not), and the clock above is read only when it wakes.
+	 * The few dozen yields end well inside two milliseconds, so every frame without a trailer
+	 * reached it. Measured on 11-19 (Arc 140V): this function on a connected pipe that holds
+	 * nothing and stays open, 200 calls back to back, median: 15.7 ms with the `Sleep(1)` (2.9
+	 * once the process has set a 1 ms timer, as some games do), 16.0 with GetTickCount, 2.00
+	 * with `Sleep(0)` alone, with either timer. A writer starved for the whole budget costs one
+	 * frame's trailer, which is all the budget is for. */
+	LARGE_INTEGER freq, started;
+	if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) {
+		/* No clock to bound the wait by: take what is there and do not wait at all. */
+		freq.QuadPart = 0;
+	}
+	QueryPerformanceCounter(&started);
+	while (count > 0) {
+		DWORD available = 0;
+		if (!PeekNamedPipe(link->handle, NULL, 0, NULL, &available, NULL))
+			return -1;
+		if (available == 0) {
+			/* Nothing YET is not nothing EVER: a large answer streams through a
+			 * 1 MB pipe buffer while the layer reads it, so the trailer - the tail
+			 * of the daemon's one `sendall` - can still be queued when the pixels
+			 * finish arriving. Measured on a 1280x720 legacy frame, the daemon's
+			 * write of the last bytes landed within a millisecond of the pixels.
+			 *
+			 * TWO milliseconds, once, for a daemon that will never send a trailer
+			 * at all: that is the price of asking a version we cannot identify,
+			 * against the seven-plus milliseconds of network work before it. */
+			if (!freq.QuadPart) return 1;
+			LARGE_INTEGER now;
+			QueryPerformanceCounter(&now);
+			const LONGLONG elapsed_us =
+				(now.QuadPart - started.QuadPart) * 1000000 / freq.QuadPart;
+			if (elapsed_us >= NR_LINK_TRAILER_BUDGET_US) return 1;
+			Sleep(0);
+			continue;
+		}
+		DWORD want = (DWORD)(count < available ? count : available);
+		DWORD got = 0;
+		if (!ReadFile(link->handle, p, want, &got, NULL)) return -1;
+		if (got == 0) return -1;
+		p += got;
+		count -= got;
+		/* A partial read means the trailer straddles a pipe boundary; give the
+		 * rest a moment rather than dropping half a magic word on the floor -
+		 * still inside the same two-millisecond budget. */
+	}
+	return 0;
+}
 #else  /* the Linux build, unchanged: a Unix socket */
 
 #include <sys/socket.h>
@@ -203,6 +306,31 @@ static int nr_link_read(nr_link *link, void *data, size_t count)
 		if (n <= 0) return -1;
 		p += n;
 		count -= (size_t)n;
+	}
+	return 0;
+}
+
+/* The Unix twin of the Windows `nr_link_read_nowait` above: take what has arrived,
+ * never wait. `MSG_DONTWAIT` fails with EAGAIN when the socket has nothing, which is
+ * the "no trailer this frame" case, not an error. A partial read waits a moment for
+ * the rest, as the Windows one does — the trailer is 8 bytes and straddles nothing
+ * bigger than itself, but a stream has no message boundaries to trust. */
+static int nr_link_read_nowait(nr_link *link, void *data, size_t count)
+{
+	unsigned char *p = data;
+	int waited = 0;
+	while (count > 0) {
+		ssize_t n = recv(link->fd, p, count, MSG_DONTWAIT);
+		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 1;
+		if (n < 0 && errno == EINTR) continue;
+		if (n <= 0) return -1;
+		p += n;
+		count -= (size_t)n;
+		if (count > 0) {
+			if (waited >= 20) return 1;
+			usleep(1000);
+			waited += 1;
+		}
 	}
 	return 0;
 }

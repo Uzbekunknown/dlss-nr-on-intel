@@ -70,7 +70,7 @@ endfunction()
 # fails the tests if the two lists part. Every shader depends on every shared GLSL
 # include: a superset, so an edit to one rebuilds a few shaders too many, never too few.
 set(NR_SPV)
-set(NR_GLSL_INCLUDES publish specialize residual_epilogue cosine_tree qkv_epilogue)
+set(NR_GLSL_INCLUDES publish specialize residual_epilogue cosine_tree qkv_epilogue history_sample)
 list(TRANSFORM NR_GLSL_INCLUDES PREPEND "${PROJECT_SOURCE_DIR}/src/gpu/")
 list(TRANSFORM NR_GLSL_INCLUDES APPEND ".glsl")
 function(nr_shader output source)
@@ -479,8 +479,8 @@ if(NR_BUILD_TESTS)
   nr_test(profile_tables "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/bench/frame_profile.py" --tables)
   foreach(name device_pick gemm_contract denorm input_fp16 compact_head gemm_int8 gemm_int8_staged
       window_block global_attention int8_quant gemm_residual window_residual window_attention
-      gemm_qkv glue ffn_fused staged_partial staged32 staged_packed gemm_e4m3 gemm_by_column epilogue
-      specialization gpu_report_network
+      gemm_qkv glue ffn_fused staged_partial staged32 staged_packed gemm_e4m3 gemm_by_column
+      prefer_tiled epilogue specialization gpu_report_network
       softmax_pack qkv_fusion scratch_arena graph frame_execution resident)
     nr_test(gpu_${name} "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/gpu/test_${name}.py")
   endforeach()

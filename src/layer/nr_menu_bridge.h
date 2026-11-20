@@ -112,7 +112,8 @@ void nr_menu_bridge_set_nr_saved(nr_menu_bridge *bridge, int on);
  * it shares the plumbing - a value that lives in `nr-env.txt` beside the game, written the moment
  * it changes and read by the layer at the next start - and because a second entry point that did
  * the same writes would be a second place for them to disagree. */
-enum { NR_PACING_ASYNC = 0, NR_PACING_GPU_IMAGE = 1, NR_PACING_EVERY = 2, NR_PACING_PRESET = 3 };
+enum { NR_PACING_ASYNC = 0, NR_PACING_GPU_IMAGE = 1, NR_PACING_EVERY = 2, NR_PACING_PRESET = 3,
+       NR_PACING_TILED = 4 };
 
 /* Name the proxy's environment file instead of taking it from beside this library.
  *
@@ -136,9 +137,18 @@ enum { NR_COUNTER_PANEL = 0, NR_COUNTER_TOP_LEFT = 1, NR_COUNTER_TOP_RIGHT = 2,
        NR_COUNTER_BOTTOM_LEFT = 3, NR_COUNTER_BOTTOM_RIGHT = 4, NR_COUNTER_PLACES = 5 };
 int nr_menu_bridge_counter(const nr_menu_bridge *bridge);
 void nr_menu_bridge_set_counter(nr_menu_bridge *bridge, int where);
+
+/* Whether the corner window draws the two frame-time graphs as well. The panel always draws them,
+ * so this is only ever about the corner - and a corner exists only when `counter` puts it
+ * somewhere. Default on; saved as `menu_graphs`. */
+int nr_menu_bridge_graphs(const nr_menu_bridge *bridge);
+void nr_menu_bridge_set_graphs(nr_menu_bridge *bridge, int on);
 int nr_menu_bridge_pacing_async(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_gpu_image(const nr_menu_bridge *bridge);
 int nr_menu_bridge_pacing_every(const nr_menu_bridge *bridge);
+/* The experimental switch for Arc A-series cards, `XMX_PREFER_TILED` in `nr-env.txt`: the
+ * network's plain GEMMs on the tiled kernel (libxmx `prefer_tiled`), from the next start. */
+int nr_menu_bridge_pacing_tiled(const nr_menu_bridge *bridge);
 
 /* Set one of them and write the file. Applies the conflicts the setup window states: the GPU
  * image path requires asynchronous mode OFF and every frame, so turning it on turns both of those

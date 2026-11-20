@@ -50,10 +50,11 @@ DXVK_FILES = ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
 PROXIES = {"x64": "nr_vulkan_proxy.dll", "x86": "nr_vulkan_proxy32.dll"}
 PROXY_NAME = "vulkan-1.dll"
 ENV_FILE = "nr-env.txt"
-# The variables set_pacing rewrites in ENV_FILE (Profile.nr_async, nr_every, gpu_image_path and
-# preset), and the most presents one network frame may cover in the window.
+# The variables set_pacing rewrites in ENV_FILE (Profile.nr_async, nr_every, gpu_image_path,
+# preset, change_metric and prefer_tiled), and the most presents one network frame may cover in
+# the window.
 PACING = ("NR_LAYER_LIVE", "NR_LAYER_ASYNC", "NR_GPU_IMAGE", "NR_GPU_TRANSPORT", "NR_GPU_ONLY",
-          "NR_PRESET")
+          "NR_PRESET", "NR_CHANGE_METRIC", "XMX_PREFER_TILED")
 MAX_EVERY = 4
 # The networks nvngx_dlssnr.dll carries, which NR_PRESET picks (notes/phase72-preset-b.md): A, the
 # original, and B, the faster one, from 310.9.16.0 on. Each one's logical weights, and their count.
@@ -146,6 +147,29 @@ class Profile:
     # For DirectX 12, the upscaler NR stands in front of: one of UPSCALERS. The setup window sends
     # none, so "auto"; a request may name one, for a game with both.
     upscaler: str = "auto"
+    # **Whether the corner window draws the two frame-time graphs.** 1 by default, which is what a
+    # counter in a corner looks best with: the number without the shape behind it says the last
+    # second averaged 14 ms and never says whether it stuttered. The panel always draws them; this
+    # is the corner alone, and it reaches the panel as `menu_graphs` in the settings file rather
+    # than through the environment - see `write_settings` below.
+    menu_graphs: int = 1
+    # Where the frame counter goes: 0 the panel alone, 1-4 the four corners. Written as
+    # `menu_counter` in the settings file, read by the panel like `menu_graphs` above.
+    #
+    # **Zero, matching the panel's own default** (`load_settings`: absent means the panel alone,
+    # because "a counter nobody asked for must not appear over a game"). This was 1, which made a
+    # fresh install disagree with itself: the window said "top right corner" while the panel -
+    # which is what actually draws - said panel-only, and the first touch of the window wrote 1
+    # and put a counter over a game nobody had asked to see it over.
+    menu_counter: int = 0
+    # NR_CHANGE_METRIC: how much NR changed each frame, in the daemon's log, for players' reports.
+    # Off unless asked for (the owner, 2026-11-15): 0.3 ms of a 1280x720 frame, 1-1.5 at 1920x1080.
+    change_metric: bool = False
+    # XMX_PREFER_TILED: the experimental switch for Arc A-series cards, the network's plain GEMMs
+    # on the tiled kernel rather than the staged one (libxmx `prefer_tiled`), which an A770 ran
+    # slower; the same picture either way, and slower on Arc B-series and Core Ultra. Off unless
+    # asked for (the owner, 2026-11-18), until A-series reports say what it gives.
+    prefer_tiled: bool = False
     # For DirectX 12, the experimental speed-up: the network answers every other frame at most and
     # its change is carried along the game's motion to the frames between (XESS_SETTINGS' `cache=`,
     # src/xess/nr_xess.c). Off unless chosen.
@@ -166,7 +190,10 @@ class Profile:
                 "launch_mode": self.launch_mode, "steam_app_id": self.steam_app_id,
                 "nr_async": self.nr_async, "nr_every": self.nr_every,
                 "gpu_image_path": self.gpu_image_path, "preset": self.preset,
-                "upscaler": self.upscaler, "nr_cache": self.nr_cache}
+                "upscaler": self.upscaler, "change_metric": self.change_metric,
+                "prefer_tiled": self.prefer_tiled,
+                "menu_graphs": self.menu_graphs, "menu_counter": self.menu_counter,
+                "nr_cache": self.nr_cache}
 
     @classmethod
     def from_dict(cls, values):
@@ -194,6 +221,28 @@ class Profile:
         upscaler = values.get("upscaler") or "auto"
         if not isinstance(upscaler, str) or upscaler not in UPSCALERS:
             raise ValueError("upscaler must be one of " + ", ".join(UPSCALERS))
+        # A profile from before the checkbox measured nothing: off.
+        change_metric = values.get("change_metric", False)
+        if not isinstance(change_metric, bool):
+            raise ValueError("change_metric must be a boolean")
+        # A profile from before the experimental switch ran the staged kernel: off.
+        prefer_tiled = values.get("prefer_tiled", False)
+        if not isinstance(prefer_tiled, bool):
+            raise ValueError("prefer_tiled must be a boolean")
+        # The panel's two preferences, which `to_dict` writes and this must read back: a
+        # profile that carried them and came back through a pacing save used to return
+        # with the defaults, so `discover` handed the window a stale counter place.
+        graphs = values.get("menu_graphs", 1)
+        if isinstance(graphs, bool) or not isinstance(graphs, int) or graphs not in (0, 1):
+            raise ValueError("menu_graphs must be 0 or 1")
+        # **Zero when absent, matching the panel.** Every profile written before this key
+        # existed says nothing about a corner, and `load_settings` in the panel reads a missing
+        # `menu_counter` as "the panel alone" - so a default of 1 here made the window say "top
+        # left" over a panel that was drawing nothing, and the first click on either new
+        # checkbox wrote that 1 into the file: a counter over the game nobody asked for.
+        counter = values.get("menu_counter", 0)
+        if isinstance(counter, bool) or not isinstance(counter, int) or not 0 <= counter <= 4:
+            raise ValueError("menu_counter must be a whole number from 0 to 4")
         cached = values.get("nr_cache", False)
         if not isinstance(cached, bool):
             raise ValueError("nr_cache must be a boolean")
@@ -205,7 +254,8 @@ class Profile:
                    disable_fossilize=fossilize, launch_mode=values.get("launch_mode", "direct"),
                    steam_app_id=str(values.get("steam_app_id") or ""),
                    nr_async=pipelined, nr_every=every, gpu_image_path=gpu_image_path,
-                   preset=preset, upscaler=upscaler, nr_cache=cached)
+                   preset=preset, upscaler=upscaler, change_metric=change_metric,
+                   prefer_tiled=prefer_tiled, menu_graphs=graphs, menu_counter=counter, nr_cache=cached)
 
 
 def profile_path(root):
@@ -221,6 +271,20 @@ def _read_json(path, limit=1024 * 1024):
 
 
 def _atomic_json(path, values):
+    """Replace `path` with `values`, retrying the rename while another process holds it.
+
+    On Windows `Path.replace` is MoveFileEx(REPLACE_EXISTING), which fails with
+    WinError 5 - permission denied, not "busy" - while any other process has the
+    destination open without FILE_SHARE_DELETE. That is the normal state here: the
+    layer's bridge reads the settings file, the daemon polls it, and a person may
+    have it open in an editor. Linux's rename(2) never fails for a reader, which is
+    why this only shows up on Windows.
+
+    Three tries, 50 ms apart: long enough to outlast one daemon poll, short enough
+    that a genuinely held file is reported rather than hung on. The message names
+    the cause, because "WinError 5" beside a settings slider says nothing about the
+    editor the user forgot.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".nr-json-", dir=path.parent)
@@ -228,7 +292,15 @@ def _atomic_json(path, values):
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(values, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
-        Path(temporary).replace(path)
+        for attempt in range(3):
+            try:
+                Path(temporary).replace(path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise PermissionError(
+                        f"{path} is open in another program; close it and try again") from None
+                time.sleep(0.05)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -379,6 +451,42 @@ def reset_settings(root, names=None):
     return save_settings(root, {name: defaults[name] for name in names})
 
 
+# The panel's own preferences, which are in the settings file but are not runtime knobs: the
+# daemon never reads them, so they do not go through `save_settings` and its knob table. The
+# setup window offers one of them - whether the corner counter draws the frame graphs - because
+# a player setting up a game has no panel open to change it in. The panel writes the same key
+# when the row is used, so the two cannot disagree: one file, one meaning, whoever wrote it last.
+PANEL_PREFERENCES = {"menu_graphs": (0, 1), "menu_counter": (0, 4)}
+
+
+def save_panel_preferences(root, changes):
+    """Merge panel preferences into the settings document, leaving every other key as it was.
+
+    Separate from `save_settings` on purpose. That one validates against the knob table and
+    refuses anything it does not know - correctly, because a knob name that is not there is a
+    caller's mistake. These keys are not knobs: `menu_counter` and `menu_graphs` are read by the
+    panel in the game's process, and a daemon never looks at them.
+
+    An unknown key is refused here too, and a value is checked against its range, so a typo in
+    the window fails at the window rather than writing a key nothing reads.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("Panel preferences must be a JSON object")
+    unknown = set(changes) - set(PANEL_PREFERENCES)
+    if unknown:
+        raise ValueError("Unknown panel preferences: " + ", ".join(sorted(unknown)))
+    for name, value in changes.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be an integer")
+        low, high = PANEL_PREFERENCES[name]
+        if not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}")
+    path, values = _settings_document(root)
+    values.update(changes)
+    _atomic_json(path, values)
+    return {"ok": True, "error": None, "path": str(path), "panel": dict(changes)}
+
+
 def load_profile(root):
     path = profile_path(root)
     if not path.exists():
@@ -454,6 +562,10 @@ def layer_environment(profile):
     values["NR_GPU_ONLY"] = "0"
     # The daemon the layer starts inherits it from the game's process.
     values["NR_PRESET"] = profile.preset
+    # Said either way, as the pacing is, so a value the game inherits cannot decide it.
+    values["NR_CHANGE_METRIC"] = "1" if profile.change_metric else "0"
+    # The daemon's libxmx reads it at start; said either way, as the change metric is.
+    values["XMX_PREFER_TILED"] = "1" if profile.prefer_tiled else "0"
     return values
 
 
@@ -2156,7 +2268,7 @@ def _rewrite_pacing_lines(path, wanted):
     own loader was set aside, `NR_REAL_VULKAN` - the installation, in other words, which a
     regenerated file would have to reconstruct and would get wrong the moment any of them moved.
     `nr_menu_bridge.c:write_pacing` makes the same trade for the same reason and its comment says
-    so. So the six pacing lines are dropped and re-appended from `wanted`, and nothing else is
+    so. So the pacing lines are dropped and re-appended from `wanted`, and nothing else is
     touched - not the comment, not the blank lines, not the order of what is left.
 
     Written through a temporary beside it and `os.replace`d, so a crash mid-write leaves the

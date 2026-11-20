@@ -27,10 +27,31 @@ whole frame at 1280x720 and 9 % at 1920x1080 (`notes/HANDOFF.md`, 2026-11-08 and
 `NR_HISTORY_SWAP=0` brings back the three history copies, to compare.
 
 `change` in the daemon's frame lines, how far the answer moved the game's frame, is a figure for
-the log alone, and on this path the composition writes a float32 copy of itself for it.
-`NR_CHANGE_METRIC=0`, in `dlss-nr\nr-env.txt` or the daemon's environment, leaves both out on
-every path: about 0.7 ms of a 1280x720 frame at render scale 0.4 on Arc 140V, the answer and the
-history the same bytes, and the frame lines read `change off`. It is on by default.
+the log alone, and on this path the composition writes a float32 copy of itself for it. It is off
+by default since 2026-11-15: about 0.3 ms of a 1280x720 frame and 1 to 1.5 ms of a 1920x1080 one
+at render scale 0.4 on Arc 140V, for a number only reports read, and the frame lines read `change
+off`. The setup window's checkbox "Measure how much NR changes each frame" writes
+`NR_CHANGE_METRIC=1` into `dlss-nr\nr-env.txt` (so does the daemon's environment) to collect it;
+the answer and the history are the same bytes either way.
+
+Arc A-series cards (A770, A750, A580, A380) run the network's matrix shape without offering it,
+and there the staged GEMM kernel measured slower than the tiled one on an A770 (OUCO86's
+`notes/staged-vs-tiled-a770.md`), where on Xe2 it is the faster. The checkbox "Experimental:
+another matrix kernel for Arc A-series", in the setup window's frame pacing card and in the
+in-game panel, writes `XMX_PREFER_TILED=1` into `dlss-nr\nr-env.txt`: from the next start the
+daemon's plain GEMMs run on the tiled kernel, the E4M3 bytes and the weights by column with them
+off. The picture is the same bytes either way (`src/gpu/test_prefer_tiled.py`); on Arc B-series
+and Core Ultra it is slower (B at 512x320 on an Arc 140V: 13.0 ms on the device against 18.7).
+On an A-series card the GPU report times the network with it off and on.
+
+In a DirectX 12 game the history follows the game's own word since 2026-11-15: its upscaler's
+reset (XeSS's `resetHistory`, FSR's `reset`) drops it, and a frame the game did not reset keeps
+the one its motion leads back to, where the daemon's cut test used to decide alone. The test is
+still measured: a frame line ends in `game-reset` where the game started over and in `cut-over`
+where its word kept a history the test would have dropped. In the Hogwarts Legacy recording of
+2026-10-16 the test kept the history unmoved across the game's one reset (cut 0.114 against a
+limit of 0.15) and was never past the limit elsewhere. `NR_DX12_CUT_TEST=1` decides by the test
+alone, as before.
 
 **Experimental; first run on Windows on 2026-09-29/30** (Arc 140V, Intel's driver 101.8991,
 then 101.9033). The compute side builds and runs there, and since PR #3 joined (2026-10-02) the

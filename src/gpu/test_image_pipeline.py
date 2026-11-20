@@ -67,9 +67,11 @@ class FakeFollower:
         top,bottom,left,right=crop;ih,iw=inner_size
         self.full=rt.buffer((bottom-top)*(right-left)*3);self.pixels=rt.buffer((bottom-top)*(right-left)*3)
         self.resampled=rt.buffer(ih*iw*3);self.inner=rt.buffer(ih*iw*3)
-        self.motions=[];self.share=1.;self.closed=False
-    def record(self,motion,**kwargs): self.motions.append(motion)
-    def cut(self,stats,inner,limit): return None if self.share==0 else stats.cut
+        self.motions=[];self.share=1.;self.closed=False;self.active_passes=[]
+    def record(self,motion,active_pass=True,**kwargs):
+        self.motions.append(motion);self.active_passes.append(active_pass)
+    def cut(self,stats,inner,limit): raise AssertionError("the pipeline records the cut test's reductions")
+    def record_cut(self,stats,inner): return lambda limit: None if self.share==0 else stats.cut
     def close(self): self.closed=True
 
 
@@ -135,12 +137,32 @@ class HostChecks(unittest.TestCase):
                 nr_daemon.process_connection(Connection(frame),None,args)
         self.assertEqual(args.image_transport,"cpu")
 
+    def test_the_composition_reads_along_the_motion_itself(self):
+        """NR_FOLLOW_IN_COMPOSE (the default): the follower leaves its active-extent pass out and
+        the composition reads the network's last output and the game's last frame along the
+        motion, with STALE; the network's history is still the follower's."""
+        live=settings();pipe=self.pipe
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
+        follower=pipe.follower
+        self.assertFalse(follower.active_passes[-1])
+        self.assertIs(pipe.prep.calls[-1]["history"],follower.inner)
+        call=pipe.compose.calls[-1]
+        self.assertEqual(call["moved"],(8192,G.STALE))
+        # the two read are this frame's previous ones, which then traded places with its own
+        self.assertIs(call["history"],pipe.compose.neural);self.assertIs(call["previous"],pipe.active)
+        with patch.object(G,"FOLLOW_IN_COMPOSE",False):
+            pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
+        self.assertTrue(follower.active_passes[-1])
+        self.assertIs(pipe.compose.calls[-1]["history"],follower.full)
+        self.assertNotIn("moved",pipe.compose.calls[-1])
+
+    @patch.object(G,"FOLLOW_IN_COMPOSE",False)
     def test_motion_is_followed_only_onto_a_history(self):
         live=settings();pipe=self.pipe
-        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
         self.assertIsNone(pipe.follower)               # nothing yet to carry along it
         self.assertFalse(pipe.last["history"] or pipe.last["motion"])
-        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
         follower=pipe.follower
         self.assertEqual(follower.motions,[8192])
         self.assertTrue(pipe.last["history"] and pipe.last["motion"])
@@ -148,24 +170,51 @@ class HostChecks(unittest.TestCase):
         self.assertIs(pipe.compose.calls[-1]["history"],follower.full)
         self.assertIs(pipe.compose.calls[-1]["previous"],follower.pixels)
         pipe.stats.cut=.2                               # a cut even against the frame moved here
-        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
         self.assertFalse(pipe.last["history"])
         self.assertIsNone(pipe.compose.calls[-1]["history"])
         pipe.stats.cut=0.;follower.share=0             # known nowhere
-        pipe.process_device(self.raw,256,192,37,live,motion=8192)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
         self.assertEqual((pipe.last["history"],pipe.last["cut"]),(False,0.0))
         follower.share=1                                # without motion, the identity history
         previous,target=pipe.previous_neural,pipe.compose.neural
-        pipe.process_device(self.raw,256,192,37,live)
+        pipe.process_device(self.raw,256,192,37,live,motion_session=True)
         self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
         self.assertIs(pipe.compose.calls[-1]["history"],previous)
         # and the two traded places for the next frame, with no copy between them
         self.assertIs(pipe.previous_neural,target);self.assertIs(pipe.compose.neural,previous)
         self.assertEqual(len(follower.motions),3)
-        pipe.process_device(self.raw,256,192,37,settings(temporal=0.),motion=8192)
+        pipe.process_device(self.raw,256,192,37,settings(temporal=0.,motion_session=True),motion=8192)
         self.assertFalse(pipe.last["motion"])
-        pipe.process_device(self.raw,320,192,37,live,motion=8192)   # another extent: rebuilt
+        pipe.process_device(self.raw,320,192,37,live,motion=8192,motion_session=True)   # another extent: rebuilt
         self.assertTrue(follower.closed);self.assertIsNone(pipe.follower)
+
+    def test_a_games_own_word_on_its_resets_decides_the_history(self):
+        """DirectX 12 (protocol 3): the game's reset drops the history, and its word that it did not
+        start over keeps one its motion leads back to past the cut test's limit, which is still
+        measured and said (`cut_over`); None is the cut test alone."""
+        live=settings();pipe=self.pipe
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False,motion_session=True)
+        self.assertTrue(pipe.last["history"] and pipe.last["motion"])
+        pipe.stats.cut=.2                               # past the limit, and the game kept its shot
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False,motion_session=True)
+        self.assertTrue(pipe.last["history"] and pipe.last["cut_over"])
+        self.assertEqual(pipe.compose.calls[-1]["moved"],(8192,G.STALE))
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)        # nobody's word: the test
+        self.assertFalse(pipe.last["history"] or pipe.last["cut_over"])
+        pipe.stats.cut=0.
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False,motion_session=True)
+        pipe.follower.share=0                           # known nowhere: dropped, whatever was said
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=False,motion_session=True)
+        self.assertFalse(pipe.last["history"])
+        pipe.follower.share=1
+        pipe.process_device(self.raw,256,192,37,live,game_reset=False,motion_session=True)  # no motion: the test, kept
+        self.assertTrue(pipe.last["history"]);self.assertFalse(pipe.last["motion"])
+        pipe.process_device(self.raw,256,192,37,live,game_reset=True,motion_session=True)   # the game started over
+        self.assertFalse(pipe.last["history"] or pipe.last["cut_over"])
+        self.assertEqual(pipe.history_frames,1)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,game_reset=True,motion_session=True)
+        self.assertFalse(pipe.last["history"])
 
     def test_no_history_first_frame_then_cut_and_reset(self):
         live=settings()
@@ -185,6 +234,29 @@ class HostChecks(unittest.TestCase):
         live.temporal=0.
         self.pipe.process_device(self.raw,256,192,37,live)
         self.assertEqual(self.pipe.history_frames,0)
+
+    def test_a_session_without_motion_keeps_the_last_frame_as_bytes(self):
+        """NR_RAW_PREVIOUS (the default): no float32 decode of the frame at its full extent, the
+        composition reading the last frame's bytes, which a copy keeps; a motion session keeps
+        the float32 decode, and motion arriving unannounced starts the history over in it."""
+        pipe,live=self.pipe,settings();decoded=[]
+        for _ in range(2): pipe.process_device(self.raw,256,192,37,live)
+        pipe.decode.record=lambda *args: decoded.append(args)
+        pipe.process_device(self.raw,256,192,37,live)
+        call=pipe.compose.calls[-1]
+        self.assertTrue(call["previous_raw"]);self.assertIs(call["previous"],pipe.previous_raw)
+        self.assertFalse(decoded)
+        pipe.change_metric=True                        # the metric reads the float32 frame
+        pipe.process_device(self.raw,256,192,37,live)
+        self.assertEqual(len(decoded),1);pipe.change_metric=False
+        pipe.process_device(self.raw,256,192,37,live,motion=8192)   # unannounced: started over
+        self.assertFalse(pipe.last["history"]);self.assertEqual(len(decoded),2)
+        pipe.process_device(self.raw,256,192,37,live,motion=8192,motion_session=True)
+        self.assertTrue(pipe.last["history"] and pipe.last["motion"]);self.assertEqual(len(decoded),3)
+        with patch.object(G,"RAW_PREVIOUS",False):
+            for _ in range(2): pipe.process_device(self.raw,256,192,37,live)
+        self.assertFalse(pipe.compose.calls[-1]["previous_raw"])
+        self.assertIs(pipe.compose.calls[-1]["previous"],pipe.active)   # traded places since
 
     def test_change_metric_off_records_neither_the_copy_nor_its_reduction(self):
         # NR_CHANGE_METRIC=0: the composition is asked for no float32 copy, the change's
@@ -367,6 +439,25 @@ class FullModelChecks(unittest.TestCase):
         with patch.object(G,"CHANGE_METRIC",False):
             self.test_exact_wire_and_history_while_forbidding_image_readbacks()
 
+    def test_exact_wire_and_history_with_the_last_frame_as_float32(self):
+        """NR_RAW_PREVIOUS=0: the decode pass's float32 copy of the last frame for the
+        composition, where the default reads its bytes: the same bytes out."""
+        with patch.object(G,"RAW_PREVIOUS",False):
+            self.test_exact_wire_and_history_while_forbidding_image_readbacks()
+
+    def test_exact_wire_and_history_with_the_change_metric_on(self):
+        """The same frames with NR_CHANGE_METRIC=1, the setup window's checkbox, which is off by
+        default since 2026-11-15: the copy and its reduction recorded, the same bytes."""
+        with patch.object(G,"CHANGE_METRIC",True):
+            self.test_exact_wire_and_history_while_forbidding_image_readbacks()
+
+    def test_exact_wire_and_history_along_motion_with_the_follow_pass(self):
+        """The motion frames with NR_FOLLOW_IN_COMPOSE=0: the follower's active-extent pass
+        writes the two images the composition reads; byte for byte the same as reading them
+        along the motion in the composition, which the default test runs."""
+        with patch.object(G,"FOLLOW_IN_COMPOSE",False):
+            self.test_exact_wire_and_history_along_motion()
+
     def test_exact_wire_and_history_along_motion(self):
         """The D3D12 transport's frames, each with its pixels' offsets to where they were: the
         pipeline's follower against the daemon's `History.follow`, byte for byte, frames that
@@ -394,7 +485,8 @@ class FullModelChecks(unittest.TestCase):
             device=self.backend.runtime.buffer(raw.size,np.uint8,kind=X.DEVICE).upload(raw)
             try:
                 answer=pipe.process_device(device,width,height,fmt,live,
-                                           motion=motion.address if moving else None)
+                                           motion=motion.address if moving else None,
+                                           motion_session=True)
                 self.assertEqual(answer.download(np.uint8).tobytes(),expected,
                                  f"wire parity along motion, frame {turn}: {pipe.last}")
                 self.assertEqual(pipe.last["history"],used)

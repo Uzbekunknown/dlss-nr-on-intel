@@ -65,7 +65,8 @@ cbuffer Constants : register(b0)
     uint width;            /* the colour's extent */
     uint height;
     uint pitch;            /* bytes between rows of the colour and of the result */
-    uint kind;             /* 0 R16G16B16A16_FLOAT, 1 R11G11B10_FLOAT, 2 R10G10B10A2_UNORM */
+    uint kind;             /* 0 R16G16B16A16_FLOAT, 1 R11G11B10_FLOAT, 2 R10G10B10A2_UNORM, and a display
+                              picture: 3 R8G8B8A8, 4 B8G8R8A8 (UNORM, SRGB or TYPELESS) */
     float white;           /* the scene value the proxy shows as display white */
     float strength;        /* compose: 0 adds nothing, 1 all of NR's change */
     uint2 frame;           /* compose: the frame's fence value, low and high, as the stamp names it */
@@ -86,7 +87,8 @@ cbuffer Constants : register(b0)
     uint width;            /* the colour's extent */
     uint height;
     uint pitch;            /* match, apply: bytes between rows of the colour and of the result */
-    uint kind;             /* match, apply: 0 R16G16B16A16_FLOAT, 1 R11G11B10_FLOAT, 2 R10G10B10A2_UNORM */
+    uint kind;             /* match, apply: 0 R16G16B16A16_FLOAT, 1 R11G11B10_FLOAT, 2 R10G10B10A2_UNORM
+                              (mode=carry takes no display picture) */
     float white;           /* the scene value the proxy showed as display white */
     float strength;        /* apply: 0 adds nothing, 1 all of NR's change */
     uint change_pitch;     /* match: bytes between rows of a change */
@@ -182,6 +184,14 @@ float3 proxy_of(float3 c)
     if (lit > 0.75)
         d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
     return d;
+}
+
+/* A display picture's word (kind 3 or 4, nr_xess.c `display_kind`) with R in its low byte, or
+ * back: the swap of B8G8R8A8's two outer channels is its own inverse. Alpha stays the top byte.
+ * The edit cache's passes never see one (nr_xess.c `after_upscale`). */
+uint rgba_of(uint v)
+{
+    return kind == 4 ? (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16) : v;
 }
 
 /* What the match compares: the square root of each of the proxy's channels, over white and
@@ -592,10 +602,14 @@ void main(uint3 id : SV_DispatchThreadID)
 
 #endif
 
-#ifdef ENCODE
+#if defined(ENCODE) || defined(COMPOSE)
 
-ByteAddressBuffer srgb : register(t1);         /* nr_xess.c `srgb8`, packed four to a word */
-RWByteAddressBuffer given : register(u0);      /* the frame NR is given, R8G8B8A8 */
+/* nr_xess.c `srgb8`, packed four to a word: linear [0, 1] in 1/16384 steps to an sRGB byte */
+#ifdef ENCODE
+ByteAddressBuffer srgb : register(t1);
+#else
+ByteAddressBuffer srgb : register(t4);
+#endif
 
 #define SRGB_STEPS 16384
 
@@ -605,15 +619,27 @@ uint srgb_byte(float v)
     return (srgb.Load(i & ~3u) >> ((i & 3u) * 8)) & 0xFF;
 }
 
-/* nr_xess.c `encode_proxy` on the GPU: over white, the knee on luminance, then sRGB through
- * the CPU's own table, so that the daemon sees what mode=carry hands it. */
+#endif
+
+#ifdef ENCODE
+
+RWByteAddressBuffer given : register(u0);      /* the frame NR is given, R8G8B8A8 */
+
+/* nr_xess.c `give_texel` on the GPU: a display picture's own bytes, opaque; scene light as
+ * `encode_proxy` has it, over white, the knee on luminance, then sRGB through the CPU's own
+ * table, so that the daemon sees what mode=carry hands it. */
 [RootSignature(RS)]
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= width || id.y >= height)
         return;
-    float3 d = max(load_texel(id.y * pitch + id.x * (kind == 0 ? 8 : 4)).rgb, 0) / white;
+    uint at = id.y * pitch + id.x * (kind == 0 ? 8 : 4);
+    if (kind >= 3) {
+        given.Store((id.y * width + id.x) * 4, rgba_of(colour.Load(at)) | 0xFF000000);
+        return;
+    }
+    float3 d = max(load_texel(at).rgb, 0) / white;
     float lit = dot(d, float3(0.2126, 0.7152, 0.0722));
     if (lit > 0.75)
         d *= (0.75 + 0.25 * (1 - exp(-(lit - 0.75) / 0.25))) / lit;
@@ -678,7 +704,9 @@ void main(uint3 id : SV_DispatchThreadID)
 
 /* The colour XeSS gets: the game's, with NR's change to this very frame added as APPLY adds a
  * carried one, when the stamp after the answer names this frame; otherwise the game's as it
- * was, the daemon having declined it or not come. */
+ * was, the daemon having declined it or not come. A display picture takes the answer's own
+ * bytes at strength 1, and at another strength that much of the change in linear light, back
+ * through the CPU's sRGB table; its alpha is the game's. */
 [RootSignature(RS)]
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -686,9 +714,24 @@ void main(uint3 id : SV_DispatchThreadID)
     if (id.x >= width || id.y >= height)
         return;
     uint at = id.y * pitch + id.x * (kind == 0 ? 8 : 4);
+    uint p = (id.y * width + id.x) * 4;
+    bool taken = answered() && strength > 0;
+    if (kind >= 3) {
+        uint v = colour.Load(at);
+        if (taken) {
+            uint a = answer.Load(p);
+            if (strength != 1) {
+                float3 g = linear_of(given.Load(p));
+                float3 mixed = saturate(g + strength * (linear_of(a) - g));
+                a = srgb_byte(mixed.r) | (srgb_byte(mixed.g) << 8) | (srgb_byte(mixed.b) << 16);
+            }
+            v = (v & 0xFF000000) | (rgba_of(a) & 0x00FFFFFF);
+        }
+        result.Store(at, v);
+        return;
+    }
     float4 c = load_texel(at);
-    if (answered() && strength > 0) {
-        uint p = (id.y * width + id.x) * 4;
+    if (taken) {
         float3 delta = linear_of(answer.Load(p)) - linear_of(given.Load(p));
         c.rgb = max(c.rgb + white * strength * knee_gain(c.rgb) * delta, 0);
     }

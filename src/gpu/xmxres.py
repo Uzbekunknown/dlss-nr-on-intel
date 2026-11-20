@@ -121,6 +121,10 @@ def _load():
             ("xmx_staged_partial", [ctypes.c_uint]),
             ("xmx_staged32", [ctypes.c_uint]),
             ("xmx_staged32_calls", []),
+            ("xmx_staged_calls", []),
+            ("xmx_prefer_tiled", []),
+            ("xmx_prefer_tiled_set", [ctypes.c_uint]),
+            ("xmx_shape_unoffered", []),
             ("xmx_staged32_init", [ctypes.c_char_p, ctypes.c_char_p]),
             ("xmx_rows_init", [ctypes.c_char_p]),
             ("xmx_specialized_count", []),
@@ -938,6 +942,19 @@ class Runtime:
             raise failure(self.lib, "xmx_buf_mark_e4m3")
         buffer.e4m3 = True
         return buffer
+
+    @property
+    def prefer_tiled(self):
+        """Whether plain GEMMs go to the tiled kernel rather than the staged one
+        (`xmx_prefer_tiled`, `XMX_PREFER_TILED=1`): the experimental switch for Arc A-series
+        cards, the same bytes either way."""
+        return bool(self.lib.xmx_prefer_tiled())
+
+    @property
+    def shape_unoffered(self):
+        """Whether this device runs the network's 8x16x16 without offering it: an Arc A-series
+        card (`xmx_shape_unoffered`)."""
+        return bool(self.lib.xmx_shape_unoffered())
 
     @property
     def weights_by_column(self):

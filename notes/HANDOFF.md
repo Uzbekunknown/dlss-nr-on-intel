@@ -55,9 +55,13 @@ such move; what it still leaves open becomes a line of its own.
   green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04 later),
   0.0.4's and 0.0.5's at `127f6dc` (below, 11-11); 0.0.6's is owed (Open items, Linux). Linux
   users build from source (README).
-- **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` are level
-  since 11-11 and move together, each push a fast-forward of all three; `media` holds the README's
-  pictures; `improve-int8` is kept for INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
+- **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` were level
+  from 11-11 and moved together, each push a fast-forward of all three. From 11-18 `alchemist`
+  ran ahead with the A-series switch while Paimonshen finished PR #45; on 11-19 #45 went into
+  `newnr` and `master` with our fixes, and `alchemist` was merged with them, so the three are
+  level again (below, 11-19). On 11-20 `alchemist` went ahead alone with the 8-bit outputs of the
+  DirectX 12 proxies (below, 11-20). `media` holds the README's pictures; `improve-int8` is kept for
+  INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
   `experiment-bgra8-pipeline`. All were already in `master` or `newnr`, except one merge commit and
@@ -176,19 +180,17 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   GPU of its runner, `attention.comp`, libxmx and `nr_resident`, and three tests changed (below,
   11-09 and 11-08; archive, 11-05)~~: green at `dff4ad5`, with `newnr` (`c22f798`) merged in (below, 11-11,
   later).
-- The weights by column (below, 11-12): `make test` in both memory modes and CTest, with the two
-  items after this one; `newnr` holds all three on GitHub since 11-12 (`2ae1d82`), and 0.0.6 is
-  built from them. `test_gemm_by_column.py` runs on Mesa as it is; `XMX_WEIGHTS_BY_COLUMN=1` is
-  worth one timing there.
-- `e4m3-weights`, the bottleneck's weights as their E4M3 bytes (below, 11-08, evening): `make test`
-  in both memory modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. It is off on Mesa unless
-  `XMX_E4M3_WEIGHTS=1`, so `test_gemm_e4m3.py` (new, `make test` and CTest `gpu_gemm_e4m3`) says
-  it is off; run it once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values, B's
-  320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both ways.
-  `gemm_staged.comp`, `libxmx.c`, `xmxres.py` and `nr_resident.py` changed.
-- `perf-1108`, the GPU path's frame around the network (below, 11-08): `make test` in both memory
-  modes and CTest once `newnr`, which holds it since 11-11, is on GitHub. `image_stats.comp` changed, and `gpu_image_stats.py`,
-  `gpu_image_pipeline.py`, `gpu_image_compose.py` and `nr_gpu_transport.py` with their tests.
+- ~~The weights by column, `e4m3-weights`, `perf-1108`, `dx12-waits` and `fused-bycol`: `make test`
+  in both memory modes and CTest~~: green at GitHub's `2c7580d` with `a6699b6`, the one failure
+  there a real bug (below, 11-16, latest). Still owed from them:
+  - `XMX_WEIGHTS_BY_COLUMN=1`, one timing on Mesa (below, 11-12);
+  - `test_gemm_e4m3.py` once more with `XMX_E4M3_WEIGHTS=1`, and if Mesa decodes all 254 values,
+    B's 320x320 and 1344x768 heads with it set and unset, and the bottleneck's four GEMMs both
+    ways (below, 11-08, evening);
+  - `frame_profile.py --size 576 1024 --weights work/mlxw/dlssnr-b-logical.safetensors` against
+    `0624ccc`, for the by-column fused kernels on Mesa (below, 11-16 and 11-15, night).
+- `a6699b6`, the interface restore with the change metric off (below, 11-16, latest): the owner's
+  word on pushing it. Python only, nothing for Windows to build.
 - Preset B in a game: `NR_PRESET=B` beside A, the look and the frame rate. Archive, 10-17 later.
 - B's four full-resolution passes, the Linux agent's proposal for the network's speed after the
   staged GEMM's walk (`6ef670e`), are not started. Archive, 11-04 evening.
@@ -204,6 +206,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
+- Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
+  three branches since 11-19, below, 11-18), in the setup window and the panel, the same bytes. Off by default;
+  A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
+  default. Not run on an A-series card: there is none here. The request to them is drafted in
+  `work\pr-replies\arc-a-tiled-call.md`, for the owner to post with a build that carries it.
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in 0.0.5 (archive, 11-05 evening).
   Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no XeSS of
@@ -263,7 +270,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   HKLM manifest that would reach it is kept for later. Archive, 10-08 and 10-09.
 - DirectX 12 in other games: only Hogwarts Legacy (XeSS 2.0.2.53) has run. Check takes any XeSS
   whose exports NR's proxy carries, and an older XeSS's execute parameters are taken to be laid
-  out as 2.0's. Archive, 10-30 evening.
+  out as 2.0's. Archive, 10-30 evening. #46 (below, 11-20): Cyberpunk 2077's XeSS 1.3.0.28 on an
+  A750 never reached the proxy's HELLO, cause unknown until its reporter sends `nr-xess.log`; an
+  upscaler's 8-bit output is taken since then, and no game with one has run.
+- How the proxy reads a 10-bit output, R10G10B10A2 as linear light (since `60a7312`), and an 8-bit
+  one, display-encoded even where FSR 3.1 was told its colour is linear: neither is confirmed by a
+  game. Below, 11-20.
 - MSVC: the composition is not vectorised (0.5-1.8 ms behind gcc): MSVC vectorises innermost
   loops only, and inside each pixel loop is a three-channel one (`/Qvec-report:2`, reasons 1106
   and 1303). ~~Three C4068 warnings~~: `NR_IVDEP`, `1c49d04` (below, 11-08). Archive, 10-02, 10-07.
@@ -275,9 +287,14 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   Kombat 11's runs (below, 11-11, morning): whether it stays on by default for every GPU on
   Intel's Windows driver; desktop Arc cards and the B580 have not run it, nor the weights by
   column, on by default there too (below, 11-12).
-- `NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
-  default, or a row in the panel or the setup window, is the owner's call. Off, it is 0.3 ms of
-  B's frame at 1280x720 and 1.0-1.5 at 1920x1080 on the merge (below, 11-11, morning).
+- ~~`NR_CHANGE_METRIC` (below, 11-08, evening, later): on by default; whether it should be off by
+  default, or a row in the panel or the setup window, is the owner's call~~: off by default, and a
+  checkbox in the setup window turns it on to collect data (the owner, 11-15; `64c0e0f`, below).
+- ~~`dx12-waits` (below, 11-15): local, not pushed. Run in Hogwarts Legacy the same evening: 15.0 ->
+  16.0 frames a second; the game's resets and the cut test part only right after menus. The
+  owner's word on that, and on merging it~~: the game's flag decides, and it is on GitHub with
+  `fused-bycol` since 11-16 (below). In no release yet; Linux's `make test` and CTest at that
+  head are green, with `a6699b6` (below, 11-16, latest).
 - #40 and #41, the panel's `render_scale` floor and its shader at SPIR-V 1.0 (merged on 11-11,
   `7d37976` and `d0a4f65`): in no release yet. Below, 11-11.
 - The Vulkan panel under validation: one warning is left, `menu.comp`'s `rgba8` against a
@@ -317,8 +334,531 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   `cl_intel_subgroup_2d_block_io`, untried (archive, "1. Do this first").
 - Taking each load out in turn, as window attention's cost was found, for every other kernel that
   runs one subgroup to a workgroup (archive, 09-25).
+- `fused-bycol` (below, 11-15): the 32-channel blocks' fused kernels with their B fragments
+  column-major in shared memory, 4 % of a frame at 1920x1080 and 2560x1440. On GitHub since 11-16
+  at the owner's word, before Linux timed it (the shaders are the same on Mesa, where by-column
+  tiles once spilt: if it is slower there, a specialisation constant can keep Mesa by row).
 
 ---
+
+## DirectX 12: an upscaler's 8-bit output taken as a display picture, after issue #46 (2026-11-20, branch `alchemist`)
+
+Issue #46 (11-19): an Arc A750 on 0.0.6 got no frame through NR in two DirectX 12 games. It was
+answered at the owner's word (issuecomment-7037721144).
+- Assassin's Creed Black Flag Resynced, through OptiScaler's XeSS: the proxy refused every frame,
+  "XeSS's output format 28 ... is not handled". `kind_of` took RGBA16F, R11G11B10F and R10G10B10A2
+  alone, and the refusal comes before the HELLO, so no daemon was started either.
+- Cyberpunk 2077 (XeSS 1.3.0.28): the report's daemon log was last written four hours before the
+  launch it records, so the proxy never reached a HELLO. Either XeSS was not the game's upscaler,
+  or a refusal came first; the reporter is asked for `nr-xess.log` with XeSS chosen. The panel
+  opens either way, from `DllMain`.
+- The A750's "lacks the float16 8x16x16 cooperative-matrix shape" lines are every A-series card's.
+
+The owner, 11-20: take 8-bit pictures. **What changed** (`src/xess`):
+- `kind_of`: R8G8B8A8 and B8G8R8A8, UNORM, SRGB or TYPELESS, are display pictures
+  (`display_kind`): a game that upscales after its tone map, its bytes display-encoded as a
+  swapchain's (an upscaler writes through a UNORM view; no SRGB format takes a UAV). ENCODE hands
+  NR those bytes as they are, R first, with no `white` and no knee. COMPOSE puts the answer's
+  bytes in their place with the game's alpha at strength 1, and at another strength that much of
+  the change in linear light, back through the sRGB table (bound at t4 now).
+- mode=carry refuses a display picture, and says so: its passes work in scene light.
+- FSR 3.1: an 8-bit output is taken whatever the context's non-linear flag says, since a game
+  that upscales after its tone map need not set it; the flag still refuses every other format.
+- `give_texel` is ENCODE on the CPU, for the carry path's read and replay's frame dumps.
+
+**Checked on Windows** (Arc 140V, Intel 101.9150):
+- `build_xess.bat` with no warning.
+- `test_nr_xess`: all passed, with 13 new cases: the cut before XeSS with R8G8B8A8_UNORM,
+  B8G8R8A8_UNORM_SRGB, strength 0.5 and 0 and a declined frame; after XeSS with R8G8B8A8_UNORM
+  (#46's case), B8G8R8A8_UNORM and R8G8B8A8_TYPELESS; after FSR 3.1 with non-linear colour and
+  with linear; mode=carry handing the colour on; and R10G10B10A2_UNORM before and after XeSS,
+  which no case had run. A display picture's bytes come back exactly (worst error 0 at strength 1
+  and 0, 0.0041 at 0.5), and `compare` now checks every format's alpha.
+- The control: with the B/R swap and the alpha taken out of the shader, all four BGRA cases fail,
+  and every 8-bit case that writes the answer fails its alpha.
+- `test_xess_panel` passes.
+
+**Not run:** a game with an 8-bit output (none here: Hogwarts upscales into RGBA16F); the real
+daemon on such a frame (its side is the same R8G8B8A8 either way); Linux (nothing in `src/xess`
+builds there).
+
+**Pushed** to `alchemist` alone at the owner's word, 11-20; `master` and `newnr` stay at `30ec631`.
+
+**Next on Windows:** a build for #46's reporter, the owner's call, then their answer. **Next on
+Linux:** nothing.
+
+## `alchemist` merged with `newnr`: the A-series switch beside #45, and a key count in the profile write (2026-11-19, later, branch `alchemist`)
+
+The owner, 11-19, after #45 went into `newnr` and `master`: merge `alchemist` with them. `146151d`
+merges `newnr` (`45f97d5`) into `alchemist` (`eb09b33`); `07f2cc1` is the fix below. Five files
+met:
+- the setup window, which keeps both checkboxes, both sets of profile keys and both sets of names;
+- its Python core, with `prefer_tiled` beside `menu_graphs` and `menu_counter`;
+- the bridge's profile write, which takes all seven keys;
+- the menu string tables, regenerated with `tools/gen_menu_strings.py` (56 keys); the generator
+  now writes the tree's tables unchanged;
+- this file, with both entries, newest first.
+
+**A bug from #45, found at the merge (`07f2cc1`).** `write_profile_pacing` replaces the keys it
+finds in `windows-profile.json` and appends the ones it does not. It tells the two apart with a mask
+of the keys seen. #45 grew the table from four keys to six, and the mask stayed 2^4 - 1:
+- With only the old keys in the profile, `menu_graphs` and `menu_counter` were never appended.
+- With every key present (the setup window writes them all since #45), the write returned before
+  it reached the disk, so the panel stopped updating the profile.
+
+The count now comes from the table. `test_menu_pacing` checks that the profile carries every key
+the panel writes, and that a change still lands once they are all there. Against the merge's bridge
+(mask 31, seven keys) it fails six checks; with the fix, none. In no release; `newnr` at `45f97d5`
+has it in its six-key form.
+
+**Checked on Windows**, at `07f2cc1`:
+- MinGW: the build, with no warning the merged branches' own builds lacked, and CTest 72 of 72.
+- MSVC: `build_win.bat` and `build_xess.bat` with no warning, and CTest 72 of 72, with
+  `gpu_prefer_tiled`.
+- The eight menu fixtures, `test_nr_xess` and `test_xess_panel`.
+- `test_windows_wizard` 106 (1 skipped) and `test_windows_setup` 14.
+- A release from `deploy.bat --release`, and the window's self-test from it (102 controls, 212
+  keys).
+- vkcube under the validation layer, the panel open and shut, and `test_gpu_present` with the panel
+  open and in a corner under synchronization validation: 0 errors.
+
+**Not run:** Linux; a game; an A-series card.
+
+**Next on Linux:** `make test` in both memory modes, and CTest, at this head. It covers the 11-18
+entry's `test_prefer_tiled.py` and the 11-19 entry's list. **Next on Windows:** a build carrying the
+A-series switch, the owner's call. Then the request to A-series owners
+(`work\pr-replies\arc-a-tiled-call.md`).
+
+## PR #45 merged with our fixes: the frame graphs, and the network's time on the pipe path (2026-11-19, branch `newnr`)
+
+The owner, 11-19: Paimonshen's fix round on #45 (`5983626`) was checked on Windows, and the three
+things still wrong were answered in the PR (issuecomment-6999190177). At the owner's word we fix
+them ourselves at the merge: `84e6b6a` merges #45 into `newnr` at `f9ad754`, and `dc5744d` is ours on
+top. #42's head (`1179f96`) is in #45's history, so `newnr` on GitHub with this merge marks both
+PRs merged. Arc 140V, Intel 101.9150, on battery.
+
+**What #45 brings:**
+- two frame-time graphs in the panel, and in the corner by a switch;
+- on the pipe path, the network's own time from the daemon: an 8-byte trailer after the pixels,
+  the magic and then microseconds, so the graph's network line works there as on the GPU path;
+- the setup window's checkboxes for the graphs and for the counter's corner (an absent
+  `menu_counter` is 0, the panel alone);
+- the corner window following its line both ways.
+
+**Ours at the merge (`dc5744d`):**
+- The layer's wait for a trailer no longer sleeps a tick. A `Sleep(1)` inside the 2 ms budget slept
+  to the next scheduler tick. The function on a connected pipe that holds nothing and stays open,
+  200 calls back to back, median: 15.7 ms with the `Sleep(1)`, or 2.9 once the process has set a
+  1 ms timer as some games do; 16.0 for #45's first version, on GetTickCount; 2.00 ms now, with
+  either timer.
+- `test_menu_persist`'s outside-edit case drives a headless menu. On a headless bridge,
+  `nr_menu_bridge_update` returns before the poll, so the case failed with the fix and without it.
+  `nr_menu_bridge_set_open`, which could not reach the poll, is gone.
+- `build_win.bat` builds `test_menu_persist`. The Makefile names it for Windows and `run_tests.py`
+  runs it there, but nothing built it on Windows. Its knob count said eleven, from the weights knob
+  that PR #20's narrowing removed; it is ten again.
+- `test_menu_panel`'s shrink check compares with the short line drawn in an ImGui context of its
+  own. Its reference had been the same window one frame later, so it passed on the ratcheting
+  width it was written against.
+- `send_trailer` writes the trailer on both pipe paths and swallows only that write's broken
+  pipe. On `gpu-image-host`, a client from before #45 made it raise and log a failed frame. On the
+  legacy path a failed write of the pixels is a failed frame again.
+- Stale comments are corrected, and `.gitignore`'s line is as `newnr` has it.
+
+**Checked on Windows**, at `dc5744d`:
+- MinGW: the build, with the same warnings as before the fixes, and CTest 71 of 71.
+- MSVC: `build_win.bat` and `build_xess.bat` with no warning, and CTest 71 of 71.
+- The eight menu fixtures, `test_menu_persist` among them, `test_nr_xess` and `test_xess_panel`.
+- `test_windows_wizard` 105 (1 skipped) and `test_windows_setup` 14.
+- `gen_menu_strings.py` writes the tree's tables.
+- A release from `deploy.bat --release`, and the window's self-test from it (101 controls, 210
+  keys).
+- vkcube under the validation layer, the panel open and shut: 0 errors. `test_gpu_present` with
+  the panel open and in a corner, under synchronization validation: 0 errors.
+- The controls: with the shut read advancing the knobs' stamp again, `test_menu_persist` fails at
+  the new case (0.4 against 0.65). Against `6f5691f`'s `nr_menu_ui.cpp`, `test_menu_panel` fails
+  the shrink check (350 px against 194).
+- The wire, with three stand-in daemons against a client from before #45 and against #45's, plain
+  and masked: all 360 exchanges right. The three daemons send the pixels alone, the pixels and the
+  trailer in one write, or the trailer in a write of its own.
+
+**Speed:** #45 touches no network, libxmx, shader or GPU-transport file. We ran `test_gpu_present
+--run` (network A at 0.4, the shared transport) for three rounds, alternating `f9ad754` and
+`5983626`, at 1280x720 and 1920x1080, with the panel shut and with the corner. No difference showed
+above the 5-7 ms by which the same build moves on battery. The corner's graphs cost 7 µs of CPU a
+frame and about 1100 vertices, and are drawn only with the corner counter and its graphs on, or the
+panel open.
+
+**Not run:** Linux; a game.
+
+**Next on Linux:** `make test` in both memory modes, and CTest, at `newnr`'s head. Nothing of the
+menu builds there. `nr_transport.h`'s Unix arm is #45's, read in review and not run. `test_alloc.py`
+and the daemon's two writes run as they are.
+
+**Next on Windows:** once this is pushed, see that #45 and #42 show as merged. Then merge
+`alchemist`, the A-series switch, with `newnr`. `git merge-tree` shows conflicts in `windows-wizard.ps1`, `nr_menu_bridge.c`,
+`nr_menu_strings.h` and `windows_wizard_core.py`; regenerate the string tables with
+`tools/gen_menu_strings.py`. Then a build for A-series owners, as the owner decides.
+
+## Arc A-series: an experimental switch for the tiled GEMM kernel, the same bytes; the head's enlargement measured and not kept (2026-11-18, branch `alchemist`)
+
+The owner, 11-18: first make life a little better for Arc A-series owners, then "simply give an
+experimental switch in the panel and in the installer, and ask the Arc A users to send reports".
+Made on the local branch `arc-a-tiled` from `newnr` (`f9ad754`) and pushed to `alchemist` alone,
+at the owner's word: `master` and `newnr` stay at `f9ad754` until #45 is merged (Next on Windows,
+below). Arc 140V, Intel 101.9150.
+
+**Why.** All eleven A-series cards in the GPU reports run the network's float16 8x16x16 at 32
+lanes exactly without offering it (they offer 8x8x16), and an A770 pays ~55 us a pass against a
+B580's 9-10 and this laptop's 23-26: 57-60 % of its network at 512x320
+(`notes/players-20261103.md`). On an A770 the staged GEMM kernel ran at 0.40-0.60 of the tiled
+kernel's rate on the frame's own shapes (OUCO86/dlss-nr-on-a770, `notes/staged-vs-tiled-a770.md`,
+2026-10-10, Apache-2.0), before this tree's walk order (`6ef670e`), E4M3 bytes and weights by
+column. On Xe2 the staged kernel is the faster: B at 512x320 here, 13.0 ms on the device against
+18.7 with every plain GEMM tiled (126 staged passes at 53 us against 110 tiled at 98 and 16 staged
+at 113). So a switch, not a default, until A-series reports say what it gives there.
+
+**What changed:**
+- libxmx: `XMX_PREFER_TILED=0|1` (`prefer_tiled`, off by default everywhere): plain GEMMs on the
+  tiled kernel; the staged kernel keeps the window gather, the pooled window residual and an E4M3
+  B; the E4M3 bytes and the weights by column, the staged loader's forms, default off with it.
+  `xmx_shape_unoffered` (the device runs the shape without offering it: every A-series card),
+  `xmx_staged_calls` and `xmx_prefer_tiled_set` (between recordings, for the test). The daemon's
+  `runtime options` line names `XMX_PREFER_TILED`.
+- The setup window's checkbox "Experimental: another matrix kernel for Arc A-series", in the frame
+  pacing card, in four languages: `Profile.prefer_tiled`, `XMX_PREFER_TILED` in `nr-env.txt`
+  (`PACING`, said either way). The in-game panel's flag row after the network, with the window's
+  words (`gen_menu_strings.py` takes `TiledKernel` and `TiledKernelTip` from the window), written
+  at once into `nr-env.txt` and the profile like the pacing rows. Both take effect at the next
+  start; the DirectX 12 proxy starts its daemon from the same `nr-env.txt` (`env=`).
+- The GPU report: on a card that runs the shape unoffered, its second process runs
+  `XMX_PREFER_TILED=1`, so an A-series report has B and A at 1280x720 with the switch off and on;
+  with the switch set, the second process times the default.
+- `docs/WINDOWS.md`: what the switch does and where.
+
+**The same bytes:** `test_prefer_tiled.py` (new; CTest `gpu_prefer_tiled`, `run_tests.py`): 127
+cases bit-identical with the switch off and on (plain, published, under the gate, both residuals,
+the ViT's QKV epilogue, specialised and not, the bottleneck's and the levels' shapes, a partial
+block, the 32-row builds' sizes, and the staged kernel on E4M3 bytes by column against the tiled
+one on half by row), none of them recorded staged with it on; the window-gathered QKV and an E4M3
+B stay staged. `frame_replay.py` heads, original and changed input, the switch off and on: B at
+320x512 (`df409ac4...`, `b6d9870b...`), 576x1024 (`edcbf478...`, `acbd05d9...`, 11-16's) and
+768x1344, A at the same three: each pair the same.
+
+**Checked on Windows:** MinGW (the 198 warnings `newnr` has) and MSVC `build_win.bat` and
+`build_xess.bat` with no warning; CTest 72 of 72 on MSVC's libraries; the seven menu fixtures
+(`test_menu_pacing` gains the row's file and profile round trip), `test_nr_xess`,
+`test_xess_panel`; `test_windows_wizard.py` 105 (1 skipped, the new test among them) and
+`test_windows_setup.py` 14; `gen_menu_strings.py` writes the tree's tables; a release from
+`deploy.bat --release` and the window's self-test from it (91 controls, 202 keys); the GPU report
+here prints the staged kernel and, with the switch set, the default beside it.
+
+**Not run:** an A-series card; a game; Linux.
+
+**The head's enlargement, measured and not kept** (11-18, before the above). Below render scale 1
+the daemon enlarges the network's head bilinearly before composing it with the full frame, and the
+owner saw a slight glow at 0.5 on 10-28. A joint-bilateral enlargement over the same four taps,
+guided by `inner` (the frame the network saw) against the full frame, sigma 0.03-0.12, on four
+Hogwarts Legacy frames (three 1920x1200, one 1280x720 with faces) through the daemon's own still
+path on the GPU, against the same frame at 1.0: the distance to 1.0 moves by under 0.5 % (B at
+0.4: 3.138 -> 3.133 levels; A at 0.4: 4.664 -> 4.659), at the edges by under 1 %; only the high
+band's alignment with 1.0's rises (B: 0.56 -> 0.62-0.72), and side by side the crops look the same.
+Least-squares gains for the change's low and high bands differ frame to frame (1.45 and 1.14
+against 0.67 and 0.55) and, fitted to each frame, cut the distance by 2-14 %. What 0.4 loses
+against 1.0 is the network's own detail at a smaller field (pores, freckles, hair; on one frame a
+redder skin), which no enlargement brings back (`notes/phase37-neural-upstream.md`). Not built.
+The other ports' answers to the same question (the 11-18 survey: wilsjo2's enlargement modes and
+generate-before/apply-after with a private upscaler, F5's guided reconstruction with band gains)
+are in the Windows session's memory, not here.
+
+**Next on Linux:** `make test` in both memory modes and CTest at `alchemist`'s head:
+`test_prefer_tiled.py` runs on Mesa as it is (the switch is any device's); the panel and the setup
+window are Windows-only. A session that keeps to `newnr` will not see this entry until the merge
+below. **Next on Windows:** when Paimonshen says #45 is done, merge it into `newnr` at the owner's
+word, then `alchemist` with it, and `master` level with both. A test merge of this branch's
+`ac1d7aa` with #45's `6f5691f` (`git merge-tree`) conflicts in `windows-wizard.ps1`,
+`nr_menu_bridge.c`, `windows_wizard_core.py` and `nr_menu_strings.h`; `nr_menu_strings.c` and
+`.py` merge without a conflict, but their order is the generator's (this branch puts the switch's
+two strings at 27 and 28, #45 adds four at 49-52), so regenerate all three with
+`tools/gen_menu_strings.py` and check its output equals the tree. Then a release or a test build
+with the switch, the owner's call, and the request to A-series owners.
+
+## Checked on Linux: GitHub's `2c7580d`, and the interface restore tied to the change metric (2026-11-16, branch `newnr`)
+
+The owner, 11-16: pull everything and run `make test` and CTest. `master`, `newnr` and `alchemist`
+fast-forwarded from `c22f798` to GitHub's `2c7580d`. No daemon, swap empty, a quiet CPU; Mesa
+26.2.6.
+
+**At `2c7580d`, `make test`: 72 of 73, one real failure.** `test_ui_mask.py`, "the mask holds when a
+strength knob is moved", every run. `9aefe63` put `and CHANGE_METRIC` on the whole block after the
+composition in `nr_daemon.process`, and that block holds the interface restore as well as the
+metric: the original wire bytes put back over the masked pixels, which is what keeps them exact
+once a strength knob is away from 1. Since `64c0e0f` turned the metric off by default, a masked
+frame on the CPU path with detail or colour strength away from 1 came back with its interface
+moved. In no release: 0.0.6 is before both.
+
+**The fix, `a6699b6`:** the restore runs whenever there is a mask; only the metric's figure waits on
+`CHANGE_METRIC`. `test_ui_mask.py` passes with `NR_CHANGE_METRIC` unset and set to 1.
+
+**At `a6699b6`:**
+- `make test` 73 of 73, in 1 min 29 s;
+- `XMX_STAGING=1 make test` 73 of 73, in 1 min 34 s, the seven GPU suites that print the mode
+  saying `staging=True`;
+- CMake builds with no warning, and CTest passes 72 of 72;
+- skipped: nothing.
+
+**Not run:** the timings still owed (Open items, Linux).
+
+**Also, for this checkout only:** a SessionStart hook keeps the Linux checkout on `newnr` (the
+owner, 11-16: a new session's context comes from `newnr`). `.claude/hooks/newnr-context.sh`,
+untracked: it fetches `origin/newnr`, fast-forwards it and switches to it, and leaves the checkout
+alone when it has uncommitted changes or another session in it, saying so.
+
+**Next on Linux:** the timings in Open items. **Next on Windows:** nothing for this; pushing `a6699b6`
+is the owner's word.
+
+## `dx12-waits` and `fused-bycol` in one tree: 12 % of a frame at 2560x1440, 8 % at 1920x1080 against 0.0.6 (2026-11-16, branch `waits-bycol`)
+
+The owner, 11-16: yes to one tree of the two for a game. `waits-bycol` is `dx12-waits` (`1ab6ecf`)
+with `fused-bycol` (`836001e`) merged in, commit `8f69ff3`. The two touch different code and met
+only in this file. **Pushed** at the owner's word the same evening, after the game run below:
+`master`, `newnr` and `alchemist` fast-forwarded together from `0624ccc`, before Linux's tests. Arc 140V, Intel 101.9150, on AC, best performance.
+
+- Green on Windows at `8f69ff3`: MSVC `build_win.bat` and `build_xess.bat` with no warning, CTest
+  71 of 71 on MinGW's libraries and on MSVC's, `test_nr_xess`, `test_gpu_d3d12.py` with and
+  without the network. `frame_replay.py --size 576 1024` with network B gives the heads both
+  branches gave (`edcbf478...`, `acbd05d9...`).
+- Whole frames of the daemon's pipeline on a device buffer (no motion, network B at 0.4, 40 frames
+  after 25, three rounds alternating with the 0.0.6 tree), ms:
+
+  | | 0.0.6 (`0624ccc`) | `waits-bycol` |
+  | --- | --- | --- |
+  | 2560x1440 frame | 50.4-51.2 | 44.2-45.1 |
+  | before the network / network / composition | 3.5-3.6 / 41.7-42.8 / 4.1-4.2 | 2.5-2.7 / 39.6-40.1 / 2.3-2.4 |
+  | 1920x1080 frame | 29.3-30.5 | 27.4-27.7 |
+  | before the network / network / composition | 2.1-2.4 / 24.7-25.3 / 2.4-2.5 | 1.6-1.9 / 24.0-24.5 / 1.4-1.5 |
+
+  Windows was not quiet by `quiet-check.ps1`, before and after (a browser at 2-3 % of the cores,
+  Defender and the search indexer running): the two trees alternated, so the difference stands
+  and the absolute figures are a little high or low. Part of the gain around the network is the
+  change metric, off by default on this branch.
+- The release folder from `8f69ff3`: `%USERPROFILE%\nr-rel\waits-bycol-8f69ff3\dlss-nr-windows`.
+  On the stand-in (`nr-game\standin-release-check.ps1`): 772 frames with none rejected, the speed
+  test of A then B, the report's 19 checks, the folder as before.
+
+**Hogwarts Legacy from that folder, 11-16 19:45-19:54** (FSR 3.1 path as on 11-15, the game at
+1920x1080 with XeFG, `nr-game\release-tests\hogwarts-waits-bycol-1116`). The owner, asked about
+the cut-overs after menus: the game's flag decides, with no guard of ours beside it (the test
+is computed either way, so the choice costs no time). Then the owner took the game and played;
+no input was sent by the session.
+
+- The 11-15 view standing still, network B at 0.4: 78-80 frames in every 5 s (15.8 a second),
+  the daemon's line 51 ms with the network 26; `dx12-waits` alone on 11-15 gave 80-81 (16.0-16.2).
+  What `fused-bycol` gives at a 768x448 network, about 1 %, is under the difference between two
+  days, and no control ran the same day: the game shows nothing of it at this size, for or
+  against.
+- 4705 frames of the game, none declined, no error in the daemon's log. From the panel the owner
+  moved the render scale between 0.15 and 1.0 (10 ms of network at 320x320, 166 at 1920x1152),
+  tried the `cinematic` and `hogwarts` profiles and network A and back to B, all in the running
+  game. The folder's `nr_settings.json` is left as the owner set it (0.3, `cinematic`).
+- The game's resets: 22, in 10 places, and 20 of them came with the cut under the 0.15 limit
+  (0.09-0.14, camera changes the old test would have carried the history across). One frame past
+  the limit without a reset, the fifth of the session (0.35, before the title screen); in play
+  none, the cut at most 0.134.
+- Closed with WM_CLOSE, Remove NR through setup; the executable's and XeSS's folders as before but
+  for `xefg-capture.log` (another project's capture proxy, which appends at every run). The game
+  wrote its saves `HL-00-12` to `-14` and the save list; the copy from before is in the test's
+  folder.
+
+**Next on Linux:** at GitHub's head, `make test` in both memory modes and CTest
+(`image_compose.comp` and `image_history.comp` include `history_sample.glsl`; the D3D12 parts
+build only on Windows), and `frame_profile.py --size 576 1024 --weights
+work/mlxw/dlssnr-b-logical.safetensors` against `0624ccc` for the by-column fused kernels on
+Mesa. **Next on Windows:** nothing owed; a release with this is the owner's to name.
+
+## The 32-channel blocks' weights by column in shared memory: 4 % of a frame at 1080p and 1440p, the same bytes (2026-11-15, night, branch `fused-bycol`)
+
+The owner, 11-15: focus on high resolutions ("if it works at WQHD, the low ones gain too"), and,
+away that evening, run the experiments without him. One commit (`19679e9`) on the local branch
+`fused-bycol` from `0624ccc`, in a worktree of the session's; nothing pushed. Arc 140V, Intel
+101.9150, on AC, quiet before and after.
+
+**Where B's time goes at WQHD** (`frame_profile.py --size 576 1024 --weights
+work/mlxw/dlssnr-b-logical.safetensors`, the network at 2560x1440 and 0.4; the script takes A's
+weights unless `--weights` says otherwise, whatever `NR_PRESET` is): 42.95 ms on the device; the
+four full-resolution passes 12.8 (the window blocks 3.38 and 3.27, the feed-forwards 3.27 and
+2.91), the 32-channel passes at half resolution 4.7 more. By arithmetic a full-resolution
+feed-forward is ~0.3 ms of matrix work and ~0.9 of memory at its 160 bytes a token; it takes 3.
+
+**Knocked out in turn inside B's frame** (a scratch driver compiles variants of a kernel and loads
+them through `XMX_FFN_SPV`, `XMX_WINDOW_BLOCK_SPV` and `XMX_WINDOW_SPV`; the tree untouched; the
+merged feed-forward, 2.91-2.92 ms, the steadiest call): the projection's multiply-adds and their B
+loads 0.63 ms; the expand's 0.47; the hidden layer's gate and E4M3 publish 0.46; the output's
+publish nothing; the hidden chunk's round trip as the projection's A 0.05. The B fragments loaded
+column-major from the same shared memory (values wrong): 2.92 -> 2.29 ms, and with no B loads at
+all 2.26. **On Intel's Windows driver a B fragment loaded row-major from shared memory is most of
+a matrix step's cost, and a column-major one next to nothing**: the staged GEMM's own by-column
+weights (`7376056`, 11-12) gained partly from this, and the fused kernels had kept their weights
+by row.
+
+**What changed** (`19679e9`; every fragment holds the values it held, so each multiply-add is the
+same):
+- `ffn_fused.comp`: the expand's 32 x 128 and the projection's 128 x 32 go into shared memory by
+  column, the bits moved as they are: a lane takes eight columns of two adjacent rows and stores
+  each column's pair as one word. Their B fragments are loaded column-major.
+- `window_block.comp`: the QKV weights and the output projection's the same way; V stored by
+  channel (a lane swaps its words with the lane of the token beside it, four lanes on), so PV
+  loads V column-major. The keys were column-major already.
+- `window_attention.comp` (the C >= 64 levels) with V by channel was timed too: no change, not
+  kept.
+
+**The same bytes:** `test_ffn_fused.py` (144 narrow, 24 branched), `test_glue.py` (its merged and
+stem feed-forwards among 282 cases) and `test_window_block.py` (240, 32 pooled, 64 with the head)
+bit-exact with the new SPIR-V; each fails on a column-major load of weights still kept by row (a
+control: 1913 bytes, 2048 of 2048 values). `frame_replay.py` heads, original and changed input,
+byte for byte the same: B at 576x1024 (`edcbf478...`, `acbd05d9...`) and 320x512, A at 320x512.
+
+**Inside the frame** (B, 1024x576, three rounds alternating): the full-resolution feed-forward
+2.91 -> 2.39 ms, the half-resolution set 1.48 -> 1.29; the full-resolution window block 3.23-3.28 ->
+2.96-2.99 (by-column weights alone 3.06-3.08), the pooled one 3.41 -> 3.14, the half-resolution
+ones 0.75 -> 0.71. **Whole frames** (the daemon's pipeline on a device buffer, B at 0.4, 120 frames,
+a process each, three rounds alternating; `perf-1115\frames_series.py`):
+
+| ms | 0.0.6 | `fused-bycol` |
+| --- | --- | --- |
+| 2560x1440, the frame | 51.14-51.34 | 48.94-49.30 |
+| 2560x1440, the network | 41.55-41.69 | 39.56-39.77 |
+| 1920x1080, the frame | 32.05-32.32 | 30.87-30.99 |
+| 1920x1080, the network | 25.19-25.35 | 24.08-24.14 |
+| 1280x720, the network | 12.97-13.46 | 12.32-12.80 |
+
+(At 1280x720 the frame itself was bimodal in both builds, 16-18 ms, from the passes around the
+network; the network is the figure.) With `dx12-waits`' passes around the network (WQHD 51.7 ->
+48.8 there) the two would be ~46 ms at 2560x1440.
+
+**What is left in the window block** (knocked out on this branch's kernel, the full-resolution
+call 2.98 ms, two rounds): Q and K's normalisation 0.16, the bias's load 0.08, the softmax's
+transform 0.08, the skip's second read 0.07, the gathered row's E4M3 0.04, the output's publish
+nothing. No piece is large; the rest, ~2.5 ms, is its structure (barriers, the matrix steps'
+chains, the shared-memory round trips). The E4M3 by a magic constant (`NR_E4M3_MAGIC`) is exact
+and was 10-22 % slower on this driver in October (`notes/improve-e4m3-probe-20261013.md`): not
+tried again.
+
+**Not run:** Linux (the same shaders run on Mesa, where `improve-b.md` saw a by-column tile spill
+in the staged GEMM: worth a timing there; a driver switch would be a specialisation constant), a
+game, CTest at this head (the three kernels' tests and the heads ran with the SPIR-V loaded from
+the scratchpad through the variables above).
+
+**Next on Linux:** `make test` in both memory modes, CTest, and `frame_profile.py --size 576 1024
+--weights work/mlxw/dlssnr-b-logical.safetensors` against `0624ccc`. **Next on Windows:** the owner's
+word; with `dx12-waits`, a release root for a game.
+
+## DirectX 12 on the game's own data, the change metric off, and where WQHD's time goes (2026-11-15, branch `dx12-waits`)
+
+The owner, 11-15, after another AI's list of optimisations was checked against this project's
+notes (most of it had been measured here and lost): take the free one, the game's own resets and
+motion in DirectX 12 ("on DX12 we carry crutches from when we had no data"), the follower in the
+composition, half-precision history, the last frame as bytes, the bottleneck's reuse, and focus
+on high resolutions. Eight commits on the local branch `dx12-waits` from `0624ccc`, the last this
+entry's game run; nothing pushed. Arc 140V, Intel 101.9150, on AC, quiet before and after every timing.
+
+**What changed:**
+- `686d391`: with motion, the cut test's two reductions are recorded in the decode's submit
+  (`GPUImageFollower.record_cut`): they were a submit and a wait each, 0.46-0.48 -> 0.04-0.05 ms
+  of a 1920x1200 frame. Protocol 3 carries the game's resets (`driver_uuid[8]`, nr_gpu_wire.h).
+- `64c0e0f`: `NR_CHANGE_METRIC` off by default; the setup window's checkbox "Measure how much NR
+  changes each frame" (four languages, Profile.change_metric) writes `NR_CHANGE_METRIC=1`.
+- `a33e142`: a DirectX 12 game's word on its resets decides the history: its reset drops it, and
+  a frame it did not reset keeps the one its motion leads back to past the cut limit (not where
+  the motion is known nowhere). A client that says nothing keeps the cut test, as every Vulkan
+  game does; `NR_DX12_CUT_TEST=1` goes back to it. The test still runs, and the frame line ends in
+  ` game-reset` and ` cut-over` (a history the test alone would have dropped).
+- `6aed11f`: the composition reads the network's last output and the game's last frame along the
+  motion itself (image_compose.comp MOVED, `history_sample.glsl` shared with image_history.comp),
+  where the follower's active-extent pass wrote both as float32 images for it to read back; the
+  pass runs only for `known` when the motion is known nowhere. `NR_FOLLOW_IN_COMPOSE=0` compares.
+- `2a7ca88`: a session no motion comes in (every Vulkan game's) keeps the last frame as its bytes
+  for the composition (PREVIOUS_RAW, the same table as its `rgb`), where a float32 decode at the
+  full extent was kept for that one read; a DirectX 12 session with room for motion keeps float32
+  (`motion_session`). Whole frames on a device buffer, B at 0.4, three rounds: the passes before
+  the network 3.22-3.25 -> 2.26-2.30 ms at 2560x1440, 2.14-2.16 -> 1.56-1.61 at 1920x1080.
+  `NR_RAW_PREVIOUS=0` compares.
+
+**The same bytes:** the full-model motion parity against the CPU's `History.follow` on both paths
+(and with the metric on and off), `test_image_history` (48 exact comparisons, `record_cut` and the
+pass left out), `test_gpu_transport` (the reset's packet rules), `test_nr_xess` (the 2, 3, 2 over
+a reset), `test_windows_wizard` 104, the window's self-test (90 controls, 200 keys); MinGW and
+MSVC CTest 71 of 71 each; `test_gpu_d3d12.py` with and without the network, `test_daemon`.
+
+**The Hogwarts Legacy recordings through `replay_nr_xess`** (mode=after, network B at 0.4, the
+daemon's own frame lines; the driver `nr-game\perf-1115\replay_ab.py`). The 10-16 recording's one
+reset came with cut 0.1136, under the 0.15 limit, so the cut test had kept an unmoved history
+across the cut (`history=still`); the game's word drops it there. No frame of 289 was past the
+limit without the game's reset. The 10-18 recording at 1920x1200, four rounds alternating:
+
+| ms a frame | the follower's pass | in the composition |
+| --- | --- | --- |
+| prep (decode, follow, cut, features) | 4.95-5.38 | 2.92-3.17 |
+| compose (the metric off) | 1.59-1.66 | 2.46-2.81 |
+
+**At 2560x1440** (a synthetic recording with motion from `make_synthetic_recording.py`'s shapes at
+1280x720 -> 2560x1440, `perf-1115\make_wqhd_recording.py`; network 1024x576): the old settings
+(`NR_CHANGE_METRIC=1 NR_FOLLOW_IN_COMPOSE=0`) against the new defaults, three rounds: prep
+7.97-8.04 -> 4.07-4.26 ms, compose 4.30-4.49 -> 4.13-4.36, the daemon's frame 63.5-64 -> 59.5-62.
+
+**Tried and not kept:** the network's kept output as float16. Exact (the composition keeps
+`trunc_half` values, which half holds), but the five-tap reads made the composition 12.7 ms
+against 3.6-4.1 at 2560x1440 with 16-bit loads, and 4.45 against 3.64 reading 32-bit words: those
+reads are not bandwidth-bound on this driver. The patch is `perf-1115\half-history-not-kept.patch`.
+For the same reason the last frame stays float32 where motion comes (`2a7ca88`): its reads there
+are the same five taps.
+
+**The bottleneck's output from the frame before** (F5's VitEvery=2), measured, not built.
+Speed: at 1024x576 (`frame_profile.py --size 576 1024`, 43.4 ms on the device) the eight
+bottleneck blocks are 6.2 ms (14 %; ~30 % at 512x320), so at most ~3 ms a frame every other frame
+there. The picture (`perf-1115\vit_reuse.py`: the CPU reference, network B, 640x360 colour from
+two fast-panning Hogwarts recordings of 11-07/11-08, frame t run whole and again with frame t-1's
+bottleneck output in place of its eight blocks, ten pairs): the answer moves 1.06-1.89 levels on
+average, 18-29 % of NR's own change (5.3-7.2 levels), p99 4.4-11.6, at worst 12.6-21.4 levels,
+the history's gate logit 0.19-0.44. Two to three times what INT8 did (6.8-13.6 %, declined); not
+worth ~3 ms.
+
+**Where WQHD's time goes, then:** the full-resolution C = 32 blocks, 17.7 ms of the 43.4 (41 %:
+`window_block` 9.7, `ffn_fused` 7.9; level 0's four passes 11.3 of it), each running near the
+3-4 TFLOP/s this project's kernels reach on this driver. Those, the Linux agent's lead of 11-04,
+are the target at high resolutions.
+
+**Hogwarts Legacy, the same evening** (the owner away: "run the experiments yourself"). The game
+as it was set: FSR 3 Quality at 1920x1080 in a window, XeFG x4 on, and another project's XeFG
+capture proxy in front of `libxess_fg.dll` (left as it was). So NR through FSR 3.1, B at 0.4
+(768x448); the release roots `nr-rel\dx12-waits-7423213` and, for 0.0.6, `nr-rel\cache-3ce573a`
+with `cache=0` (0.0.6's daemon and proxy). Screen unlocked, on AC, best performance;
+`nr-game\hogwarts-fsr-test.ps1`, the save loaded with `game-click.ps1` and put back to one view
+with `game-reload.ps1` (the pause menu's Restart from last save). Every frame answered, none
+declined. Standing in the save's room, the same view; the frame from the capture's per-frame log
+(`camera.txt`'s QPC), the rest from the daemon's lines:
+
+| | the game's frame | the daemon's | prep | compose | network |
+| --- | --- | --- | --- | --- | --- |
+| 0.0.6 | 66.6 ms (15.0 a second) | 66 | 6.17 | 2.56 | 26 |
+| `dx12-waits` | 62.4 ms (16.0 a second) | 62 | 3.46 | 2.52 | 26 |
+| NR off | 28.1 ms (35.6 a second) | | | | |
+
+On the title screen 51 -> 49 ms, 19.2 -> 20.2 frames a second.
+
+**The game's word against the cut test:** 318 frames of play, turns up to ~130 degrees in a
+third of a second: no reset, no cut-over, the cut at most 0.052. The game resets when the save
+starts loading (3 frames), when the load ends (2), and when the pause menu opens (2) and closes
+(1). The cut passed its limit without the game's reset only right after two of those: the menu
+into the loading screen (0.44, 0.97, 0.36) and four frames after the pause menu closed (0.59, 0.58,
+twice). There the history is now kept, as NVIDIA's NR would keep it, having only the game's
+flag. Whether those few frames show anything is for the eye. The game saved itself at every
+load (`HL-00-10` to `-14`, the save list); the saves from before are in each test's folder.
+
+**Next on Linux:** once this is on GitHub, `make test` in both memory modes and CTest:
+`image_compose.comp` and `image_history.comp` include `history_sample.glsl` (the Makefile and
+CMake know), and the D3D12 parts build only on Windows. **Next on Windows:** the owner's word on
+the cut-overs after menus, and on merging.
 
 ## The edit cache: NR on every other frame in DirectX 12, its edit carried along the game's motion; built, then run in Hogwarts Legacy (2026-11-13 and 11-15, branch `edit-cache`)
 

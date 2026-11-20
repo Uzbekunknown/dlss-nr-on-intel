@@ -81,31 +81,72 @@ class GPUImageFollower:
                            int(np.float32(STALE).view(np.uint32)))
         self.pipeline.record(push, -(-width * height // 256))
 
-    def record(self, motion, *, neural, previous, active, previous_inner, inner):
+    def record(self, motion, *, neural, previous, active, previous_inner, inner, active_pass=True):
         """Record both passes. ``motion`` is the device address of the frame's offsets, two
         float32 a pixel at the frame's extent; the buffers are the pipeline's own, at the
-        active extent (``neural``, ``previous``, ``active``) and the network's (the rest)."""
+        active extent (``neural``, ``previous``, ``active``) and the network's (the rest).
+
+        ``active_pass=False`` leaves the active-extent pass out: the composition reads the same
+        two images along the same motion itself (GPUImageComposer.record's `moved`), so `full`
+        and `pixels` are not written. `known` at that extent, which the cut test reads only when
+        the motion is known nowhere the network reads, is then made by the pass on demand."""
         if self._closed:
             raise RuntimeError("GPUImageFollower is closed")
         if not isinstance(motion, int) or motion <= 0 or motion % 4:
             raise ValueError("motion must be a float-aligned device address")
-        self._push(ACTIVE, motion, neural, previous, active, self.full, self.pixels, self.known)
+        self._active = (motion, neural, previous, active, self.full, self.pixels, self.known)
+        self._active_done = active_pass
+        if active_pass:
+            self._push(ACTIVE, *self._active)
         self._push(INNER, motion, self.resampled, previous_inner, inner, self.inner, self.moved,
                    self.known_inner)
 
+    def _active_known(self):
+        """`known` at the active extent for this frame, the pass run for it if it was left out
+        (its operands are unchanged until the composition, after the cut test)."""
+        if not self._active_done:
+            self.rt.begin()
+            try:
+                self._push(ACTIVE, *self._active)
+                self.rt.submit()
+            except Exception:
+                self.rt.abort()
+                raise
+            self._active_done = True
+        return self.known
+
     def cut(self, stats, inner, limit):
         """The reference's cut against the last frame moved here, over the pixels whose motion
-        is known; None when it is known nowhere, which drops the history."""
-        share = stats.delta(self.known_inner, self.zeros, self.inner_width, self.inner_height,
-                            channels=1)
+        is known; None when it is known nowhere, which drops the history. Each reduction is a
+        submit of its own; `record_cut` puts them in the caller's."""
+        return self._cut(stats, limit,
+                         lambda: stats.delta(self.known_inner, self.zeros, self.inner_width,
+                                             self.inner_height, channels=1),
+                         lambda threshold: stats.delta(inner, self.moved, self.inner_width,
+                                                       self.inner_height, decision_threshold=threshold))
+
+    def record_cut(self, stats, inner):
+        """`cut`'s two reductions recorded into the commands the caller is recording, after
+        `record`, each on a scratch of its own: the share of the network's pixels whose motion
+        is known, and how far this frame lies from the last one moved here. Returns the call
+        that gives `cut` for a limit once those commands have run. The same reductions of the
+        same buffers, so the same values; they were a submit and a wait each, after the one
+        `record` is in (0.5 ms of a 1920x1200 frame of Hogwarts Legacy's)."""
+        share_of = stats.record_delta(self.known_inner, self.zeros, self.inner_width, self.inner_height,
+                                      channels=1, slot="follow_share")
+        apart_of = stats.record_delta(inner, self.moved, self.inner_width, self.inner_height,
+                                      slot="follow_apart")
+        return lambda limit: self._cut(stats, limit, share_of,
+                                       lambda threshold: apart_of(decision_threshold=threshold))
+
+    def _cut(self, stats, limit, share_of, apart_of):
+        share = share_of()
         if not share > 0:
             # Each pixel at the network's extent reads an active pixel's motion, so only now
             # can the motion be known somewhere and still be known nowhere it reads.
-            known = stats.delta(self.known, self.zeros, self.width, self.height, channels=1)
+            known = stats.delta(self._active_known(), self.zeros, self.width, self.height, channels=1)
             return 0.0 if known > 0 else None
-        apart = stats.delta(inner, self.moved, self.inner_width, self.inner_height,
-                            decision_threshold=float(limit) * share)
-        return apart / share
+        return apart_of(float(limit) * share) / share
 
     def close(self):
         if not self._closed:

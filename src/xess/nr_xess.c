@@ -32,7 +32,9 @@
  * The scene colour is linear HDR, and the network was trained on a display-referred
  * sRGB picture. The frame NR sees is src/ref/nr_display.py's proxy of it — a soft knee on
  * luminance above 0.75 of `white` — and the change goes back through the same ratio, in
- * nr_xess.hlsl.
+ * nr_xess.hlsl. A game that upscales after its tone map hands over a picture 8 bits a channel,
+ * display-referred already: NR is given its bytes, and the answer's take their place
+ * (`display_kind`, mode=after and mode=before).
  *
  * Every other export jumps straight to the original, renamed libxess_nr_orig.dll beside
  * this one (gen_xess_exports.py). Settings are read from nr-xess.txt beside it, and what
@@ -654,7 +656,17 @@ static void build_tables(void)
 	for (int i = 0; i < 256; i++) likeness_half[i] = to_half(sqrtf(linear8[i]));
 }
 
-enum { KIND_RGBA16F, KIND_R11G11B10F, KIND_R10G10B10A2 };
+enum { KIND_RGBA16F, KIND_R11G11B10F, KIND_R10G10B10A2, KIND_RGBA8, KIND_BGRA8 };
+
+/* A picture 8 bits a channel is one after the tone map, its bytes display-encoded as a
+ * swapchain's, whatever view the game reads it through (an upscaler writes its output through a
+ * UNORM view: no SRGB format takes a UAV). NR is given those bytes as they are, with no `white`
+ * and no knee, and its answer's bytes go back in their place. The other kinds hold scene light,
+ * which NR sees through the proxy. */
+static int display_kind(int kind)
+{
+	return kind == KIND_RGBA8 || kind == KIND_BGRA8;
+}
 
 static int kind_of(DXGI_FORMAT format, UINT *texel)
 {
@@ -662,12 +674,26 @@ static int kind_of(DXGI_FORMAT format, UINT *texel)
 	case DXGI_FORMAT_R16G16B16A16_FLOAT: *texel = 8; return KIND_RGBA16F;
 	case DXGI_FORMAT_R11G11B10_FLOAT: *texel = 4; return KIND_R11G11B10F;
 	case DXGI_FORMAT_R10G10B10A2_UNORM: *texel = 4; return KIND_R10G10B10A2;
+	case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+	case DXGI_FORMAT_R8G8B8A8_UNORM:
+	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: *texel = 4; return KIND_RGBA8;
+	case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: *texel = 4; return KIND_BGRA8;
 	default: return -1;
 	}
 }
 
+/* A texel's colour: scene light, or for a display kind the light its bytes show. */
 static void load_texel(const uint8_t *at, int kind, float *rgb)
 {
+	if (display_kind(kind)) {
+		int red = kind == KIND_BGRA8 ? 2 : 0;
+		rgb[0] = linear8[at[red]];
+		rgb[1] = linear8[at[1]];
+		rgb[2] = linear8[at[2 - red]];
+		return;
+	}
 	if (kind == KIND_RGBA16F) {
 		const uint16_t *h = (const uint16_t *)at;
 		rgb[0] = half_value[h[0]];
@@ -707,13 +733,40 @@ static void encode_proxy(const float *rgb, float inverse_white, uint8_t *out)
 	out[3] = 255;
 }
 
+/* What NR is given for a texel, R8G8B8A8 holding sRGB-encoded values: a display kind's own bytes
+ * in that order, opaque; scene light through the proxy. nr_xess.hlsl's ENCODE does the same. */
+static void give_texel(const uint8_t *at, int kind, float inverse_white, uint8_t *out)
+{
+	if (display_kind(kind)) {
+		int red = kind == KIND_BGRA8 ? 2 : 0;
+		out[0] = at[red];
+		out[1] = at[1];
+		out[2] = at[2 - red];
+		out[3] = 255;
+		return;
+	}
+	float rgb[3];
+	load_texel(at, kind, rgb);
+	encode_proxy(rgb, inverse_white, out);
+}
+
 /* ---- The daemon ---- */
 
 /* One frame each way, the layer's protocol (src/layer/nr_layer.c `process_frame`):
  * R8G8B8A8_UNORM holding sRGB-encoded values, as a swapchain would. With `motion` — for
  * each pixel, two floats: the offset to where its surface was on the frame sent before,
  * NaN where it was not on screen — the request is the daemon's MAGIC_MOTION, and its
- * history follows the game's own vectors instead of standing still. */
+ * history follows the game's own vectors instead of standing still.
+ *
+ * **The answer may end with the network's time** (the layer's `exchange_receive`, the
+ * daemon's TRAILER_MAGIC): eight bytes, a little-endian word naming itself and one
+ * naming the frame's microseconds. Read past the pixels when they are there, never
+ * waiting for an old daemon's silence; what lands in `last_answer_us` is this frame's
+ * cost, and zero means the daemon said nothing. The signature stays the shape the
+ * test's stand-ins (`brighten`, `spot`) implement — the trailer travels through the
+ * module variable below instead of a parameter. */
+static volatile LONG64 last_answer_us;
+
 static int exchange_pipe(const uint8_t *frame, const float *motion, uint8_t *answer,
 			 uint32_t width, uint32_t height)
 {
@@ -725,7 +778,22 @@ static int exchange_pipe(const uint8_t *frame, const float *motion, uint8_t *ans
 		     || nr_link_write(&link, frame, bytes) != 0
 		     || (motion && nr_link_write(&link, motion, bytes * 2) != 0)
 		     || nr_link_read(&link, answer, bytes) != 0;
+	uint32_t us = 0;
+	if (!failed) {
+		unsigned char tail[8];
+		if (nr_link_read_nowait(&link, tail, sizeof tail) == 0) {
+			const uint32_t magic = (uint32_t)tail[0] | ((uint32_t)tail[1] << 8) |
+					       ((uint32_t)tail[2] << 16) | ((uint32_t)tail[3] << 24);
+			if (magic == 0x54494E52u)
+				us = (uint32_t)tail[4] | ((uint32_t)tail[5] << 8) |
+				     ((uint32_t)tail[6] << 16) | ((uint32_t)tail[7] << 24);
+		}
+	}
 	nr_link_close(&link);
+	/* Only on success: a failed exchange leaves the variable as it was, so "zero means the
+	 * daemon said nothing" stays true and a stand-in that never sets it cannot inherit a real
+	 * daemon's time from a frame that failed. */
+	if (!failed) InterlockedExchange64(&last_answer_us, (LONG64)us);
 	return failed ? -1 : 0;
 }
 
@@ -892,14 +960,12 @@ static void read_frame(float white)
 	uint8_t *mapped = NULL;
 	D3D12_RANGE range = { 0, (SIZE_T)nr.bytes }, none = { 0, 0 };
 	if (FAILED(ID3D12Resource_Map(nr.readback, 0, &range, (void **)&mapped))) return;
-	float inverse_white = 1 / white, rgb[3];
+	float inverse_white = 1 / white;
 	for (UINT y = 0; y < nr.height; y++) {
 		const uint8_t *row = mapped + nr.footprint.Offset + (size_t)y * nr.footprint.Footprint.RowPitch;
 		uint8_t *out = nr.frame + (size_t)y * nr.width * 4;
-		for (UINT x = 0; x < nr.width; x++) {
-			load_texel(row + (size_t)x * nr.texel, nr.kind, rgb);
-			encode_proxy(rgb, inverse_white, out + (size_t)x * 4);
-		}
+		for (UINT x = 0; x < nr.width; x++)
+			give_texel(row + (size_t)x * nr.texel, nr.kind, inverse_white, out + (size_t)x * 4);
 	}
 	ID3D12Resource_Unmap(nr.readback, 0, &none);
 }
@@ -1078,7 +1144,14 @@ static DWORD WINAPI worker(LPVOID unused)
 		}
 		if (ok) {
 			publish(epoch, sequence, jitter);
-			panel_count_answer(0);   /* the CPU exchange reports no network time */
+			/* The daemon's time for this frame, when the trailer carried one.
+			 * The GPU cut path fills the same counters from its reply's
+			 * `detail` (panel_count_answer(reply.detail) below); zero here
+			 * means the exchange said nothing, which counts the frame but not
+			 * the graph. The stand-ins the tests install never set the
+			 * variable, so their frames read as "not reported" — the honest
+			 * answer for a fake daemon. */
+			panel_count_answer((uint32_t)InterlockedCompareExchange64(&last_answer_us, 0, 0));
 			if (answers_dir) write_answer(sequence);
 			if (++nr.answered == 30 && config.dump) dump_frames();
 			QueryPerformanceCounter(&t1);
@@ -1622,12 +1695,14 @@ static ID3D12Resource *record(ID3D12GraphicsCommandList *list, const xess_d3d12_
 	UINT texel;
 	int kind = kind_of(desc.Format, &texel);
 	static int told;
-	if (kind < 0 || (UINT64)p->inputColorBase.x + width > desc.Width
+	/* MATCH and APPLY work in scene light, through the proxy: a display picture is the cut's */
+	if (kind < 0 || display_kind(kind) || (UINT64)p->inputColorBase.x + width > desc.Width
 	    || (UINT64)p->inputColorBase.y + height > desc.Height) {
 		if (!told++)
-			say("colour format %d, %ux%u at (%u, %u) in %llux%u: not handled; XeSS gets it as it is\n",
+			say("colour format %d, %ux%u at (%u, %u) in %llux%u: not handled%s; XeSS gets it as it is\n",
 			    desc.Format, width, height, p->inputColorBase.x, p->inputColorBase.y,
-			    desc.Width, desc.Height);
+			    desc.Width, desc.Height,
+			    kind >= 0 && display_kind(kind) ? " by mode=carry (8 bits a channel: mode=after or before)" : "");
 		return NULL;
 	}
 	ID3D12Device *device = NULL;
@@ -2068,11 +2143,13 @@ struct cut_constants {
 _Static_assert(sizeof(struct cut_constants) == 40 * 4, "the root signature takes 40 constants");
 
 /* What one frame's cut hands the daemon: its fence, held, since the session may close before
- * the worker gets to it, the frame's value V, the session it belongs to, and the V of the
- * frame its offsets lead back to, or 0 when it has none to follow. */
+ * the worker gets to it, the frame's value V, the session it belongs to, the V of the frame
+ * its offsets lead back to, or 0 when it has none to follow, and whether the game started its
+ * history over at this frame. */
 struct handover {
 	ID3D12Fence *fence;
 	uint64_t value, session, previous;
+	int reset;
 	LARGE_INTEGER queued;
 };
 
@@ -2173,6 +2250,7 @@ static void hand_over(struct handover *h)
 	if (current) {
 		nr_gpu_d3d12_packet(&cut.gpu, NR_GPU_FRAME, h->value, &packet);
 		nr_gpu_d3d12_follow(&packet, h->previous);
+		nr_gpu_d3d12_tell_reset(&packet, h->reset);
 	}
 	ReleaseSRWLockShared(&cut.lock);
 	if (!current) {
@@ -2996,6 +3074,9 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 		say("%s %ux%u format %d at (%u, %u) in a %llux%u texture; exposure %g, jitter (%.3f, %.3f)\n",
 		    what, width, height, desc.Format, base.x, base.y, desc.Width, desc.Height,
 		    p->exposureScale, p->jitterOffsetX, p->jitterOffsetY);
+		if (display_kind(kind))
+			say("%s is 8 bits a channel, taken as a display picture: NR is given its bytes as they are, "
+			    "and its answer's bytes replace them\n", what);
 		if (cut_rebuild(device, width, height, desc.Format, kind, texel) != 0) {
 			say("setup failed; from here on %s gets every frame as it is\n", upscaler);
 			nr.broken = 1;
@@ -3049,7 +3130,8 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	}
 	if (!f) cache.newest = cache.older = -1;
 	/* XeSS multiplies the colour by the exposure; its output is taken to be in the colour's
-	 * own scale, as other upscalers' is (Hogwarts' exposure is 1, so this is untried). */
+	 * own scale, as other upscalers' is (Hogwarts' exposure is 1, so this is untried). A display
+	 * picture takes neither: the passes leave `white` alone for it. */
 	float white = config.white;
 	if (p->exposureScale > 0) white /= p->exposureScale;
 	/* the output is drawn without jitter */
@@ -3172,6 +3254,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	h->value = value;
 	h->session = cut.session;
 	h->previous = follow ? cut.last : 0;
+	h->reset = p->resetHistory != 0;
 	if (!nr_split_cut(list, run_between, drop_handover, h, state, why, sizeof why)) {
 		ID3D12Fence_Release(h->fence);
 		free(h);
@@ -3193,7 +3276,7 @@ static ID3D12Resource *record_cut(ID3D12GraphicsCommandList *list, const xess_d3
 	add(&b, nr.staging, common, read);
 	add(&b, cut.gpu.input, common, read);
 	add(&b, cut.gpu.output, common, read);
-	ID3D12Resource *composing[5] = { nr.staging, cut.gpu.input, cut.gpu.output, nr.linear_table, nr.staging };
+	ID3D12Resource *composing[5] = { nr.staging, cut.gpu.input, cut.gpu.output, nr.linear_table, nr.srgb_table };
 	if (f) {
 		/* CAPTURE: this frame's edit becomes the newest change, in the other buffer, and its
 		 * tracker starts afresh, this being its frame */
@@ -3382,7 +3465,20 @@ static void after_upscale(ID3D12GraphicsCommandList *list, const xess_d3d12_exec
 	int chained = cache.chain && cache.chain + 1 == upscales;
 	UINT motion_width = 0, motion_height = 0;
 	D3D12_RESOURCE_DESC colour_desc;
-	if (config.cache >= 2 && p->pColorTexture && vectors_at != (D3D12_RESOURCE_STATES)-1) {
+	/* the cache's passes work in scene light: a display picture gets NR on every frame */
+	int display = 0;
+	if (config.cache >= 2 && p->pOutputTexture) {
+		D3D12_RESOURCE_DESC output;
+		ID3D12Resource_GetDesc(p->pOutputTexture, &output);
+		UINT texel;
+		int kind = kind_of(output.Format, &texel);
+		display = kind >= 0 && display_kind(kind);
+		static int told;
+		if (display && !told++)
+			say("the edit cache works in scene light; %s's output, 8 bits a channel, gets NR on every frame\n",
+			    upscaler);
+	}
+	if (config.cache >= 2 && !display && p->pColorTexture && vectors_at != (D3D12_RESOURCE_STATES)-1) {
 		ID3D12Resource_GetDesc(p->pColorTexture, &colour_desc);
 		UINT render_width = p->inputWidth ? p->inputWidth : (UINT)colour_desc.Width;
 		UINT render_height = p->inputHeight ? p->inputHeight : colour_desc.Height;

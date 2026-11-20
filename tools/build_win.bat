@@ -15,6 +15,7 @@ rem    work\test_menu_panel.exe the panel's own reporting, headless
 rem    work\test_menu_side.exe  the menu's C side against the same panel, headless
 rem    work\test_menu_keys.exe  the panel's hotkeys, by structure
 rem    work\test_menu_language.exe  the selector matches the rows
+rem    work\test_menu_persist.exe   the settings file under the menu, outside edits included
 rem    work\test_menu_actions.exe   Reset, Revert and the effect checkbox
 rem    work\test_menu_pacing.exe    async, the GPU path and the cadence
 rem
@@ -203,7 +204,7 @@ rem
 rem /Fo puts these objects in the checkout, where the links below read them, whatever folder the
 rem script runs from. Without it they landed in the caller's folder, and run from anywhere but the
 rem checkout the layer's link stopped at LNK1181 on nr_layer.obj (2026-11-04).
-cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%REPO%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu_floor.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c"
+cl /nologo /O2 /TC /utf-8 /we4013 /D_WIN32 /I"%VULKAN_SDK%\Include" /I"%REPO%\third_party\imgui" /I"%REPO%\src\layer" /Fo:"%REPO%\\" /c "%REPO%\src\layer\nr_layer.c" "%REPO%\src\layer\nr_menu_layer.c" "%REPO%\src\layer\nr_menu_floor.c" "%REPO%\src\layer\nr_menu.c" "%REPO%\src\layer\nr_menu_font.c" "%REPO%\src\layer\nr_menu_strings.c" "%REPO%\src\layer\nr_menu_strings_lookup.c" "%REPO%\src\layer\nr_menu_bridge.c" "%REPO%\src\layer\nr_file.c" "%REPO%\src\layer\nr_focus.c" "%REPO%\src\layer\nr_raw_mouse.c" "%REPO%\src\layer\nr_panel.c" "%REPO%\src\layer\nr_input_guard.c" "%REPO%\src\layer\test_exchange.c" "%REPO%\src\layer\test_menu_persist.c"
 if errorlevel 1 ( echo ERROR: layer C objects failed & exit /b 1 )
 rem link.exe, not cl, for the mixed C/C++ link: cl with /TC recompiles .obj inputs it is handed
 rem on the same command line (C2018, reading the binary as source), which is not a link at all.
@@ -242,6 +243,14 @@ rem it checks is a call site, and a real bridge needs a menu to hand it to.
 link /nologo /OUT:"%WORK%\test_menu_language.exe" "%REPO%\test_menu_language.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_menu_language.exe failed & exit /b 1 )
 echo   test_menu_language.exe
+rem What the settings file does when the menu touches it: unrelated fields survive a save, opening
+rem or saving changes nothing, render scale is not reset, and an edit the setup window makes with
+rem the panel shut reaches the knobs when it opens. The Makefile names it for Windows alone and
+rem run_tests.py runs it there, but nothing built it on Windows, so it ran nowhere. C, with asserts
+rem on (no /DNDEBUG on the C line), on a headless menu: no Vulkan device.
+link /nologo /OUT:"%WORK%\test_menu_persist.exe" "%REPO%\test_menu_persist.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" user32.lib gdi32.lib
+if errorlevel 1 ( echo ERROR: test_menu_persist.exe failed & exit /b 1 )
+echo   test_menu_persist.exe
 rem Reset, Revert and the effect checkbox answer three different questions; this checks that
 rem each still answers its own, and that Reset cannot reach the saved file.
 link /nologo /OUT:"%WORK%\test_menu_actions.exe" "%REPO%\test_menu_actions.obj" "%REPO%\nr_menu.obj" "%REPO%\nr_menu_font.obj" "%REPO%\nr_menu_strings.obj" "%REPO%\nr_menu_strings_lookup.obj" "%REPO%\nr_menu_bridge.obj" "%REPO%\nr_file.obj" "%REPO%\nr_focus.obj" "%REPO%\nr_raw_mouse.obj" user32.lib gdi32.lib
@@ -406,7 +415,7 @@ echo   libnr_image.dll the host passes around the network
 echo   libnr_alloc.dll the daemon's NumPy allocator
 echo   *.spv         the compute shaders
 echo   NR-Setup.exe  the Windows setup window
-echo   test_exchange.exe, test_menu_panel.exe, test_menu_side.exe, test_menu_keys.exe, test_menu_language.exe, test_menu_actions.exe, test_menu_pacing.exe, test_menu_choices.exe  the native fixtures
+echo   test_exchange.exe, test_menu_panel.exe, test_menu_side.exe, test_menu_keys.exe, test_menu_language.exe, test_menu_persist.exe, test_menu_actions.exe, test_menu_pacing.exe, test_menu_choices.exe  the native fixtures
 echo.
 echo Next: tools\deploy.bat --game ^<game dir^> installs the layer and points the
 echo daemon at this checkout, so nothing has to be copied into the game folder.

@@ -352,9 +352,24 @@ $script:SettingsStateKey = 'SettingsLoading'
          <TextBlock x:Name="EveryLabel" VerticalAlignment="Center" ToolTip=""/>
          <ComboBox x:Name="EveryFrame" Grid.Column="1" Margin="8,0,0,0" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="Every1" Tag="1" Content=""/><ComboBoxItem x:Name="Every2" Tag="2" Content=""/><ComboBoxItem x:Name="Every3" Tag="3" Content=""/><ComboBoxItem x:Name="Every4" Tag="4" Content=""/></ComboBox>
         </Grid>
+        <CheckBox x:Name="ChangeMetric" Content="" ToolTip="" Margin="0,8,0,0"/>
+        <CheckBox x:Name="TiledKernel" Content="" ToolTip="" Margin="0,8,0,0"/>
         <CheckBox x:Name="EditCache" Content="" ToolTip="" Margin="0,8,0,0"/>
         <TextBlock x:Name="EditCacheNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
         <TextBlock x:Name="PacingNote" Style="{StaticResource Note}" Margin="0,8,0,0"/>
+        <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="CounterLabel" VerticalAlignment="Center" ToolTip=""/>
+         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+          <CheckBox x:Name="CounterCheck" VerticalAlignment="Center" ToolTip=""/>
+          <ComboBox x:Name="CounterCorner" Margin="10,0,0,0" Width="110" SelectedIndex="0" ToolTip=""><ComboBoxItem x:Name="CounterTL" Tag="1" Content=""/><ComboBoxItem x:Name="CounterTR" Tag="2" Content=""/><ComboBoxItem x:Name="CounterBL" Tag="3" Content=""/><ComboBoxItem x:Name="CounterBR" Tag="4" Content=""/></ComboBox>
+         </StackPanel>
+        </Grid>
+        <TextBlock x:Name="CounterNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
+<Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <TextBlock x:Name="GraphsLabel" VerticalAlignment="Center" ToolTip=""/>
+         <CheckBox x:Name="GraphsCheck" Grid.Column="1" Margin="8,0,0,0" IsChecked="True" ToolTip=""/>
+        </Grid>
+        <TextBlock x:Name="GraphsNote" Style="{StaticResource Note}" Margin="0,4,0,0"/>
        </StackPanel>
       </Border>
       <Border Style="{StaticResource CardBox}">
@@ -410,7 +425,7 @@ foreach($name in @('DllPath','GamePath','PythonPath','BrowseDll','BrowseGame','B
 # knob, which names the model file directly and hot-swaps). A second chooser here
 # answered the same question with a second value and the two disagreed; NR_PRESET
 # stays what the profile says (A) and the saved settings decide the rest.
-foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','EditCache','EditCacheNote','PacingNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
+foreach($name in @('Pages','SetupTab','ControlsTab','ControlsHeading','ControlsToggle','ControlsLaunch','ResetSettings','ControlsEffectState','ControlsRuntimeState','FrameReadout','SettingsState','KnobRows','MoreSettings','MoreKnobRows','PacingHeading','AsyncMode','GpuImagePath','GpuImageNote','EveryLabel','EveryFrame','Every1','Every2','Every3','Every4','ChangeMetric','TiledKernel','EditCache','EditCacheNote','PacingNote','GraphsLabel','GraphsCheck','CounterLabel','CounterCheck','CounterCorner','CounterTL','CounterTR','CounterBL','CounterBR','CounterNote','GraphsNote','PresetHeading','PresetChoice','PresetA','PresetB','PresetNote','AboutTab','AboutVersion','AboutText','OpenRepository','OpenReleases','OpenIssues','UpdatesHeading','UpdateState','CheckUpdates','OpenUpdate','UpdateAtStart','UpdateNote','CreditsHeading','CreditsText','UpdateBanner')) {
     $script:Ui[$name]=$script:Window.FindName($name)
     if($null -eq $script:Ui[$name]) { throw "Missing control $name" }
 }
@@ -546,10 +561,17 @@ $script:Strings=@{
   SpeedCase='{0}×{1} {2} ms (up to {3} fps)'
   SpeedNote='Taking each frame from the game and giving it back takes time too, and the game draws on the same GPU: in a game the frame rate is lower than these.'
   PacingHeading='Frame pacing'; PacingNote='Takes effect when the game starts next.'
+  CounterLabel='Frame counter'; CounterTL='top left'; CounterTR='top right'; CounterBL='bottom left'; CounterBR='bottom right'; CounterCheck='Show in a corner'; CounterNote='The frames-per-second line, drawn over the corner you pick. Untick it and only the panel carries it.';
+  GraphsCheck='Show the graphs in the corner too'; GraphsLabel='Frame graphs'
+  GraphsNote='Two graphs under the frame counter: the milliseconds between frames, and the network''s own time. Always drawn in the panel; this is whether the corner window draws them too.'
   AsyncMode='Asynchronous: the network works while the game draws its next frame'
   AsyncModeTip='More frames a second, and what is on screen is one processed frame behind.'
   GpuImagePath='Keep frames on the GPU'
   GpuImagePathTip='Frames stay on the GPU from capture to the screen, with no copy through the CPU. Needs the game and the network on the same Arc, and a game on Vulkan 1.1 or newer, as DirectX games through DXVK are. Where that is not so, NR takes its usual path, and Save report says why.'
+  ChangeMetric='Measure how much NR changes each frame'
+  ChangeMetricTip='Writes into the daemon''s log how far NR moved each frame, for reports and tuning. Costs about 0.3 ms a frame at 1280x720 and 1 to 1.5 ms at 1920x1080, so leave it off unless you are collecting data.'
+  TiledKernel='Experimental: another matrix kernel for Arc A-series'
+  TiledKernelTip='Runs the network''s plain matrix multiplications on the tiled kernel instead of the staged one. On an Arc A770 the staged kernel measured slower, so this may be faster on A-series cards (A770, A750, A580, A380); on Arc B-series and Core Ultra it is slower. The picture is the same either way. Takes effect at the next start of the game. If you try it, please send a GPU report (nr_gpu_probe.exe) and your frame rates with it on and off.'
   GpuImageNote='Takes effect at the next game start. NR then works on every frame, in step: asynchronous mode and every Nth frame wait until this is off.'
   EditCache='Faster, experimental: the network on every other frame (DirectX 12)'
   EditCacheTip='The network answers every other frame, and its change is carried along the game''s motion onto the frame between, so the game runs faster. A fast turn of the camera is answered on every frame. Fine detail may pulse faintly.'
@@ -664,10 +686,17 @@ $script:Strings=@{
   SpeedCase='{0}×{1} — {2} мс (до {3} fps)'
   SpeedNote='Захват кадра из игры и его возврат тоже занимают время, а игра рисует на той же видеокарте, поэтому fps в игре будет ниже этих значений.'
   PacingHeading='Подача кадров'; PacingNote='Применится при следующем запуске игры.'
+  CounterLabel='Счётчик кадров'; CounterTL='сверху слева'; CounterTR='сверху справа'; CounterBL='снизу слева'; CounterBR='снизу справа'; CounterCheck='Показывать в углу'; CounterNote='Строка кадров в секунду поверх выбранного угла. Сними отметку — останется только панель.';
+  GraphsCheck='Показывать графики и в углу'; GraphsLabel='Графики времени кадра'
+  GraphsNote='Два графика под счётчиком кадров: миллисекунды между кадрами и время самой сети. В панели рисуются всегда; здесь — рисует ли их также окно в углу.'
   AsyncMode='Асинхронно: сеть работает, пока игра рисует следующий кадр'
   AsyncModeTip='Больше кадров в секунду, а на экране результат на один обработанный кадр позже.'
   GpuImagePath='Кадры остаются на GPU'
   GpuImagePathTip='Кадры остаются на GPU от захвата до экрана, без копии через процессор. Нужны игра и сеть на одной Arc и игра на Vulkan 1.1 или новее, как игры DirectX через DXVK. Где это не так, NR идёт обычным путём, а «Сохранить отчёт» говорит почему.'
+  ChangeMetric='Считать, насколько NR меняет каждый кадр'
+  ChangeMetricTip='Пишет в журнал демона, насколько NR изменил каждый кадр, — для отчётов и настройки. Стоит около 0,3 мс на кадр в 1280x720 и 1–1,5 мс в 1920x1080, поэтому включайте только для сбора данных.'
+  TiledKernel='Эксперимент: другое матричное ядро для Arc A-серии'
+  TiledKernelTip='Простые матричные умножения сети идут через ядро tiled вместо staged. На Arc A770 ядро staged оказалось медленнее, поэтому на картах A-серии (A770, A750, A580, A380) так может быть быстрее; на Arc B-серии и Core Ultra — медленнее. Картинка в обоих случаях та же. Действует со следующего запуска игры. Если попробуете, пришлите, пожалуйста, отчёт GPU (nr_gpu_probe.exe) и частоту кадров с переключателем и без него.'
   GpuImageNote='Применится при следующем запуске игры. NR тогда работает на каждом кадре, синхронно: асинхронный режим и сеть на каждом N-м кадре ждут, пока это выключено.'
   EditCache='Быстрее, экспериментально: сеть через кадр (DirectX 12)'
   EditCacheTip='Сеть отвечает через кадр, а её правка переносится по движению игры на кадр между ними, и игра идёт быстрее. На быстром повороте камеры сеть отвечает на каждом кадре. Мелкие детали могут слегка пульсировать.'
@@ -782,10 +811,17 @@ $script:Strings=@{
   SpeedCase='{0}×{1} {2} ms (hasta {3} fps)'
   SpeedNote='Tomar cada fotograma del juego y devolverlo también lleva tiempo, y el juego dibuja en la misma GPU: en un juego los FPS son más bajos que estos.'
   PacingHeading='Ritmo de fotogramas'; PacingNote='Se aplica la próxima vez que se inicie el juego.'
+  CounterLabel='Contador de fotogramas'; CounterTL='arriba a la izquierda'; CounterTR='arriba a la derecha'; CounterBL='abajo a la izquierda'; CounterBR='abajo a la derecha'; CounterCheck='Mostrar en una esquina'; CounterNote='La línea de fotogramas por segundo sobre la esquina que elijas. Desmárcala y solo el panel la lleva.';
+  GraphsCheck='Mostrar los gráficos también en la esquina'; GraphsLabel='Gráficos de tiempo de fotograma'
+  GraphsNote='Dos gráficos bajo el contador de fotogramas: los milisegundos entre fotogramas y el tiempo de la propia red. En el panel se dibujan siempre; esto decide si la ventana de la esquina también los dibuja.'
   AsyncMode='Asíncrono: la red trabaja mientras el juego dibuja el siguiente fotograma'
   AsyncModeTip='Más fotogramas por segundo, y lo que se ve va un fotograma procesado por detrás.'
   GpuImagePath='Los fotogramas permanecen en la GPU'
   GpuImagePathTip='Los fotogramas permanecen en la GPU desde la captura hasta la pantalla, sin copia por la CPU. Requiere el juego y la red en la misma Arc, y un juego con Vulkan 1.1 o posterior, como los juegos DirectX a través de DXVK. Si no es así, NR usa su ruta habitual y «Guardar informe» dice por qué.'
+  ChangeMetric='Medir cuánto cambia NR cada fotograma'
+  ChangeMetricTip='Escribe en el registro del daemon cuánto cambió NR cada fotograma, para informes y ajustes. Cuesta unos 0,3 ms por fotograma a 1280x720 y de 1 a 1,5 ms a 1920x1080, así que déjelo desactivado salvo para recoger datos.'
+  TiledKernel='Experimental: otro núcleo de matrices para las Arc de la serie A'
+  TiledKernelTip='Ejecuta las multiplicaciones de matrices simples de la red en el núcleo tiled en lugar del staged. En una Arc A770 el núcleo staged resultó más lento, así que puede ser más rápido en las tarjetas de la serie A (A770, A750, A580, A380); en las Arc de la serie B y Core Ultra es más lento. La imagen es la misma en ambos casos. Se aplica en el próximo inicio del juego. Si lo prueba, envíe un informe de GPU (nr_gpu_probe.exe) y sus fotogramas por segundo con la opción activada y desactivada.'
   GpuImageNote='Se aplica al próximo inicio del juego. NR trabaja entonces en cada fotograma y en sincronía: el modo asíncrono y la red cada N fotogramas esperan a que esto se desactive.'
   EditCache='Más rápido, experimental: la red en fotogramas alternos (DirectX 12)'
   EditCacheTip='La red responde en fotogramas alternos, y su cambio se lleva con el movimiento del juego al fotograma intermedio, así que el juego va más rápido. Un giro rápido de la cámara se responde en cada fotograma. Los detalles finos pueden latir levemente.'
@@ -900,10 +936,17 @@ $script:Strings=@{
    SpeedCase='{0}×{1} {2} 毫秒（最高 {3} fps）'
    SpeedNote='从游戏取每一帧再交回去也要花时间，而且游戏在同一块 GPU 上绘制：在游戏中的帧率会低于这些数字。'
    PacingHeading='帧节奏'; PacingNote='在游戏下次启动时生效。'
+  CounterLabel='帧率显示'; CounterTL='左上角'; CounterTR='右上角'; CounterBL='左下角'; CounterBR='右下角'; CounterCheck='在角落中显示'; CounterNote='每秒帧数一行，绘制在所选的角落上。取消勾选则仅面板中显示。';
+  GraphsCheck='角落中也显示曲线'; GraphsLabel='帧时间曲线'
+  GraphsNote='帧率计数器下方的两条曲线：帧与帧之间的毫秒数，以及网络自身的时间。面板内始终绘制；此项决定角落浮窗是否也绘制。'
    AsyncMode='异步：网络在游戏绘制下一帧时工作'
    AsyncModeTip='每秒帧数更多，而屏幕上显示的比处理结果落后一帧。'
    GpuImagePath='帧保留在 GPU 上'
    GpuImagePathTip='帧保留在 GPU 上，从捕获到屏幕都不经过 CPU 拷贝。需要游戏与网络在同一块 Arc 上，且游戏使用 Vulkan 1.1 或更高版本（DirectX 游戏经 DXVK 即属于此）。如果不能如此，NR 会走常规路径，保存报告会说明原因。'
+   ChangeMetric='统计 NR 对每帧的改变量'
+   ChangeMetricTip='在守护进程日志中写入 NR 对每帧的改变量，用于报告和调校。在 1280x720 下每帧约耗 0.3 毫秒，在 1920x1080 下约 1 至 1.5 毫秒，因此仅在收集数据时开启。'
+   TiledKernel='实验：Arc A 系列的另一种矩阵内核'
+   TiledKernelTip='网络的普通矩阵乘法改用 tiled 内核而不是 staged 内核。在 Arc A770 上 staged 内核测得较慢，因此在 A 系列显卡（A770、A750、A580、A380）上可能更快；在 Arc B 系列和 Core Ultra 上会更慢。两种方式的画面完全相同。下次启动游戏时生效。如果您试用，请发送 GPU 报告（nr_gpu_probe.exe）以及开启和关闭时的帧率。'
    GpuImageNote='在下次游戏启动时生效。异步模式或非每帧处理会在该模式下跳过效果。'
    EditCache='更快（实验性）：网络隔帧处理（DirectX 12）'
    EditCacheTip='网络每隔一帧处理一次，其改动沿游戏的运动带到中间那一帧，游戏因此更快。镜头快速转动时网络每帧都处理。细节处可能有轻微的闪动。'
@@ -947,7 +990,7 @@ $script:TextBindings=@{
  ConnectHeading='ConnectHeading'; ApiLabel='ApiLabel'
  ArgsLabel='ArgsLabel'; FirstTestHint='FirstTestHint'; CompareHeading='CompareHeading'
  FpsHint='FpsHint'; ControlsHeading='ControlsHeading'
- PacingHeading='PacingHeading'; EveryLabel='EveryLabel'; PacingNote='PacingNote'; GpuImageNote='GpuImageNote'
+ PacingHeading='PacingHeading'; EveryLabel='EveryLabel'; PacingNote='PacingNote'; GpuImageNote='GpuImageNote'; CounterLabel='CounterLabel'; CounterNote='CounterNote'; GraphsLabel='GraphsLabel'; GraphsNote='GraphsNote'
  EditCacheNote='EditCacheNote'
  PresetHeading='PresetHeading'; PresetNote='PresetNote'
  AboutText='AboutText'; UpdatesHeading='UpdatesHeading'; UpdateNote='UpdateNote'; CreditsHeading='CreditsHeading'; CreditsText='CreditsText'
@@ -957,7 +1000,8 @@ $script:ContentBindings=@{
  ApiVulkan='ApiVulkan'; ApiDxvk='ApiDxvk'; ApiD3d12='ApiD3d12'; Fossilize='Fossilize'
  Check='Check'; Dependencies='Dependencies'; Install='Install'; Uninstall='Uninstall'; Launch='Launch'
  Report='Report'; ControlsLaunch='Launch'; ResetSettings='ResetSettings'; SpeedTest='SpeedTest'
- AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
+ AsyncMode='AsyncMode'; GpuImagePath='GpuImagePath'; ChangeMetric='ChangeMetric'; TiledKernel='TiledKernel'; Every1='Every1'; Every2='Every2'; Every3='Every3'; Every4='Every4'
+ CounterCheck='CounterCheck'; GraphsCheck='GraphsCheck'; CounterTL='CounterTL'; CounterTR='CounterTR'; CounterBL='CounterBL'; CounterBR='CounterBR'
  EditCache='EditCache'
  PresetA='PresetA'; PresetB='PresetB'
  OpenRepository='OpenRepository'; OpenReleases='OpenReleases'; OpenIssues='OpenIssues'; CheckUpdates='CheckUpdates'
@@ -966,7 +1010,7 @@ $script:ContentBindings=@{
 $script:HeaderBindings=@{LaunchOptions='LaunchOptions'; CheckDetails='CheckDetails';SetupTab='SetupTab';ControlsTab='ControlsTab';MoreSettings='MoreSettings';AboutTab='AboutTab'}
 $script:TipBindings=@{DllPath='DllTip'; GamePath='GameTip'; PythonPath='PythonTip'; GameArgs='ArgsTip'; Fossilize='FossilizeTip'; Language='LanguageTip'
  PythonLabel='PythonHint'; ControlsHeading='ControlsHint'; Theme='ThemeTip'; SpeedTest='SpeedTestTip'
- AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
+ AsyncMode='AsyncModeTip'; GpuImagePath='GpuImagePathTip'; ChangeMetric='ChangeMetricTip'; TiledKernel='TiledKernelTip'; EveryLabel='EveryTip'; EveryFrame='EveryTip'
  EditCache='EditCacheTip'
  PresetChoice='PresetTip'}
 function T([string]$Key) {
@@ -1123,6 +1167,33 @@ function Reset-NrSettings([string[]]$Names=@()) {
     $resetPayload=$(if($Names.Count){@{reset=@($Names)}}else{$null})
     Start-Bridge 'settings-reset' '' $false $resetPayload
 }
+function Save-PanelGraphs {
+    # The panel's own keys, saved on their own: `Save-NrSettings` returns early when no KNOB is
+    # pending, and these are not knobs. Same bridge action, a `panel` block instead of `settings`.
+    #
+    # **Busy means later, not never.** This used to `return` while an action was running, which
+    # threw the edit away silently while the two controls still showed the new value - and the
+    # next edit would then save the newer state, so the window and the game's panel could
+    # disagree for the rest of the session. `Save-NrSettings` already queues into
+    # `PendingSettings` for the same reason; this queues the panel block into its own, and the
+    # queued block is sent when the action ends.
+    $panel=@{}
+    $on=0; if($script:Ui.GraphsCheck.IsChecked) { $on=1 }
+    $corner=1; if($script:Ui.CounterCheck.IsChecked) { $corner=[int]$script:Ui.CounterCorner.SelectedItem.Tag }
+    $panel['menu_graphs']=$on
+    $panel['menu_counter']=$(if($script:Ui.CounterCheck.IsChecked){$corner}else{0})
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    $script:PendingPanel=$null
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
+}
+function Flush-PendingPanel {
+    # Sent by whatever ends a busy action, once, and only if a panel edit waited through it.
+    if(-not $script:PendingPanel) { return }
+    $panel=$script:PendingPanel
+    $script:PendingPanel=$null
+    if($script:Busy) { $script:PendingPanel=$panel; return }
+    Start-Bridge 'settings-save' '' $false @{panel=$panel}
+}
 function Restore-SettingsFailure($Job) {
     if($Job -and $Job.Action -in @('settings','settings-save','settings-reset')) { Set-SettingsState 'SettingsFailed' }
     if($Job -and $Job.SettingsPatch) {
@@ -1189,8 +1260,9 @@ function Profile-FromWindow {
     $dll = $script:Ui.DllPath.Text.Trim()
     return [ordered]@{root=$script:Root; python=$script:Ui.PythonPath.Text.Trim(); game_exe=$script:Ui.GamePath.Text.Trim(); dll=$(if($dll){$dll}else{$null}); api=$(switch($script:Ui.Api.SelectedIndex){ 1 {'dxvk'} 2 {'d3d12'} default {'vulkan'} }); game_args_raw=$script:Ui.GameArgs.Text; disable_fossilize=[bool]$script:Ui.Fossilize.IsChecked
         nr_async=[bool]$script:Ui.AsyncMode.IsChecked; nr_every=[int]$script:Ui.EveryFrame.SelectedItem.Tag;
-        gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag
-        nr_cache=[bool]$script:Ui.EditCache.IsChecked}
+        gpu_image_path=[bool]$script:Ui.GpuImagePath.IsChecked; preset=[string]$script:Ui.PresetChoice.SelectedItem.Tag;
+        change_metric=[bool]$script:Ui.ChangeMetric.IsChecked; prefer_tiled=[bool]$script:Ui.TiledKernel.IsChecked;
+        menu_graphs=$(if($script:Ui.GraphsCheck.IsChecked){1}else{0}); menu_counter=$(if($script:Ui.CounterCheck.IsChecked){[int]$script:Ui.CounterCorner.SelectedItem.Tag}else{0}); nr_cache=[bool]$script:Ui.EditCache.IsChecked}
 }
 function Apply-Profile($Profile) {
     if($null -eq $Profile) { return }
@@ -1206,6 +1278,18 @@ function Apply-Profile($Profile) {
     try {
         $script:Ui.AsyncMode.IsChecked=[bool]$Profile.nr_async
         $script:Ui.GpuImagePath.IsChecked=[bool]$Profile.gpu_image_path
+        # A profile from before the checkbox measured nothing.
+        $script:Ui.ChangeMetric.IsChecked=[bool]$Profile.change_metric
+        $script:Ui.TiledKernel.IsChecked=[bool]$Profile.prefer_tiled
+        # A profile from before the graphs ran them, as the corner does by default - and one
+        # from before the counter's place existed leaves it in the panel, 0, which is what the
+        # XAML starts at and what the panel does with a missing key. Said either way rather than
+        # only when present, so a profile applied after one that had a corner goes back to 0.
+        $script:Ui.GraphsCheck.IsChecked = $(if($Profile.PSObject.Properties.Name -contains 'menu_graphs') { [int]$Profile.menu_graphs -ne 0 } else { $true })
+        $c = $(if($Profile.PSObject.Properties.Name -contains 'menu_counter') { [int]$Profile.menu_counter } else { 0 })
+        $script:Ui.CounterCheck.IsChecked = $c -ne 0
+        $script:Ui.CounterCorner.SelectedIndex = $(if($c -ge 1 -and $c -le 4){$c-1}else{0})
+        $script:Ui.CounterCorner.IsEnabled = ($c -ne 0)
         # A profile from before the speed-up has it off.
         $script:Ui.EditCache.IsChecked=[bool]$Profile.nr_cache
         $every=[int]$Profile.nr_every
@@ -1261,7 +1345,7 @@ function Update-PacingState([bool]$Busy=[bool]$script:Busy) {
 function Merge-PacingFromProfile($RequestValues, $LastProfile, $Fresh) {
     if(-not $Fresh) { return $RequestValues }
     # The upscaler NR stands in front of in a DirectX 12 game has no control here either.
-    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','nr_cache')) {
+    foreach($key in @('nr_async','nr_every','gpu_image_path','preset','upscaler','change_metric','prefer_tiled','menu_graphs','menu_counter','nr_cache')) {
         if(-not ($Fresh.PSObject.Properties.Name -contains $key)) { continue }
         $was=$null
         if($LastProfile -and ($LastProfile.PSObject.Properties.Name -contains $key)) {
@@ -1289,8 +1373,11 @@ function Request-Pacing([string]$Action='pacing') {
     if($script:Busy) { $script:PacingDue=$Action } else { $script:PacingDue=$null; Start-Bridge $Action }
 }
 function Set-Busy([bool]$Busy) {
-    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','PresetChoice')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    foreach($name in @('DllPath','GamePath','PythonPath','Api','GameArgs','Fossilize','BrowseDll','BrowseGame','BrowsePython','FindPython','Check','Dependencies','Install','Uninstall','Launch','Toggle','SpeedTest','Report','ControlsToggle','ControlsLaunch','ResetSettings','GpuImagePath','ChangeMetric','TiledKernel','PresetChoice','GraphsCheck','CounterCheck','CounterCorner')) { $script:Ui[$name].IsEnabled=-not $Busy }
+    # A panel edit made while an action ran waited in PendingPanel; this is where it goes out.
+    if(-not $Busy) { Flush-PendingPanel }
     Update-PacingState $Busy
+    if(-not $Busy) { $script:Ui.CounterCorner.IsEnabled = [bool]$script:Ui.CounterCheck.IsChecked }
     $script:Ui.KnobRows.IsEnabled=(-not $Busy -or ($script:Busy -and $script:Busy.Action -eq 'settings-save'))
     # An indeterminate ProgressBar animates while collapsed too: 6 % of a core, the window idle.
     $script:Ui.Spinner.IsIndeterminate=$Busy
@@ -1694,19 +1781,37 @@ if($SelfTest) {
         if($script:Ui.SpeedState.Text) { throw 'No speed test left words behind' }
         # Frame pacing reaches the backend, a profile without it is every frame in step, and
         # neither a profile applied to the window nor a change during an action starts a save.
-        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true})
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$true;nr_every=3;gpu_image_path=$true;change_metric=$true;prefer_tiled=$true})
         $sent=Profile-FromWindow
-        if(-not $sent.nr_async -or $sent.nr_every -ne 3 -or -not $sent.gpu_image_path -or $script:PacingDue) { throw 'Frame pacing and GPU image choice did not reach the profile' }
+        if(-not $sent.nr_async -or $sent.nr_every -ne 3 -or -not $sent.gpu_image_path -or -not $sent.change_metric -or -not $sent.prefer_tiled -or $script:PacingDue) { throw 'Frame pacing, the GPU image choice, the change metric or the tiled kernel did not reach the profile' }
         if($script:Ui.AsyncMode.IsEnabled -or $script:Ui.EveryFrame.IsEnabled) { throw 'The GPU image path left asynchronous mode or every Nth frame to choose' }
         Set-Busy $true; Set-Busy $false
         if($script:Ui.AsyncMode.IsEnabled -or $script:Ui.EveryFrame.IsEnabled) { throw 'An action''s end opened asynchronous mode or every Nth frame under the GPU image path' }
         Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true})
         $sent=Profile-FromWindow
-        if($sent.nr_async -or $sent.nr_every -ne 1 -or $sent.gpu_image_path) { throw 'An older profile was not every frame, in step, with GPU image path off' }
+        if($sent.nr_async -or $sent.nr_every -ne 1 -or $sent.gpu_image_path -or $sent.change_metric -or $sent.prefer_tiled) { throw 'An older profile was not every frame, in step, with GPU image path, the change metric and the tiled kernel off' }
         if(-not $script:Ui.AsyncMode.IsEnabled -or -not $script:Ui.EveryFrame.IsEnabled) { throw 'Asynchronous mode or every Nth frame stayed greyed with the GPU image path off' }
         Set-Progress 'ChooseFiles'
         $script:ApplyingProfile=$true; Request-Pacing; $script:ApplyingProfile=$false
         if($script:PacingDue -or $script:ProgressKey -ne 'ChooseFiles') { throw 'Applying a profile asked to save frame pacing' }
+        # The corner's frame graphs and the counter's place: the window carries both, and a
+        # profile without them leaves the panel's own defaults - an absent `menu_graphs` means
+        # the panel draws them, 1, and an absent `menu_counter` means the panel alone, 0. Both
+        # match `load_settings` in the panel, which is what actually draws; they used to be 1
+        # here for the counter, so a fresh install disagreed with itself and the first click on
+        # either checkbox wrote a corner into the file. Applying a profile must not start a save
+        # - the guard is what keeps the two from fighting.
+        $script:Ui.GraphsCheck.IsChecked=$false
+        $script:Ui.CounterCheck.IsChecked=$true; $script:Ui.CounterCorner.SelectedIndex=2
+        $sent=Profile-FromWindow
+        if($sent.menu_graphs -ne 0) { throw 'The graphs choice did not reach the profile' }
+        if($sent.menu_counter -ne 3) { throw 'The counter place did not reach the profile' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$false;nr_every=1;gpu_image_path=$true;menu_graphs=1;menu_counter=4})
+        if(-not $script:Ui.GraphsCheck.IsChecked) { throw 'A profile did not turn the corner graphs back on' }
+        if($script:Ui.CounterCorner.SelectedIndex -ne 3) { throw 'A profile did not move the counter to the bottom right' }
+        Apply-Profile ([pscustomobject]@{python='fixture';game_exe='fixture.exe';api='vulkan';disable_fossilize=$true;nr_async=$false;nr_every=1;gpu_image_path=$true})
+        if(-not $script:Ui.GraphsCheck.IsChecked) { throw 'A profile with no graphs key left the graphs unset' }
+        if($script:Ui.CounterCheck.IsChecked) { throw 'A profile with no counter key put the counter in a corner' }
         $script:Busy=[pscustomobject]@{Action='check'}; Request-Pacing; $script:Busy=$null
         if(-not $script:PacingDue) { throw 'Frame pacing changed during an action was not kept for later' }
         # Free, it goes to the bridge at once: here with no Python behind the fixture's path.
@@ -1825,11 +1930,26 @@ $script:Ui.AsyncMode.Add_Checked({ Request-Pacing })
 $script:Ui.AsyncMode.Add_Unchecked({ Request-Pacing })
 $script:Ui.GpuImagePath.Add_Checked({ Update-PacingState; Request-Pacing })
 $script:Ui.GpuImagePath.Add_Unchecked({ Update-PacingState; Request-Pacing })
+# The change metric is read by the daemon when the game starts it, so it is saved as the pacing is.
+$script:Ui.ChangeMetric.Add_Checked({ Request-Pacing })
+$script:Ui.ChangeMetric.Add_Unchecked({ Request-Pacing })
+$script:Ui.TiledKernel.Add_Checked({ Request-Pacing })
+$script:Ui.TiledKernel.Add_Unchecked({ Request-Pacing })
 $script:Ui.EveryFrame.Add_SelectionChanged({ Request-Pacing })
 $script:Ui.EditCache.Add_Checked({ Request-Pacing })
 $script:Ui.EditCache.Add_Unchecked({ Request-Pacing })
 $script:Ui.Api.Add_SelectionChanged({ Update-PacingState })
 $script:Ui.PresetChoice.Add_SelectionChanged({ Request-Pacing 'preset' })
+# The corner's frame graphs: a panel preference, so it goes to the settings file rather than to
+# the launch profile, and it is saved as soon as it is chosen - there is no "apply" for it, and a
+# choice that only took effect after a Save would read as one that did nothing.
+$script:Ui.GraphsCheck.Add_Checked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.GraphsCheck.Add_Unchecked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Checked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Unchecked({ if(-not $script:ApplyingProfile) { Save-PanelGraphs } })
+$script:Ui.CounterCheck.Add_Checked({ $script:Ui.CounterCorner.IsEnabled = [bool]$script:Ui.CounterCheck.IsChecked })
+$script:Ui.CounterCheck.Add_Unchecked({ $script:Ui.CounterCorner.IsEnabled = $false })
+$script:Ui.CounterCorner.Add_SelectionChanged({ if(-not $script:ApplyingProfile -and $script:Ui.CounterCheck.IsChecked) { Save-PanelGraphs } })
 $script:Ui.Theme.Add_Click({
     Set-Theme $(if($script:Theme -eq 'dark'){'light'}else{'dark'})
     Save-UiPrefs

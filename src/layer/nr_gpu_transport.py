@@ -37,6 +37,10 @@ MOTION = 8                         # bytes a pixel of the offsets after a frame,
 # The client sends FRAME once its queue holds the signal of V, so V comes within a frame
 # of the game's GPU work; this is for a client that died first.
 D3D12_WAIT_NS = 10_000_000_000
+# A DirectX 12 game's own word on its resets decides its frames' history (the owner,
+# 2026-11-15), where its client gives it (`tells_resets`); NR_DX12_CUT_TEST=1 decides by the cut
+# test alone, as before, to compare. GPUImagePipeline.process_device(game_reset=).
+GAME_RESETS = os.environ.get("NR_DX12_CUT_TEST", "0") != "1"
 
 
 def peer_pid(connection):
@@ -124,8 +128,11 @@ def unpack_packet(raw, width, height, fmt):
             raise ValueError("D3D12 protocol requires a shared fence of its own")
         if (p["action"] == FRAME) != bool(p["done_sem"]) or p["done_sem"] >= 1 << 62:
             raise ValueError("a D3D12 FRAME carries its fence value, and nothing else does")
-        if any(p["device_uuid"][8:]) or any(p["driver_uuid"][8:]):
+        if (any(p["device_uuid"][8:]) or any(p["driver_uuid"][9:])
+                or p["driver_uuid"][8] not in (0, RESETS_TOLD, RESETS_TOLD | RESET_HERE)):
             raise ValueError("D3D12 protocol names its adapter by LUID alone")
+        if p["driver_uuid"][8] and p["action"] != FRAME:
+            raise ValueError("only a D3D12 FRAME tells its game's resets")
         before = motion_from(p)
         if before and (p["action"] != FRAME or before >= p["done_sem"]):
             raise ValueError("a D3D12 FRAME's motion leads back to an earlier frame, and nothing else names one")
@@ -137,6 +144,21 @@ def unpack_packet(raw, width, height, fmt):
 def motion_from(p):
     """Protocol 3: the frame a FRAME's offsets lead back to, by its fence value; 0 for none."""
     return int.from_bytes(p["driver_uuid"][:8], "little")
+
+
+# Protocol 3, driver_uuid[8] of a FRAME (nr_gpu_wire.h): the client tells its game's resets,
+# and the game started its upscaler's history over at this frame.
+RESETS_TOLD, RESET_HERE = 2, 1
+
+
+def tells_resets(p):
+    """Protocol 3: whether this FRAME's client gives its game's word on resets at all."""
+    return bool(p["driver_uuid"][8] & RESETS_TOLD)
+
+
+def reset_at(p):
+    """Protocol 3: whether the game started its upscaler's history over at this FRAME."""
+    return bool(p["driver_uuid"][8] & RESET_HERE)
 
 
 def carries_motion(p):
@@ -460,8 +482,11 @@ class GPUSharedTransport:
             before = motion_from(p)
             motion = (context.input.address + p["bytes"]
                       if context.motion and before and before == context.answered else None)
+            # The game's own word on its resets, where its client gives it (GAME_RESETS).
+            word = reset_at(p) if GAME_RESETS and tells_resets(p) else None
             result = self.images.process_device(context.input, width, height, fmt, live, motion=motion,
-                                                output=_direct(context, p, width, height))
+                                                output=_direct(context, p, width, height), game_reset=word,
+                                                motion_session=bool(context.motion))
             _copy_unless_direct(self.backend.runtime, result, context, p)
             stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
             if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,
@@ -471,7 +496,7 @@ class GPUSharedTransport:
             context.value = value + 1
             context.answered = value
             self.last = {**self.images.last, "total_seconds": time.perf_counter() - started,
-                         "sync": "d3d12"}
+                         "sync": "d3d12", "game_reset": reset_at(p)}
             self._reply(connection, p, 0, network_us(self.last))
             return self.last
         except Exception:

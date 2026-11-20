@@ -55,6 +55,7 @@ static struct {
 	unsigned staged_partial;  /* the staged kernel takes M that is not whole 64-row blocks */
 	unsigned staged32;        /* M of 32 or fewer takes the 32-row staged build */
 	unsigned staged32_calls;  /* how many GEMMs it has recorded: tests check the routing */
+	unsigned staged_calls;    /* GEMMs recorded on the staged kernel, either build: the same */
 	VkCommandBuffer rcb; VkFence rfence; int recording, recorded, rready;
 	/* transfers have their own command buffer: the weights are created while the
 	 * frame's graph is being recorded, so a staged upload cannot borrow `rcb` */
@@ -78,6 +79,8 @@ static struct {
 	int preserve16;           /* float16 subnormals kept: DenormPreserve 16 on every module (xmx_init) */
 	int e4m3_weights;         /* the bottleneck's weights kept as E4M3 bytes (xmx_init) */
 	int weights_by_column;    /* the graph keeps its wide weights by column, N x K (xmx_init) */
+	int shape_unoffered;      /* the device runs the network's 8x16x16 without offering it */
+	int prefer_tiled;         /* plain GEMMs on the tiled kernel, not the staged one (xmx_init) */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -652,6 +655,25 @@ int xmx_e4m3_weights(void) { return g.e4m3_weights; }
  * reads such a B (xmx_buf_mark_by_column); this says where it is the faster way. */
 int xmx_weights_by_column(void) { return g.weights_by_column; }
 
+/* Whether plain GEMMs go to the tiled kernel rather than the staged one: `XMX_PREFER_TILED=1`,
+ * the experimental switch for Arc A-series cards (xmx_init). */
+int xmx_prefer_tiled(void) { return g.prefer_tiled; }
+
+/* Whether the device runs the network's float16 8x16x16 without offering it: every Arc A-series
+ * card (Xe-HPG), which offers 8x8x16 only (xmx_init). */
+int xmx_shape_unoffered(void) { return g.shape_unoffered; }
+
+/* The same routing switched for a test, between recordings: the bytes must not move. */
+int xmx_prefer_tiled_set(unsigned on)
+{
+	if (g.recording) FAIL("cannot change the staged routing during recording", 0);
+	g.prefer_tiled = on != 0;
+	return 0;
+}
+
+/* GEMMs recorded on the staged kernel, the 64-row build and the 32-row ones together. */
+unsigned xmx_staged_calls(void) { return g.staged_calls; }
+
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
 int xmx_driver(void) { return g.driver; }
@@ -669,6 +691,8 @@ int xmx_discrete(void) { return g.discrete; }
  * network can run on any card in the machine, not only the game's. The kernels need the
  * cooperative-matrix shape they are written for, float16 8x16 by 16x16 into float32 at
  * subgroup scope (Xe2's), and the workgroup-memory layouts gemm_staged declares. */
+static const char LACKS_SHAPE[] = "the float16 8x16x16 cooperative-matrix shape";
+
 static const char *device_lacks(VkInstance inst, VkPhysicalDevice pd)
 {
 	uint32_t n = 0;
@@ -707,7 +731,7 @@ static const char *device_lacks(VkInstance inst, VkPhysicalDevice pd)
 					 && shapes[i].scope == VK_SCOPE_SUBGROUP_KHR;
 	}
 	free(shapes);
-	return found ? NULL : "the float16 8x16x16 cooperative-matrix shape";
+	return found ? NULL : LACKS_SHAPE;
 }
 
 static const char *device_kind(int type)
@@ -837,6 +861,11 @@ int xmx_init(const char *spv_path)
 	else if (n > 1)
 		fprintf(stderr, "libxmx: the network runs on device %d, %s%s\n", chosen,
 			names[chosen], how == XMX_PICK_ASKED ? ", as XMX_DEVICE asks" : "");
+	/* Every Arc A-series card (Xe-HPG) offers float16 8x8x16 only, and computes the network's
+	 * 8x16x16 at 32 lanes exactly all the same: eleven of them in the GPU reports
+	 * (notes/players-20261103.md). Such a device is tried although it is not "able"; the GPU
+	 * report times the tiled kernel there beside the staged one (`prefer_tiled`, below). */
+	g.shape_unoffered = lacks[chosen] == LACKS_SHAPE;
 	g.pd = pds[chosen];
 	VkPhysicalDeviceProperties props = all[chosen];
 	free(pds); free(all); free(lacks); free(names); free(types); free(able);
@@ -1015,13 +1044,33 @@ int xmx_init(const char *spv_path)
 	if (!g.preserve16 && !(denorm && !strcmp(denorm, "driver")))
 		fprintf(stderr, "libxmx: %s cannot keep float16 subnormals by declaration; its own default "
 			"decides, and the picture may differ from other drivers'\n", g.name);
+	/* Plain GEMMs on the tiled kernel rather than the staged one. On Xe2 the staged kernel is
+	 * the faster by far (B at 512x320 on the Arc 140V: 13.0 ms on the device against 18.7 with
+	 * every plain GEMM tiled, 2026-11-18). On an Arc A-series card, which runs the network's
+	 * 8x16x16 without offering it (`shape_unoffered`), its K loop ran at 0.40-0.60 of the tiled
+	 * kernel's rate on the frame's own shapes (an A770, OUCO86/dlss-nr-on-a770
+	 * notes/staged-vs-tiled-a770.md, 2026-10-10, before the staged kernel's walk order, E4M3
+	 * bytes and weights by column). A row's sums are its own and run in the same K order on
+	 * both, so the choice moves no byte the graph writes. Off by default everywhere until
+	 * A-series owners' reports say what it gives there: `XMX_PREFER_TILED=1`, which the setup
+	 * window's and the panel's experimental switch write into `nr-env.txt`, turns it on, on
+	 * any device. What only the staged kernel does stays there either way: the window gather,
+	 * the pooled window residual, an E4M3 B; the E4M3 bytes and the weights by column below,
+	 * the staged loader's forms, are off with it. */
+	g.prefer_tiled = 0;
+	const char *prefer_tiled = getenv("XMX_PREFER_TILED");
+	if (prefer_tiled) {
+		if (!strcmp(prefer_tiled, "1")) g.prefer_tiled = 1;
+		else if (!strcmp(prefer_tiled, "0")) g.prefer_tiled = 0;
+		else FAIL("XMX_PREFER_TILED must be 0 or 1", 0);
+	}
 	/* The bottleneck's weights as their E4M3 bytes, half of what its GEMMs stream: they wait
 	 * on those bytes on Intel's Windows driver (B at 512x320: 4.8 ms of the network, 4.0 with
 	 * half of them, HANDOFF 2026-11-08). The staged loader decodes a byte to its half
 	 * exactly, through a half subnormal where the value is an E4M3 one, so it needs float16
 	 * subnormals kept, and it is the packed loader's. `XMX_E4M3_WEIGHTS=0|1` sets it either
 	 * way where those hold, to compare; the bytes of the graph are the same. */
-	g.e4m3_weights = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+	g.e4m3_weights = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS && !g.prefer_tiled;
 	const char *e4m3_weights = getenv("XMX_E4M3_WEIGHTS");
 	if (e4m3_weights) {
 		if (!strcmp(e4m3_weights, "1")) g.e4m3_weights = 1;
@@ -1043,7 +1092,7 @@ int xmx_init(const char *spv_path)
 	 * the same, so the bytes of the graph are. Mesa keeps its weights by row: a by-column
 	 * tile spilt there and its bottleneck does not wait on weights (notes/improve-b.md).
 	 * `XMX_WEIGHTS_BY_COLUMN=0|1` sets it either way, on any driver, to compare. */
-	g.weights_by_column = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+	g.weights_by_column = g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS && !g.prefer_tiled;
 	const char *by_column = getenv("XMX_WEIGHTS_BY_COLUMN");
 	if (by_column) {
 		if (!strcmp(by_column, "1")) g.weights_by_column = 1;
@@ -1920,6 +1969,11 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 		small = 1;
 	int staged = (M % 64 == 0 || small || g.staged_partial)
 		     && N % 32 == 0 && K % 32 == 0 && K >= g.staging;
+	/* Where plain GEMMs go tiled (`prefer_tiled`, xmx_init), the staged kernel keeps only what
+	 * no other one does: the pooled window residual here, the window gather and an E4M3 B
+	 * below. */
+	if (g.prefer_tiled && !(bt & 0x800000u))
+		staged = 0;
 	/* the window gather lives in the staged kernel's A loader, at any depth of K */
 	if (bt & 0x400000u) {
 		if (!window_a || M % 64 || N % 32 || K % 32 || batch > 1 || (bt & 1u))
@@ -1984,6 +2038,7 @@ static int record_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K,
 	vkCmdBindPipeline(g.rcb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 	vkCmdPushConstants(g.rcb, g.rpl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof p, &p);
 	g.staged32_calls += small;
+	g.staged_calls += staged;
 	if (staged) {
 		unsigned rows = small ? 32u : 64u;
 		vkCmdDispatch(g.rcb, N / 32, (M + rows - 1) / rows, batch ? batch : 1);

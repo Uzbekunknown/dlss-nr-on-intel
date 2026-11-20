@@ -280,11 +280,11 @@ work/ffn_fused.spv: src/gpu/ffn_fused.comp $(GEMM_GLSL)
 
 work/image_preprocess.spv: src/gpu/image_preprocess.comp
 	$(GLSL) -o $@ $<
-work/image_compose.spv: src/gpu/image_compose.comp
+work/image_compose.spv: src/gpu/image_compose.comp src/gpu/history_sample.glsl
 	$(GLSL) -o $@ $<
 work/image_stats.spv: src/gpu/image_stats.comp
 	$(GLSL) -o $@ $<
-work/image_history.spv: src/gpu/image_history.comp
+work/image_history.spv: src/gpu/image_history.comp src/gpu/history_sample.glsl
 	$(GLSL) -o $@ $<
 
 # Window attention's QK^T, softmax and PV in one pass (ProjectsCodex's phase42).

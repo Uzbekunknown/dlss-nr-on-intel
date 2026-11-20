@@ -851,6 +851,72 @@ class WizardFixture(unittest.TestCase):
         self.assertNotIn("NR_LAYER_TIMING", core.runtime_env(enabled))
         self.assertNotIn("NR_LAYER_TIMING_LOG", core.runtime_env(enabled))
 
+    def test_the_change_metric_is_off_unless_the_checkbox_asks_for_it(self):
+        # Off by default, and a profile from before the checkbox measured nothing either.
+        self.assertFalse(self.profile.change_metric)
+        old = self.profile.to_dict()
+        del old["change_metric"]
+        self.assertEqual(core.Profile.from_dict(old), self.profile)
+        for value in ("1", 1, None, ["yes"]):
+            with self.assertRaises(ValueError, msg=value):
+                core.Profile.from_dict({**old, "change_metric": value})
+        # Said either way, so a value the game inherits cannot turn it on.
+        with patch.dict(os.environ, {"NR_CHANGE_METRIC": "1"}):
+            self.assertEqual(core.runtime_env(self.profile)["NR_CHANGE_METRIC"], "0")
+        measured = replace(self.profile, change_metric=True)
+        self.assertEqual(core.Profile.from_dict(measured.to_dict()), measured)
+        self.assertEqual(core.layer_environment(measured)["NR_CHANGE_METRIC"], "1")
+        # The checkbox reaches an installed game's file, as the pacing does, and back.
+        self.assertTrue(core.install(self.profile)["ok"])
+        path = core.installed_path(self.profile) / core.ENV_FILE
+
+        def values():
+            return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line and not line.startswith("#"))
+
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "0")
+        others = {k: v for k, v in values().items() if k != "NR_CHANGE_METRIC"}
+        self.assertTrue(core.set_pacing(measured)["applied"])
+        self.assertTrue(core.load_profile(self.root).change_metric)
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "1")
+        self.assertEqual({k: v for k, v in values().items() if k != "NR_CHANGE_METRIC"}, others)
+        core.set_pacing(self.profile)
+        self.assertEqual(values()["NR_CHANGE_METRIC"], "0")
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
+    def test_the_tiled_kernel_is_off_unless_the_experimental_switch_asks_for_it(self):
+        # Off by default, and a profile from before the switch ran the staged kernel.
+        self.assertFalse(self.profile.prefer_tiled)
+        old = self.profile.to_dict()
+        del old["prefer_tiled"]
+        self.assertEqual(core.Profile.from_dict(old), self.profile)
+        for value in ("1", 1, None, ["yes"]):
+            with self.assertRaises(ValueError, msg=value):
+                core.Profile.from_dict({**old, "prefer_tiled": value})
+        # Said either way, so a value the game inherits cannot turn it on.
+        with patch.dict(os.environ, {"XMX_PREFER_TILED": "1"}):
+            self.assertEqual(core.runtime_env(self.profile)["XMX_PREFER_TILED"], "0")
+        tiled = replace(self.profile, prefer_tiled=True)
+        self.assertEqual(core.Profile.from_dict(tiled.to_dict()), tiled)
+        self.assertEqual(core.layer_environment(tiled)["XMX_PREFER_TILED"], "1")
+        # The switch reaches an installed game's file, as the pacing does, and back.
+        self.assertTrue(core.install(self.profile)["ok"])
+        path = core.installed_path(self.profile) / core.ENV_FILE
+
+        def values():
+            return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line and not line.startswith("#"))
+
+        self.assertEqual(values()["XMX_PREFER_TILED"], "0")
+        others = {k: v for k, v in values().items() if k != "XMX_PREFER_TILED"}
+        self.assertTrue(core.set_pacing(tiled)["applied"])
+        self.assertTrue(core.load_profile(self.root).prefer_tiled)
+        self.assertEqual(values()["XMX_PREFER_TILED"], "1")
+        self.assertEqual({k: v for k, v in values().items() if k != "XMX_PREFER_TILED"}, others)
+        core.set_pacing(self.profile)
+        self.assertEqual(values()["XMX_PREFER_TILED"], "0")
+        self.assertTrue(core.uninstall(self.profile)["ok"])
+
     def preset_b_weights(self):
         return self.root / core.PRESETS["B"][0]
 
@@ -900,6 +966,30 @@ class WizardFixture(unittest.TestCase):
         self.assertEqual(core.layer_environment(core.load_profile(self.root))["NR_PRESET"], "A")
         self.assertEqual(values()["NR_PRESET"], "A")
         self.assertTrue(core.uninstall(self.profile)["ok"])
+
+    def test_a_profile_without_the_panels_keys_gets_the_panels_own_defaults(self):
+        """The window and the panel must agree about a profile that predates both keys.
+
+        `load_settings` in the panel reads a missing `menu_counter` as "the panel alone", 0,
+        because a counter nobody asked for must not appear over a game. The window read the
+        same absence as 1 - `Profile.from_dict`'s default and `CounterCheck IsChecked="True"`
+        in its XAML - so a fresh install said "top left" over a panel that was drawing nothing,
+        and the first click on either new checkbox wrote that 1 into `nr_settings.json`.
+        `menu_graphs` is the other way round on purpose: the panel draws the graphs unless told
+        not to, so absent means 1 on both sides.
+        """
+        old = self.profile.to_dict()
+        del old["menu_counter"]
+        del old["menu_graphs"]
+        got = core.Profile.from_dict(old)
+        self.assertEqual(got.menu_counter, 0, "an absent counter key must mean the panel alone")
+        self.assertEqual(got.menu_graphs, 1, "an absent graphs key must mean the corner draws them")
+        # And a file that says 0 round-trips as 0 rather than being read as absent.
+        self.assertEqual(core.Profile.from_dict({**old, "menu_counter": 0}).menu_counter, 0)
+        self.assertEqual(core.Profile.from_dict({**old, "menu_counter": 4}).menu_counter, 4)
+        for bad in (5, -1, "2", 1.0, True, None):
+            with self.assertRaises(ValueError, msg=bad):
+                core.Profile.from_dict({**old, "menu_counter": bad})
 
     def test_the_window_does_not_write_a_stale_pacing_over_the_panel(self):
         """The ordering that made this window stop writing nr-env.txt in the first place.

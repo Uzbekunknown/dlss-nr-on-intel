@@ -218,18 +218,43 @@ int nrex_resize(nrex_ui *ui, uint32_t width, uint32_t height);
 /* Language name for the tab the C side shows. */
 const char *nrex_language_name(int language);
 
-/* The frame counter (nr_panel.c builds its text from nr_frame_rate.h; this file only draws it).
+/* **The two graphs, after OptiScaler's.** The corner shows the counter's numbers; these show the
+ * shape of the last couple of seconds behind them, which is the difference between a steady frame
+ * time and one that stutters without moving the average.
+ *
+ *   frame  green - milliseconds between presents, so frame generation's extra frames are the short
+ *                  ones and a stall is a spike;
+ *   NR     blue  - the network's milliseconds, the cost NR adds to those frames.
+ *
+ * The series live in `nr_frame_rate.h`'s `nr_frame_graph`, which fills them once a present. This
+ * header owns the count because `nr_menu_ui.cpp` is C++ and does not include that file: the ring is
+ * `NR_GRAPH_SAMPLES` deep and `nrex_counter` copies at most that many points. Keep the two numbers
+ * equal - a static assert in the C side would need the include, which is the thing being avoided. */
+#define NREX_GRAPH_SAMPLES 120
+
+/* The axis itself - the percentiles and the span floor - lives in `nr_frame_rate.h` with the ring
+ * that feeds it (`nr_frame_graph_axis`), because it is arithmetic with no ImGui in it and the
+ * fixture can hold it to what it promises. Only the count is here: `nr_menu_ui.cpp` is C++ and
+ * sizes its copy of the samples from it. Keep the two equal. */
+
+/* The frame counter (nr_frame_rate.h builds its text; this file only draws it).
  * Call between nrex_new_frame and the render, before the panel's own calls.
  *
  *   panel_line   drawn at the top of the panel while it is open, with `hint` shown on hover;
  *                NULL or "" draws nothing there
  *   corner       where `corner_line` goes as well: 0 nowhere, 1-4 the top left, top right,
  *                bottom left and bottom right of the picture (NR_COUNTER_* in nr_menu_bridge.h)
+ *   frame_ms     the frame-time series and its length, oldest first; NULL or 0 draws no graph
+ *   net_ms       the network's series, same shape; NULL or 0 omits the second graph
+ *   corner_graphs  whether the CORNER draws the two graphs as well. The panel always draws them;
+ *                this is the user's switch for the corner alone, and 0 leaves the corner as the
+ *                line of numbers it was before the graphs existed.
  *
  * The corner is a small window that takes NO input - no pointer, no keys, no focus, no navigation
  * - so it can stay on screen while the panel is shut and the game has the keyboard and mouse. */
 void nrex_counter(nrex_ui *ui, const char *panel_line, const char *hint, int corner,
-                  const char *corner_line);
+                  const char *corner_line, const float *frame_ms, int frame_count,
+                  const float *net_ms, int net_count, int corner_graphs);
 
 /* The part of the picture the last rendered frame drew into, in image pixels: the bounds of its
  * vertices, a pixel or two wider, inside the image. Valid after the renderer's render call until

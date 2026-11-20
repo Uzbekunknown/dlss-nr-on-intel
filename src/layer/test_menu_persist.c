@@ -72,6 +72,7 @@ static char *read_text(const char *path)
 /* The row indices, named. `nr_menu_bridge.c`'s table is in `nr_knobs.py`'s order:
  * render_scale, min_extent, profile, intensity, detail_strength, colour_strength, temporal, hold,
  * release, cut_limit. */
+#define ROW_RENDER_SCALE 0
 #define ROW_INTENSITY 3
 
 /* --- 1. unrelated fields survive ------------------------------------------------------------ */
@@ -456,6 +457,78 @@ static void test_a_moved_knob_survives_a_reopen(void)
     printf("  ok  a moved knob survives a reopen (intensity reads back 1.05, scale still 0.4)\n");
 }
 
+/* --- 6b. an outside edit reaches the knobs when the panel opens ------------------------------ */
+
+/* **A shut panel may only act on the corner's two keys; it must not answer the knobs' question.**
+ *
+ * The bridge polls the settings file twice over: with the panel open it reloads everything, with
+ * it shut it reads only the counter's place and the graphs switch - because a `load_settings` with
+ * the panel shut throws away unsaved edits. Both branches used to advance ONE stamp, so the shut
+ * read marked the whole file as seen and the open panel then found the stamp matching and never
+ * reloaded: an edit the setup window made while the panel was shut never reached the knobs. The
+ * panel showed the old render scale, the arrows stepped from it, and the next Save wrote it back.
+ *
+ * This is that sequence, at the file level: shut, write the file from outside, tick; open, tick;
+ * the knob must show what the file says.
+ *
+ * **On a headless MENU, not a headless bridge.** A bridge without a menu does no per-frame work -
+ * `nr_menu_bridge_update` returns before the poll - so on one neither read below runs, and the
+ * case failed at the corner's check with the fix and without it alike. A headless menu draws
+ * nothing and reads no keys, and `nr_menu_inject_open` is what the panel's key does, so this is
+ * the code the layer runs. With the shut read advancing the knobs' stamp again (the bug), the
+ * render scale reads 0.4 at the end. */
+static void test_an_outside_edit_reaches_the_knobs_when_the_panel_opens(void)
+{
+    char settings[1088];
+    path_of(settings, sizeof settings, "outside.json");
+    write_text(settings, "{\n  \"render_scale\": 0.4,\n  \"intensity\": 1.0\n}\n");
+
+    nr_menu *menu = nr_menu_create_headless();
+    assert(menu);
+    nr_menu_bridge *bridge = nr_menu_bridge_create(menu, settings, NR_MENU_LANG_EN);
+    assert(bridge);
+    /* Shut: the counter and the graphs are read, nothing else. */
+    nr_menu_bridge_update(bridge, 1.0f / 60.0f);
+    assert(nr_menu_bridge_counter(bridge) == NR_COUNTER_PANEL);
+
+    /* The setup window writes while the panel is shut. A second apart, because the shut poll is
+     * throttled to one; the wait is on the wall clock the poll itself reads. */
+    write_text(settings, "{\n  \"render_scale\": 0.65,\n  \"intensity\": 1.0,\n"
+                         "  \"menu_counter\": 2\n}\n");
+#ifdef _WIN32
+    Sleep(1100);
+#else
+    usleep(1100 * 1000);
+#endif
+    nr_menu_bridge_update(bridge, 1.0f / 60.0f);
+    /* The corner followed the file, which is what the shut read is for. */
+    if (nr_menu_bridge_counter(bridge) != NR_COUNTER_TOP_RIGHT) {
+        printf("  FAIL the corner did not follow an outside edit made with the panel shut "
+               "(counter place %d, the file says %d)\n", nr_menu_bridge_counter(bridge),
+               NR_COUNTER_TOP_RIGHT);
+        nr_menu_bridge_destroy(bridge);
+        nr_menu_destroy(menu);
+        exit(1);
+    }
+
+    /* Now the panel opens. The knobs have NOT been read since the file moved, so this is where
+     * they catch up - and the bug was that they did not. */
+    nr_menu_inject_open(menu, 1);
+    for (int frame = 0; frame < 3; ++frame) nr_menu_bridge_update(bridge, 1.0f / 60.0f);
+    const char *shown = nr_menu_bridge_row_value(bridge, ROW_RENDER_SCALE);
+    assert(shown != NULL);
+    if (strcmp(shown, "0.65") != 0) {
+        printf("  FAIL the knobs did not follow an outside edit made with the panel shut "
+               "(render scale reads '%s', the file says 0.65)\n", shown);
+        nr_menu_bridge_destroy(bridge);
+        nr_menu_destroy(menu);
+        exit(1);
+    }
+    nr_menu_bridge_destroy(bridge);
+    nr_menu_destroy(menu);
+    printf("  ok  an outside edit reaches the knobs when the panel opens (render scale 0.65)\n");
+}
+
 /* --- 7. every knob can move and come back --------------------------------------------------- */
 
 /* The one above moves one knob. This moves all ten, so a knob whose step is zero, whose range is
@@ -469,7 +542,13 @@ static void test_every_knob_moves_and_survives(void)
     nr_menu_bridge *probe = nr_menu_bridge_create_headless(settings, NR_MENU_LANG_EN);
     assert(probe);
     int count = nr_menu_bridge_row_count(probe);
-    assert(count == 11);
+    /* Ten, `nr_knobs.py`'s table. It said eleven from the weights knob (`c484c5d`) until that knob
+     * went in PR #20's narrowing, and nothing built this fixture on Windows to notice. */
+    if (count != 10) {
+        printf("  FAIL the bridge has %d knobs, this test moves ten\n", count);
+        nr_menu_bridge_destroy(probe);
+        exit(1);
+    }
 
     for (int row = 0; row < count; ++row) {
         const char *before = nr_menu_bridge_row_value(probe, row);
@@ -545,6 +624,7 @@ int main(void)
     test_close_keeps_the_changes();
     test_the_written_file_parses();
     test_a_moved_knob_survives_a_reopen();
+    test_an_outside_edit_reaches_the_knobs_when_the_panel_opens();
     test_every_knob_moves_and_survives();
     test_languages_are_complete();
     printf("test_menu_persist: ok\n");
