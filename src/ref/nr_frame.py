@@ -898,7 +898,7 @@ def main():
     parser.add_argument("--local-tone", type=float,
                         help="local tone strength, 0..2 (the vendor's range; default 1.0)")
     parser.add_argument("--local-structure", type=float,
-                        help="local structure strength, 0..2 (vendor default 1.5)")
+                        help="local structure strength, 0..2 (the vendor's default is 1, our standard profile)")
     parser.add_argument("--skin-structure", type=float,
                         help="skin structure strength; enables automatic masking, -1 to follow local structure")
     parser.add_argument("--auto-mask", type=float,
@@ -909,7 +909,7 @@ def main():
                              "DLSSNR.MaskBlendMode: 0 off, 1 average, 2 minimum, 3 maximum")
     parser.add_argument("--intensity", type=float, default=1.0,
                         help="blend of the model's picture against the source, 0..2; "
-                             "above 1 extrapolates past the model's own picture")
+                             "above 1 extrapolates past the model's own picture (NVIDIA's DLL stops at 1)")
     parser.add_argument("--intensity-ladder",
                         help="comma-separated intensities; renders once and writes one file each")
     parser.add_argument("--detail-strength", type=float, default=1.0)

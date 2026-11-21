@@ -96,7 +96,8 @@ COMMENTS = {
                 ';               half the tone change, milder detail, faces milder still'),
     "intensity": ('Intensity', 'Sharpness', '0.0 to 2.0', '1.0',
                   'How far to go towards the model\'s picture. 1 is the model, 0 is the game\n'
-                  '; untouched, above 1 exaggerates what it changed and can look overdone.'),
+                  '; untouched, above 1 exaggerates what it changed and can look overdone.\n'
+                  '; NVIDIA\'s own NR stops at 1: above it is this project\'s alone.'),
     "detail_strength": ('DetailStrength', 'Sharpness', '0.0 to 2.0', '1.0',
                         'How strongly the fine detail is applied - pores, hair, grain.\n'
                         '; 0 keeps only the change in tone. Away from 1 costs one blur a frame.'),

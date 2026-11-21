@@ -76,10 +76,10 @@ def main():
     print("  -- local tone strength (vendor range 0..2, default 1.0) --")
     for value in (0.0, 0.5, 1.5, 2.0):
         report(f"local_tone={value}", render(local_tone=value))
-    print("\n  -- local structure strength (vendor range 0..2, default 1.5) --")
+    print("\n  -- local structure strength (vendor range 0..2, default 1) --")
     for value in (0.0, 0.5, 1.5, 2.0):
         report(f"local_structure={value}", render(local_structure=value))
-    print("\n  -- skin structure, with the automatic mask on (vendor default 2.0) --")
+    print("\n  -- skin structure, with the automatic mask on (unset, the vendor's follows the local structure) --")
     for value in (-1.0, 0.0, 1.0, 2.0):
         mask = nr_frame.AutomaticMask(skin_structure_strength=value,
                                       automatic_mask_structure_strength=-1.0)

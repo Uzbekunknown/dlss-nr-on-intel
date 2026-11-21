@@ -72,7 +72,8 @@ KNOBS = (
         "Blends the model's picture with the game's own. 1 is the model's picture, 0 is the "
         "game's frame untouched, and values between are part of the way. Above 1 the "
         "blend goes past the model and exaggerates what it changed, which can look "
-        "overdone. Free to change: nothing is re-run.",
+        "overdone; NVIDIA's own NR stops at 1, so that is this project's alone. Free to "
+        "change: nothing is re-run.",
     ),
     Knob(
         "detail_strength", "detail strength", "number", 0.0, 2.0, 0.05, 1.0,
