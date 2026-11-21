@@ -127,6 +127,10 @@ still leaves open becomes a line of its own.
   1280x720 and 0.4 in 9 ms, 3.9x an A770. An A770 plays level with this laptop at that size,
   because its network pays ~55 us a pass whatever the field. Eleven A-series cards compute NR's
   shape exactly, and a Pro B70 and two B580s offer it natively.
+- **NVIDIA's own output, since 11-21** (`notes/phase74-vendor-parity.md`): the owner's RTX 5060 Ti
+  runs NVIDIA's DLL over SSH, without a game, on frames of our choosing. Our A and B agree with
+  it at 0.989-0.997 correlation of the change, the residual 6-13 % of it, on eight frames of two
+  games. The two DLLs are there privately and go nowhere else.
 - **Working rules.** Nothing goes to GitHub without the owner's word, and nothing untested at all:
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
@@ -164,8 +168,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   For #17 the owner's reading: when the whole frame waits on the network, the game has nothing to
   render past the network's own frame rate, so its load stays low. #12 and #15 work after a reinstall, and #12 waits for the next release. #16 is
   Paimonshen's in-game menu.
-- Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
-  `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Archive, 10-17 later.
+- ~~Preset B against the vendor's own B: a capture on the RTX 5060 Ti with
+  `DLSSNR.Hint.Render.Preset` set to B, when the owner opens that machine. Archive, 10-17 later.~~:
+  done, preset 2 there; ours agrees at 0.992-0.997 correlation of the change
+  (`notes/phase74-vendor-parity.md`; below, 11-21, night).
 - The two files that came with the 310.9.16 DLL (`nvngx_dlssnr_compat-fp16-310.9.16-cuda13.4.3.rar`
   and `renodx-dlss.addon64`, in the Windows Downloads). The owner says, as their source claims,
   that the first is the DLL patched for RTX 30 and 40 cards, with FP16 kernels, and the second
@@ -298,6 +304,21 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Housekeeping: each release root in `D:\NRonWindows\rel` holds ~440 MB of extracted weights, and
   `D:` ran out of space mid-test. Archive, 10-12.
 
+**The RTX 5060 Ti machine** (`notes/phase74-vendor-parity.md`; below, 11-21, night)
+- It sleeps when idle, and has slept since 16:11 its time on 11-21, until someone at home wakes
+  it. Then, the owner: sleep off on AC power (KDE's energy saving, or `systemctl mask` of the
+  sleep targets); the full update, `pacman -Sy archlinux-keyring`, then `-Syu xorg-server-xvfb`,
+  with `dkms status` checked before the reboot. Then `run.sh` on a private Xvfb display in place
+  of the owner's session's Xwayland `:1`, and one frame run again on the new driver against
+  610.57.04's bytes.
+- Waiting for it: Hogwarts Legacy's six frames without the interface and three with its HUD
+  (`work/vendor/frames/set_hog.txt`), DoA5 at 1920x1080 and a desktop capture (their vendor
+  outputs made, not fetched).
+- Proposed, the owner's word: history (frames in sequence, and the Hogwarts recordings' motion
+  and depth), the knobs away from their defaults, a per-pass gate wrapping
+  `vkCmdCuLaunchKernelNVX`; and whether `nr_vendor.c`, `run.sh` and `compare.py` go into the
+  repository (they are in `work/vendor/`).
+
 **Planned, not started** (parked by the owner: do not start unasked)
 - A FAQ in the README. Later.
 - INT8 on the bottleneck: the exact kernel exists (`gemm_staged_int8.comp`) and stays out of the
@@ -334,6 +355,32 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   late night).
 
 ---
+
+## NVIDIA's own NR on the RTX 5060 Ti: our A and B against the vendor's, the first parity figures (2026-11-21, night, branch `newnr`)
+
+The owner, 11-21: the RTX 5060 Ti machine is on, reachable over SSH; do there what is needed,
+copy both DLLs and start. It had no game with DLSS 5, and none is needed. What was done, what the
+DLL said and the figures are in `notes/phase74-vendor-parity.md`; here, the session.
+
+- Both DLLs copied there over Tailscale at the owner's word (310.8.0.0 and 310.9.16.0, SHA-256
+  checked at both ends against `TESTED_DLLS`, mode 0444). The owner installed wine-staging 11.15
+  and mingw-w64-gcc 16.1 from their own session (`sudo` needs them); DXVK 3.1.1 and dxvk-nvapi
+  0.9.3 came from their GitHub releases, digests checked.
+- `work/vendor/nr_vendor.c` (C, built there with mingw) drives the DLL's own Vulkan exports in
+  the NGX core's place, after `fernandaspets/dlss5-nr-recipe` (MIT). The walls on the way, each
+  named in the note: Wine's desktop needs an X display (Xwayland's `:1` of the owner's Plasma
+  session), the DLL needs NvAPI to see its GPU, and the parameter block is MSVC's layout.
+- 22 vendor runs once the walls were down, every one created and evaluated with Success: presets 1
+  (A) and 2 (B), 1280x720 to 1920x1080, 3.4-9.8 ms a frame.
+- Parity on DoA5 (five frames of one screen) and Mortal Kombat 1 (three): A 0.989-0.997
+  correlation of the change, B 0.992-0.997, the residual 6-13 % of the vendor's change, 43.6-49.6 dB
+  between the two outputs; the other network as a control at 0.86-0.95. The brief's hard
+  constraint 2 and its weight-format line now say so.
+- At 16:11 its time the machine went to sleep, idle as far as it knows, with a download of DoA5's
+  1920x1080 output half done; it waits for someone at home (Open items).
+
+**Next on Linux:** when the machine wakes, the items under Open items, The RTX 5060 Ti machine.
+**Next on Windows:** nothing for this.
 
 ## Issues #47-#50: the A-series switch slower on two A770s, Mesa wrong on an A750, a B580 in Tomb Raider with DLL 310.8.2.0 (2026-11-21, evening, later, branch `newnr`)
 

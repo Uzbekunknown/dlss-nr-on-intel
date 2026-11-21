@@ -50,7 +50,8 @@ it is built from source (`docs/DEVS.md`).
   (`notes/phase22-staging-and-storage.md`), and Windows has no bf16 at all.
 - The decode is byte-identical to a model arena captured from a running RTX 50
   (`skchen17/dlssnr-amd-lab`, `notes/phase3-execution-order.md`): the weights are anchored to real
-  hardware; the activations are not.
+  hardware, and since 2026-11-21 so is the composed output (`notes/phase74-vendor-parity.md`); the
+  activations between the passes are not.
 - **Per-element agreement with a reference is impossible by construction**: the graph is chaotic,
   with ~100 E4M3 publishes at a 6.25 % step between input and output. Judge a change on the
   composed image and the controls (`notes/phase9-numerics.md`, `notes/phase7-first-render.md`).
@@ -82,8 +83,9 @@ it is built from source (`docs/DEVS.md`).
    HANDOFF archive, 09-26). Do not retrofit tiling.
 2. **No NVIDIA GPU on this laptop.** Ground truth is our CPU reference (`src/ref`), cross-checked
    against a second implementation that claims the vendor's arithmetic
-   (`notes/opendlss-reference.md`). The owner has an RTX 5060 Ti in another machine; a capture
-   from it waits until the owner opens it (HANDOFF, Open items).
+   (`notes/opendlss-reference.md`), and since 2026-11-21 against NVIDIA's own DLL, run on the
+   owner's RTX 5060 Ti over SSH on frames of our choosing: our A and B agree with it at 0.99
+   correlation of the change (`notes/phase74-vendor-parity.md`).
 3. **Cooperative matrix is compute-only**, so everything runs in compute shaders.
 
 ## Phases — all done
