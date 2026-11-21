@@ -71,7 +71,9 @@ still leaves open becomes a line of its own.
   DirectX 12 proxies (below, 11-20), and on 11-21 the three were level again at 0.0.7's head
   (below, 11-21, later). That evening `newnr` took the fused kernels' layout per driver
   (`8c82133`) and Linux's entries, and `master` and `alchemist` followed it, each at the owner's
-  word: the three are level again (below, 11-21, evening, later). `media` holds the README's pictures; `improve-int8` is kept for
+  word: the three are level again (below, 11-21, evening, later). On 11-22 `newnr` went ahead alone
+  with the RTX 5060 Ti machine's notes and the intensity texts (`0169ad9`), the owner having
+  asked on 11-21 not to fast-forward the other two for now. `media` holds the README's pictures; `improve-int8` is kept for
   INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -335,11 +337,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   players read, or to cap it: the owner's call.~~ Say so, the owner, 11-21: the intensity hint
   in four languages (`dist-tools/windows-wizard.ps1`, and the panel's tables from it), the INI's
   comment, `nr_knobs.py` and `docs/SETTINGS.md` say NVIDIA stops at 1; the range stays 0-2.
-  Local, not pushed (below, 11-21, late night).
+  On GitHub since 11-22, at the owner's word (below, 11-21, late night).
 - ~~`nr_frame.py --help` says the vendor's default local structure is 1.5. The DLL's default is 1,
   which is our `standard` (`phase74`). A one-line fix of the help, at the owner's word.~~ Fixed,
   with `control_atlas.py`'s two headings (structure 1.5, skin 2.0): the skin strength unset
-  follows the structure. Local, not pushed.
+  follows the structure. On GitHub since 11-22.
 - `docs/ARCHITECTURE.md`'s controls section says the vendor extrapolates above an intensity of
   1 when a grade or a mask runs its pass (`phase70`). Measured, it does not with style 1's grade
   nor with the automatic mask (`phase74`); a control mask is untested. With the file's other
@@ -387,7 +389,8 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 The owner, 11-21, on the proposals left for the RTX 5060 Ti machine: the per-pass gate the
 exact way, history, and the knobs; the tools into the repository and `docs/ARCHITECTURE.md`
 later. Network A was traced and tapped; B was traced only. The numbers are in `phase75` and
-`phase74`. Nothing pushed.
+`phase74`. Pushed at the owner's word on 11-22, `newnr` alone: `master` and `alchemist` stay
+at `b315822`, the owner having asked on 11-21 not to fast-forward them for now.
 
 - **The per-pass gate** (`phase75`):
   - `nr_vendor.c` now wraps the DLL's Vulkan through its own `vkGetInstanceProcAddr` and
@@ -419,7 +422,7 @@ later. Network A was traced and tapped; B was traced only. The numbers are in `p
     from them, plus the INI's comment, `nr_knobs.py` and `docs/SETTINGS.md`.
   - `nr_frame.py`'s help and `control_atlas.py` now give the DLL's own defaults.
   - Checked on Linux: `make test` 74 of 74 in both memory modes, CMake with no warning, CTest 73
-    of 73. Local, not pushed.
+    of 73. On GitHub since 11-22 (`0169ad9`).
 
 **Next on Linux:** at the owner's word, history with a game's own motion and depth, B's taps.
 **Next on Windows:** once this is on GitHub, the setup window's self-test and the MSVC build:
