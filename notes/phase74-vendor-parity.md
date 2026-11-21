@@ -9,8 +9,8 @@ and the first parity figures. Everything below was measured, unless it says othe
 
 ## How NVIDIA's network runs without a game or the NGX core
 
-The machine runs Arch Linux with nvidia-open 610.57.04 and has no game with DLSS 5; none is
-needed. The route is `fernandaspets/dlss5-nr-recipe` (MIT), proved there on an RTX 5090 and an
+The machine runs Arch Linux with nvidia-open 610.57.04 (620.73.04 since the evening of 11-21,
+below) and has no game with DLSS 5; none is needed. The route is `fernandaspets/dlss5-nr-recipe` (MIT), proved there on an RTX 5090 and an
 RTX PRO 6000, which credits `bmitch87/DLSS5VKLayer` (MIT). It was read and reimplemented in C as
 `nr_vendor.c` (`work/vendor/`, not in the repository): the DLL is loaded in the NGX core's place
 and its own Vulkan exports are called, under Wine (wine-staging 11.15).
@@ -35,7 +35,9 @@ and its own Vulkan exports are called, under Wine (wine-staging 11.15).
   `DXVK_ENABLE_NVAPI=1`, answer its `NvAPI_EnumPhysicalGPUs`, `GPU_GetArchInfo` and DRS reads.
 - Wine needs a display for its desktop process although nothing is drawn. With none, or with
   Wayland's, `explorer.exe /desktop` never comes up and the first `vkCreateInstance` waits for
-  it forever (traced: `get_desktop_window started explorer`). X11 through Xwayland works.
+  it forever (traced: `get_desktop_window started explorer`). X11 through Xwayland works, and so
+  does Xvfb, which `run.sh` starts as a user unit (`:99`) since the evening of 11-21, so that no
+  run depends on the desktop session.
 - The DLL's own log: `__NGX_LOG_LEVEL=256`, `__NGX_ENABLE_OVERRIDE_LOG_PATH=1` and
   `__NGX_LOG_PATH_OVERRIDE`. The DRS settings the recipe served for it were not needed here.
 
@@ -81,6 +83,11 @@ control is the same comparison against the other network's output from the vendo
 The rows from DoA5 at 1920x1080 on were run on the evening of 11-21, after the machine had slept:
 Hogwarts' 18 runs each a process of its own, all created and evaluated with Success.
 
+**The driver does not change the vendor's output.** After the owner's update to nvidia-open
+620.73.04, with wine-staging 11.22 and Xvfb in place of the session's Xwayland, all 19 frames
+above were run again with A and B: the 38 outputs are byte for byte those of 610.57.04. The
+evaluation's times were as before (one B at 1280x720 took 9.5 ms, the others 3.3-4.0).
+
 On the first DoA5 frame each output is 27.1 dB (the vendor's A) and 26.8 dB (ours) from the
 input, and 43.6 dB from the other.
 
@@ -115,7 +122,6 @@ input, and 43.6 dB from the other.
 - The vendor's intermediate activations. The harness owns the VkDevice, so
   `vkCmdCuLaunchKernelNVX` could be wrapped and the buffers read between launches: a per-pass
   gate.
-- Another driver: all of this ran on 610.57.04.
 
 ## Where things are
 

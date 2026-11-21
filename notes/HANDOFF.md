@@ -307,11 +307,13 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 **The RTX 5060 Ti machine** (`notes/phase74-vendor-parity.md`; below, 11-21, night and later)
 - ~~It sleeps when idle, and has slept since 16:11 its time on 11-21, until someone at home wakes
   it~~: KDE's PowerDevil, its default on AC; off since 11-21 17:23 its time, and 20 minutes
-  without input did not put it to sleep (below, 11-21, night, later).
-- The owner's: the full update, `pacman -Sy archlinux-keyring`, then `-Syu xorg-server-xvfb`,
+  without input did not put it to sleep; the setting held through the update to Plasma 6.8.3
+  (below, 11-21, night, later).
+- ~~The owner's: the full update, `pacman -Sy archlinux-keyring`, then `-Syu xorg-server-xvfb`,
   with `dkms status` checked before the reboot. Then `run.sh` on a private Xvfb display in place
   of the owner's session's Xwayland `:1`, and one frame run again on the new driver against
-  610.57.04's bytes.
+  610.57.04's bytes~~: done on 11-21, nvidia-open 620.73.04; `run.sh` on Xvfb `:99`; all 19
+  frames again, the 38 outputs byte for byte those of 610.57.04 (below, 11-21, night, later).
 - ~~Waiting for it: Hogwarts Legacy's six frames without the interface and three with its HUD
   (`work/vendor/frames/set_hog.txt`), DoA5 at 1920x1080 and a desktop capture (their vendor
   outputs made, not fetched)~~: done, 0.991-0.995 on Hogwarts (below, 11-21, night, later).
@@ -357,7 +359,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## The RTX 5060 Ti machine no longer sleeps; Hogwarts Legacy, DoA5 at 1920x1080 and a desktop against NVIDIA's (2026-11-21, night, later, branch `newnr`)
+## The RTX 5060 Ti machine: no more sleep, driver 620.73.04 with the same bytes; Hogwarts Legacy, DoA5 at 1920x1080 and a desktop against NVIDIA's (2026-11-21, night, later, branch `newnr`)
 
 The owner, 11-21: check and set the machine's sleep yourself; it is on Wi-Fi, so it cannot be
 woken over the network. Someone at home woke it at 17:16 its time (21:16 here).
@@ -385,9 +387,17 @@ woken over the network. Someone at home woke it at 17:16 its time (21:16 here).
   of 3.5-5 levels. Over the 18 frames of games, 0.989-0.997. The vendor's 18 Hogwarts runs, a
   process each through `work/vendor/run_set.sh`, took about 0.5 s apiece, the evaluation A
   5.4-5.8 ms and B 3.3-3.9 at 1280x720.
+- **The owner's update**, from the owner's session (18:02-18:08 its time, the reboot at 18:13):
+  kernel 7.3.5, nvidia-open-dkms 620.73.04 (DKMS built it for 7.3.5 and the initramfs was made
+  before the reboot), wine-staging 11.22, Plasma and PowerDevil 6.8.3, xorg-server-xvfb. The
+  machine came back by itself with the session (SDDM's autologin), no unit failed, and the sleep
+  setting held. After the reboot there were three X displays where there had been two, so the
+  session's number is not fixed: `run.sh` now starts its own Xvfb, `:99`, as a user unit, and
+  `NRV_XDISPLAY=session` keeps the old way. **All 19 frames run again with A and B: the 38
+  outputs are byte for byte those of 610.57.04.**
 
-**Next on Linux:** the owner's update and Xvfb (Open items, The RTX 5060 Ti machine), then the
-proposals there. **Next on Windows:** nothing for this.
+**Next on Linux:** the proposals under Open items, The RTX 5060 Ti machine, each at the owner's
+word. **Next on Windows:** nothing for this.
 
 ## NVIDIA's own NR on the RTX 5060 Ti: our A and B against the vendor's, the first parity figures (2026-11-21, night, branch `newnr`)
 
