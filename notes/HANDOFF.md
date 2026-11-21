@@ -69,9 +69,9 @@ still leaves open becomes a line of its own.
   `newnr` and `master` with our fixes, and `alchemist` was merged with them, so the three are
   level again (archive, 11-19). On 11-20 `alchemist` went ahead alone with the 8-bit outputs of the
   DirectX 12 proxies (below, 11-20), and on 11-21 the three were level again at 0.0.7's head
-  (below, 11-21, later). That evening `newnr` went ahead alone, at the owner's word, with the fused
-  kernels' layout per driver (`8c82133`) and Linux's entries; `master` and `alchemist` stay at
-  `ecdce7b` (below, 11-21, evening, later). `media` holds the README's pictures; `improve-int8` is kept for
+  (below, 11-21, later). That evening `newnr` took the fused kernels' layout per driver
+  (`8c82133`) and Linux's entries, and `master` and `alchemist` followed it, each at the owner's
+  word: the three are level again (below, 11-21, evening, later). `media` holds the README's pictures; `improve-int8` is kept for
   INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -207,7 +207,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 **Windows**
 - `8c82133`, the fused kernels' layout as specialisation constant 4, on for this driver (below,
   11-16, late night): the MSVC build, CTest, and B's `frame_profile` at 576x1024 against
-  `XMX_FUSED_BY_COLUMN=0`. On GitHub's `newnr` since 11-21.
+  `XMX_FUSED_BY_COLUMN=0`. On GitHub, on all three branches, since 11-21.
 - Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
   three branches since 11-19, archive, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
@@ -346,8 +346,8 @@ checkout's `work/pr-replies/`, `issue47.md` to `issue50.md`.
 -7060438192 and -7060438412 for #47 to #50), #49's with a paragraph the owner asked for: try
 network B, which needs a DLL of 310.9.16 or later (Hogwarts Legacy since its DLSS 5 update, or
 NBA 2K27); setup picks B when the DLL has it, and the panel switches A and B in play. **`newnr`
-pushed** at the owner's word the same evening, this entry its head; `master` and `alchemist` stay
-at `ecdce7b`.
+pushed** at the owner's word the same evening (`c0c17d2`), and then, at the owner's word too,
+`master` and `alchemist` fast-forwarded to it with this line: the three level.
 
 **#47 and #50, two A770 16GB, Windows, Intel 101.9175** (0.0.7's GPU report). NR's 8x16x16 is
 exact at 8, 16 and 32 lanes, though not offered, as on the eleven A-series cards before. The network
@@ -395,8 +395,8 @@ README row for the next release:
 `| Tomb Raider (2013) | Arc B580, a player's report ([#49](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/49)) | Windows, DirectX 11 (32-bit) through DXVK, network A | 37-40 fps at 1080p Ultra and render scale 0.45, 70-80 with frame generation | 2026-11-21 |`
 
 **Next on Linux:** the owner's word on the start-up check of the unoffered shape in libxmx, and
-the answers in #47-#50. **Next on Windows:** `git fetch`, `newnr` to GitHub's, then the line for
-`8c82133` under Open items, Windows; the README row at the next release; #49's DLL once its source
+the answers in #47-#50. **Next on Windows:** `git fetch`, fast-forward `master`, `newnr` and
+`alchemist` to GitHub's, then the line for `8c82133` under Open items, Windows; the README row at the next release; #49's DLL once its source
 is known.
 
 ## Checked on Linux: 0.0.7's head, with the fused kernels' layout per driver rebased onto it (2026-11-21, evening, branch `newnr`)
