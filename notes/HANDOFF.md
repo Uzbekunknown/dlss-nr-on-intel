@@ -129,8 +129,8 @@ still leaves open becomes a line of its own.
   shape exactly, and a Pro B70 and two B580s offer it natively.
 - **NVIDIA's own output, since 11-21** (`notes/phase74-vendor-parity.md`): the owner's RTX 5060 Ti
   runs NVIDIA's DLL over SSH, without a game, on frames of our choosing. Our A and B agree with
-  it at 0.989-0.997 correlation of the change, the residual 6-13 % of it, on eight frames of two
-  games. The two DLLs are there privately and go nowhere else.
+  it at 0.989-0.997 correlation of the change, the residual 6-13 % of it, on 18 frames of three
+  games, Hogwarts Legacy's among them. The two DLLs are there privately and go nowhere else.
 - **Working rules.** Nothing goes to GitHub without the owner's word, and nothing untested at all:
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
@@ -304,16 +304,17 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Housekeeping: each release root in `D:\NRonWindows\rel` holds ~440 MB of extracted weights, and
   `D:` ran out of space mid-test. Archive, 10-12.
 
-**The RTX 5060 Ti machine** (`notes/phase74-vendor-parity.md`; below, 11-21, night)
-- It sleeps when idle, and has slept since 16:11 its time on 11-21, until someone at home wakes
-  it. Then, the owner: sleep off on AC power (KDE's energy saving, or `systemctl mask` of the
-  sleep targets); the full update, `pacman -Sy archlinux-keyring`, then `-Syu xorg-server-xvfb`,
+**The RTX 5060 Ti machine** (`notes/phase74-vendor-parity.md`; below, 11-21, night and later)
+- ~~It sleeps when idle, and has slept since 16:11 its time on 11-21, until someone at home wakes
+  it~~: KDE's PowerDevil, its default on AC; off since 11-21 17:23 its time, and 20 minutes
+  without input did not put it to sleep (below, 11-21, night, later).
+- The owner's: the full update, `pacman -Sy archlinux-keyring`, then `-Syu xorg-server-xvfb`,
   with `dkms status` checked before the reboot. Then `run.sh` on a private Xvfb display in place
   of the owner's session's Xwayland `:1`, and one frame run again on the new driver against
   610.57.04's bytes.
-- Waiting for it: Hogwarts Legacy's six frames without the interface and three with its HUD
+- ~~Waiting for it: Hogwarts Legacy's six frames without the interface and three with its HUD
   (`work/vendor/frames/set_hog.txt`), DoA5 at 1920x1080 and a desktop capture (their vendor
-  outputs made, not fetched).
+  outputs made, not fetched)~~: done, 0.991-0.995 on Hogwarts (below, 11-21, night, later).
 - Proposed, the owner's word: history (frames in sequence, and the Hogwarts recordings' motion
   and depth), the knobs away from their defaults, a per-pass gate wrapping
   `vkCmdCuLaunchKernelNVX`; and whether `nr_vendor.c`, `run.sh` and `compare.py` go into the
@@ -355,6 +356,38 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   late night).
 
 ---
+
+## The RTX 5060 Ti machine no longer sleeps; Hogwarts Legacy, DoA5 at 1920x1080 and a desktop against NVIDIA's (2026-11-21, night, later, branch `newnr`)
+
+The owner, 11-21: check and set the machine's sleep yourself; it is on Wi-Fi, so it cannot be
+woken over the network. Someone at home woke it at 17:16 its time (21:16 here).
+
+- **What put it to sleep: KDE's PowerDevil.** logind, 16:11:39: `suspend requested from client
+  PID 926 ('org_kde_powerde')`. `~/.config/powerdevilrc` did not exist, so its default held: on
+  AC, sleep after 15 minutes without input, and SSH and the network are not input. logind's own
+  `IdleAction` is `ignore`.
+- **Set**, user-level: `[AC][SuspendAndShutdown] AutoSuspendAction=0`, "do nothing", with
+  `kwriteconfig6` (the names checked in its `libpowerdevilcore.so` 6.7.4), then
+  `reparseConfiguration` and `refreshStatus` over the session bus. The screen still goes off when
+  idle.
+- **Checked:** with no inhibitor, and KDE's idle timers reset (`SimulateUserActivity`) at
+  17:32:15, the screen went off at about 17:43 (its DisplayPort audio sink vanished then) and was
+  still off at 17:53, so nothing touched the machine; it stayed up with no suspend request in
+  logind's journal or the kernel's. The old default would have asked at 17:47.
+- **Holding it awake from SSH:** `systemd-inhibit --mode=block` is refused there (polkit: a
+  Tailscale SSH session is remote, and `inhibit-block-sleep` has `allow_any=no`), which is why
+  the wake watcher's six-hour block never took. `kde-inhibit --power` under `systemd-run --user`
+  is honoured (PowerDevil's `HasInhibit` true after ~5 s); it ran while the frames did, and was
+  stopped for the check.
+- **Parity** (`phase74`, its table): Hogwarts' six frames without the interface, A 0.991-0.994
+  and B 0.991-0.992, the residual 11-13 % of the change; its three with the HUD 0.993-0.995,
+  9-10 %; DoA5 at 1920x1080 0.995 and 0.996, 8-9 %; a desktop capture 0.985, 13-16 % of a change
+  of 3.5-5 levels. Over the 18 frames of games, 0.989-0.997. The vendor's 18 Hogwarts runs, a
+  process each through `work/vendor/run_set.sh`, took about 0.5 s apiece, the evaluation A
+  5.4-5.8 ms and B 3.3-3.9 at 1280x720.
+
+**Next on Linux:** the owner's update and Xvfb (Open items, The RTX 5060 Ti machine), then the
+proposals there. **Next on Windows:** nothing for this.
 
 ## NVIDIA's own NR on the RTX 5060 Ti: our A and B against the vendor's, the first parity figures (2026-11-21, night, branch `newnr`)
 
