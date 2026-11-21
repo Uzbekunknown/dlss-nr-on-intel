@@ -138,10 +138,15 @@ knob acts.
 | Hogwarts Legacy's own (tone 0.5, structure 0.84, the mask, skin 0.27); `--profile hogwarts` | 0.988-0.997 | 0.90-0.98 (0.955-0.994) |
 
 - **The DLL clamps `Intensity` at 1.** It read 1.5 and gave its default's output, byte for byte,
-  on all six frames and networks. Ours at 1.5 extrapolates past the model's picture, as its help
-  says, and its change is 1.5 times the vendor's: that is ours alone.
+  on all six frames and networks. On the 512x320 crop (`phase75`), 1.001 and 1.5 give 1's bytes
+  and 0.99 does not, and 1.5 gives 1's bytes with style 1's grade and with the automatic mask
+  too; a control mask is untested. Ours at 1.5 extrapolates past the model's picture, as its
+  help says, and its change is 1.5 times the vendor's: that is ours alone, and since 11-21 the
+  panel, the setup window, the INI and `docs/SETTINGS.md` say NVIDIA stops at 1.
 - **`SkinStructureStrength` acts only with `UseAutoMask`.** Without it, at 2, the DLL's output is
-  its default's byte for byte. Our `--skin-structure` turns the mask on by itself.
+  its default's byte for byte. Our `--skin-structure` turns the mask on by itself. With the mask
+  on and the skin strength unset, the DLL hands the pre-block the local structure in its place
+  (2 at a structure of 2), as our -1 does.
 - **The automatic mask is the same scalars as ours.** The pre-block's arguments carry them, and
   no mask image is bound (`phase75`). Its effect is about one level. The residual between the two
   implementations at a setting is not the residual at the defaults: their correlation is -0.09 to

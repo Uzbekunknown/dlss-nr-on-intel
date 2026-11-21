@@ -330,11 +330,20 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Whether `nr_vendor.c`, `run.sh`, `run_set.sh`, `compare.py` and the other tools in
   `work/vendor/` go into the repository: later (the owner, 11-21). So is `docs/ARCHITECTURE.md`'s
   line that preset B was not compared with NVIDIA's.
-- **The DLL clamps `Intensity` at 1** (`phase74`): at 1.5 its output is its default's. Ours
+- ~~**The DLL clamps `Intensity` at 1** (`phase74`): at 1.5 its output is its default's. Ours
   extrapolates above 1, and the panel offers it (#49's player ran 1.25). Whether to say so where
-  players read, or to cap it: the owner's call.
-- `nr_frame.py --help` says the vendor's default local structure is 1.5. The DLL's default is 1,
-  which is our `standard` (`phase74`). A one-line fix of the help, at the owner's word.
+  players read, or to cap it: the owner's call.~~ Say so, the owner, 11-21: the intensity hint
+  in four languages (`dist-tools/windows-wizard.ps1`, and the panel's tables from it), the INI's
+  comment, `nr_knobs.py` and `docs/SETTINGS.md` say NVIDIA stops at 1; the range stays 0-2.
+  Local, not pushed (below, 11-21, late night).
+- ~~`nr_frame.py --help` says the vendor's default local structure is 1.5. The DLL's default is 1,
+  which is our `standard` (`phase74`). A one-line fix of the help, at the owner's word.~~ Fixed,
+  with `control_atlas.py`'s two headings (structure 1.5, skin 2.0): the skin strength unset
+  follows the structure. Local, not pushed.
+- `docs/ARCHITECTURE.md`'s controls section says the vendor extrapolates above an intensity of
+  1 when a grade or a mask runs its pass (`phase70`). Measured, it does not with style 1's grade
+  nor with the automatic mask (`phase74`); a control mask is untested. With the file's other
+  line, later.
 
 **Planned, not started** (parked by the owner: do not start unasked)
 - A FAQ in the README. Later.
@@ -404,9 +413,17 @@ later. Network A was traced and tapped; B was traced only. The numbers are in `p
   - A pan with motion vectors: the DLL reads `MVec` as our motion (pixels, to where the pixel
     was, scale 1); the other sign falls to 0.86-0.95.
 
-**Next on Linux:** the owner's calls under Open items, The RTX 5060 Ti machine (the intensity
-above 1, the help's structure default); then, at the owner's word, history with a game's own
-motion and depth, B's taps. **Next on Windows:** nothing for this.
+- **The owner's calls**, 11-21, "yes and yes":
+  - The intensity stays 0-2, and the texts players read now say NVIDIA stops at 1. That is
+    the hint in four languages, in the setup window's strings and the panel's tables generated
+    from them, plus the INI's comment, `nr_knobs.py` and `docs/SETTINGS.md`.
+  - `nr_frame.py`'s help and `control_atlas.py` now give the DLL's own defaults.
+  - Checked on Linux: `make test` 74 of 74 in both memory modes, CMake with no warning, CTest 73
+    of 73. Local, not pushed.
+
+**Next on Linux:** at the owner's word, history with a game's own motion and depth, B's taps.
+**Next on Windows:** once this is on GitHub, the setup window's self-test and the MSVC build:
+`Hint.intensity` changed in `windows-wizard.ps1` and in the panel's tables.
 
 ## The RTX 5060 Ti machine: no more sleep, driver 620.73.04 with the same bytes; Hogwarts Legacy, DoA5 at 1920x1080 and a desktop against NVIDIA's (2026-11-21, night, later, branch `newnr`)
 
