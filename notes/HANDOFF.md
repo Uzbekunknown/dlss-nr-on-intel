@@ -57,12 +57,12 @@ still leaves open becomes a line of its own.
   speed-up ("Faster, experimental", the edit cache), a frame 8-12 % shorter at 1080p and 1440p,
   the panel's frame graphs, the A-series kernel switch and the 8-bit outputs (below, 11-21,
   later). What 0.0.2 to 0.0.3.1
-  brought is in the archive (10-31, 11-01) and on the release pages. The last six went out on the
-  owner's word before Linux's `make test` at their heads, as 0.0.1.3 did, and Linux has run five
-  green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04 later),
-  0.0.4's and 0.0.5's at `127f6dc` (archive, 11-11); 0.0.6's and 0.0.7's are owed (Open items,
-  Linux). Linux
-  users build from source (README).
+  brought is in the archive (10-31, 11-01) and on the release pages. The last seven went out on
+  the owner's word before Linux's `make test` at their heads, as 0.0.1.3 did, and Linux has run
+  all seven green since: 0.0.2's at `eb9b281`, 0.0.3's and 0.0.3.1's at `d28e841` (archive, 11-04
+  later), 0.0.4's and 0.0.5's at `127f6dc` (archive, 11-11), 0.0.6's and 0.0.7's at `d5bbde8`,
+  0.0.7's code with `8c82133` on it (below, 11-21, evening). Linux users build from source
+  (README).
 - **Branches**, on GitHub since 10-30: `master` (the default), `newnr` and `alchemist` were level
   from 11-11 and moved together, each push a fast-forward of all three. From 11-18 `alchemist`
   ran ahead with the A-series switch while Paimonshen finished PR #45; on 11-19 #45 went into
@@ -319,6 +319,34 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## Checked on Linux: 0.0.7's head, with the fused kernels' layout per driver rebased onto it (2026-11-21, evening, branch `newnr`)
+
+The owner, 11-21: pull the branches from GitHub, then run the tests. GitHub had gone from `f9ad754`
+to `ecdce7b`, 0.0.7 and the entries after it, and `master` and `alchemist` fast-forwarded to it.
+`newnr` held the three local commits of 11-16, the timings on Mesa, constant 4 and its entry: they
+are rebased onto `ecdce7b` as `895d7a6`, `8c82133` (the code, `7944836` before) and `d5bbde8`, and
+`backup-20261121-newnr-before-pull` keeps the branch as it was. What met in the rebase is in the
+entry of 11-16, late night (below). Nothing pushed. Mesa 26.2.7 (26.2.6 on 11-16), no daemon, swap
+empty, a quiet CPU.
+
+- `make test` 74 of 74, in 1 min 30 s;
+- `XMX_STAGING=1 make test` 74 of 74, in 1 min 33 s, the seven GPU suites that print the mode
+  saying `staging=True`;
+- CMake builds with no warning, and CTest passes 73 of 73;
+- `XMX_FUSED_BY_COLUMN=1 make test-gpu` 44 of 44: the layout Intel's Windows driver takes, and
+  0.0.7's on every driver;
+- `frame_replay.py` heads with the constant 0 and 1, both ways those of 11-16: B at 576x1024
+  (`edcbf478`, `acbd05d9`) and 320x512 (`df409ac4`, `b6d9870b`), A at 320x512 (`3e37b87c`,
+  `29d613d2`). With 1, B's replay at 576x1024 took 52 ms against 48, so the variable takes.
+- Skipped inside the scripts, as before: the Windows-only cases, `test_gemm_e4m3.py`'s comparison
+  (the E4M3 bytes are off on Mesa) and the GPU image path's parity checks, which hold its bytes to
+  the CPU's on Intel's Windows driver alone (`xmxres.image_path_exact`). **So
+  `test_image_compose.py`'s strengths case, which the 0.0.7 entry expected to run on Mesa, is
+  skipped here** with the other parity checks.
+
+**Next on Linux:** nothing owed. **Next on Windows:** once the owner's word puts `newnr` on GitHub,
+`8c82133` (Open items, Windows).
+
 ## 0.0.7 built, checked and published: the edit cache, the panel's graphs and fixes, the A-series switch, 8-bit outputs (2026-11-21, later, branch `release-0.0.7`)
 
 The owner, 11-21, after playing the edit-cache build in Hogwarts Legacy (02:25-02:31, NR turned
@@ -538,7 +566,8 @@ whatever that switch says); in the daemon's `runtime options` line `XMX_FUSED_BY
 `XMX_PREFER_TILED`; in `gpu_report_network.py` all three forms are turned off only where the second
 process compares with 0.0.5's weights. An A-series card's second process compares the kernels with
 the fused layout as its driver has it, and its line adds `the fused kernels by column` when they
-are. The checks above ran at the old base, and none has run at `8c82133` yet.
+are. The checks above ran at the old base; at `8c82133` they ran again on 11-21, green (above,
+11-21, evening).
 
 **Not run:** Intel's Windows driver, where the constant is on and the kernels should compile to
 what `19679e9` gave.
