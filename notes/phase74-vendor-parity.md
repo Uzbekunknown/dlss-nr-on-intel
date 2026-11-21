@@ -1,5 +1,8 @@
 # Phase 74 — NVIDIA's own NR on an RTX 5060 Ti: our A and B against the vendor's (2026-11-21)
 
+*Its activations pass by pass, and where the residual comes from, are in
+`phase75-inside-the-network.md`.*
+
 Since 09-07 the brief has said that ground truth here is our CPU reference and that there is no
 NVIDIA parity gate: the graph is MLX-DLSS's recovery, checked against its specification and
 against behaviour, not against the DLL (`phase7`, HANDOFF section 6). On 2026-11-21 the owner
@@ -111,15 +114,85 @@ input, and 43.6 dB from the other.
   finding. On DoA5's first frame ours takes red down a little more, −3.07 levels on average
   against −2.88.
 
+## The knobs away from their defaults (11-21, evening)
+
+Each setting alone on top of the defaults, presets 1 and 2, on three frames: DoA5 (`live001`),
+MK1's close-up (`mk023`, 1600x900) and Hogwarts (`hog_cleanoff1`). Ours ran with
+`nr_frame.py`'s matching flags (`work/vendor/knobs.txt`, `knobs.sh`, `compare_knobs.py`). A
+knob's effect is a side's output at the setting less its output at the defaults; its correlation
+is also given blurred (sigma 12), which takes out the pixel-level residual and leaves where the
+knob acts.
+
+| setting (the DLL's; ours) | correlation of the changes | the knob's effect: correlation (blurred) |
+| --- | --- | --- |
+| `Intensity` 0.5; `--intensity 0.5` | 0.988-0.996 | 0.980-0.994 |
+| `LocalToneStrength` 0; `--local-tone 0` | 0.986-0.994 | 0.930-0.985 |
+| `LocalToneStrength` 2; `--local-tone 2` | 0.992-0.998 | 0.77-0.975 (0.85-0.99) |
+| `LocalStructureStrength` 0; `--local-structure 0` | 0.987-0.998 | 0.977-0.989 |
+| `LocalStructureStrength` 2; `--local-structure 2` | 0.974-0.996 | 0.71-0.993 (0.83-0.998) |
+| `Style` 1; `--style-index 1` | 0.995-0.998 | 0.988-0.996 |
+| `Style` 2; `--style-index 2` | 0.992-0.997 | 0.987-0.991 |
+| `UseAutoMask` 1; `--skin-structure 1` | 0.991-0.997 | 0.30-0.61 (0.21-0.71) |
+| `UseAutoMask` 1, `SkinStructureStrength` 0; `--skin-structure 0` | 0.990-0.997 | 0.72-0.93 (0.79-0.98) |
+| `UseAutoMask` 1, `SkinStructureStrength` 2; `--skin-structure 2` | 0.990-0.997 | 0.38-0.75 (0.46-0.89) |
+| Hogwarts Legacy's own (tone 0.5, structure 0.84, the mask, skin 0.27); `--profile hogwarts` | 0.988-0.997 | 0.90-0.98 (0.955-0.994) |
+
+- **The DLL clamps `Intensity` at 1.** It read 1.5 and gave its default's output, byte for byte,
+  on all six frames and networks. Ours at 1.5 extrapolates past the model's picture, as its help
+  says, and its change is 1.5 times the vendor's: that is ours alone.
+- **`SkinStructureStrength` acts only with `UseAutoMask`.** Without it, at 2, the DLL's output is
+  its default's byte for byte. Our `--skin-structure` turns the mask on by itself.
+- **The automatic mask is the same scalars as ours.** The pre-block's arguments carry them, and
+  no mask image is bound (`phase75`). Its effect is about one level. The residual between the two
+  implementations at a setting is not the residual at the defaults: their correlation is -0.09 to
+  +0.15 per pixel and -0.21 to +0.30 blurred, so any change of input reshuffles it. An effect that
+  small cannot correlate better, and the large ones do (structure 0, the styles).
+
+## History (11-21, evening)
+
+**Eight consecutive frames, no motion.** DoA5's character select, `work/live` 001-008, 1280x720.
+The vendor ran them in one process, the history reset on the first frame only, with zero motion
+vectors; ours ran `nr_temporal.py --frames-from`, zero motion (`compare_seq.py`). The history's
+effect is a side's sequence output less its single-frame output of the same frame.
+
+| net | correlation of the changes, frame 1 to 8 | residual's share | PSNR | the history's effect, vendor / ours (levels) | its correlation (blurred) |
+| --- | --- | --- | --- | --- | --- |
+| A | 0.9894 to 0.9953 | 13 to 9 % | 43.6 to 46.9 dB | 1.27 / 1.37 to 2.44 / 2.47 | 0.48 to 0.88 (0.46 to 0.94) |
+| B | 0.9925 to 0.9959 | 11 to 8 % | 46.9 to 49.9 dB | 1.34 / 1.39 to 2.26 / 2.35 | 0.72 to 0.90 (0.67 to 0.93) |
+
+- A sequence's first frame is its single frame's output byte for byte, on both sides.
+- The two sequences grow closer as the history builds, the residual of each frame being its own
+  and the blend averaging them.
+- Our blend weighs the history at 0.47-0.55 on average for A and 0.59-0.68 for B, under its
+  0.74 ceiling.
+
+**A pan with motion vectors.** A 640x384 window over Hogwarts' `hog_cleanoff1`, moving 6 pixels
+a frame for 8 frames. Ours ran `nr_temporal.py --pan 6,0`, whose motion is +6/640 of the width;
+the vendor got one vector everywhere (`NRV_MVEC`), with `DLSSNR.MVecScaleX` and `Y` at 1.
+
+| the vendor's vector, against ours | correlation of the changes, frames 1-7 |
+| --- | --- |
+| (+6, 0), against ours with the motion | A 0.983-0.986, B 0.981-0.986 |
+| (-6, 0), the other sign | A 0.91-0.95, B 0.86-0.94 |
+| (0, 0), against ours with none | A 0.980-0.989, B 0.972-0.980 |
+| (+6, 0), against ours with none | A 0.91-0.97, B 0.88-0.95 |
+
+- **The DLL reads `MVec` as ours reads motion:** in pixels, from a pixel to where it was in the
+  previous frame, at a scale of 1.
+- The motion's own effect, with it less without, is the same order on both sides: A 1.4-2.0
+  levels from the vendor against our 1.1-1.7 (correlation 0.52-0.85), B 0.7-1.3 against 0.8-1.4
+  (0.64-0.86). A's is somewhat larger on the vendor's side, and that is not explained.
+- Our history weighed 0.69 on average at the last frame with the motion for A and 0.22 for B,
+  and 0.01-0.02 with none.
+
 ## Not established
 
-- Where the residual comes from. Candidates, untested: the deterministic noise of the feature
-  assembly (MLX-DLSS's), the E4M3 publishes after our float32 accumulation against the
-  vendor's float16 (`phase4`, `phase9`), the composition.
-- History. Every frame ran alone with the history reset; the harness carries it across frames
-  given in sequence.
-- The knobs away from their defaults, the masks, UI, subrects, a scaling ratio below 1.
-- The vendor's intermediate activations. The harness owns the VkDevice, so
+- Which arithmetic inside the fused blocks differs. `phase75` found where the residual comes
+  from: not the feature assembly and not the composition; each block on the vendor's own input
+  lands within 1-3.4 % of it, compounded through the graph.
+- History with depth, with a game's own motion (the Hogwarts recordings), and across a scene
+  cut; A's motion effect, larger on the vendor's side.
+- The control mask and its blend modes, the UI inputs, subrects, a scaling ratio below 1. The harness owns the VkDevice, so
   `vkCmdCuLaunchKernelNVX` could be wrapped and the buffers read between launches: a per-pass
   gate.
 
@@ -129,6 +202,7 @@ On the machine, `~/nr-vendor`: `dll/310.8.0.0/` and `dll/310.9.16.0/` (the owner
 0444, copied there privately; they go nowhere else), `prefix/` (the Wine prefix with the
 driver's NGX DLLs, DXVK and dxvk-nvapi), `thirdparty/`, `harness/` (`nr_vendor.c`, its build,
 the Vulkan headers), `run.sh`, `run_set.sh` (a list of frames, presets 1 and 2, one process a
-frame so that each starts from a reset history), `frames/`, `logs/`. A long set runs as a
-`systemd-run --user` unit, so that it outlives the SSH session. Here, `work/vendor/`:
-`nr_vendor.c`, `run.sh`, `run_set.sh`, `compare.py` and the frames.
+frame so that each starts from a reset history, and the parameters to add), `knobs.sh`,
+`frames/`, `logs/`. A long set runs as a `systemd-run --user` unit, so that it outlives the SSH
+session. Here, `work/vendor/`: `nr_vendor.c`, `run.sh`, `run_set.sh`, `knobs.sh`, `knobs.txt`,
+`compare.py`, `compare_knobs.py`, `compare_seq.py` and the frames.

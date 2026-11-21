@@ -1,6 +1,6 @@
 # Index of the notes
 
-Ninety-two files, sixty-three phases. This is what each one settles, so a reader arriving
+Ninety-three files, sixty-four phases. This is what each one settles, so a reader arriving
 cold can go straight to the answer instead of the archaeology.
 
 **Read `notes/HANDOFF.md` first** — it carries the current state, the standing conclusions and
@@ -16,7 +16,8 @@ disproved.
 
 | note | what it settles |
 | --- | --- |
-| `phase74-vendor-parity.md` | NVIDIA's own DLL run on an RTX 5060 Ti on frames of our choosing, no game needed: our A and B against the vendor's, 0.989-0.997 correlation of the change and a residual of 6-13 % of it on 18 frames of three games, Hogwarts Legacy's among them (a desktop capture 0.985); how it runs (the snippet in the NGX core's place under Wine, MSVC's parameter vtable, NvAPI through dxvk-nvapi), presets numbered from 1, the defaults our `standard` |
+| `phase75-inside-the-network.md` | NVIDIA's network from inside: 156 launches for A and 80 for B, its scratch and its two E4M3 layouts (`[c/16][h][w][16]`, and `mma.m16n8k32` A fragments over 4x4 pixel blocks); its activations against ours at every stage; each of our encoder blocks on its own input within 1-3.4 % of its output, the head and the composition within 0.08 of a level: the residual is those small differences compounded, not FP16 accumulation |
+| `phase74-vendor-parity.md` | NVIDIA's own DLL run on an RTX 5060 Ti on frames of our choosing, no game needed: our A and B against the vendor's, 0.989-0.997 correlation of the change and a residual of 6-13 % of it on 18 frames of three games, Hogwarts Legacy's among them (a desktop capture 0.985); how it runs (the snippet in the NGX core's place under Wine, MSVC's parameter vtable, NvAPI through dxvk-nvapi), presets numbered from 1, the defaults our `standard`; the knobs away from their defaults (the DLL clamps `Intensity` at 1, and the skin strength acts only with `UseAutoMask`); history over eight frames and a pan with motion vectors, `MVec` read as our motion |
 | `phase45-frame-profile.md` | where every millisecond of a frame goes, per pass, from GPU timestamps |
 | `players-20261103.md` | every player's report to 11-03 as data (`measurements/players.json`): eleven A-series cards compute NR's shape exactly and a Pro B70 offers it natively; the network on each GPU as a fixed part and a part per megapixel, the A770's fixed part ~55 us a pass and half of a frame at 1280x720, so it plays level with this laptop there; a B580 3.9x faster than an A770 at that size; where a game's frame goes on the GPU path and on the CPU path; and the speed test's round trip still measuring the CPU path |
 | `phase47-live-mode.md` | the live mode, 10.6 fps at 512x288, and the bottleneck leaving the graph |

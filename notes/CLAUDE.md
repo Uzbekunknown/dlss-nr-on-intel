@@ -50,8 +50,9 @@ it is built from source (`docs/DEVS.md`).
   (`notes/phase22-staging-and-storage.md`), and Windows has no bf16 at all.
 - The decode is byte-identical to a model arena captured from a running RTX 50
   (`skchen17/dlssnr-amd-lab`, `notes/phase3-execution-order.md`): the weights are anchored to real
-  hardware, and since 2026-11-21 so is the composed output (`notes/phase74-vendor-parity.md`); the
-  activations between the passes are not.
+  hardware, and since 2026-11-21 so are the composed output (`notes/phase74-vendor-parity.md`)
+  and the activations between the passes: each of our encoder blocks, on NVIDIA's own input,
+  gives its output to 0.9994-0.99995 (`notes/phase75-inside-the-network.md`).
 - **Per-element agreement with a reference is impossible by construction**: the graph is chaotic,
   with ~100 E4M3 publishes at a 6.25 % step between input and output. Judge a change on the
   composed image and the controls (`notes/phase9-numerics.md`, `notes/phase7-first-render.md`).
@@ -85,7 +86,8 @@ it is built from source (`docs/DEVS.md`).
    against a second implementation that claims the vendor's arithmetic
    (`notes/opendlss-reference.md`), and since 2026-11-21 against NVIDIA's own DLL, run on the
    owner's RTX 5060 Ti over SSH on frames of our choosing: our A and B agree with it at 0.99
-   correlation of the change (`notes/phase74-vendor-parity.md`).
+   correlation of the change (`notes/phase74-vendor-parity.md`), and its activations can be read
+   between its passes (`notes/phase75-inside-the-network.md`).
 3. **Cooperative matrix is compute-only**, so everything runs in compute shaders.
 
 ## Phases — all done
@@ -107,7 +109,8 @@ it is built from source (`docs/DEVS.md`).
   accumulator (`notes/phase4-accumulation-choice.md`). The vendor's FP16 accumulator is kept
   behind `-DACC16`: 1.36x on an isolated GEMM and nothing in a frame at phase 31, a verdict
   `notes/phase38-there-was-no-bug.md` says rested on a driver bug that was not there; no later
-  note measures it again.
+  note measures its speed again. Half accumulation emulated in our reference does not bring a
+  block's output closer to NVIDIA's own (`notes/phase75-inside-the-network.md`).
 - **OpenCL** reaches DPAS and is slower: 3533 GFLOP/s against Vulkan's 3828 on the same shape, and
   it would be a second backend, not a flag (`notes/phase33-opencl-measured.md`).
 - **The detail is drawn at the network's scale.** Half the extent, enlarged after, keeps only 62 %

@@ -130,7 +130,11 @@ still leaves open becomes a line of its own.
 - **NVIDIA's own output, since 11-21** (`notes/phase74-vendor-parity.md`): the owner's RTX 5060 Ti
   runs NVIDIA's DLL over SSH, without a game, on frames of our choosing. Our A and B agree with
   it at 0.989-0.997 correlation of the change, the residual 6-13 % of it, on 18 frames of three
-  games, Hogwarts Legacy's among them. The two DLLs are there privately and go nowhere else.
+  games, Hogwarts Legacy's among them. Inside the network (`notes/phase75-inside-the-network.md`),
+  each of our encoder blocks on the vendor's own input lands within 1-3.4 % of the vendor's
+  output, and the residual is those differences compounded. The knobs and the history agree as
+  well, but the DLL clamps `Intensity` at 1. The two DLLs are there privately and go nowhere
+  else.
 - **Working rules.** Nothing goes to GitHub without the owner's word, and nothing untested at all:
   `make test` in both memory modes (`XMX_STAGING=1` is the second), CTest, and on Windows the MSVC
   build. Commits use the noreply address. NVIDIA's DLL, and anything derived from it, never enters
@@ -317,10 +321,20 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - ~~Waiting for it: Hogwarts Legacy's six frames without the interface and three with its HUD
   (`work/vendor/frames/set_hog.txt`), DoA5 at 1920x1080 and a desktop capture (their vendor
   outputs made, not fetched)~~: done, 0.991-0.995 on Hogwarts (below, 11-21, night, later).
-- Proposed, the owner's word: history (frames in sequence, and the Hogwarts recordings' motion
+- ~~Proposed, the owner's word: history (frames in sequence, and the Hogwarts recordings' motion
   and depth), the knobs away from their defaults, a per-pass gate wrapping
-  `vkCmdCuLaunchKernelNVX`; and whether `nr_vendor.c`, `run.sh` and `compare.py` go into the
-  repository (they are in `work/vendor/`).
+  `vkCmdCuLaunchKernelNVX`~~: done at the owner's word, 11-21 (below, 11-21, late night):
+  history without motion and with a pan's motion vectors, the knobs, and the per-pass gate for
+  network A. Left of them: history with depth and a game's own motion (the Hogwarts
+  recordings), network B's taps, the blocks after the encoder one by one.
+- Whether `nr_vendor.c`, `run.sh`, `run_set.sh`, `compare.py` and the other tools in
+  `work/vendor/` go into the repository: later (the owner, 11-21). So is `docs/ARCHITECTURE.md`'s
+  line that preset B was not compared with NVIDIA's.
+- **The DLL clamps `Intensity` at 1** (`phase74`): at 1.5 its output is its default's. Ours
+  extrapolates above 1, and the panel offers it (#49's player ran 1.25). Whether to say so where
+  players read, or to cap it: the owner's call.
+- `nr_frame.py --help` says the vendor's default local structure is 1.5. The DLL's default is 1,
+  which is our `standard` (`phase74`). A one-line fix of the help, at the owner's word.
 
 **Planned, not started** (parked by the owner: do not start unasked)
 - A FAQ in the README. Later.
@@ -358,6 +372,41 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   late night).
 
 ---
+
+## Inside NVIDIA's network, its knobs and its history, against ours (2026-11-21, late night, branch `newnr`)
+
+The owner, 11-21, on the proposals left for the RTX 5060 Ti machine: the per-pass gate the
+exact way, history, and the knobs; the tools into the repository and `docs/ARCHITECTURE.md`
+later. Network A was traced and tapped; B was traced only. The numbers are in `phase75` and
+`phase74`. Nothing pushed.
+
+- **The per-pass gate** (`phase75`):
+  - `nr_vendor.c` now wraps the DLL's Vulkan through its own `vkGetInstanceProcAddr` and
+    `vkGetDeviceProcAddr`, traces every launch (`NRV_VKTRACE`) and copies spans of its scratch
+    after chosen launches (`NRV_TAPS`). Taps leave the output byte for byte as it was.
+  - A's 156 launches are skchen17's 156 slots. Its activations are E4M3 in two layouts, now
+    decoded.
+  - The feature assembly and block 0 are the same as ours to 0.9998. Each of our 22 encoder
+    blocks, on the vendor's own input, gives its output to 0.9994-0.99995 (1-3.4 % RMS). The head
+    and the composition, on its tensors, give its output within 0.08 of a level.
+  - Run freely, the blocks' small differences compound to 17 % by level 4 and 10.5 % at the
+    decoder's end: that is the 6-13 % of `phase74`.
+  - FP16 accumulation, emulated, does not account for a block's difference.
+- **The knobs** (`phase74`): all as ours at 0.974-0.998, but two:
+  - the DLL clamps `Intensity` at 1;
+  - its skin strength needs `UseAutoMask`.
+
+  The automatic mask's lanes are the same scalars as ours. Its effect, about one level, is too
+  small to correlate past the residual.
+- **History** (`phase74`):
+  - Eight consecutive DoA5 frames without motion: the two sequences grow closer frame by frame
+    (A 0.989 to 0.995, B 0.9925 to 0.996), the history's effect the same size on both sides.
+  - A pan with motion vectors: the DLL reads `MVec` as our motion (pixels, to where the pixel
+    was, scale 1); the other sign falls to 0.86-0.95.
+
+**Next on Linux:** the owner's calls under Open items, The RTX 5060 Ti machine (the intensity
+above 1, the help's structure default); then, at the owner's word, history with a game's own
+motion and depth, B's taps. **Next on Windows:** nothing for this.
 
 ## The RTX 5060 Ti machine: no more sleep, driver 620.73.04 with the same bytes; Hogwarts Legacy, DoA5 at 1920x1080 and a desktop against NVIDIA's (2026-11-21, night, later, branch `newnr`)
 
