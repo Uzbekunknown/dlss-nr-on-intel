@@ -142,6 +142,8 @@ under that date. When an item is done, strike it through here and name the commi
 closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 **Waiting for the owner**
+- The replies to #47-#50 (below, 11-21, evening, later), drafted in the Linux checkout's
+  `work/pr-replies/issue47.md` to `issue50.md`: the owner's word on posting them.
 - Answers to the A-series reports, as GitHub stood on 11-04: we have commented on #18, #19, #23,
   #25, #27, #29 and #34 (#34: two comments from the owner's account, 11-03 and 11-04), and not
   yet on #22, #24, #26, #28, #30-#33 and #36. Two questions the data raised: #25, which network
@@ -172,6 +174,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   test-gpu`, and CTest on Linux only when CMake changes. Archive, 11-05.
 
 **Linux**
+- libxmx tries a device that lacks the float16 8x16x16 shape (`shape_unoffered`, every Arc
+  A-series card) without checking that it computes it, and on Mesa an A750 gives 127 of 128 values
+  wrong (#48, below, 11-21, evening, later): a game there would get a wrong picture without a word.
+  A start-up check of the shape, as `xmxres` checks the E4M3 decode, and a refusal where it fails;
+  the owner's word.
 - ~~Owed on Mesa from the weights by column, `e4m3-weights` and `fused-bycol`: their timings~~:
   done (below, 11-16, night). The wide weights by column and the E4M3 bytes are exact on Mesa and
   gain nothing there; they stay off, as they are by default. The by-column fused kernels cost it
@@ -203,7 +210,12 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
   default. Not run on an A-series card: there is none here. In 0.0.7; the request to them
   (`work\pr-replies\arc-a-tiled-call.md`) went into the 13 open A-series issues on 11-21: their
-  answers are what is waited for.
+  answers are what is waited for. The first two, #47 and #50 (two A770s on 101.9175, below, 11-21,
+  evening, later), read it 1.5x slower for B and for A; the draft replies say to leave it off.
+- #49's DLL, 310.8.2.0 (a B580 in Tomb Raider 2013, below, 11-21, evening, later): not in
+  `TESTED_DLLS`, and its network not compared with 310.8.0.0's; the draft reply asks where it came
+  from. And Tomb Raider (2013)'s row in the README's tested games at the next release (the row is
+  in that entry).
 - NR through OptiScaler (#38): runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and
   from its FSR 3; setup takes OptiScaler's XeSS (`d936d63`), in 0.0.5 (archive, 11-05 evening).
   Untested: DLSS input through OptiScaler's spoofing, its DirectX 11 path, a game with no XeSS of
@@ -224,9 +236,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   morning.
 - An Arc A-series path with 8x8 matrix tiles, from OUCO86's A770 port: begun on 11-01 and paused
   at the owner's word, on the local branch `arc-a-n8` (`6be5235`, not on GitHub). Archive, 11-01.
-- Where an A770's ~55 us a pass goes: a per-pass profile from an A-series tester
+- ~~Where an A770's ~55 us a pass goes: a per-pass profile from an A-series tester
   (`frame_profile.py --warm`, timestamps per pass) would say whether passes or the gaps between
-  them. It is half of a frame at 1280x720 there. Archive, 11-03.
+  them. It is half of a frame at 1280x720 there. Archive, 11-03.~~: into the passes; B's 179 add
+  up to its frame on two A770s (#47 and #50, below, 11-21, evening, later).
 - The speed test measures the CPU path (no `NR_` setting reaches its daemon), while the Windows
   release keeps a game's frames on the GPU since 0.0.2. At 1920x1080 its round trip reads 10-20 ms
   worse than a game waits for. Archive, 11-03. Measured on 11-08 at `perf-1108`, network B: with
@@ -318,6 +331,62 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   late night).
 
 ---
+
+## Issues #47-#50: the A-series switch slower on two A770s, Mesa wrong on an A750, a B580 in Tomb Raider with DLL 310.8.2.0 (2026-11-21, evening, later, branch `newnr`)
+
+The owner, 11-21: check GitHub's new issues, then draft the replies and write this down. Four new
+issues, all of 11-21; none of the 13 A-series issues asked on 11-21 has answered yet, nor #46's
+reporter, and no pull request is open. The drafts, for the owner to post, are in the Linux
+checkout's `work/pr-replies/`, `issue47.md` to `issue50.md`. Nothing posted.
+
+**#47 and #50, two A770 16GB, Windows, Intel 101.9175** (0.0.7's GPU report). NR's 8x16x16 is
+exact at 8, 16 and 32 lanes, though not offered, as on the eleven A-series cards before. The network
+at 1280x720 and 0.4, the default staged kernel with the E4M3 bytes and the weights by column,
+against the switch (`XMX_PREFER_TILED=1`, half and by row):
+
+| ms | #47 | #50 |
+| --- | --- | --- |
+| B, default / switch | 11.9 / 18.2 | 10.8 / 16.4 |
+| A, default / switch | 23.5 / 36.8 | 21.3 / 32.7 |
+
+- **The switch is 1.5x slower on both.** OUCO86's measurement behind it (10-10) predates the staged
+  walk order, the E4M3 bytes and the weights by column, and those reached A-series cards too: at
+  that size an A770 took ~19 ms on B and ~35 on A on 11-03 (`notes/players-20261103.md`).
+- **An A770's ~55 us a pass is in the passes.** B's 179 passes add up to 11.7 of #47's 11.9 ms and
+  10.5 of #50's 10.8 (the profile and the timing are separate runs), so the gaps between them come
+  to 1-2 us each. The staged GEMM is 126 of them,
+  58 % of the frame, 49-55 us each; the six window blocks take 292-334 us each and the six fused
+  feed-forwards 249-274.
+- **NR's shape runs 1.4-1.7x faster at 8 or 16 lanes than at 32 on an A770**: 44-58 TFLOP/s
+  against 31-35, and 8x8x16 the same way (46-54 against 27-33). Every pipeline is built for 32
+  lanes (`build_pipeline_spec`); the local branch `subgroup-width` (`work/sg16`,
+  `XMX_SUBGROUP_WIDTH`) is where a narrower build for A-series cards would start. Not started.
+- #50's author (generalninja, #29) offers test builds again.
+
+**#48, an A750 on Linux, Mesa 26.2.5** (0.0.7 built from source; `coopmat_probe` and the GPU
+report's network): 8x8x16 exact at 8 to 32 lanes; 8x16x16 wrong, 119 of 128 values at 8 lanes and
+127 at 16 and 32. So under Mesa an A-series card cannot run NR's kernels, and libxmx tries it
+anyway (`shape_unoffered`) without checking the shape: a game there would get a wrong picture
+without a word (Open items, Linux). The report's network timings ran on wrong values; the switch
+read slower there too (B 30.6 against 24.6 ms).
+
+**#49, a B580 Founders Edition, Windows, 0.0.7: Tomb Raider (2013)**, DirectX 11 (32-bit) through
+DXVK, network A at render scale 0.45, intensity 1.25, profile `cinematic`. The player: 37-40 fps at
+"1080p" Ultra, 70-80 with frame generation, with screenshots before and after. Its Save report:
+6589 frames on `gpu-shared`, none rejected, no error; frames of 2560x1009, a 1152x512 network in
+~21 ms, 24-25 ms a frame in the daemon; the speed test's network A 8 ms at 1280x720 and 0.4 (9 on
+#17's B580, `notes/players-20261103.md`) and 15 at 1920x1080. **Its DLL is 310.8.2.0** (165 830 144 B, SHA-256
+`6eb209e764f39872625debd6abaf45e2bb6322f6f270f781f70c059ae30b3927`), not in `TESTED_DLLS`; setup
+took 649 tensors out of it and the game ran. Whether its network is 310.8.0.0's is not known, and
+no report can tell: the logical file's `source_sha256` is the hash of MLX-DLSS's packed file
+(`dlssnr-packed.safetensors`), and the Save report carries no hash of the network at all. The
+README row for the next release:
+
+`| Tomb Raider (2013) | Arc B580, a player's report ([#49](https://github.com/Uzbekunknown/dlss-nr-on-intel/issues/49)) | Windows, DirectX 11 (32-bit) through DXVK, network A | 37-40 fps at 1080p Ultra and render scale 0.45, 70-80 with frame generation | 2026-11-21 |`
+
+**Next on Linux:** the owner's word on posting the replies, and on the start-up check of the
+unoffered shape in libxmx. **Next on Windows:** the README row at the next release; #49's DLL once
+its source is known.
 
 ## Checked on Linux: 0.0.7's head, with the fused kernels' layout per driver rebased onto it (2026-11-21, evening, branch `newnr`)
 
