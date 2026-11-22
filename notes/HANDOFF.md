@@ -220,9 +220,10 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 - Optional: `build_check.py` could hold `build_win.bat` to the same floor (`/DNR_F16C`,
   `/fp:precise`, `/openmp`). The owner does not mind either way. Archive, 10-07.
 **Windows**
-- `8c82133`, the fused kernels' layout as specialisation constant 4, on for this driver (below,
+- ~~`8c82133`, the fused kernels' layout as specialisation constant 4, on for this driver (below,
   11-16, late night): the MSVC build, CTest, and B's `frame_profile` at 576x1024 against
-  `XMX_FUSED_BY_COLUMN=0`. On GitHub, on all three branches, since 11-21.
+  `XMX_FUSED_BY_COLUMN=0`. On GitHub, on all three branches, since 11-21~~: done 11-22, the 4 %
+  holds (below, 11-22, midday).
 - Arc A-series: the experimental switch for the tiled GEMM kernel (`XMX_PREFER_TILED`, on all
   three branches since 11-19, archive, 11-18), in the setup window and the panel, the same bytes. Off by default;
   A-series owners' GPU reports and frame rates with it off and on decide whether it becomes their
@@ -418,6 +419,22 @@ Arc 140V, Intel 101.9150 before and after. Asked by the morning's entry below.
   in 29 of 32 pairs, the fused feed-forwards in 25. One loss: global attention at 320x512, 0.09 ->
   0.13-0.14 ms in all 16 pairs there (unchanged at 576x1024). October's 10-22 % loss (10-13) is
   gone; the gain is about half of Mesa's.
+- **The daemon's own paths** (`gpu_frame_stages.py`, its three modes, 5 rounds alternating, B at
+  1280x720 8 more; `work/e4m3magic-win-1122c`, `-d`): the outputs the same bytes with 0 and 1 in
+  every mode and round. Where a process holds its speed: the host path's network 1.5 % faster, A
+  and B at 1280x720 and 0.4; B at 1920x1080 and 0.4 1.8 % faster on the GPU image path (32.18 ->
+  31.59 ms, 5 of 5 pairs), its network 1.9 % on the frames that never leave the GPU (24.32 ->
+  23.85, 5 of 5). At 1280x720 the two GPU paths change speed state from process to process (B's
+  frames 14-35 ms, the network alone 12.4-29.5, while the host path in the same process holds
+  12.5-12.9): the constant cannot be seen there; in the fast state both read 14.3-14.9 ms.
+- **The checks owed from 11-21:** `8c82133` again, by column against `XMX_FUSED_BY_COLUMN=0`, 5
+  rounds alternating (`work/fusedcol-win-1122`): B 576x1024 39.97 against 41.65 ms, A 78.66
+  against 81.48, 5 of 5 each, the bands apart; the window blocks 8 % and the feed-forwards 15-17 %
+  slower by row: the 4 % holds. The setup window's self-test after `0169ad9`: 105 controls, 217
+  keys; and its pacing block (`Merge-PacingFromProfile`, `6c61d486`, 10-23) was a bare `{ }`,
+  which PowerShell prints instead of running, so its four checks never ran. Now `& {`
+  (`dist-tools/windows-wizard.ps1`): it passes, and fails as it should with the function broken.
+  Local `master` and `alchemist` fast-forwarded to `b315822`.
 
 **Verdict, as asked:** stably faster by the median, never slower, the same bits: the constant goes
 on for Intel's Windows driver too (`libxmx.c`, `g.e4m3_magic`). Nothing changed in the code here.
