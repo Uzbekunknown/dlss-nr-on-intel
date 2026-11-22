@@ -437,9 +437,12 @@ Arc 140V, Intel 101.9150 before and after. Asked by the morning's entry below.
   Local `master` and `alchemist` fast-forwarded to `b315822`.
 
 **Verdict, as asked:** stably faster by the median, never slower, the same bits: the constant goes
-on for Intel's Windows driver too (`libxmx.c`, `g.e4m3_magic`). Nothing changed in the code here.
-**Next on Linux:** that line, unless the owner has Windows make it. **Next on Windows:** after it,
-the MSVC build, CTest and the heads.
+on for Intel's Windows driver too. **Done on Windows at the owner's word** (11-22, afternoon):
+`libxmx.c` turns it on for `VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS` as for Mesa, and the comments
+in `publish.glsl`, `e4m3_probe.py` and notes/CLAUDE.md say so. Checked: CMake and MSVC with no
+warning, CTest 72 of 72; the default reads on here and `XMX_E4M3_MAGIC=0` turns it off; the heads
+with the default are Linux's. **Next on Linux:** fetch and fast-forward; nothing changes on Mesa.
+**Next on Windows:** nothing for this; the next release carries it.
 
 ## The GPU image path on by default on Linux, and exact on Mesa (2026-11-22, morning, branch `newnr`)
 
