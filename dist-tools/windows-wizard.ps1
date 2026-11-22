@@ -1877,7 +1877,9 @@ if($SelfTest) {
     # The request values have to be an ordered dictionary, because that is what
     # `Profile-FromWindow` returns and what the function's `[$key]=` assignment needs. A PSObject
     # throws there, and the first version of this block used one, so it proved nothing.
-    {
+    # `& {`: a bare `{ }` is only a value, which PowerShell prints instead of running; so it ran
+    # none of these checks from 10-23 to 11-22.
+    & {
         # The window opened on async off / every 1; the panel moved it to async on / every 3.
         $last=[pscustomobject]@{nr_async=$false; nr_every=1; gpu_image_path=$false; preset='A'}
         $fresh=[pscustomobject]@{nr_async=$true; nr_every=3; gpu_image_path=$true; preset='B'}
