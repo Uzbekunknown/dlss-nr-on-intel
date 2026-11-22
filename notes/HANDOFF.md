@@ -393,6 +393,38 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## The GPU path's slow state at 1280x720 on Windows is the driver's own clock choice (2026-11-22, afternoon, branch `newnr`)
+
+`gpu_frame_stages.py`, B at 1280x720 and 0.4, Intel 101.9150, quiet, the GPU checked free per
+process (`Get-Counter '\GPU Engine(*)\Utilization Percentage'`). In some periods the GPU image path
+and the device path take 15-35 ms a frame and the network alone 15-31 ms, against 14-15 and 12.3;
+the host path in the same process always runs the network in 12.3-12.8. Logs:
+`work/gpu-path-states-1122`, the probe `probe_states.py` beside them.
+- **The cause so far: the GPU's clock.** Level Zero sysman (`work/tools-win/gpu_clock.py`) reads
+  700-1400 MHz in those phases, the request equal to the actual and no throttle reason; 1950 in the
+  host path and in fast periods. The driver's governor chooses it; no power or thermal limit.
+- **Ruled out:** constant 5 (seen with 0 and 1); the clock poll itself (with and without, alternating);
+  the process's power class (default, high QoS, EcoQoS through `SetProcessInformation`); an idle CPU
+  (a busy core in another process beside it changes nothing); the wait (every wait is a blocking
+  `vkWaitForFences`). Another GPU user doubles every mode, the host path too: the XeSS session's
+  replay did at 12:47-12:50, and those runs are left out.
+- **Periods, not processes:** none in 20 processes at 12:44-12:47 and 15:32-15:35; nearly all of 35 at
+  15:35-15:45.
+- **A game does not see it** (at the owner's word, 17:06-17:15): Hogwarts Legacy from the 0.0.7
+  release through the FSR 3.1 proxy (the game is set to FSR 3 Quality with XeFG x4; its settings
+  left as they were), B at 768x448 for 1920x1080 at 0.4. Over 9 minutes, 8736 frames from the
+  daemon's log: the network 25.0 ms median, 27 at the 90th percentile, 30 at most, never doubled;
+  the GPU at 1900-1950 MHz with the request at 4250, as in the host path. The bench right after it
+  was low again in its GPU-only modes (1360-1830 MHz, request 1400-2700; the host path 1940, 4232).
+  So the governor holds the clock up under a game's load, and the slow state belongs to the bench's
+  GPU-only modes: time those with the clock beside them, within one state. Nothing to change in
+  NR for it. What sets the request (4250 against ~1400) is not known; forcing the clock stays
+  refused (owner, 11-15). Harness: `nr-game\hogwarts-fsr-test.ps1` and `clock_log.py` (beside the
+  logs in `nr-game\release-tests\hogwarts-clock-fsr-1122`); the daemon logs to the release root's
+  `work\nr_daemon.log`, not beside the game.
+
+**Next on Windows:** nothing. **Next on Linux:** nothing.
+
 ## `XMX_E4M3_MAGIC=1` on Intel's Windows driver: the same bits and 1-5 % faster; `789ed4c` built and checked (2026-11-22, midday, branch `newnr`)
 
 Arc 140V, Intel 101.9150 before and after. Asked by the morning's entry below.
