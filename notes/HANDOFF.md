@@ -39,7 +39,9 @@ still leaves open becomes a line of its own.
 
 - **It works on both systems of this laptop** (Arc 140V): Linux with Mesa, Windows with Intel's
   driver. A Vulkan layer hands each presented frame to a daemon that runs NVIDIA's network on the
-  GPU and writes the answer back into the swapchain. DirectX 8-11 games go through DXVK. DirectX 12
+  GPU and writes the answer back into the swapchain. Since 11-22 the daemon's passes around the
+  network run on the GPU by default on Linux too, as the Windows release has them (below, 11-22,
+  morning). DirectX 8-11 games go through DXVK. DirectX 12
   runs on Linux through VKD3D-Proton, and on Windows through the game's own XeSS (since 0.0.2).
 - **The releases are Windows-only so far**: v0.0.1 (`7f9c364`), v0.0.1.1 (`f9ec5f1`), v0.0.1.2
   (`2f90064`, 10-15), v0.0.1.3 (`d89563f`, 10-18), v0.0.2 (`81b0a59`, 10-31), v0.0.3
@@ -390,6 +392,46 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## The GPU image path on by default on Linux, and exact on Mesa (2026-11-22, morning, branch `newnr`)
+
+The owner, 11-22, morning, on the night's entry: so only the CPU path has run on Linux all along?
+We need the GPU path. Commit to `newnr` and push.
+
+- **What ran on the CPU on Linux**: the daemon's passes around the network, the frame's resize and
+  features, the head's upscale, the composition and the encode. The network itself has always run
+  on the GPU. The GPU image path existed (`NR_GPU_IMAGE=1`, which the Windows release sets) and was
+  off by default everywhere, because on Mesa it was not the host path's bytes (below, the night).
+- **Exact on Mesa now.** The night's half rounding (`fff7ea5`), and the division:
+  `image_compose.comp`'s and `image_history.comp`'s `divide` and `image_preprocess.comp`'s
+  `area_divide` have `_f64` builds (`NR_DIVIDE_F64`) that divide through double. libxmx takes them
+  on Mesa's ANV where the device has `shaderFloat64`, and turns the feature on at device creation
+  (`xmx_image_divide_f64`; `XMX_IMAGE_DIVIDE_F64=0|1`). `xmxres.image_shader` picks the build, and
+  `image_path_exact` is true there as well, so the image parity tests run on Linux now and pass
+  (`test_image_compose`, `_history`, `_preprocess`, `_pipeline`). The default builds are byte for
+  byte as before, and Intel's Windows driver keeps them.
+- **On by default on Linux** (`nr_daemon.gpu_image_wanted`): `NR_GPU_IMAGE=1` or `0` decides; unset,
+  on where `image_path_exact` holds and the system is not Windows, whose release sets the variable
+  itself and whose speed test leaves it unset on purpose. A pipeline that cannot be built, when
+  nobody asked for it, leaves the host path with one line instead of failing every frame. A daemon
+  with no settings here says `GPU image path ready: transport=gpu-image-host`.
+  `test_image_pipeline.py` holds the rule. `docs/DEVS.md` has the variable's row.
+- **Measured after** (`gpu_frame_stages.py`, B, median ms a frame; `exact outputs=True` in all
+  three; the double division costs nothing seen, the passes 0.86 + 0.67 ms at 1280x720):
+
+  | | host path | GPU image path | frames never leaving the GPU (Windows only) |
+  | --- | --- | --- | --- |
+  | 1280x720 at 0.4 | 20.4 | 16.6 | 15.7 |
+  | 1920x1080 at 0.4 | 40.8 | 30.7 | 28.9 |
+  | 1280x720 at 0.5 | 28.6 | 23.9 | 22.7 |
+
+- Checked on Linux: `make test` 74 of 74 in both memory modes, CMake with no warning, CTest 73 of
+  73, `build_check.py` (both build systems build the `_f64` shaders, from the same sources with
+  the same defines).
+
+**Not run:** a game on Linux. **Next on Windows:** with the night's commits, the MSVC build and
+CTest; nothing in the Windows path changes (the `_f64` builds are never chosen on Intel's Windows
+driver, and the release's shader list is as it was).
+
 ## The network's speed, the night of 11-22: E4M3 by a magic constant on Mesa, and what did not pay (2026-11-22, night, branch `newnr`)
 
 The owner, 11-22, going to sleep until about 11:00: speed the network up at full size, after
@@ -497,8 +539,8 @@ two benchmarks' trailer (`f63c41b`) and these notes. Checked at that state: `mak
 73 of 73; the heads with the constant 0 and 1 the same at 512x320, 576x1024, 1920x1088 and
 2560x1472.
 
-**The owner, 11-22, morning:** the GPU image path goes on for Linux (`NR_GPU_IMAGE`; 5-8 ms a
-frame at 0.4), with the division that makes it exact on Mesa. **Next on Windows:** once this is on GitHub, the
+**The owner, 11-22, morning:** the GPU image path goes on for Linux, with the division that makes
+it exact on Mesa: done (above, 11-22, morning). **Next on Windows:** once this is on GitHub, the
 MSVC build and CTest, and `XMX_E4M3_MAGIC=1` timed against the default on Intel's driver
 (`frame_profile.py --size 576 1024` and `--size 320 512`, B and A, rounds alternating): October's
 10-22 % loss (10-13) came before November's changes on that driver, the staged walk, the E4M3 and
