@@ -197,9 +197,9 @@ the vendor got one vector everywhere (`NRV_MVEC`), with `DLSSNR.MVecScaleX` and 
   lands within 1-3.4 % of it, compounded through the graph.
 - History with depth, with a game's own motion (the Hogwarts recordings), and across a scene
   cut; A's motion effect, larger on the vendor's side.
-- The control mask and its blend modes, the UI inputs, subrects, a scaling ratio below 1. The harness owns the VkDevice, so
-  `vkCmdCuLaunchKernelNVX` could be wrapped and the buffers read between launches: a per-pass
-  gate.
+- The control mask and its blend modes, the UI inputs, subrects. A scaling ratio below 1 is not
+  reachable in 310.9.16: its evaluation fixes the ratio at 1.0 (`phase76`). The per-pass gate
+  this line once proposed is `phase75`.
 
 ## Where things are
 

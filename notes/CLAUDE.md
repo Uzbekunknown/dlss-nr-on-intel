@@ -108,18 +108,31 @@ it is built from source (`docs/DEVS.md`).
 - **FP32 accumulate.** NVIDIA's kernels accumulate in FP16: none of 218 PTX kernels has an FP32
   accumulator (`notes/phase4-accumulation-choice.md`). The vendor's FP16 accumulator is kept
   behind `-DACC16`: 1.36x on an isolated GEMM and nothing in a frame at phase 31, a verdict
-  `notes/phase38-there-was-no-bug.md` says rested on a driver bug that was not there; no later
-  note measures its speed again. Half accumulation emulated in our reference does not bring a
-  block's output closer to NVIDIA's own (`notes/phase75-inside-the-network.md`).
+  `notes/phase38-there-was-no-bug.md` says rested on a driver bug that was not there. Timed
+  again on Mesa on 11-22, in every GEMM kernel: about 1 % of a frame, since the kernels a frame
+  runs do not spill, and no closer to NVIDIA's own output on 19 frames, A and B (HANDOFF,
+  11-22). Half accumulation emulated in our reference does not bring a block's output closer to
+  NVIDIA's either (`notes/phase75-inside-the-network.md`).
 - **OpenCL** reaches DPAS and is slower: 3533 GFLOP/s against Vulkan's 3828 on the same shape, and
   it would be a second backend, not a flag (`notes/phase33-opencl-measured.md`).
 - **The detail is drawn at the network's scale.** Half the extent, enlarged after, keeps only 62 %
-  of the high-frequency band (`notes/phase37-neural-upstream.md`).
+  of the high-frequency band (`notes/phase37-neural-upstream.md`). Against NVIDIA's own picture
+  (`notes/phase76-render-scale-against-nvidia.md`): on a smaller frame the model, NVIDIA's own
+  included, draws a different change, so render scale 0.5 leaves 55-60 % of NVIDIA's full-size
+  change unreproduced, against 11 % at full size, and the upscale accounts for 0.01 of the
+  correlation. NVIDIA's 310.9.16 always runs the network at the output's size.
 - **Optical flow** does not help live mode's history (`notes/phase54-flicker-fix.md`).
 - Measured and not kept: register tiling, operand staging, integer weights, storage width,
   shared-memory bank padding (1.11x, not the textbook 32x), work on the E-cores (−7 %)
   (`notes/phase45-frame-profile.md`, `notes/phase46-cpu-share.md`). Before an optimisation, look
   for it in the `improve-*.md` notes and the HANDOFF archive.
+- **The frame is not memory-bound; the fused kernels are bound by their arithmetic.** On
+  2026-11-22 (HANDOFF, that night): activations read as E4M3 bytes, NVIDIA's layout, gain
+  nothing in a frame, nor does the 32-channel skip as half; the publishes are 15-20 % of the
+  window blocks' and feed-forwards' time, and the E4M3 rounding by a magic constant takes
+  3.5-7 % off a network on Mesa (`publish.glsl` constant 5, Mesa only: Intel's Windows driver
+  was slower with it in October). Half arithmetic does not help on Mesa: its half FMA rounds
+  twice and its half E4M3 is slower than float32's.
 
 ## Repo layout
 

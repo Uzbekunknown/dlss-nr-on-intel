@@ -73,7 +73,8 @@ still leaves open becomes a line of its own.
   (`8c82133`) and Linux's entries, and `master` and `alchemist` followed it, each at the owner's
   word: the three are level again (below, 11-21, evening, later). On 11-22 `newnr` went ahead alone
   with the RTX 5060 Ti machine's notes and the intensity texts (`0169ad9`), the owner having
-  asked on 11-21 not to fast-forward the other two for now. `media` holds the README's pictures; `improve-int8` is kept for
+  asked on 11-21 not to fast-forward the other two for now, and later that day with the E4M3
+  rounding by a magic constant on Mesa and the composition's half rounding (below, 11-22, night). `media` holds the README's pictures; `improve-int8` is kept for
   INT8 experiments; `cleanup` (PR #39, merged 11-11) stays.
   Seven branches were deleted at the owner's word: `dx12` (it went into `newnr` on 10-30, a
   fast-forward), `windows`, `improve`, `improve-e4m3`, `improve-fusions`, `improve-release` and
@@ -346,6 +347,11 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   1 when a grade or a mask runs its pass (`phase70`). Measured, it does not with style 1's grade
   nor with the automatic mask (`phase74`); a control mask is untested. With the file's other
   line, later.
+- The render scale's texts for players (`nr_knobs.py` and `docs/SETTINGS.md`, `Hint.render_scale`
+  in four languages) say a lower scale draws coarser detail. It draws a different picture: at
+  0.5, 55-60 % of NVIDIA's full-size change goes unreproduced, against 11 % at 1.0, and NVIDIA's
+  own network does the same on a smaller frame (`phase76`; below, 11-22, later). The owner's word
+  on whether to say so, and how.
 
 **Planned, not started** (parked by the owner: do not start unasked)
 - A FAQ in the README. Later.
@@ -383,6 +389,201 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
   late night).
 
 ---
+
+## The network's speed, the night of 11-22: E4M3 by a magic constant on Mesa, and what did not pay (2026-11-22, night, branch `newnr`)
+
+The owner, 11-22, going to sleep until about 11:00: speed the network up at full size, after
+NVIDIA's own structure (activations in E4M3 and the rest); experiments and research all night,
+nothing committed or pushed. Mesa 26.2.7, `frame_profile.py --warm 25 --runs 5`, every pairing
+in two rounds with the order swapped (`work/e4m3act/pair.sh`, `pair_env.sh`). The baselines: B at
+1344x768 (1280x720's field) 74 ms on the device, at 512x320 (1280x720 at 0.4) 15.6; A 139 and
+30.
+
+**Kept, local, tested: every E4M3 publish by a magic constant on Mesa** (`publish.glsl` constant 5,
+`libxmx` `e4m3_magic`, `XMX_E4M3_MAGIC=0|1`). The rounding `NR_E4M3_MAGIC` had since October,
+the magnitude plus a power of two that leaves three mantissa bits and the same power taken
+away again, is now a specialisation constant: on for Mesa's ANV, off everywhere else, so Intel's
+Windows driver, 10-22 % slower with it in October, runs as before.
+- The same bits: `src/bench/e4m3_probe.py` 0 mismatches over 1 114 875 inputs; the heads of
+  `frame_replay.py` the same with the constant 0 and 1, and those of 11-21 (B 576x1024
+  `edcbf478`/`acbd05d9`, 320x512 `df409ac4`/`b6d9870b`, A 320x512 `3e37b87c`/`29d613d2`).
+- The device's time, constant 1 against 0: B 1344x768 71.2/70.4 against 73.9/74.4 ms, A
+  133.8/133.6 against 140.1/140.3, B 512x320 15.2/14.7 against 15.1/15.3, A 512x320 29.2/26.2
+  against 30.9/26.7. The window blocks 8-10 % faster, the fused feed-forwards 4-12 %. On the
+  daemon's own path (`gpu_frame_stages.py`, with `NR_GPU_IMAGE=1`, rounds alternating): B at
+  1280x720 and 0.4 16.5/16.1 against 17.7/17.6 ms a frame, the network 13.7/13.6 against
+  14.6/14.5; A there 30.1/30.0 against 32.2/33.0, the network 26.9/27.0 against 28.9/28.9; B at
+  1920x1080 and 0.4 30.7/31.1 against 32.3/34.2, the network 26.0/26.3 against 27.5/27.8.
+- `make test` 74 of 74 in both memory modes, `XMX_E4M3_MAGIC=0 make test-gpu` 44 of 44, CMake
+  with no warning, CTest 73 of 73. Not built with MSVC.
+
+**Measured and not kept:**
+- **Activations as E4M3 bytes**, NVIDIA's layout between its passes (`phase75`). A knockout, the
+  staged GEMM reading its A operand as eight bytes where it reads sixteen and decoding them
+  (`work/e4m3act/a-bytes-knockout.patch`): the GEMMs with N = 32 gain 5-45 %, every other one
+  loses 10-20 % to the decode, and the frame gains nothing (B 1344x768 74.3/77.1 -> 76.5/77.0,
+  A 138.8/137.8 -> 143.3/141.3, B 512x320 15.6/15.7 -> 15.9/16.2). Routed to the narrow GEMMs
+  alone it could save 1-2 % of a frame before the producers are made to write bytes. The frame
+  is not memory-bound: the window blocks and the feed-forwards at full size read and write
+  20-40 GB/s against ~80.
+- **The 32-channel blocks' skip as half**, as the reference's `numerics.md` has it (half carries
+  the accumulators and those skips; ours float32; `work/e4m3act/half-skip.patch`, `NR_HALF_SKIP`):
+  no faster (B 74.4/74.1 -> 74.7/75.1 ms), and no closer to NVIDIA (closer on 10 of the 19
+  frames with A and with B, the correlation of the change -0.0005 and +0.0001 on average).
+- **Half arithmetic for the publishes.** Knockouts, each primitive replaced by the identity
+  (`work/ko_*`): `e4m3` is 8 % of B's frame at 1344x768 even by the magic constant (the window
+  blocks 15 % of theirs), `half_round` 6.7 %, the feed-forward's gate 3.5 %: the fused kernels
+  are bound by their arithmetic as much as by anything. But a half FMA on Mesa does not round
+  once (470 of the 65 536 half inputs of the gate differ by an ulp), the gate exact with float32
+  FMAs and a half multiply is 6 % faster alone, and the E4M3 publish in half arithmetic, exact
+  over every half, is slower than float32's (3.14 against 2.60 ms in `work/probe/gate_probe.py`).
+  Nor is a table: the gate and its publish are a function of 65 536 half inputs, and looking
+  them up (`work/probe/lut_probe.py`) took 6.58 ms where computing them took 6.20.
+- **Spills**: of the pipelines a frame runs (`XMX_PIPELINE_STATS`) only block 0's feed-forward
+  spills much (25, 95 fills); the merge's 4 and 54, the window blocks 3-6. Not followed.
+- **The window block's weights**, 6 + 2 + 1 KB copied into shared memory for every window: a
+  knockout writing a constant there instead takes nothing off (18.86/18.85 against 18.98/19.15
+  ms). Its time is ~30 % arithmetic and the rest its structure, as Windows found on 11-15.
+- **The 32-row staged build for every GEMM with fewer than 256 64-row blocks** (twice the
+  blocks; the same bits): slower everywhere, A at 512x320 29.0/28.9 -> 33.4/31.6 ms, B
+  14.9/14.0 -> 16.1/15.9, 768x448 3-8 %. Each block reads B's tile again.
+- **A pass's own cost** is ~2.7 us with its barrier (a thousand tiny passes in one submit): B's
+  179 at 512x320 are ~0.5 ms of its 15. Fewer passes is not the lever.
+
+**The image path on Linux, the owner's call:** a game on Linux has the daemon's host passes on
+the CPU unless `NR_GPU_IMAGE=1`, which the Windows release sets; the GPU path is off on Mesa
+because it is not exact there. Measured (`src/bench/gpu_frame_stages.py`, median ms, B; A
+the same shape):
+
+| | CPU path | `NR_GPU_IMAGE=1` |
+| --- | --- | --- |
+| B 1280x720 at 0.4 | 22.2 (prep 3.0, compose 3.2, metadata 0.8) | 17.1 (0.9, 0.7, 0) |
+| B 1920x1080 at 0.4 | 39.3 (4.2, 6.5, 1.2) | 30.8 (1.5, 1.4, 0) |
+| A 1920x1080 at 0.4 | 62.4 | 54.4 |
+
+And how far from exact: over the 19 frames at 0.4 (`work/vendor/scale_set.py` with
+`NR_GPU_IMAGE=1`), A and B, the two paths differed by one level at most, on 0.05-0.22 % of the
+values, and agreed with NVIDIA's output to the fourth place. **Two causes, found:**
+- `image_compose.comp` rounded the head to half with its own `float(float16_t(v))`, the cast
+  Mesa folds away (`publish.glsl`'s constant 1 exists for exactly this): on Mesa the head went
+  unrounded. Fixed locally, the same constant 1 (`HALF_BY_CAST`), so Intel's Windows driver keeps
+  the cast it had. With it the composed bytes of all 38 (19 frames, A and B, at 0.4) are the CPU
+  path's byte for byte, and `gpu_frame_stages.py` reads `exact outputs=True`. `make test` 74 of 74.
+- The division the image shaders correct to the CPU's correctly rounded quotient
+  (`divide`, `area_divide`: the native quotient, then `q + fma(-q, b, a) / b`) is not corrected
+  on Mesa: there the residual is exact in only 5-45 % of cases (`work/probe/fma_probe.py`, the
+  quotient laundered through its bits or not), though a lone `fma` is fused, and the result is
+  one ulp off in 7-17 %. Divided through double instead (`shaderFloat64`, which this ANV has), the
+  four image parity tests pass on Mesa with `image_path_exact` forced (`test_image_compose`,
+  `_history`, `_preprocess`, `_pipeline`). Not kept: Intel's Windows path is exact as it is, and a
+  module that declares Float64 needs a driver that has it, so it would be a second SPIR-V per
+  image shader chosen per driver (`work/probe/image_*-div-f64.patch`). It matters for an exact
+  claim on Mesa in the area mean (a scale with an odd factor), the grade and history, not for the
+  common path above.
+
+`src/bench/gpu_frame_stages.py`, like `scale_spectrum.py`, had kept the network-time trailer
+as the reply since it came in, and refused every frame: it keeps the pixels now. Local.
+
+The frames that never leave the GPU (`gpu-device` above, 15.7 ms against 17.1 at 1280x720 and
+0.4) need the shared transport, which the layer has on Windows alone (`#ifdef _WIN32` around
+`NR_GPU_TRANSPORT`): on Linux a frame crosses the pipe both ways. A Linux transport (an exported
+memory fd) would be a project of its own.
+
+**Committed and pushed at the owner's word** (11-22, morning), `newnr` alone: constant 5
+(`75b4626`: `publish.glsl`, `libxmx.c`, `xmxres.py`, `nr_daemon.py`, and `e4m3_probe.py`
+comparing against the constant off, since on Mesa `publish.glsl`'s own `e4m3` is the magic one
+now; 0 mismatches again over the same inputs), the composition's half rounding (`fff7ea5`), the
+two benchmarks' trailer (`f63c41b`) and these notes. Checked at that state: `make test` 74 of 74 in both memory modes, CMake with no warning, CTest
+73 of 73; the heads with the constant 0 and 1 the same at 512x320, 576x1024, 1920x1088 and
+2560x1472.
+
+**The owner, 11-22, morning:** the GPU image path goes on for Linux (`NR_GPU_IMAGE`; 5-8 ms a
+frame at 0.4), with the division that makes it exact on Mesa. **Next on Windows:** once this is on GitHub, the
+MSVC build and CTest, and `XMX_E4M3_MAGIC=1` timed against the default on Intel's driver
+(`frame_profile.py --size 576 1024` and `--size 320 512`, B and A, rounds alternating): October's
+10-22 % loss (10-13) came before November's changes on that driver, the staged walk, the E4M3 and
+by-column weights and the fused kernels by column; if it gains now, the constant goes on for that
+driver too.
+
+## Render scale against NVIDIA's full picture: NVIDIA has no smaller network, and a smaller frame is a different picture (2026-11-22, later, branch `newnr`)
+
+The owner, 11-22, after the half accumulator: weigh the render scales players use against
+NVIDIA's full picture, and NVIDIA's own `DLSSNR.ScalingRatio` below 1. The note is
+`notes/phase76-render-scale-against-nvidia.md`.
+
+- **NVIDIA's 310.9.16 always runs the network at the output's size.** With `ScalingRatio` 0.5 its
+  output is byte for byte that of 1.0, and it asks for no such parameter. In its code the ratio is
+  written for an application by `DLSSNRComputeScalingRatioCallback`: 1.0, or 0.85 for
+  `PerfQualityValue` 4, never below 0.5. The evaluation's parser fixes the ratio at 1.0, so the
+  smaller network the evaluation can build never runs.
+- **Our render scale against NVIDIA's full size**, 19 frames, the daemon's own path:
+  - A: correlation of the change 0.993 at 1.0, 0.931 at 0.75, 0.827 at 0.5 and 0.749 at 0.4. The
+    residual is 11, 34, 55 and 68 % of NVIDIA's change.
+  - B against NVIDIA's B: 0.992, 0.927, 0.789 and 0.751.
+  - B against NVIDIA's A: 0.875 at 1.0.
+  - The coarse band (a 3 px blur) falls as well: A at 0.5 is 0.846.
+- **It is the model.** Our full-size change, taken down to the scale's frame and back up, would
+  still be 0.986 at 0.5, so the upscale costs 0.01. NVIDIA's own network on six frames halved to
+  640x360 agrees with its full-size picture at 0.737 (A) and 0.777 (B). Ours at 0.5 agrees with
+  that half-size picture at 0.978 and 0.984. No upscaler can win this back.
+- **Cost on this laptop**, 1280x720's fields, device ms: A 140 / 80-82 / 42-44 / 30-31, B 74 /
+  42-43 / 22 / 15.5 at 1.0 / 0.75 / 0.5 / 0.4. At about 42 ms, B at 0.75 is 0.927 of NVIDIA's B
+  and 0.834 of its A, where A at 0.5 is 0.827 of its A.
+- `src/bench/scale_spectrum.py` had lost two pixels to the daemon's network-time trailer since it
+  came in: it reads the reply's pixels from the front now. Local, with the notes; not committed.
+
+**Waiting for the owner:** the render scale's texts say a lower scale draws "coarser detail, at
+about the same strength" (`nr_knobs.py`, and from it `docs/SETTINGS.md`) or is "cheaper, with
+coarser detail" (`Hint.render_scale` in four languages, `windows-wizard.ps1`, and the panel's
+tables from it). It draws a different picture: whether to say so, and how.
+
+**Next on Linux:** nothing owed. **Next on Windows:** nothing.
+
+## The half accumulator timed again on Mesa: about 1 % of a frame, and no closer to NVIDIA (2026-11-22, branch `newnr`)
+
+The owner, 11-22, on what the RTX 5060 Ti machine can do for speed: start with the FP16
+accumulator, NVIDIA's own arithmetic. It was last timed in a frame at phase 31, behind the ANV
+store bug that phase 38 found was not there.
+
+- **The build.** `gemm_staged.comp` takes `-DACC16` as `gemm_resident.comp` does: a `float16_t`
+  accumulator, widened to float32 at each store, direct or through the stage (a matrix is stored
+  only into an array of its own component type, phase 38). Off by default, and the default
+  SPIR-V of the three staged builds was byte for byte as before. Dropped at the owner's word
+  (11-22): the change is `work/acc16/gemm_staged-acc16.patch`, the builds beside it.
+- **Speed**, `frame_profile.py --warm 25 --runs 5 --calls 0`, every GEMM kernel built with it
+  (resident, tiled, staged, staged32 and its deep build, through `XMX_*_SPV`) against the
+  default, five rounds with the order swapped each round, Mesa 26.2.7. Median ms of the device
+  (of the staged GEMM):
+
+  | | FP32 | ACC16 |
+  | --- | --- | --- |
+  | A 1024x576 | 84.12 (49.46) | 82.73 (48.26) |
+  | A 512x320 | 30.44 (19.53) | 30.24 (19.19) |
+  | B 1024x576 | 43.47 (19.87) | 43.19 (19.47) |
+  | B 512x320 | 15.54 (8.33) | 15.26 (8.23) |
+
+  1.2-2.5 % of the staged GEMM, 0.8-1.8 % of the device; the paired differences straddle zero in
+  three of the four.
+- **Why so little.** The pipelines a frame runs are the specialised ones (`XMX_SPECIALIZE` is 7
+  by default), and none of the staged kernel's twelve spills in float32 (Mesa's `INTEL_DEBUG=cs`):
+  a subgroup holds four 8x16 accumulators, 16 of its 128 registers. Phase 31's 1.36x came from
+  a block that spilled 15 in float32 and none in float16. The fused kernels, which have no
+  `ACC16`, spill little: `window_block`'s variants 4-7 each, `ffn_fused`'s none or 41-43, so a
+  half accumulator there has a couple of per cent of a frame to find at most.
+- **Against NVIDIA** (`work/vendor/compare.py`, the 19 frames of `set_parity.txt`, ours as
+  `nr_frame.py --profile standard --intensity 1.0 --resident` with the five kernels): ACC16 is
+  closer to the vendor's output on 8 of the 19 frames with A and on 8 with B. The correlation of
+  the change moves by −0.0001 on average with A (−0.0019 to +0.0010) and 0.0000 with B (−0.0007
+  to +0.0008), the residual's share by +0.3 and 0.0 points. The first frame tried, the 512x320
+  crop of MK1, read 0.9921 -> 0.9927 and alone would have said closer.
+
+So on Mesa the half accumulator buys about 1 % and brings the picture no closer to NVIDIA's; it
+stays off. Intel's Windows driver is untimed: another compiler, where the staged GEMM's loop
+takes 1.2-1.3x Mesa's time.
+
+**Next on Linux:** the speed settings players use against NVIDIA's full picture, and NVIDIA's
+own `DLSSNR.ScalingRatio` below 1: done at the owner's word (above, 11-22, later). **Next on
+Windows:** nothing.
 
 ## Inside NVIDIA's network, its knobs and its history, against ours (2026-11-21, late night, branch `newnr`)
 

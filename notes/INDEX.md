@@ -1,6 +1,6 @@
 # Index of the notes
 
-Ninety-three files, sixty-four phases. This is what each one settles, so a reader arriving
+Ninety-four files, sixty-five phases. This is what each one settles, so a reader arriving
 cold can go straight to the answer instead of the archaeology.
 
 **Read `notes/HANDOFF.md` first** — it carries the current state, the standing conclusions and
@@ -16,6 +16,7 @@ disproved.
 
 | note | what it settles |
 | --- | --- |
+| `phase76-render-scale-against-nvidia.md` | render scale against NVIDIA's full picture: its 310.9.16 DLL has no smaller network that runs (`ScalingRatio` is an output, 1.0 or 0.85; the evaluation's ratio is fixed at 1.0); on a smaller frame the model, NVIDIA's own included, draws a different change (its half-size picture 0.74-0.78 of its full one), so 0.5 leaves 55-60 % of NVIDIA's change unreproduced and 0.4 68 %, against 11 % at full size, and the upscale costs only 0.01; at one cost B at a higher scale beats A at a lower |
 | `phase75-inside-the-network.md` | NVIDIA's network from inside: 156 launches for A and 80 for B, its scratch and its two E4M3 layouts (`[c/16][h][w][16]`, and `mma.m16n8k32` A fragments over 4x4 pixel blocks); its activations against ours at every stage; each of our encoder blocks on its own input within 1-3.4 % of its output, the head and the composition within 0.08 of a level: the residual is those small differences compounded, not FP16 accumulation |
 | `phase74-vendor-parity.md` | NVIDIA's own DLL run on an RTX 5060 Ti on frames of our choosing, no game needed: our A and B against the vendor's, 0.989-0.997 correlation of the change and a residual of 6-13 % of it on 18 frames of three games, Hogwarts Legacy's among them (a desktop capture 0.985); how it runs (the snippet in the NGX core's place under Wine, MSVC's parameter vtable, NvAPI through dxvk-nvapi), presets numbered from 1, the defaults our `standard`; the knobs away from their defaults (the DLL clamps `Intensity` at 1, and the skin strength acts only with `UseAutoMask`); history over eight frames and a pan with motion vectors, `MVec` read as our motion |
 | `phase45-frame-profile.md` | where every millisecond of a frame goes, per pass, from GPU timestamps |
@@ -96,7 +97,7 @@ disproved.
 | `phase25-the-frame-rate-wall.md` | `17 ms + 488 ms per megapixel`, and what that forbids — `9 + 205` since the fusions and the shared-memory fix |
 | `phase51-output-resolution-costs.md` | what costs the output extent rather than the network's, and a profile that was measuring swap |
 | `phase50-what-the-model-computes-in.md` | 36 % of the shipped model's mma is already FP8; what FP4 would and would not change |
-| `phase37-neural-upstream.md` | half the extent is 3x faster and keeps 62 % of the high band |
+| `phase37-neural-upstream.md` | half the extent is 3x faster and keeps 62 % of the high band (against NVIDIA's own picture: `phase76`) |
 | `phase46-cpu-share.md` | four busy E-cores cost the GPU 7 % for a theoretical +2 % |
 | `phase14-npu-and-rounding.md` | the NPU is not worth using; the rounding point was |
 | `phase13-torch-and-blas.md` | the system numpy is netlib; every early CPU baseline was 67x too slow |
