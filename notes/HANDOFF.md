@@ -392,6 +392,38 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## `XMX_E4M3_MAGIC=1` on Intel's Windows driver: the same bits and 1-5 % faster; `789ed4c` built and checked (2026-11-22, midday, branch `newnr`)
+
+Arc 140V, Intel 101.9150 before and after. Asked by the morning's entry below.
+- **Built and checked at `789ed4c`:** MinGW CMake/Ninja builds; MSVC `build_win.bat` and
+  `build_xess.bat` with no warning; CTest 72 of 72 on MSVC's libraries.
+- **The same bits with constant 5 on this driver:** `frame_replay.py`'s heads with 0 and 1 are
+  Linux's (B 576x1024 `edcbf478`/`acbd05d9`, 320x512 `df409ac4`/`b6d9870b`, A 320x512
+  `3e37b87c`/`29d613d2`); `e4m3_probe.py` 0 mismatches over 1 114 875 inputs; `test_ffn_fused`,
+  `test_window_block`, `test_glue` and `test_global_attention` pass with `XMX_E4M3_MAGIC=1`.
+- **Timed:** `frame_profile.py --warm 25 --runs 5`, device ms a frame, every run its own process,
+  a warm-up process thrown away, rounds alternating the order. Two sets: 3 rounds (quiet before;
+  after it Windows Update's servicing had started, TiWorker and 33 % CPU) and 5 rounds (quiet
+  before and after). Logs and `results.json` in `work/e4m3magic-win-1122` and `-1122b`.
+
+  | | default | `XMX_E4M3_MAGIC=1` | medians |
+  | --- | --- | --- | --- |
+  | B 576x1024 | 41.22/38.74/41.08; 41.13/39.78/39.40/39.04/42.05 | 39.67/39.39/39.81; 39.82/39.05/39.13/39.35/41.02 | -3.4 %, -1.1 % |
+  | B 320x512 | 12.18/12.76/12.08; 12.37/12.03/12.26/12.42/12.55 | 12.17/11.69/11.83; 12.18/12.76/12.15/12.07/12.85 | -2.9 %, -1.5 % |
+  | A 576x1024 | 80.97/77.56/76.89; 80.52/81.44/80.88/74.33/82.16 | 80.96/75.74/76.09; 80.74/81.21/79.10/73.74/77.03 | -1.9 %, -2.2 % |
+  | A 320x512 | 24.94/23.42/24.02; 25.47/24.76/25.79/26.35/25.69 | 24.81/22.03/22.77; 25.24/24.85/24.40/22.62/25.09 | -5.2 %, -3.3 % |
+
+  Faster by the median in all 8 comparisons and in 26 of the 32 pairs; a process's own state moves
+  a frame 2-8 %, as much as the constant, so no single pair decides. The window blocks 2-7 % faster
+  in 29 of 32 pairs, the fused feed-forwards in 25. One loss: global attention at 320x512, 0.09 ->
+  0.13-0.14 ms in all 16 pairs there (unchanged at 576x1024). October's 10-22 % loss (10-13) is
+  gone; the gain is about half of Mesa's.
+
+**Verdict, as asked:** stably faster by the median, never slower, the same bits: the constant goes
+on for Intel's Windows driver too (`libxmx.c`, `g.e4m3_magic`). Nothing changed in the code here.
+**Next on Linux:** that line, unless the owner has Windows make it. **Next on Windows:** after it,
+the MSVC build, CTest and the heads.
+
 ## The GPU image path on by default on Linux, and exact on Mesa (2026-11-22, morning, branch `newnr`)
 
 The owner, 11-22, morning, on the night's entry: so only the CPU path has run on Linux all along?
