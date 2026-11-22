@@ -1843,6 +1843,9 @@ def run_owned(args):
             # the fused kernels' weights by column in shared memory: libxmx's choice for
             # this driver, the same bytes either way (xmxres.Runtime.fused_by_column)
             ("XMX_FUSED_BY_COLUMN", "fused_by_column"),
+            # every E4M3 publish by a magic constant: libxmx's choice for this driver, the
+            # same bits either way (xmxres.Runtime.e4m3_magic)
+            ("XMX_E4M3_MAGIC", "e4m3_magic"),
             # plain GEMMs on the tiled kernel: the experimental switch for Arc A-series cards
             # (libxmx `prefer_tiled`; the setup window's and the panel's checkbox)
             ("XMX_PREFER_TILED", "prefer_tiled"))),

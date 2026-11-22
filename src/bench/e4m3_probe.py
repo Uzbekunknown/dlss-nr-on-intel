@@ -13,6 +13,9 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 os.environ['XMX_UNARY_SPV'] = str(ROOT / 'work/e4m3_probe.spv')
+# publish.glsl's e4m3 is the magic one where libxmx turns constant 5 on (Mesa): compare the
+# candidate against the scale-and-roundEven form, which the constant off keeps.
+os.environ['XMX_E4M3_MAGIC'] = '0'
 sys.path.insert(0, str(ROOT / 'src/gpu'))
 import xmxres
 

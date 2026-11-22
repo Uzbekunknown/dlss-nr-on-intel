@@ -167,7 +167,8 @@ def _load():
             ("xmx_e4m3_weights", []),
             ("xmx_buf_mark_by_column", [ctypes.c_int]),
             ("xmx_weights_by_column", []),
-            ("xmx_fused_by_column", [])):
+            ("xmx_fused_by_column", []),
+            ("xmx_e4m3_magic", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -969,6 +970,12 @@ class Runtime:
         of `ffn_fused.comp` and `window_block.comp` (`xmx_fused_by_column`,
         `XMX_FUSED_BY_COLUMN`): the same bytes either way, a layout per driver."""
         return bool(self.lib.xmx_fused_by_column())
+
+    @property
+    def e4m3_magic(self):
+        """Whether every E4M3 publish rounds by a magic constant, constant 5 of `publish.glsl`
+        (`xmx_e4m3_magic`, `XMX_E4M3_MAGIC`): the same bits either way, the faster per driver."""
+        return bool(self.lib.xmx_e4m3_magic())
 
     def weight(self, array, *, e4m3=False, by_column=None):
         """A weight matrix as a GEMM's B, and nothing else's operand: `array` is

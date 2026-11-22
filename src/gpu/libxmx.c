@@ -82,6 +82,7 @@ static struct {
 	int shape_unoffered;      /* the device runs the network's 8x16x16 without offering it */
 	int prefer_tiled;         /* plain GEMMs on the tiled kernel, not the staged one (xmx_init) */
 	int fused_by_column;      /* the fused kernels' shared-memory B by column, constant 4 */
+	int e4m3_magic;           /* the E4M3 rounding by a magic constant (publish.glsl), constant 5 */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -349,14 +350,15 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 {
 	/* Every pipeline also gets constant 1, half_round's spelling (publish.glsl), constant 2,
 	 * staged operand copies, constant 3, the staged GEMM's walk order (gemm_staged.comp), and
-	 * constant 4, the fused kernels' weights by column (ffn_fused.comp, window_block.comp).
-	 * All are fixed in xmx_init; a shader that does not declare one ignores its entry. */
-	VkSpecializationMapEntry entries[6];
-	unsigned char data[40];
+	 * constant 4, the fused kernels' weights by column (ffn_fused.comp, window_block.comp), and
+	 * constant 5, the E4M3 rounding by a magic constant (publish.glsl). All are fixed in
+	 * xmx_init; a shader that does not declare one ignores its entry. */
+	VkSpecializationMapEntry entries[7];
+	unsigned char data[44];
 	uint32_t count = 0, size = 0;
 	if (specialization) {
-		if (specialization->mapEntryCount > sizeof entries / sizeof *entries - 4
-		    || specialization->dataSize > sizeof data - 4 * sizeof(VkBool32))
+		if (specialization->mapEntryCount > sizeof entries / sizeof *entries - 5
+		    || specialization->dataSize > sizeof data - 5 * sizeof(VkBool32))
 			FAIL("specialization too large", 0);
 		count = specialization->mapEntryCount;
 		size = (uint32_t)specialization->dataSize;
@@ -380,6 +382,10 @@ static int build_pipeline_spec(const char *spv_path, VkPipelineLayout layout, Vk
 						       .size = sizeof fused_column };
 	memcpy(data + size, &fused_column, sizeof fused_column);
 	size += sizeof fused_column;
+	VkBool32 magic = g.e4m3_magic ? VK_TRUE : VK_FALSE;
+	entries[count++] = (VkSpecializationMapEntry){ .constantID = 5, .offset = size, .size = sizeof magic };
+	memcpy(data + size, &magic, sizeof magic);
+	size += sizeof magic;
 	VkSpecializationInfo constants = { .mapEntryCount = count, .pMapEntries = entries,
 					   .dataSize = size, .pData = data };
 
@@ -684,6 +690,7 @@ unsigned xmx_staged_calls(void) { return g.staged_calls; }
 /* Whether the fused kernels keep their weights by column in shared memory and load every B
  * fragment there column-major, constant 4 (ffn_fused.comp, window_block.comp; xmx_init). */
 int xmx_fused_by_column(void) { return g.fused_by_column; }
+int xmx_e4m3_magic(void) { return g.e4m3_magic; }
 
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
@@ -1122,6 +1129,19 @@ int xmx_init(const char *spv_path)
 		if (!strcmp(fused_column, "1")) g.fused_by_column = 1;
 		else if (!strcmp(fused_column, "0")) g.fused_by_column = 0;
 		else FAIL("XMX_FUSED_BY_COLUMN must be 0 or 1", 0);
+	}
+	/* Every E4M3 publish by a magic constant (publish.glsl, constant 5): the same bits for
+	 * every input. On Mesa a network takes 3.5-7 % less (B at 1344x768 73.9-74.4 -> 70.4-71.2
+	 * ms, A 140.1-140.3 -> 133.6-133.8; HANDOFF 2026-11-22, night); Intel's Windows compiler
+	 * ran one 10-22 % slower in October
+	 * (notes/improve-e4m3-probe-20261013.md). So on Mesa's ANV alone, where it was measured;
+	 * `XMX_E4M3_MAGIC=0|1` sets it on any driver. Fixed before any pipelines are created. */
+	g.e4m3_magic = g.driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
+	const char *magic = getenv("XMX_E4M3_MAGIC");
+	if (magic) {
+		if (!strcmp(magic, "1")) g.e4m3_magic = 1;
+		else if (!strcmp(magic, "0")) g.e4m3_magic = 0;
+		else FAIL("XMX_E4M3_MAGIC must be 0 or 1", 0);
 	}
 	VkPhysicalDeviceVulkan13Features v13 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &cm,

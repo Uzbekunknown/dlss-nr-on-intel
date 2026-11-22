@@ -30,26 +30,41 @@ float half_round(float x) {
  * the instruction there with hand-packed half bits is what broke the picture on the B580
  * (Paimon, PR #3). */
 
+/* Constant 5: the E4M3 rounding by a magic constant — the magnitude plus a power of two that
+ * leaves three mantissa bits, and the same power taken away again — instead of the scale,
+ * roundEven and scale back. The same bits for every input, NaNs, infinities and subnormals
+ * included (`src/bench/e4m3_probe.py` on Mesa, 1 114 875 inputs), and in October the same
+ * network output on Intel's Windows driver. Mesa runs a network 3.5-7 % faster with it
+ * (2026-11-22); Intel's Windows compiler ran one 10-22 % slower in October
+ * (notes/improve-e4m3-probe-20261013.md), so libxmx sets it per driver (`xmx_init`,
+ * `XMX_E4M3_MAGIC`). NR_E4M3_MAGIC sets the default a shader is built with. The idea is from
+ * mauri870/DLSSNR-RDNA3 (MIT), 5f099e2; see licenses/rdna3-e4m3-MIT.txt. */
 #ifndef NR_E4M3_MAGIC
 #define NR_E4M3_MAGIC 0
+#endif
+#if NR_E4M3_MAGIC
+layout(constant_id = 5) const bool E4M3_MAGIC = true;
+#else
+layout(constant_id = 5) const bool E4M3_MAGIC = false;
 #endif
 
 float e4m3(float x) {
     float magnitude = min(abs(x), 448.0);
-#if NR_E4M3_MAGIC
-    /* Optional experiment; idea from mauri870/DLSSNR-RDNA3 (MIT), 5f099e2.
-     * See licenses/rdna3-e4m3-MIT.txt. Magnitude preserves our NaN/zero rules. */
-    uint bits = floatBitsToUint(magnitude) & 0x7F800000u;
-    float magic = uintBitsToFloat(max(bits, 0x3C800000u) + 0x0A400000u);
-    precise float sum = magnitude + magic;
-    precise float rounded = sum - magic;
-#else
-    int exponent = (floatBitsToInt(magnitude) >> 23) & 0xFF;
-    exponent = max(exponent, 121) - 3;                 // 121-3 = the 2^-9 subnormal step
-    float step = intBitsToFloat(exponent << 23);
-    float reciprocal = intBitsToFloat((254 - exponent) << 23);
-    float rounded = roundEven(magnitude * reciprocal) * step;
-#endif
+    float rounded;
+    if (E4M3_MAGIC) {
+        /* the magnitude keeps our NaN and zero rules */
+        uint bits = floatBitsToUint(magnitude) & 0x7F800000u;
+        float magic = uintBitsToFloat(max(bits, 0x3C800000u) + 0x0A400000u);
+        precise float sum = magnitude + magic;
+        precise float back = sum - magic;
+        rounded = back;
+    } else {
+        int exponent = (floatBitsToInt(magnitude) >> 23) & 0xFF;
+        exponent = max(exponent, 121) - 3;             // 121-3 = the 2^-9 subnormal step
+        float step = intBitsToFloat(exponent << 23);
+        float reciprocal = intBitsToFloat((254 - exponent) << 23);
+        rounded = roundEven(magnitude * reciprocal) * step;
+    }
     return x < 0.0 ? -rounded : rounded;
 }
 
