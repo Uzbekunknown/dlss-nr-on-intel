@@ -1088,6 +1088,27 @@ def process_connection(connection, backend, args):
                    masked=magic == MAGIC_MASKED, moving=magic == MAGIC_MOTION)
 
 
+def gpu_image_wanted(backend):
+    """Whether a host frame's passes around the network run on the GPU (`GPUImagePipeline`).
+
+    `NR_GPU_IMAGE=1` or `0` says so. Unset, it is on where that path is held to the host
+    path's bytes (`xmxres.image_path_exact`: Mesa with its division through double, Intel's
+    Windows driver) and the system is not Windows: there the release sets the variable itself,
+    and the speed test leaves it unset on purpose. On Linux it takes 5-8 ms off a frame at
+    render scale 0.4, the host passes 1.6-2.9 ms where they took 7-12 on the CPU (HANDOFF
+    2026-11-22, night)."""
+    value = os.environ.get("NR_GPU_IMAGE")
+    if value is not None:
+        return value == "1"
+    if os.name == "nt":
+        return False
+    lib = getattr(getattr(backend, "runtime", None), "lib", None)
+    if lib is None:
+        return False
+    import xmxres
+    return xmxres.image_path_exact(lib)
+
+
 def process(connection, backend, args, width, height, vk_format, *, masked=False, moving=False):
     """Legacy host image processing, guarded even when invoked directly."""
     if os.environ.get("NR_GPU_ONLY") == "1":
@@ -1114,11 +1135,21 @@ def process(connection, backend, args, width, height, vk_format, *, masked=False
 
     live = args.live
     live.refresh()
-    if os.environ.get("NR_GPU_IMAGE") == "1":
+    engine = getattr(args, "gpu_images", None)
+    wanted = engine is not False and gpu_image_wanted(backend)
+    if wanted and engine is None:
         from gpu_image_pipeline import GPUImagePipeline
-        engine = getattr(args, "gpu_images", None)
-        if engine is None:
+        try:
             engine = args.gpu_images = GPUImagePipeline(backend)
+        except Exception as error:
+            if os.environ.get("NR_GPU_IMAGE") == "1":
+                raise
+            # On by default rather than asked for: a pipeline that cannot be built leaves the
+            # host path, said once, instead of failing every frame after.
+            print(f"GPU image path unavailable, the host path instead: {error}", flush=True)
+            engine = args.gpu_images = False
+            wanted = False
+    if wanted:
         reason = engine.supported(width, height, vk_format, live, interface=interface is not None,
                                   diagnostic=bool(args.dump or args.meter))
         if reason is None:

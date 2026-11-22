@@ -114,10 +114,10 @@ class HostChecks(unittest.TestCase):
         self.raw=self.backend.runtime.buffer(192*256*4,np.uint8)
 
     def test_default_daemon_takes_the_host_path(self):
-        # Off unless asked, on any driver: without NR_GPU_IMAGE, NR_GPU_TRANSPORT and NR_GPU_ONLY,
-        # as by default, a host frame is accepted and reaches the host image path, and the GPU
-        # image pipeline is never built. Where the GPU path is not exact (Mesa), this is what
-        # its tests hold; its parity is held on Intel's Windows driver.
+        # Without NR_GPU_IMAGE, NR_GPU_TRANSPORT and NR_GPU_ONLY, and with no device whose GPU
+        # image path is held to the host path's bytes (here no backend at all), a host frame is
+        # accepted and reaches the host image path, and the GPU image pipeline is never built.
+        # Where the path is exact the default takes it on Linux (the next test).
         class Reached(Exception): pass
         def region(*args): raise Reached
         class Connection:
@@ -136,6 +136,27 @@ class HostChecks(unittest.TestCase):
             with self.assertRaises(Reached):
                 nr_daemon.process_connection(Connection(frame),None,args)
         self.assertEqual(args.image_transport,"cpu")
+
+    def test_default_takes_the_gpu_path_where_it_is_exact_off_windows(self):
+        # Unset, NR_GPU_IMAGE is on where the GPU image path is held to the host path's bytes
+        # (xmxres.image_path_exact: here a library that divides through double) and the system
+        # is not Windows, whose release sets the variable itself; 0 and 1 say so outright.
+        class Lib:
+            def __init__(self, divide): self.divide = divide
+            def xmx_image_divide_f64(self): return self.divide
+            def xmx_driver(self): return 0
+        def backend(lib): return SimpleNamespace(runtime=SimpleNamespace(lib=lib))
+        keep = {k: v for k, v in os.environ.items() if k != "NR_GPU_IMAGE"}
+        with patch.dict(os.environ, keep, clear=True):
+            with patch.object(nr_daemon.os, "name", "posix"):
+                self.assertTrue(nr_daemon.gpu_image_wanted(backend(Lib(1))))
+                self.assertFalse(nr_daemon.gpu_image_wanted(backend(Lib(0))))
+                self.assertFalse(nr_daemon.gpu_image_wanted(None))
+            with patch.object(nr_daemon.os, "name", "nt"):
+                self.assertFalse(nr_daemon.gpu_image_wanted(backend(Lib(1))))
+        for value, want in (("1", True), ("0", False)):
+            with patch.dict(os.environ, {"NR_GPU_IMAGE": value}):
+                self.assertEqual(nr_daemon.gpu_image_wanted(backend(Lib(1 - want))), want)
 
     def test_the_composition_reads_along_the_motion_itself(self):
         """NR_FOLLOW_IN_COMPOSE (the default): the follower leaves its active-extent pass out and

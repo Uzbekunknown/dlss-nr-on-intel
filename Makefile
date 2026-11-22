@@ -26,7 +26,8 @@ SHADERS := work/gemm_resident.spv work/gemm_tiled.spv work/gemm_staged.spv \
            work/gemm_f16acc.spv work/gemm_coopmat_int8.spv work/gemm_staged_int8.spv \
            work/window_attention.spv work/window_block.spv work/global_attention.spv \
            work/ffn_fused.spv work/image_preprocess.spv work/image_compose.spv work/image_stats.spv \
-           work/image_history.spv
+           work/image_history.spv work/image_preprocess_f64.spv work/image_compose_f64.spv \
+           work/image_history_f64.spv
 
 # half_probe.spv is built by `all` because the daemon needs it: check_half_rounding()
 # runs it at start-up and refuses to run the graph if the driver's float16 conversion is
@@ -286,6 +287,14 @@ work/image_stats.spv: src/gpu/image_stats.comp
 	$(GLSL) -o $@ $<
 work/image_history.spv: src/gpu/image_history.comp src/gpu/history_sample.glsl
 	$(GLSL) -o $@ $<
+# the same three with their division through double, which libxmx picks where the driver does
+# not keep the float correction exact (Mesa; xmx_image_divide_f64)
+work/image_preprocess_f64.spv: src/gpu/image_preprocess.comp Makefile
+	$(GLSL) -DNR_DIVIDE_F64 -o $@ $<
+work/image_compose_f64.spv: src/gpu/image_compose.comp src/gpu/history_sample.glsl Makefile
+	$(GLSL) -DNR_DIVIDE_F64 -o $@ $<
+work/image_history_f64.spv: src/gpu/image_history.comp src/gpu/history_sample.glsl Makefile
+	$(GLSL) -DNR_DIVIDE_F64 -o $@ $<
 
 # Window attention's QK^T, softmax and PV in one pass (ProjectsCodex's phase42).
 work/window_attention.spv: src/gpu/window_attention.comp src/gpu/publish.glsl

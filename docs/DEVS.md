@@ -207,6 +207,7 @@ run it again. Leave out `NR_LIVE=1` for photo mode. For a native Vulkan game,
 | `NR_LAYER_ASYNC=1` | with live mode: each processed present shows the answer for the one before it, so the daemon works while the game draws its next frame — more frames a second, one more frame of latency. Off by default; `NR_ASYNC=1 NR_LIVE=1 src/layer/nr-photo --steam <appid>` prints it into the launch option |
 | `NR_LAYER_UI_MASK=1` | mark pixels that held still and leave them as the game drew them |
 | `NR_LAYER_SYNC` | accepted for old launchers and ignored: there is one synchronisation path, described under **Capture synchronization** below |
+| `NR_GPU_IMAGE=0` | the daemon's own: its passes around the network (the frame's resize and features, the head's upscale, the composition and the encode) on the CPU. By default they run on the GPU wherever that gives the CPU path's bytes, which on Linux is Mesa with `shaderFloat64`, and that takes 4-10 ms off a frame at render scale 0.4-0.5; `NR_GPU_IMAGE=1` takes the GPU path on any device. A daemon the layer starts inherits it from the game |
 
 **If your frame rate drops as soon as the game starts and the daemon's log shows no frames**,
 one of the first four is missing or wrong: the layer is capturing and has nowhere to send it.

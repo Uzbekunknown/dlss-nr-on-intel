@@ -1,4 +1,7 @@
 #version 450
+#ifdef NR_DIVIDE_F64
+#extension GL_ARB_gpu_shader_fp64 : require   /* the division below, per driver */
+#endif
 /* The history carried along the client's motion, `History.follow` in nr_daemon.py, on the
  * device: the network's last output and the game's last frame read at where each pixel's
  * surface was on the frame before, with the vendor's five-tap Catmull-Rom (nr_image.c
@@ -36,12 +39,17 @@ layout(push_constant, scalar) uniform Push {
  * height, STALE's float bits. */
 
 /* Intel's native FDiv is approximate; one residual correction gives the correctly rounded
- * quotient the reference's float32 division has (image_compose.comp). */
+ * quotient the reference's float32 division has (image_compose.comp), and NR_DIVIDE_F64 the
+ * same through double where the driver does not keep that correction exact (Mesa). */
 float divide(float a, float b) {
+#ifdef NR_DIVIDE_F64
+    return float(double(a) / double(b));
+#else
     precise float q = a / b;
     precise float error = fma(-q, b, a);
     precise float refined = q + error / b;
     return refined;
+#endif
 }
 
 #include "history_sample.glsl"

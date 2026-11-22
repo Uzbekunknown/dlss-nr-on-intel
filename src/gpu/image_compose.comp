@@ -1,4 +1,7 @@
 #version 450
+#ifdef NR_DIVIDE_F64
+#extension GL_ARB_gpu_shader_fp64 : require   /* the division below, per driver */
+#endif
 /* SDR composition, preserving the CPU contract's FP32 operation order. The
  * input head and neural history stay on the device. The original alpha and
  * pixels outside the active rectangle are copied without conversion. */
@@ -100,12 +103,21 @@ void detail(uint index, uint flags) {
 }
 /* Intel's native FDiv is approximate. One residual correction recovers the
  * correctly-rounded scalar division used by the CPU colour grade. Explicit fma
- * here measures the quotient's residual; the surrounding grade stays precise. */
+ * here measures the quotient's residual; the surrounding grade stays precise.
+ * NR_DIVIDE_F64 (the `_f64` build, which libxmx's `xmx_image_divide_f64` picks per driver):
+ * through double instead. Mesa does not keep the residual's fma exact, and the corrected
+ * quotient was a ulp off there in 7-17 % of cases; a double quotient rounded to float is the
+ * correctly rounded one, a float quotient never lying on a float's midpoint
+ * (HANDOFF 2026-11-22, night). */
 float divide(float a, float b) {
+#ifdef NR_DIVIDE_F64
+    return float(double(a) / double(b));
+#else
     precise float q = a / b;
     precise float error = fma(-q, b, a);
     precise float refined = q + error / b;
     return refined;
+#endif
 }
 #include "history_sample.glsl"
 /* Rounding to half, spelled as libxmx's constant 1 says for this driver (publish.glsl): Mesa

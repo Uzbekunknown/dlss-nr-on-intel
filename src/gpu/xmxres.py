@@ -168,7 +168,8 @@ def _load():
             ("xmx_buf_mark_by_column", [ctypes.c_int]),
             ("xmx_weights_by_column", []),
             ("xmx_fused_by_column", []),
-            ("xmx_e4m3_magic", [])):
+            ("xmx_e4m3_magic", []),
+            ("xmx_image_divide_f64", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -226,14 +227,39 @@ def align(value, multiple):
 INTEL_WINDOWS_DRIVER = 5
 
 
+def image_divide_f64(lib=None):
+    """Whether the GPU image path takes its shaders' `_f64` builds, their division through
+    double (libxmx `xmx_image_divide_f64`: Mesa's ANV with shaderFloat64, where the float
+    division's correction is not kept exact; `XMX_IMAGE_DIVIDE_F64`)."""
+    query = getattr(lib or _load(), "xmx_image_divide_f64", None)
+    return bool(query is not None and query())
+
+
+# The image shaders with a division, and their builds that divide through double.
+IMAGE_F64 = {"image_preprocess.spv": "image_preprocess_f64.spv",
+             "image_compose.spv": "image_compose_f64.spv",
+             "image_history.spv": "image_history_f64.spv"}
+
+
+def image_shader(name, lib):
+    """The build of the image shader `name` the device behind `lib` runs, under `work/`; a
+    stand-in runtime without one (the host-side tests') takes the float build."""
+    if lib is not None and image_divide_f64(lib):
+        name = IMAGE_F64.get(name, name)
+    return ROOT / "work" / name
+
+
 def image_path_exact(lib=None):
-    """Whether this device's driver is the one the GPU image path's bytes were proved on."""
-    return (lib or _load()).xmx_driver() == INTEL_WINDOWS_DRIVER
+    """Whether the GPU image path's bytes are held to the CPU's on this device: on Intel's
+    Windows driver, where they were proved first, and on Mesa with its division through double
+    (`image_divide_f64`), from 2026-11-22. The daemon takes the path by default on Linux there."""
+    lib = lib or _load()
+    return lib.xmx_driver() == INTEL_WINDOWS_DRIVER or image_divide_f64(lib)
 
 
-IMAGE_PATH_EXACT_ONLY = ("the GPU image path is held to the CPU's bytes on Intel's Windows driver, "
-                         "where it was proved; on this driver it is not exact, and it is off by "
-                         "default everywhere (xmxres.image_path_exact)")
+IMAGE_PATH_EXACT_ONLY = ("the GPU image path is held to the CPU's bytes on Intel's Windows driver "
+                         "and on Mesa with its division through double; on this device it is not "
+                         "(xmxres.image_path_exact)")
 
 
 # what a buffer is for, which decides where it lives

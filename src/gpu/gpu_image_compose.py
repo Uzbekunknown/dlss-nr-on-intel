@@ -90,7 +90,8 @@ class GPUImageComposer:
         if self.head_row_width < self.head_width or self.head_channels not in (4, 16):
             raise ValueError("head must be compact four or padded sixteen channels")
         self.bgra = SDR_FORMATS[vk_format]
-        path = shader_path or os.environ.get("NR_IMAGE_COMPOSE_SPV") or ROOT / "work" / "image_compose.spv"
+        path = (shader_path or os.environ.get("NR_IMAGE_COMPOSE_SPV")
+                or xmxres.image_shader("image_compose.spv", getattr(runtime, "lib", None)))
         self.pipeline = xmxres.ImagePipeline(str(path))
         self.encoded = runtime.buffer(self.frame_width * self.frame_height, np.uint32, kind=xmxres.DEVICE)
         self.neural = runtime.buffer(self.width * self.height * 3, kind=xmxres.DEVICE)

@@ -83,6 +83,7 @@ static struct {
 	int prefer_tiled;         /* plain GEMMs on the tiled kernel, not the staged one (xmx_init) */
 	int fused_by_column;      /* the fused kernels' shared-memory B by column, constant 4 */
 	int e4m3_magic;           /* the E4M3 rounding by a magic constant (publish.glsl), constant 5 */
+	int divide_f64;           /* the image shaders' division through double (xmx_init) */
 	/* XMX_PIPELINE_STATS=FILE: what the driver's compiler made of each pipeline, appended to
 	 * FILE through VK_KHR_pipeline_executable_properties, where the device has it */
 	FILE *stats;
@@ -691,6 +692,9 @@ unsigned xmx_staged_calls(void) { return g.staged_calls; }
  * fragment there column-major, constant 4 (ffn_fused.comp, window_block.comp; xmx_init). */
 int xmx_fused_by_column(void) { return g.fused_by_column; }
 int xmx_e4m3_magic(void) { return g.e4m3_magic; }
+/* Whether the GPU image path takes its shaders' `_f64` builds, their division through double
+ * (image_compose.comp; xmx_init). */
+int xmx_image_divide_f64(void) { return g.divide_f64; }
 
 /* The device's VkDriverId (xmx_init): what a test asks before holding a path to the bytes it
  * was proved on with one driver's compiler. */
@@ -1172,6 +1176,20 @@ int xmx_init(const char *spv_path)
 	 * them. Mesa never minded. Asked for only where the device has it. */
 	VkPhysicalDeviceFeatures base;
 	vkGetPhysicalDeviceFeatures(g.pd, &base);
+	/* The GPU image path corrects its float divisions to the CPU's correctly rounded quotients
+	 * with a fused residual, and Mesa does not keep that residual exact: a ulp off in 7-17 % of
+	 * quotients, so the path was not the CPU's bytes there (HANDOFF 2026-11-22, night). Its
+	 * `_f64` builds divide through double instead, which needs shaderFloat64 on: on Mesa's ANV
+	 * where the device has it, the float correction everywhere else, as on Intel's Windows
+	 * driver, where it is exact. `XMX_IMAGE_DIVIDE_F64=0|1` sets it on any driver with the
+	 * feature. */
+	g.divide_f64 = g.driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA && base.shaderFloat64;
+	const char *divide_f64 = getenv("XMX_IMAGE_DIVIDE_F64");
+	if (divide_f64) {
+		if (!strcmp(divide_f64, "0")) g.divide_f64 = 0;
+		else if (!strcmp(divide_f64, "1") && base.shaderFloat64) g.divide_f64 = 1;
+		else FAIL("XMX_IMAGE_DIVIDE_F64 must be 0, or 1 on a device with shaderFloat64", 0);
+	}
 	/* XMX_PIPELINE_STATS: the compiler's own account of each pipeline (build_pipeline_spec) */
 	const char *stats_path = getenv("XMX_PIPELINE_STATS");
 	int stats = 0;
@@ -1194,7 +1212,8 @@ int xmx_init(const char *spv_path)
 		.pNext = &v11, .pipelineExecutableInfo = VK_TRUE };
 	VkPhysicalDeviceFeatures2 f2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
 					 .pNext = stats ? (void *)&executables : (void *)&v11,
-					 .features.shaderInt64 = base.shaderInt64 };
+					 .features.shaderInt64 = base.shaderInt64,
+					 .features.shaderFloat64 = g.divide_f64 ? VK_TRUE : VK_FALSE };
 	float prio = 1.0f;
 	VkDeviceQueueCreateInfo qci = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 					.pNext = priority.globalPriority ? &priority : NULL,

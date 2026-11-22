@@ -84,7 +84,8 @@ class GPUImageResampler:
         self.source_nbytes = self.width * self.height * (4 if vk_format is not None else 12)
         self.output_nbytes = self.inner_h * self.inner_w * 12
         import xmxres
-        path = pathlib.Path(shader_path) if shader_path else ROOT / "work" / "image_preprocess.spv"
+        path = (pathlib.Path(shader_path) if shader_path
+                else xmxres.image_shader("image_preprocess.spv", getattr(runtime, "lib", None)))
         self.pipeline = xmxres.ImagePipeline(path)
 
     @staticmethod

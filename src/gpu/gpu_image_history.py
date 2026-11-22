@@ -51,7 +51,8 @@ class GPUImageFollower:
         self.inner_height, self.inner_width = (int(v) for v in inner_size)
         if not (0 < self.inner_height <= self.height and 0 < self.inner_width <= self.width):
             raise ValueError("the network's extent must lie within the active one")
-        path = shader_path or os.environ.get("NR_IMAGE_HISTORY_SPV") or ROOT / "work" / "image_history.spv"
+        path = (shader_path or os.environ.get("NR_IMAGE_HISTORY_SPV")
+                or X.image_shader("image_history.spv", getattr(runtime, "lib", None)))
         self.pipeline = X.ImagePipeline(str(path))
         active, inner = self.width * self.height, self.inner_width * self.inner_height
         self.buffers = []
