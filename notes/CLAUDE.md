@@ -130,8 +130,8 @@ it is built from source (`docs/DEVS.md`).
   2026-11-22 (HANDOFF, that night): activations read as E4M3 bytes, NVIDIA's layout, gain
   nothing in a frame, nor does the 32-channel skip as half; the publishes are 15-20 % of the
   window blocks' and feed-forwards' time, and the E4M3 rounding by a magic constant takes
-  3.5-7 % off a network on Mesa (`publish.glsl` constant 5, Mesa only: Intel's Windows driver
-  was slower with it in October). Half arithmetic does not help on Mesa: its half FMA rounds
+  3.5-7 % off a network on Mesa and 1-5 % on Intel's Windows driver (`publish.glsl` constant 5,
+  on for both since 2026-11-22; that driver was slower with it in October). Half arithmetic does not help on Mesa: its half FMA rounds
   twice and its half E4M3 is slower than float32's.
 
 ## Repo layout

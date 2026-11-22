@@ -36,8 +36,9 @@ float half_round(float x) {
  * included (`src/bench/e4m3_probe.py` on Mesa, 1 114 875 inputs), and in October the same
  * network output on Intel's Windows driver. Mesa runs a network 3.5-7 % faster with it
  * (2026-11-22); Intel's Windows compiler ran one 10-22 % slower in October
- * (notes/improve-e4m3-probe-20261013.md), so libxmx sets it per driver (`xmx_init`,
- * `XMX_E4M3_MAGIC`). NR_E4M3_MAGIC sets the default a shader is built with. The idea is from
+ * (notes/improve-e4m3-probe-20261013.md) and 1-5 % faster after November's kernels
+ * (2026-11-22, the same heads), so libxmx sets it per driver (`xmx_init`, `XMX_E4M3_MAGIC`):
+ * on for both. NR_E4M3_MAGIC sets the default a shader is built with. The idea is from
  * mauri870/DLSSNR-RDNA3 (MIT), 5f099e2; see licenses/rdna3-e4m3-MIT.txt. */
 #ifndef NR_E4M3_MAGIC
 #define NR_E4M3_MAGIC 0

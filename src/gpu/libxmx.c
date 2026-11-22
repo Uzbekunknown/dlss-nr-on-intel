@@ -1136,11 +1136,14 @@ int xmx_init(const char *spv_path)
 	}
 	/* Every E4M3 publish by a magic constant (publish.glsl, constant 5): the same bits for
 	 * every input. On Mesa a network takes 3.5-7 % less (B at 1344x768 73.9-74.4 -> 70.4-71.2
-	 * ms, A 140.1-140.3 -> 133.6-133.8; HANDOFF 2026-11-22, night); Intel's Windows compiler
-	 * ran one 10-22 % slower in October
-	 * (notes/improve-e4m3-probe-20261013.md). So on Mesa's ANV alone, where it was measured;
-	 * `XMX_E4M3_MAGIC=0|1` sets it on any driver. Fixed before any pipelines are created. */
-	g.e4m3_magic = g.driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
+	 * ms, A 140.1-140.3 -> 133.6-133.8; HANDOFF 2026-11-22, night). Intel's Windows compiler
+	 * ran one 10-22 % slower in October (notes/improve-e4m3-probe-20261013.md), but after
+	 * November's kernels 1-5 % faster on 101.9150, by the median in all 8 comparisons (B and A
+	 * at 576x1024 and 320x512, HANDOFF 2026-11-22, midday). So on both drivers where it was
+	 * measured; `XMX_E4M3_MAGIC=0|1` sets it on any driver. Fixed before any pipelines are
+	 * created. */
+	g.e4m3_magic = g.driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA
+	            || g.driver == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
 	const char *magic = getenv("XMX_E4M3_MAGIC");
 	if (magic) {
 		if (!strcmp(magic, "1")) g.e4m3_magic = 1;
