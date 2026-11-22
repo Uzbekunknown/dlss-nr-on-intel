@@ -108,7 +108,14 @@ float divide(float a, float b) {
     return refined;
 }
 #include "history_sample.glsl"
-float half_round(float v) { return float(float16_t(v)); }
+/* Rounding to half, spelled as libxmx's constant 1 says for this driver (publish.glsl): Mesa
+ * folds `float(float16_t(v))` away and keeps packHalf2x16's round trip, Intel's Windows
+ * compiler the other way round. With the cast alone the head went unrounded on Mesa, and the
+ * composed bytes moved by one level on about a thousandth of the values. */
+layout(constant_id = 1) const bool HALF_BY_CAST = false;
+float half_round(float v) {
+    return HALF_BY_CAST ? float(float16_t(v)) : unpackHalf2x16(packHalf2x16(vec2(v, 0.0))).x;
+}
 float trunc_half(float v) {
     uint bits = floatBitsToUint(v);
     float kept = uintBitsToFloat(bits & 0xffffe000u);
