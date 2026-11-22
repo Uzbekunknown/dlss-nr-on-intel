@@ -77,6 +77,10 @@ class MemoryConnection:
         if self.payload_at==len(self.payload): self.body_finished=time.perf_counter()
         return got
     def sendall(self,answer):
+        # the pixels, then the network-time trailer in a write of its own (D.send_trailer)
+        if self.reply is not None:
+            self.trailer=bytes(answer)
+            return
         self.reply=memoryview(answer).cast("B")
         self.answer_ready=time.perf_counter()
 

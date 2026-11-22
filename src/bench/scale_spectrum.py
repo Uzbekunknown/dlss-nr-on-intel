@@ -35,7 +35,10 @@ def run(scale):
         with open(os.devnull, "w") as sink:
             import contextlib
             with contextlib.redirect_stdout(sink): d.process_connection(c, backend, args)
-    px = np.frombuffer(bytes(c.out[-4 * H * W:]), np.uint8).reshape(H, W, 4)[..., [2, 1, 0]]
+    # The pixels come first: the daemon writes the network's time after them (`send_trailer`),
+    # and the last 4*H*W bytes were the frame two pixels on, with the trailer for its end.
+    assert len(c.out) == 4 * H * W + 8 and struct.unpack_from("<I", c.out, 4 * H * W)[0] == d.TRAILER_MAGIC
+    px = np.frombuffer(bytes(c.out[:4 * H * W]), np.uint8).reshape(H, W, 4)[..., [2, 1, 0]]
     return px.astype(np.float32) / 255
 source = np.frombuffer(bytes(wire), np.uint8).reshape(H, W, 4)[..., [2, 1, 0]].astype(np.float32) / 255
 luma = lambda im: im @ np.float32([0.2126, 0.7152, 0.0722])
