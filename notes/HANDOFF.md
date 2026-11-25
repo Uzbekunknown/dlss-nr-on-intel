@@ -393,6 +393,45 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## What a desktop card's frame holds besides the network, and 0.9 ms off it in the daemon and the layer (2026-11-26, branch `daemon-cuts`)
+
+The owner, 11-25, on #51 (a B580 in the Bloodborne PC recompile, native Vulkan: network B at
+896x512 in 9 ms, 21 ms a frame in the daemon): the speed-ups dropped for a small gain on this
+iGPU may matter on desktop cards; study it. Then, each at the owner's word: measure, cut the
+daemon, then the layer, then commit. Arc 140V, Intel 101.9150.
+
+- **The daemon's frame time holds the game's own GPU frame.** `total_seconds` starts before
+  `xmx_external_acquire`, which waits on the CPU for the game's `ready` semaphore (with
+  sync=semaphore, and in D3D12): #51's 9.3 ms beside the network, prep and compose are the game's
+  rendering, which runs in series with NR. Hogwarts' D3D12 frames show 20-33 ms of it here.
+- **Per step on the light client** (test_gpu_present with `--no-validation`; B with a 896x512 field
+  at 1280x720, 1762x992 and 2560x1440, 4 processes each; the marks were in a scratch worktree, not
+  committed):
+  - the network 29.7-31.0 ms;
+  - decode and cut 0.54-0.79, and prep 1.05-1.60, both flat with the output's size;
+  - compose 0.91-1.04 / 1.24-1.58 / 2.12-2.45, about 0.5 ms fixed and 0.5 a megapixel;
+  - the daemon's CPU 1.1-1.6 ms: the settings file read every frame 0.22, the letterbox check's
+    own submit 0.25, recording the image passes 0.35-0.45;
+  - the layer and the pipe between frames 1.2-1.75, the copy back's CPU wait 0.26-0.68 of it.
+
+  On a B580, prep and compose (1.6 and 1.2 ms in #51) are hardly faster than here: fixed costs. So
+  besides the network, the rest is about 17 % of a frame here and about 40 % of NR's own time on a
+  B580.
+- **Cut on this branch**, each in its own commit: the settings file read only when its stamp could
+  hide a write (`c07391d`); the letterbox check inside the decode's submit (`c07391d`); the copy
+  back presented on a semaphore (`dc793be`). Together, timed with the GPU's clock steady, the whole
+  request went from 35.94 to 35.01 ms at 1762x992 (6 of 6 rounds): about 4 % of #51's frame, if a
+  B580 saves the same.
+- **Measured, not built:** a pipe connection kept open across frames, 338-388 -> 210-232 us a
+  request (`nr_pipe`, 30 ms apart), about 0.15 ms a frame. The daemon serves one connection at a
+  time, so a held one would lock out a second client. The owner's call.
+- **Left for desktop cards:** the image passes, ~2.9 ms of a B580's frame, mostly fixed costs.
+
+**Not run:** a game through the Vulkan layer since (Mortal Kombat 11 is the one here), a B580,
+Linux. **Next on Linux:** `make test` in both memory modes and CTest: `nr_daemon.py`,
+`gpu_image_stats.py` and `gpu_image_pipeline.py` changed (the layer's change is Windows-only).
+**Next on Windows:** a game through the Vulkan layer, at the owner's word.
+
 ## The GPU path's slow state at 1280x720 on Windows is the driver's own clock choice (2026-11-22, afternoon, branch `newnr`)
 
 `gpu_frame_stages.py`, B at 1280x720 and 0.4, Intel 101.9150, quiet, the GPU checked free per
