@@ -396,6 +396,33 @@ static void partial_failure_checks(void)
     fail_resource_call = 0;
 }
 
+/* The copy back that signals its image's semaphore (2026-11-26): it does not wait, its fence stays
+ * pending, and the next capture waits for that fence before it records or submits anything. */
+static void signalled_output_checks(void)
+{
+    struct nr_gpu_bridge b;
+    CHECK(init(&b) == VK_SUCCESS);
+    CHECK(nr_gpu_bridge_configure(&b, 1280, 720, VK_FORMAT_B8G8R8A8_UNORM, 81, NULL) == VK_SUCCESS);
+    VkSemaphore copied = H(VkSemaphore, 77);
+    CHECK(nr_gpu_bridge_capture(&b, H(VkImage, 3), H(VkQueue, 5), 0, NULL) == VK_SUCCESS);
+    wait_result = VK_TIMEOUT;   /* a wait in the copy back would fail it */
+    CHECK(nr_gpu_bridge_copy_output_signal(&b, H(VkImage, 3), H(VkQueue, 5), copied) == VK_SUCCESS);
+    CHECK(seen_signal_count == 1 && seen_signal == copied && seen_wait_count == 1 && seen_wait == b.done);
+    CHECK(b.output_pending && !b.captured && b.error == VK_SUCCESS);
+    wait_result = VK_SUCCESS;
+    CHECK(nr_gpu_bridge_capture(&b, H(VkImage, 3), H(VkQueue, 5), 0, NULL) == VK_SUCCESS);
+    CHECK(!b.output_pending && b.captured && b.capture_pending && b.waits_consumed);
+    /* the copy's fence failing at the next capture fails that capture before it submits */
+    CHECK(nr_gpu_bridge_copy_output_signal(&b, H(VkImage, 3), H(VkQueue, 5), copied) == VK_SUCCESS);
+    unsigned before_submits = submits;
+    wait_result = VK_TIMEOUT;
+    CHECK(nr_gpu_bridge_capture(&b, H(VkImage, 3), H(VkQueue, 5), 0, NULL) == VK_TIMEOUT);
+    CHECK(submits == before_submits && b.output_pending && b.error == VK_TIMEOUT && !b.waits_consumed);
+    wait_result = VK_SUCCESS;
+    CHECK(nr_gpu_bridge_close(&b, NULL) == VK_SUCCESS && !b.output_pending && !b.capture_pending);
+    check_closed_handles();
+}
+
 static void output_timeout_checks(void)
 {
     struct nr_gpu_bridge b;
@@ -614,7 +641,8 @@ int main(void)
     CHECK(nr_gpu_bridge_close(&b, NULL) == VK_SUCCESS);
     CHECK(destroys == creates && frees == allocations);
     check_closed_handles(); submit_result = VK_SUCCESS;
-    capability_checks(); partial_failure_checks(); output_timeout_checks(); fenced_fallback_checks();
+    capability_checks(); partial_failure_checks(); output_timeout_checks(); signalled_output_checks();
+    fenced_fallback_checks();
     loader_callback_checks();
     fenced_override_checks();
     compatibility_checks();

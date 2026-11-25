@@ -1388,8 +1388,27 @@ static int process_frame_gpu(struct device_data *data, struct swapchain_data *ch
     if (data->timing.active) nr_timing_add(&data->timing, NR_TIME_EXCHANGE, nr_time_us() - began);
     if (answered && reply.status == NR_GPU_SUCCESS) {
         began = data->timing.active ? nr_time_us() : 0;
-        result = nr_gpu_bridge_copy_output(bridge, chain->images[index], queue);
+        /* The copy back signals this image's own semaphore, and whatever follows it into the image,
+         * the panel's composite or the present (`present_now`), waits on that on the GPU instead of
+         * the CPU waiting for the copy here. A semaphore that cannot be made leaves the CPU's wait. */
+        VkSemaphore copied = chain->nr_copied[index];
+        if (!copied) {
+            PFN_vkCreateSemaphore create = (PFN_vkCreateSemaphore)
+                data->get_device_proc(data->device, "vkCreateSemaphore");
+            VkSemaphoreCreateInfo made = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            if (!create || create(data->device, &made, NULL, &chain->nr_copied[index]) != VK_SUCCESS)
+                chain->nr_copied[index] = VK_NULL_HANDLE;
+            copied = chain->nr_copied[index];
+        }
+        result = copied ? nr_gpu_bridge_copy_output_signal(bridge, chain->images[index], queue, copied)
+                        : nr_gpu_bridge_copy_output(bridge, chain->images[index], queue);
         if (data->timing.active) nr_timing_add(&data->timing, NR_TIME_RETURN, nr_time_us() - began);
+        if (result == VK_SUCCESS && copied) {
+            /* The capture took the game's waits; this is the one left for whoever comes next. */
+            data->present_wait = &chain->nr_copied[index];
+            data->present_wait_count = 1;
+            data->waits_consumed = 0;
+        }
         if (result == VK_SUCCESS) {
             /* The network's time for this frame, which a FRAME's reply carries in `detail` since
              * 2026-11-05 (nr_gpu_wire.h); 0 from a daemon before that, and then nothing is
@@ -1549,6 +1568,26 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroyDevice(VkDevice device,
 	if (next) next(device, allocator);
 }
 
+#ifdef _WIN32
+/* The copy back's semaphores of a swapchain that goes (`nr_copied`), after the last copy into its
+ * images: the bridge's output fence covers it, and is waited for first if it is still pending. */
+static void nr_copied_gone(struct device_data *data, struct swapchain_data *chain)
+{
+    int made = 0;
+    for (uint32_t i = 0; i < MAX_IMAGES; ++i)
+        if (chain->nr_copied[i]) made = 1;
+    if (!made) return;
+    if (data->gpu && data->gpu->output_pending)
+        nr_gpu_bridge_wait(data->gpu, data->gpu->output_fence, &data->gpu->output_pending);
+    PFN_vkDestroySemaphore destroy = (PFN_vkDestroySemaphore)
+        data->get_device_proc(data->device, "vkDestroySemaphore");
+    for (uint32_t i = 0; i < MAX_IMAGES; ++i) {
+        if (chain->nr_copied[i] && destroy) destroy(data->device, chain->nr_copied[i], NULL);
+        chain->nr_copied[i] = VK_NULL_HANDLE;
+    }
+}
+#endif
+
 /* Without this the eight slots are consumed one per window resize, exclusive-fullscreen
  * toggle or HDR renegotiation, after which nothing is tracked and the photo mode goes
  * quiet. Worse, a driver may reuse a handle, and then `find_swapchain` would match a
@@ -1577,7 +1616,12 @@ VKAPI_ATTR void VKAPI_CALL nr_DestroySwapchainKHR(VkDevice device, VkSwapchainKH
 	 * lock is what keeps a present from drawing into the swapchain meanwhile. */
 	if (data) {
 		struct swapchain_data *gone = find_swapchain(swapchain);
-		if (gone && gone->device == device) nr_menu_layer_swapchain_gone(data, gone);
+		if (gone && gone->device == device) {
+			nr_menu_layer_swapchain_gone(data, gone);
+#ifdef _WIN32
+			nr_copied_gone(data, gone);
+#endif
+		}
 	}
 	nr_mutex_lock(&lock);
 	for (int i = 0; i < MAX_SWAPCHAINS; i++)
@@ -2109,8 +2153,14 @@ static VkResult present_now(struct device_data *data, VkQueue queue,
         patched.pWaitSemaphores = &drawn;
         return data->present(queue, &patched);
     }
-    if (!data->waits_consumed) return data->present(queue, info);
     VkPresentInfoKHR patched = *info;
+    if (!data->waits_consumed) {
+        /* What nobody took: the game's own waits, or the copy back's signal when NR's answer went
+         * into this image on the GPU path (`process_frame_gpu`). */
+        patched.waitSemaphoreCount = data->present_wait_count;
+        patched.pWaitSemaphores = data->present_wait_count ? data->present_wait : NULL;
+        return data->present(queue, &patched);
+    }
     patched.waitSemaphoreCount = 0;
     patched.pWaitSemaphores = NULL;
     return data->present(queue, &patched);

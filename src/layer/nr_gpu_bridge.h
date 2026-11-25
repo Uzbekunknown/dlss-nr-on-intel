@@ -506,9 +506,17 @@ static VkResult nr_gpu_bridge_capture(struct nr_gpu_bridge *b, VkImage image, Vk
                                      uint32_t wait_count, const VkSemaphore *waits)
 {
     b->waits_consumed = 0;
-    if (!b->resources || b->captured || b->output_pending || b->error != VK_SUCCESS
+    if (!b->resources || b->captured || b->error != VK_SUCCESS
         || !image || !queue || (b->bound_queue && b->bound_queue != queue)
         || (wait_count && !waits)) return VK_ERROR_INITIALIZATION_FAILED;
+    /* The last frame's copy back, when its present waited on a semaphore instead of the CPU on its
+     * fence (`nr_gpu_bridge_copy_output_signal`): waited for here, a frame later, where it has long
+     * finished. Nothing the daemon writes next can reach the output before it either way: this
+     * capture's signal, which the daemon's acquire waits for, comes after the copy on this queue. */
+    if (b->output_pending) {
+        VkResult waited = nr_gpu_bridge_wait(b, b->output_fence, &b->output_pending);
+        if (waited != VK_SUCCESS) return waited;
+    }
     if ((uint64_t)wait_count * sizeof(VkPipelineStageFlags) > SIZE_MAX) return VK_ERROR_OUT_OF_HOST_MEMORY;
     VkPipelineStageFlags *stages = wait_count ? (VkPipelineStageFlags *)malloc((size_t)wait_count * sizeof *stages) : NULL;
     if (wait_count && !stages) return VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -560,8 +568,15 @@ static VkResult nr_gpu_bridge_capture(struct nr_gpu_bridge *b, VkImage image, Vk
 
 /* Call only after a matching successful FRAME reply. The daemon must send that
  * reply after its done signal submit/fence completed, so a failure cannot strand
- * the game's queue in an unfulfilled binary semaphore wait. */
-static VkResult nr_gpu_bridge_copy_output(struct nr_gpu_bridge *b, VkImage image, VkQueue queue)
+ * the game's queue in an unfulfilled binary semaphore wait.
+ *
+ * With `signal`, the copy signals it and the CPU does not wait: what comes after it on the GPU, the
+ * panel's composite or the present, waits on `signal` instead, and the fence is waited for at the
+ * next capture. The wait here was 0.3-0.7 ms of every frame (the light client, 2026-11-26), the
+ * copy's own time and the wake-up after it, before the game could go on. `signal` is a binary
+ * semaphore of this swapchain image's own, unsignalled; whoever presents must wait on it. */
+static VkResult nr_gpu_bridge_copy_output_signal(struct nr_gpu_bridge *b, VkImage image, VkQueue queue,
+                                                 VkSemaphore signal)
 {
     if (!b->resources || !b->captured || b->error != VK_SUCCESS || !image || !queue
         || b->bound_queue != queue)
@@ -591,13 +606,25 @@ static VkResult nr_gpu_bridge_copy_output(struct nr_gpu_bridge *b, VkImage image
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .waitSemaphoreCount = b->fenced ? 0 : 1,
         .pWaitSemaphores = b->fenced ? NULL : &b->done, .pWaitDstStageMask = b->fenced ? NULL : &stage, .commandBufferCount = 1,
-        .pCommandBuffers = &b->output_command};
+        .pCommandBuffers = &b->output_command, .signalSemaphoreCount = signal ? 1 : 0,
+        .pSignalSemaphores = signal ? &signal : NULL};
     if (r == VK_SUCCESS) r = b->QueueSubmit(queue, 1, &si, b->output_fence);
     if (r != VK_SUCCESS) { b->error = r; return r; }
     b->output_pending = 1;
+    if (signal) {
+        b->captured = 0;
+        return VK_SUCCESS;
+    }
     r = nr_gpu_bridge_wait(b, b->output_fence, &b->output_pending);
     if (r == VK_SUCCESS) b->captured = 0;
     return r;
+}
+
+/* The copy back with the CPU waiting for it, as before 2026-11-26: for a present with nothing to
+ * wait on, and the tests that hold the bridge's states. */
+static VkResult nr_gpu_bridge_copy_output(struct nr_gpu_bridge *b, VkImage image, VkQueue queue)
+{
+    return nr_gpu_bridge_copy_output_signal(b, image, queue, VK_NULL_HANDLE);
 }
 #endif /* _WIN32 */
 #endif /* NR_GPU_BRIDGE_H */

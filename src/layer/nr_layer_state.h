@@ -206,6 +206,11 @@ struct swapchain_data {
 	 * is exactly when the next composite into it comes. Made on first use, destroyed with the
 	 * swapchain; never made off Windows, where there is no panel. */
 	VkSemaphore menu_done[MAX_IMAGES];
+	/* NR's answer copied into image i on the GPU path signals `nr_copied[i]`, and the panel's
+	 * composite or the present of that image waits on it instead of the CPU waiting for the copy
+	 * (`process_frame_gpu`, 2026-11-26): one per image for `menu_done`'s reason. Made on first use,
+	 * destroyed with the swapchain (`nr_copied_gone`); never made off Windows, which has no GPU path. */
+	VkSemaphore nr_copied[MAX_IMAGES];
 };
 
 /* Two small helpers the menu's glue needed from the file it came out of.
