@@ -393,7 +393,7 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
-## What a desktop card's frame holds besides the network, and 0.9 ms off it in the daemon and the layer (2026-11-26, branch `daemon-cuts`)
+## What a desktop card's frame holds besides the network; 0.9 ms of CPU and waits off it, which a GPU-bound game does not see (2026-11-26, branch `daemon-cuts`)
 
 The owner, 11-25, on #51 (a B580 in the Bloodborne PC recompile, native Vulkan: network B at
 896x512 in 9 ms, 21 ms a frame in the daemon): the speed-ups dropped for a small gain on this
@@ -420,17 +420,29 @@ daemon, then the layer, then commit. Arc 140V, Intel 101.9150.
 - **Cut on this branch**, each in its own commit: the settings file read only when its stamp could
   hide a write (`c07391d`); the letterbox check inside the decode's submit (`c07391d`); the copy
   back presented on a semaphore (`dc793be`). Together, timed with the GPU's clock steady, the whole
-  request went from 35.94 to 35.01 ms at 1762x992 (6 of 6 rounds): about 4 % of #51's frame, if a
-  B580 saves the same.
+  request went from 35.94 to 35.01 ms at 1762x992 (6 of 6 rounds). That is CPU time and waits, and
+  it shows where the GPU has room, as on the light client.
+- **In a game it does not show** (Mortal Kombat 11 at the owner's word, release roots built the
+  same way from `newnr` and from this branch, `nr-game\pacing-game-test.ps1`, B, GPU path,
+  1280x720 at 0.4, 40 s a run, alternating):
+  - frames a second 48.25 and 47.67 with the branch against 50.14 and 48.13 with `newnr`, which
+    moves 4 % between its own two runs;
+  - prep 1.15-1.16 against 1.21-1.25 ms;
+  - the rest of the daemon's frame, its wait for the game's own GPU work, 4.33-4.85 against
+    3.32-4.13.
+
+  So on this iGPU the game's GPU work and NR's fill the frame, and the CPU time freed only moves
+  into waiting. A frame that is GPU-bound gains only from less GPU work or fewer idle gaps on the
+  GPU; #51's B580 frame (the game's ~9 ms beside NR's ~12) may well be one. All frames
+  `gpu-shared` with `sync=semaphore`, no refusal, the game folder as before after each run.
 - **Measured, not built:** a pipe connection kept open across frames, 338-388 -> 210-232 us a
   request (`nr_pipe`, 30 ms apart), about 0.15 ms a frame. The daemon serves one connection at a
   time, so a held one would lock out a second client. The owner's call.
 - **Left for desktop cards:** the image passes, ~2.9 ms of a B580's frame, mostly fixed costs.
 
-**Not run:** a game through the Vulkan layer since (Mortal Kombat 11 is the one here), a B580,
-Linux. **Next on Linux:** `make test` in both memory modes and CTest: `nr_daemon.py`,
-`gpu_image_stats.py` and `gpu_image_pipeline.py` changed (the layer's change is Windows-only).
-**Next on Windows:** a game through the Vulkan layer, at the owner's word.
+**Not run:** a B580, Linux, CTest on Windows. **Next on Linux:** `make test` in both memory modes
+and CTest: `nr_daemon.py`, `gpu_image_stats.py` and `gpu_image_pipeline.py` changed (the layer's
+change is Windows-only). **Next on Windows:** the owner's word on the branch.
 
 ## The GPU path's slow state at 1280x720 on Windows is the driver's own clock choice (2026-11-22, afternoon, branch `newnr`)
 
