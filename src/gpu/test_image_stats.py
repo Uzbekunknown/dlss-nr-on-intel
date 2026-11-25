@@ -167,6 +167,35 @@ class HostChecks(unittest.TestCase):
         self.assertEqual(self.rt.calls[0],(0,41+73))
         self.assertEqual(self.rt.calls[1],(3,8))
 
+    def test_check_in_the_callers_submit_matches_the_reference(self):
+        # `_process_device` records the cached bounds' check into its decode's submit and finds
+        # the bounds afresh when the bars moved: the same bounds as `region` on every frame.
+        rng=np.random.default_rng(448)
+        reference=nr_daemon.Letterbox()
+        checked=0
+        for height,width,fmt,top,bottom,left,right in (
+                (41,73,37,4,37,0,73),(41,73,37,4,37,0,73),
+                (41,73,37,0,41,0,73),(41,73,44,0,41,3,70),
+                (42,74,43,2,39,0,74),(42,74,43,2,39,0,74),
+                (42,74,50,3,38,5,69),(42,74,50,0,42,0,74)):
+            raw=rng.integers(3,256,(height,width,4),dtype=np.uint8)
+            raw[:top,:,:3]=2;raw[bottom:,:,:3]=0
+            raw[:,:left,:3]=0;raw[:,right:,:3]=1
+            colour=nr_daemon.decode(raw.tobytes(),width,height,fmt)
+            expected=reference.region(colour,(width,height,fmt))
+            source=self.rt.buffer(raw.size,np.uint8).upload(raw)
+            try:
+                found=self.stats.cached_region(width,height,fmt)
+                if found is not None:
+                    checked+=1
+                    self.rt.begin();holds=self.stats.record_region_check(source,width,height)
+                    self.rt.submit()
+                    if not holds(): found=None
+                if found is None: found=self.stats.find_region(source,width,height,fmt)
+                self.assertEqual(found,expected)
+            finally: source.free()
+        self.assertGreater(checked,1)
+
     def test_dark_alpha_and_asymmetric_lines(self):
         rng=np.random.default_rng(338)
         for height,width in ((1,1),(2,2),(21,37),(96,129)):

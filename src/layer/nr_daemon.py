@@ -234,6 +234,9 @@ class Settings:
     # What `_read_json` returns, when asked, for a file that was there at its last look and is not
     # now: the panel removes its preview when its process ends (`nr_menu_bridge_destroy`).
     _GONE = object()
+    # How old a stamp must be, when its bytes are read, before the same stamp is taken to mean
+    # the same bytes without reading them (`_read_json`): longer than any filesystem's tick.
+    _SETTLED_NS = 5_000_000_000
 
     def __init__(self, args):
         self.path = args.settings
@@ -531,15 +534,27 @@ class Settings:
             was_there = getattr(self, attr) is not None
             setattr(self, attr, None)
             setattr(self, attr + "_bytes", None)
+            setattr(self, attr + "_settled", False)
             return gone if was_there else None
 
         same_stamp = (stamp == getattr(self, attr))
         setattr(self, attr, stamp)
+        # **A settled stamp needs no read.** Reading the bytes on every frame cost 0.2 ms of each
+        # (the light client, 11-26). A write after the bytes were read lands later, so it carries
+        # a later stamp unless it falls within the clock's tick of the old one: two seconds at worst
+        # (FAT32). Once a read finds its stamp older than `_SETTLED_NS`, the same stamp means the
+        # same bytes, and only a file written in the last few seconds is read on every frame.
+        if same_stamp and getattr(self, attr + "_settled", False):
+            return None
+        # Imported here: the setup window's tests run this class alone, without the module's imports.
+        import time
+        read_at = time.time_ns()
         try:
             with open(path, "rb") as handle:
                 raw = handle.read()
         except OSError:
             return None
+        setattr(self, attr + "_settled", read_at - stamp > self._SETTLED_NS)
 
         # The bytes decide, not the stamp. See the note above.
         if same_stamp and raw == getattr(self, attr + "_bytes", None):

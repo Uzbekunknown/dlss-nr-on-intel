@@ -93,8 +93,15 @@ class FakeComposer:
 
 
 class FakeStats:
-    def __init__(self,rt): self.cut=0.;self.bad=0;self.crop=None
-    def region(self,raw,width,height,fmt): return self.crop or (0,height,0,width)
+    def __init__(self,rt): self.cut=0.;self.bad=0;self.crop=None;self.known=None;self.checks=0
+    def region(self,raw,width,height,fmt):
+        self.known=self.crop or (0,height,0,width);return self.known
+    find_region=region
+    # The pipeline checks the last bounds inside its decode's submit and finds them afresh when
+    # the bars moved: `known` is what the last search found, `crop` where the bars are now.
+    def cached_region(self,width,height,fmt): return self.known
+    def record_region_check(self,raw,width,height):
+        self.checks+=1;return lambda: (self.crop or (0,height,0,width))==self.known
     def delta(self,*args,**kwargs): return self.cut
     def nonfinite(self,*args): return self.bad
     # the pipeline records these into its own submits and reads them after
@@ -319,9 +326,14 @@ class HostChecks(unittest.TestCase):
         old._closed=True
         self.pipe.process_device(self.raw,256,192,37,live)
         self.assertIsNot(self.pipe.frame,old)
+        checks=self.pipe.stats.checks
         self.pipe.stats.crop=(8,184,0,256)
         self.pipe.process_device(self.raw,256,192,37,live)
         self.assertEqual(self.pipe.last["crop"],(8,184,0,256))
+        # the bars moved: the check in the decode's submit said so, and the frame was decoded
+        # again on the bounds found afresh
+        self.assertEqual(self.pipe.stats.checks,checks+1)
+        self.assertEqual(self.pipe.stats.known,(8,184,0,256))
         self.assertFalse(self.pipe.last["history"])
 
     def test_fallbacks_before_recording_and_nonfinite_drops_history(self):

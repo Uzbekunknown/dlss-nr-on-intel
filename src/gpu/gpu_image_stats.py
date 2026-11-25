@@ -17,6 +17,11 @@ class _Push(ctypes.Structure):
 assert ctypes.sizeof(_Push)==56
 SDR_FORMATS=frozenset((37,43,44,50))
 
+
+def _bounds_hold(checks):
+    """Whether mode 3's eight words find the bars where the cached bounds put them."""
+    return all(value==0xffffffff or bool(value<=2)==(i<4) for i,value in enumerate(checks))
+
 class GPUImageStats:
     def __init__(self,runtime):
         self.rt=runtime
@@ -206,14 +211,30 @@ class GPUImageStats:
         return int(self._run(a,None,width,height,2,channels)[0])
 
     def region(self,raw,width,height,vk_format):
+        if self.cached_region(width,height,vk_format) is not None:
+            if _bounds_hold(self._run(raw,None,width,height,3,bounds=self.bounds)):
+                return self.bounds
+        return self.find_region(raw,width,height,vk_format)
+
+    def cached_region(self,width,height,vk_format):
+        """The bounds the last frame of this size and format was found to have, or None."""
+        if vk_format not in SDR_FORMATS:
+            raise ValueError("GPU letterbox metadata supports SDR RGBA8/BGRA8 only")
+        return self.bounds if self.key==(width,height,vk_format) else None
+
+    def record_region_check(self,raw,width,height):
+        """`region`'s check of the cached bounds, recorded into the commands the caller is
+        recording: `_process_device` puts it in its decode's submit, which spares a submit and its
+        wait, 0.25 ms a frame (11-26). The call it returns says, once those commands are
+        submitted, whether the bars are where they were."""
+        read=self._record(raw,None,width,height,3,bounds=self.bounds)
+        return lambda: _bounds_hold(read())
+
+    def find_region(self,raw,width,height,vk_format):
+        """The bounds found afresh from the frame's row and column maxima, and kept."""
         if vk_format not in SDR_FORMATS:
             raise ValueError("GPU letterbox metadata supports SDR RGBA8/BGRA8 only")
         key=(width,height,vk_format)
-        if self.key==key and self.bounds is not None:
-            checks=self._run(raw,None,width,height,3,bounds=self.bounds)
-            if all(value==0xffffffff or bool(value<=2)==(i<4)
-                   for i,value in enumerate(checks)):
-                return self.bounds
         maxima=self._run(raw,None,width,height,0)
         rows,columns=maxima[:height],maxima[height:]
         def run(values,extent):

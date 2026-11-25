@@ -181,29 +181,40 @@ class GPUImagePipeline:
 
     def _process_device(self, raw, width, height, fmt, live, motion=None, output=None, game_reset=None):
         started=time.perf_counter()
-        crop=self.stats.region(raw,width,height,fmt)
-        ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
-        follow=motion is not None and live.temporal>0 and self.history_frames>0
-        follower=self._follower(width,height,crop,ih,iw) if follow else None
-        # One submit for the decode and what reads it before the CPU decides anything: the cut
-        # test, or with motion the follower and its cut test's two reductions. They ran as
-        # separate submits in this order, and each image pass is still recorded behind a barrier
-        # (`xmx_rec_image_pipeline`).
-        raw_mode=self._raw_mode
-        self.rt.begin()
-        # Without motion only the change metric reads the frame as float32 at its full extent.
-        if not raw_mode or self.change_metric: self.decode.record(raw,self.active)
-        self.inner_decode.record(raw,self.inner)
-        cut_of=None
-        if follow:
-            self.history_resize.record(self.previous_neural,follower.resampled)
-            follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
-                            active=self.active,previous_inner=self.previous_inner,inner=self.inner,
-                            active_pass=not FOLLOW_IN_COMPOSE)
-            cut_of=follower.record_cut(self.stats,self.inner)
-        elif self.history_frames:
-            cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
-        self.rt.submit()
+        # The letterbox: the last frame's bounds are checked inside the decode's own submit, which
+        # spares a submit and its wait (0.25 ms a frame, 11-26), and a frame whose bars moved is
+        # decoded again on the bounds found afresh, so every frame decodes on its own bounds as when
+        # the check came first. A first frame, or a new size, finds them before anything.
+        crop=self.stats.cached_region(width,height,fmt)
+        check=crop is not None
+        if not check: crop=self.stats.find_region(raw,width,height,fmt)
+        while True:
+            ih,iw,ah,aw=self._configure(width,height,fmt,crop,live)
+            follow=motion is not None and live.temporal>0 and self.history_frames>0
+            follower=self._follower(width,height,crop,ih,iw) if follow else None
+            # One submit for the decode and what reads it before the CPU decides anything: the
+            # letterbox's check, and the cut test, or with motion the follower and its cut test's
+            # two reductions. They ran as separate submits in this order, and each image pass is
+            # still recorded behind a barrier (`xmx_rec_image_pipeline`).
+            raw_mode=self._raw_mode
+            self.rt.begin()
+            holds=self.stats.record_region_check(raw,width,height) if check else None
+            # Without motion only the change metric reads the frame as float32 at its full extent.
+            if not raw_mode or self.change_metric: self.decode.record(raw,self.active)
+            self.inner_decode.record(raw,self.inner)
+            cut_of=None
+            if follow:
+                self.history_resize.record(self.previous_neural,follower.resampled)
+                follower.record(motion,neural=self.previous_neural,previous=self.previous_active,
+                                active=self.active,previous_inner=self.previous_inner,inner=self.inner,
+                                active_pass=not FOLLOW_IN_COMPOSE)
+                cut_of=follower.record_cut(self.stats,self.inner)
+            elif self.history_frames:
+                cut_of=self.stats.record_delta(self.inner,self.previous_inner,iw,ih,slot="cut")
+            self.rt.submit()
+            if holds is None or holds(): break
+            crop=self.stats.find_region(raw,width,height,fmt)
+            check=False
         if follow:
             # Known nowhere, or a cut even against the last frame moved here: no history. A game
             # that said it did not start over keeps it past the limit, though not where its
