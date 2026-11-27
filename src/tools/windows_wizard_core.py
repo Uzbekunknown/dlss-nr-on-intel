@@ -91,8 +91,9 @@ FFX_NAMES = ("amd_fidelityfx_dx12.dll", "amd_fidelityfx_loader_dx12.dll")
 # The FidelityFX API versions the proxy has run in a game: Hogwarts Legacy's 1.0.1.41314.
 TESTED_FFX = ("1.0.1",)
 # Which of a DirectX 12 game's upscalers NR stands in front of (`_d3d12_target`): "auto" takes
-# XeSS where the game has it, which an Arc runs on its matrix units, else FSR 3.1; "xess" or "fsr"
-# takes that one.
+# XeSS where the game has it, which an Arc runs on its matrix units, else FSR 3.1, and OptiScaler's
+# custom upscaler where OptiScaler is set to one; "xess" or "fsr" takes that one, the custom
+# upscaler counting as FSR.
 UPSCALERS = ("auto", "xess", "fsr")
 # OptiScaler (github.com/optiscaler/OptiScaler) takes a DirectX 12 game's DLSS, FSR or XeSS and
 # upscales with XeSS unless its OptiScaler.ini says otherwise, from the libxess.dll it loads
@@ -102,6 +103,19 @@ UPSCALERS = ("auto", "xess", "fsr")
 OPTISCALER_INI = "OptiScaler.ini"
 OPTISCALER_FOLDER = "OptiScaler"
 OPTISCALER_ON_INSERT = ("auto", "", "0x2d", "45")
+# OptiScaler v10's custom upscalers (#53): a FidelityFX API upscaler's DLL in custom\<name>\ffx
+# under OptiScaler's own folder, chosen by Dx12Upscaler=<name>, the folder's name in any case, where
+# <name> is none of OptiScaler's own upscalers (OPTISCALER_UPSCALERS, which it reads first). It
+# takes FFX_CUSTOM_NAME there, else the first .dll the folder lists, and calls it by the FidelityFX
+# API's names, as a game calls its amd_fidelityfx_dx12.dll. Its hooks take over any DLL whose name
+# ends in a FidelityFX SDK name, from any folder, so NR's could not load the upscaler's under that
+# name from a folder of its own: NR's takes the DLL's place and name, and the upscaler's stays
+# beside it under `ffx_original`'s, as a game's FidelityFX DLL does; its other files stay as they
+# are (XMX-SR's fsr-original.dll and nvngx_dlss.dll).
+OPTISCALER_CUSTOM = ("custom", "ffx")
+FFX_CUSTOM_NAME = "amd_fidelityfx_upscaler_dx12.dll"
+OPTISCALER_UPSCALERS = ("auto", "xess", "xess_12", "fsr21", "fsr21_12", "fsr22", "fsr22_12", "ffx", "ffx_12",
+                        "fsr31", "fsr31_12", "dlss", "dlss_12", "dlssd")
 RUNTIME_MODULES = (
     "src/layer/nr_daemon.py", "src/layer/nr_alloc.py", "src/layer/nr_pipe.py",
     "src/layer/nr_paths.py", "src/layer/nr_knobs.py", "src/ref/nr_frame.py",
@@ -920,12 +934,14 @@ def _ini_values(path):
 
 def optiscaler(game_exe):
     """OptiScaler beside the game's executable, as its OptiScaler.ini sets it up: None when there is
-    none, else {"ini", "xess": the libxess.dll it loads or None, "upscaler", "menu_key"}.
+    none, else {"ini", "folder": its own, "xess": the libxess.dll it loads or None, "upscaler",
+    "custom": the custom upscaler it is set to (`_optiscaler_custom`) or None, "menu_key"}.
 
     OptiScaler 0.9 looks for XeSS (`XeSSProxy::InitXeSS`, `Util::LoadProxyLibrary`) in the file or
     folder its [Libraries] XeSSPath names; then in its own folder, which is OptiDllPath when set,
     else an `OptiScaler` folder beside the executable when there is one, else the executable's;
-    then by name alone, which finds the executable's first."""
+    then by name alone, which finds the executable's first. v10 keeps its custom upscalers under
+    that folder of its own too (OPTISCALER_CUSTOM)."""
     folder = Path(game_exe).parent
     ini = next((path for path in (folder / OPTISCALER_INI, folder / OPTISCALER_FOLDER / OPTISCALER_INI)
                 if path.is_file()), None)
@@ -946,10 +962,65 @@ def optiscaler(game_exe):
     if chosen is not None:
         candidates.append(chosen / XESS_NAME if chosen.is_dir() else chosen)
     own = named("optidllpath") or folder / OPTISCALER_FOLDER
-    candidates += [(own if own.is_dir() else folder) / XESS_NAME, folder / XESS_NAME]
-    return {"ini": ini, "xess": next((path for path in candidates if path.is_file()), None),
-            "upscaler": values.get("upscalers", {}).get("dx12upscaler", "auto").lower() or "auto",
+    own = own if own.is_dir() else folder
+    candidates += [own / XESS_NAME, folder / XESS_NAME]
+    upscaler = values.get("upscalers", {}).get("dx12upscaler", "auto") or "auto"
+    return {"ini": ini, "folder": own, "xess": next((path for path in candidates if path.is_file()), None),
+            "upscaler": upscaler.lower(),
+            "custom": None if upscaler.lower() in OPTISCALER_UPSCALERS else _optiscaler_custom(own, upscaler),
             "menu_key": values.get("menu", {}).get("shortcutkey", "auto").lower()}
+
+
+def _listed(folder, name):
+    """`folder / name` as `folder` spells it: OptiScaler, and Windows, find a folder's entry by its
+    name in any case. Spelled `name`'s way when there is none, or `folder` cannot be read."""
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if entry.name.lower() == name.lower():
+                    return Path(folder) / entry.name
+    except OSError:
+        pass
+    return Path(folder) / name
+
+
+def _optiscaler_custom(own, name):
+    """OptiScaler's custom upscaler `name`, in its own folder `own`: {"name": as its folder spells it,
+    "folder": its custom\\<name>\\ffx, where OptiScaler looks for it whether or not it is there,
+    "dll": the DLL OptiScaler takes from that folder (FFX_CUSTOM_NAME, else the first .dll listed,
+    in the order Windows lists the folder, as OptiScaler takes it), or None when it holds none}.
+    None for a name that is no folder's."""
+    if Path(name).name != name or name in (".", ".."):
+        return None
+    root = _listed(own, OPTISCALER_CUSTOM[0])
+    upscaler = _listed(root, name)
+    folder = _listed(upscaler, OPTISCALER_CUSTOM[1])
+    try:
+        with os.scandir(folder) as entries:
+            names = [entry.name for entry in entries]
+    except OSError:
+        names = []
+    dll = next((entry for entry in names if entry.lower() == FFX_CUSTOM_NAME), None) \
+        or next((entry for entry in names if len(entry) > 4 and entry.lower().endswith(".dll")), None)
+    return {"name": upscaler.name, "folder": folder, "dll": dll}
+
+
+def _custom_upscaler(folder):
+    """The name of OptiScaler's custom upscaler whose folder `folder` is, custom\\<name>\\ffx (any
+    case), else None: what an installation's record says NR went in front of."""
+    folder = Path(folder)
+    if folder.name.lower() == OPTISCALER_CUSTOM[1] and folder.parent.parent.name.lower() == OPTISCALER_CUSTOM[0]:
+        return folder.parent.name
+    return None
+
+
+def _optiscaler_menu(opti):
+    """What to say of OptiScaler's menu key: it opens on Insert, as NR's panel does, unless
+    ShortcutKey names another."""
+    if opti["menu_key"] not in OPTISCALER_ON_INSERT:
+        return ""
+    return ("; OptiScaler's menu opens on Insert, as NR's panel does: set ShortcutKey in "
+            f"{opti['ini']} to another key, such as 0x23 (End)")
 
 
 def _xess_placed(record, profile):
@@ -978,16 +1049,22 @@ def _upscaler_original(profile, folder, name, record, stage=None):
 
 def _ffx_placed(record, profile):
     """Where NR's FidelityFX DLL went, by an installation's record: (its folder, the name it took),
-    or None."""
+    or None. The name is one of FFX_NAMES, or a custom upscaler's (`_upscaler_names`)."""
+    names = _upscaler_names(record["files"])
     for name, entry in record["files"].items():
-        if name.lower() in FFX_NAMES and entry.get("placed"):
+        if name in names and name.lower() != XESS_NAME and entry.get("placed"):
             return (Path(entry["folder"]) if entry.get("folder") else Path(profile.game_exe).parent), name
     return None
 
 
-def _upscaler_name(name):
-    """Whether `name` is an upscaler DLL of the game's that NR's takes the place of."""
-    return name.lower() == XESS_NAME or name.lower() in FFX_NAMES
+def _upscaler_names(names):
+    """Which of `names`, files an installation placed or is to place, are upscaler DLLs of the
+    game's that NR's takes the place of: libxess.dll, a FidelityFX one (FFX_NAMES), or the DLL of
+    OptiScaler's custom upscaler, which may have any name and is known by its copy under
+    `ffx_original`'s name beside it."""
+    names = set(names)
+    return {name for name in names if name.lower() == XESS_NAME or name.lower() in FFX_NAMES
+            or (name.lower().endswith(".dll") and ffx_original(name) in names)}
 
 
 def _upscaler_placed(record, profile):
@@ -1010,8 +1087,16 @@ def _xess_check(profile, record=None):
         return None, str(error)
     opti = optiscaler(profile.game_exe)
     if opti is not None and opti["upscaler"] not in ("auto", "xess"):
+        if opti["custom"] is None:
+            fix = ("NR runs after OptiScaler's XeSS or a custom upscaler of its: set Dx12Upscaler=xess there, "
+                   f"or to the name of a custom upscaler's folder in {_listed(opti['folder'], OPTISCALER_CUSTOM[0])}")
+        elif _xess_placed(record, profile) is not None:
+            fix = ("NR is in front of XeSS: set Dx12Upscaler=xess there, or Remove NR, then Install NR again "
+                   f"to run NR after {opti['custom']['name']}")
+        else:
+            fix = "NR runs after OptiScaler's XeSS: set Dx12Upscaler=xess there"
         return None, (f"OptiScaler upscales this game with {opti['upscaler']} (Dx12Upscaler in {opti['ini']}), "
-                      "and NR runs after OptiScaler's XeSS: set Dx12Upscaler=xess there")
+                      f"and {fix}")
     folder = _xess_placed(record, profile)
     if folder is None and opti is not None:
         if opti["xess"] is None:
@@ -1046,26 +1131,33 @@ def _xess_check(profile, record=None):
     tested = any(version.startswith(prefix + ".") for prefix in TESTED_XESS)
     detail = f"XeSS {version} in {folder}"
     if opti is not None:
-        detail += ", which OptiScaler loads: NR runs after OptiScaler's XeSS"
-        if opti["menu_key"] in OPTISCALER_ON_INSERT:
-            detail += ("; OptiScaler's menu opens on Insert, as NR's panel does: set ShortcutKey in "
-                       f"{opti['ini']} to another key, such as 0x23 (End)")
+        detail += ", which OptiScaler loads: NR runs after OptiScaler's XeSS" + _optiscaler_menu(opti)
     return folder, detail + ("" if tested else f"; NR has run with XeSS {', '.join(TESTED_XESS)}")
 
 
 def _ffx_check(profile, record=None):
-    """Whether NR can go in front of the game's FSR 3.1: ((its folder, the DLL's name), what it is),
-    or (None, why not).
+    """Whether NR can go in front of the game's FSR 3.1, or of OptiScaler's custom upscaler: ((its
+    folder, the DLL's name), what it is), or (None, why not).
 
     The FidelityFX API is five functions, which NR's amd_fidelityfx_dx12.dll exports, and every one
-    of the game's DLL must be among them, as for XeSS. One without ffxDispatch is not the API."""
+    of the game's DLL must be among them, as for XeSS. One without ffxDispatch is not the API. With
+    OptiScaler set to a custom upscaler (`optiscaler`), the DLL is that upscaler's, which OptiScaler
+    calls by the same names, and the same holds for it."""
     if pe_architecture(profile.game_exe) != "x64":
         return None, "DirectX 12 through FSR 3.1 is for 64-bit games"
     try:
         record = record or _game_record(installed_path(profile))
     except (OSError, ValueError) as error:
         return None, str(error)
+    opti = optiscaler(profile.game_exe)
+    custom = opti["custom"] if opti else None
     placed = _ffx_placed(record, profile)
+    if placed is None and custom is not None:
+        if custom["dll"] is None:
+            return None, (f"OptiScaler upscales this game with {custom['name']} (Dx12Upscaler in {opti['ini']}), "
+                          f"a custom upscaler with no DLL in {custom['folder']}, where OptiScaler looks for it: put "
+                          "the upscaler there, or set Dx12Upscaler=xess, then Check again")
+        placed = custom["folder"], custom["dll"]
     if placed is None:
         found = ffx_libraries(profile.game_exe)
         if not found:
@@ -1075,24 +1167,47 @@ def _ffx_check(profile, record=None):
             return None, "Several FidelityFX DLLs, none beside the game: " + ", ".join(map(str, found))
         placed = found[0].parent, found[0].name
     folder, name = placed
+    # An installation's record names the custom upscaler NR went in front of by its folder. One
+    # OptiScaler no longer upscales with, or the game's own FSR where OptiScaler now upscales with
+    # a custom one, would leave NR without frames.
+    kind = _custom_upscaler(folder)
+    if kind is not None and (custom is None or custom["folder"] != folder):
+        return None, (f"NR is in front of OptiScaler's custom upscaler {kind}, in {folder}, which OptiScaler no "
+                      f"longer upscales this game with: set its Dx12Upscaler={kind} again, or Remove NR, then "
+                      "Install NR again")
+    if kind is None and custom is not None:
+        return None, (f"NR is in front of the game's FSR 3.1, in {folder}, and OptiScaler upscales this game with "
+                      f"its custom upscaler {custom['name']} (Dx12Upscaler in {opti['ini']}): Remove NR, then "
+                      "Install NR again to run NR after it")
+    restore = ("put the custom upscaler's own DLL back there" if kind
+               else "the game's file check (Steam's, or its launcher's) restores it")
     original, ours = _upscaler_original(profile, folder, name, record), profile.root / FFX_PROXY
     if not original.is_file():
-        return None, f"{original} is missing; the game's file check (Steam's, or its launcher's) restores it"
+        return None, f"{original} is missing; {restore}"
     if not ours.is_file():
         return None, f"This release has no {FFX_PROXY}, NR's FidelityFX DLL"
     if original.stat().st_size == ours.stat().st_size and _sha256(original) == _sha256(ours):
-        return None, (f"{folder / name} is NR's, from an installation setup has no record of. Restore "
-                      "the game's own with its file check (Steam's, or its launcher's), then Install NR")
+        return None, (f"{folder / name} is NR's, from an installation setup has no record of. "
+                      + ("Put the custom upscaler's own DLL back there" if kind
+                         else "Restore the game's own with its file check (Steam's, or its launcher's)")
+                      + ", then Install NR")
     theirs, provided = pe_exports(original), pe_exports(ours)
     if not theirs or provided is None or pe_architecture(original) != "x64":
         return None, f"{original} is not a 64-bit FidelityFX library setup can read"
-    version = _file_version(original) or "of unknown version"
+    known = _file_version(original)
+    version = known or "of unknown version"
     if "ffxDispatch" not in theirs:
-        return None, f"{original}, {version}, exports no ffxDispatch: it is not FSR 3.1's FidelityFX API"
+        return None, (f"{original}, {version}, exports no ffxDispatch: it is not "
+                      + ("a FidelityFX API upscaler" if kind else "FSR 3.1's FidelityFX API"))
     missing = sorted(theirs - provided)
     if missing:
-        return None, (f"This game's FidelityFX DLL, {version}, has functions NR's does not: "
+        return None, ((f"OptiScaler's custom upscaler {kind}" if kind else "This game's FidelityFX DLL")
+                      + f", {version}, has functions NR's does not: "
                       + ", ".join(missing[:8]) + ("..." if len(missing) > 8 else ""))
+    if kind:
+        return (folder, name), (f"OptiScaler's custom upscaler {kind} in {folder}: NR runs after it. Its {name}"
+                                + (f" {known}" if known else "") + f" stays beside NR's as {ffx_original(name)}"
+                                + _optiscaler_menu(opti))
     tested = any(version.startswith(prefix + ".") for prefix in TESTED_FFX)
     return (folder, name), (f"FSR 3.1, FidelityFX {version} in {folder}: NR runs while the game upscales "
                             "with FSR" + ("" if tested else f"; NR has run with FidelityFX {', '.join(TESTED_FFX)}"))
@@ -1101,9 +1216,11 @@ def _ffx_check(profile, record=None):
 def _d3d12_target(profile, record=None):
     """Which of a DirectX 12 game's upscalers NR stands in front of: ({"upscaler": "xess" or "fsr",
     "folder", "name": the game's DLL NR's takes the place of, "original": the name the game's keeps
-    beside NR's, "proxy": NR's in the release}, what it is), or (None, why not).
+    beside NR's, "proxy": NR's in the release, "custom": the name of OptiScaler's custom upscaler
+    when the DLL is its, else None}, what it is), or (None, why not).
 
-    By the profile's `upscaler`. "auto" keeps the one an installation placed; else XeSS where the
+    By the profile's `upscaler`. "auto" keeps the one an installation placed; else, where OptiScaler
+    is set to a custom upscaler, that one, a FidelityFX DLL and so "fsr" here; else XeSS where the
     game has it or OptiScaler is beside it, else FSR 3.1; and a game whose XeSS NR cannot stand in
     front of gets FSR 3.1 where it can, XeSS's reason said."""
     if pe_architecture(profile.game_exe) != "x64":
@@ -1116,7 +1233,7 @@ def _d3d12_target(profile, record=None):
     def xess():
         folder, detail = _xess_check(profile, record)
         target = {"upscaler": "xess", "folder": folder, "name": XESS_NAME, "original": XESS_ORIGINAL,
-                  "proxy": XESS_PROXY}
+                  "proxy": XESS_PROXY, "custom": None}
         return (target if folder is not None else None), detail
 
     def fsr():
@@ -1125,19 +1242,20 @@ def _d3d12_target(profile, record=None):
             return None, detail
         folder, name = found
         return {"upscaler": "fsr", "folder": folder, "name": name, "original": ffx_original(name),
-                "proxy": FFX_PROXY}, detail
+                "proxy": FFX_PROXY, "custom": _custom_upscaler(folder)}, detail
 
     opti = optiscaler(profile.game_exe)
+    custom = opti["custom"] if opti else None
     if profile.upscaler == "xess":
         return xess()
     if profile.upscaler == "fsr":
-        if opti is not None:
+        if opti is not None and custom is None:
             return None, ("OptiScaler is beside the game, and NR runs after the XeSS it upscales with: "
                           "leave the upscaler to setup")
         return fsr()
     if _xess_placed(record, profile) is not None:
         return xess()
-    if _ffx_placed(record, profile) is not None:
+    if _ffx_placed(record, profile) is not None or custom is not None:
         return fsr()
     target, why = xess()
     if target is not None or opti is not None:
@@ -1514,6 +1632,11 @@ def validate(profile):
     if profile.api == "d3d12":
         # Named for XeSS, the first upscaler NR went in front of; FSR 3.1's choice is said here too.
         check("xess_library", target is not None, target_detail)
+        if target is not None and target["custom"]:
+            # Said in the window, not only in the details: setup renames that upscaler's DLL, and
+            # NR gets frames only while OptiScaler upscales with it.
+            warn("optiscaler_custom", f"OptiScaler's custom upscaler {target['custom']} in {target['folder']}: "
+                 "NR runs after it while OptiScaler upscales with it", target["custom"], target["folder"])
     files_ok, files_detail = _game_files_check(profile, arch)
     check("game_files", files_ok, files_detail)
     if profile.api == "vulkan" and arch in LAYERS:
@@ -1679,9 +1802,9 @@ def _game_sources(profile, arch, stage=None):
     """What goes into the game's folders, by name: (source, the folder it goes into).
 
     Beside the executable, the proxy for every Vulkan or DirectX 8-11 game, and DXVK for DirectX 8-11.
-    For DirectX 12, in the folder of the game's upscaler, XeSS or FSR 3.1 (`_d3d12_target`): a copy of
-    its DLL under another name, NR's in its place, and NR's settings for it, which install writes into
-    `stage` first."""
+    For DirectX 12, in the folder of the game's upscaler, XeSS, FSR 3.1 or OptiScaler's custom one
+    (`_d3d12_target`): a copy of its DLL under another name, NR's in its place, and NR's settings for
+    it, which install writes into `stage` first."""
     game = profile.game_exe.parent
     if profile.api == "d3d12":
         record = _game_record(stage or installed_path(profile))
@@ -1723,15 +1846,16 @@ def _game_files_check(profile, arch):
     if placed and (not set(placed) <= set(sources) or record.get("arch") != arch):
         return False, "Remove NR from this game before changing its graphics API, upscaler or executable"
     aside = []
+    upscalers = _upscaler_names(sources)
     for name, (source, folder) in sources.items():
         target = folder / name
         entry = record["files"].get(name, {})
         if target.is_symlink() or (target.exists() and not target.is_file()):
             return False, f"{target} is not a regular file"
-        if _upscaler_name(name) and entry.get("placed") and target.is_file() \
+        if name in upscalers and entry.get("placed") and target.is_file() \
                 and _sha256(target) != entry.get("sha256"):
-            return False, (f"The game has replaced NR's {name}, in an update most likely: Remove NR, "
-                           "then Install NR again")
+            who = "The game has" if _custom_upscaler(folder) is None else "A new copy of the custom upscaler has"
+            return False, f"{who} replaced NR's {name}, in an update most likely: Remove NR, then Install NR again"
         if target.is_file() and not entry.get("placed") and source.is_file() \
                 and _sha256(target) != _sha256(source):
             aside.append(name)
@@ -1807,7 +1931,7 @@ def _write_proxy_environment(profile, stage, destination):
     it is for, where to record a launch, and the game's own loader if one was set aside."""
     lines = ["# Read by vulkan-1.dll beside the game (nr_vulkan_proxy.c) in the game's own process."
              if profile.api != "d3d12" else
-             "# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside the game's upscaler "
+             "# Read by NR's libxess.dll or FidelityFX DLL beside the game's upscaler "
              "(src/xess/nr_xess.c, nr_ffx.c), in the game's process.",
              "NR_GAME_EXE=" + str(profile.game_exe),
              "NR_LAUNCH_STATE=" + str(profile.root / "work/windows-wizard/launch-state.json")]
@@ -1831,7 +1955,7 @@ def _write_xess_settings(profile, stage, destination):
     """XESS_SETTINGS, which NR's libxess.dll or amd_fidelityfx_dx12.dll reads beside it: NR after the
     upscaler, on its output, the daemon's pipe, the ENV_FILE to start the daemon from, whose
     trigger turns NR on and off, and the experimental speed-up (`_cache_lines`)."""
-    lines = ["# Read by NR's libxess.dll or amd_fidelityfx_dx12.dll beside it (src/xess/nr_xess.c, "
+    lines = ["# Read by NR's libxess.dll or FidelityFX DLL beside it (src/xess/nr_xess.c, "
              "nr_ffx.c); Install NR writes it.",
              "mode=after", "pipe=" + layer_environment(profile)["NR_LAYER_SOCKET"],
              "env=" + str(destination / ENV_FILE)] + _cache_lines(profile)
@@ -1918,11 +2042,12 @@ def uninstall(profile, emit=None):
         record = _game_record(destination)
         placed_any = any(entry.get("placed") for entry in record["files"].values())
         upscaler = _upscaler_placed(record, profile)
+        upscalers = _upscaler_names(record["files"])
         for name in sorted(record["files"]):
             entry = record["files"][name]
             if entry.get("placed"):
                 target = _game_target(profile, name, entry)
-                if _upscaler_name(name) and target.is_file() and _sha256(target) != entry.get("sha256"):
+                if name in upscalers and target.is_file() and _sha256(target) != entry.get("sha256"):
                     # The game put its own back over NR's, in an update: it stays, and the one set
                     # aside, which it replaces, goes with the installation.
                     updated.append(name)

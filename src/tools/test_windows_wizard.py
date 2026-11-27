@@ -774,6 +774,205 @@ class WizardFixture(unittest.TestCase):
         self.assertFalse(detail["ok"])
         self.assertIn(core.FFX_PROXY, detail["detail"])
 
+    def custom_upscaler_game(self):
+        """A DirectX 12 game with OptiScaler v10 beside it, set to a custom upscaler laid out as
+        XMX-SR's guide lays it out (#53): its DLL in OptiScaler\\custom\\xmxsr\\ffx, beside the files
+        it loads itself, with OptiScaler's own libxess.dll and FidelityFX DLL in its folder. The ini
+        spells the name otherwise than its folder, and the kind's folder is FFX: OptiScaler finds
+        both in any case, and so must setup on a file system that does not."""
+        top = self.base / "Custom upscaler game (test)"
+        exe = write_pe(top / "Game.exe")
+        own = top / core.OPTISCALER_FOLDER
+        (top / "dxgi.dll").write_bytes(b"OptiScaler")
+        (top / core.OPTISCALER_INI).write_text("[Upscalers]\nDx12Upscaler=XMXSR\n[Menu]\nShortcutKey=0x23\n",
+                                               encoding="utf-8")
+        write_pe_exporting(own / core.XESS_NAME, XESS_EXPORTS[:-1], suffix=b"OptiScaler's XeSS")
+        write_pe_exporting(own / core.FFX_CUSTOM_NAME, FFX_EXPORTS, suffix=b"OptiScaler's own FidelityFX")
+        folder = own / "custom" / "xmxsr" / "FFX"
+        write_pe_exporting(folder / core.FFX_CUSTOM_NAME, FFX_EXPORTS, suffix=b"XMX-SR")
+        write_pe_exporting(folder / "fsr-original.dll", FFX_EXPORTS, suffix=b"AMD's SDK 2.4 upscaler")
+        write_pe(folder / "nvngx_dlss.dll", suffix=b"NVIDIA's DLSS")
+        (folder / "xmxsr.ini").write_text("[XMX]\n", encoding="utf-8")
+        write_pe_exporting(self.root / core.FFX_PROXY, FFX_EXPORTS, suffix=b"NR's FSR proxy")
+        write_pe_exporting(self.root / core.XESS_PROXY, XESS_EXPORTS, suffix=b"NR's proxy")
+        return replace(self.profile, api="d3d12", game_exe=exe), folder
+
+    def test_d3d12_goes_in_front_of_optiscalers_custom_upscaler_and_remove_puts_it_back(self):
+        # OptiScaler's hooks take any DLL named as a FidelityFX one, so NR's cannot load XMX-SR's
+        # by its name from a folder of its own: NR's takes its place and name, and XMX-SR's stays
+        # beside it under ffx_original's, its other files where they were.
+        profile, folder = self.custom_upscaler_game()
+        name, original = core.FFX_CUSTOM_NAME, "amd_fidelityfx_upscaler_dx12_nr_orig.dll"
+        self.assertEqual(core.ffx_original(name), original)
+        xmx = (folder / name).read_bytes()
+        own = profile.game_exe.parent / core.OPTISCALER_FOLDER
+        before = {path.name: path.read_bytes() for path in folder.iterdir()}
+        opti_files = {path.name: path.read_bytes() for path in own.iterdir() if path.is_file()}
+        target, _ = core._d3d12_target(profile)
+        self.assertEqual(target, {"upscaler": "fsr", "folder": folder, "name": name, "original": original,
+                                  "proxy": core.FFX_PROXY, "custom": "xmxsr"})
+        checked = core.validate(profile)
+        checks = {item["name"]: item for item in checked["checks"]}
+        self.assertTrue(checks["xess_library"]["ok"], checks["xess_library"])
+        detail = checks["xess_library"]["detail"]
+        self.assertIn(f"OptiScaler's custom upscaler xmxsr in {folder}: NR runs after it", detail)
+        self.assertIn(original, detail)
+        self.assertNotIn("ShortcutKey", detail)   # its menu is on End here
+        self.assertTrue(checks["runtime_files"]["ok"], checks["runtime_files"])
+        self.assertIn(name, checks["game_files"]["detail"])
+        # Said in the window too, in its own words, in each of its four languages.
+        self.assertEqual([(item["name"], item["values"]) for item in checked["warnings"]],
+                         [("optiscaler_custom", ["xmxsr", str(folder)])])
+        window = (Path(core.__file__).resolve().parent.parent.parent / "dist-tools"
+                  / "windows-wizard.ps1").read_text(encoding="utf-8")
+        self.assertEqual(window.count("'Warn.optiscaler_custom'="), 4)
+        result = core.install(profile)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([item["name"] for item in result["warnings"]], ["optiscaler_custom"])
+        installed = core.installed_path(profile)
+        self.assertEqual((folder / name).read_bytes(), (self.root / core.FFX_PROXY).read_bytes())
+        self.assertEqual((folder / original).read_bytes(), xmx)
+        self.assertEqual((installed / core.GAME_BACKUP / name).read_bytes(), xmx)
+        for other in ("fsr-original.dll", "nvngx_dlss.dll", "xmxsr.ini"):
+            self.assertEqual((folder / other).read_bytes(), before[other], other)
+        self.assertEqual({path.name: path.read_bytes() for path in own.iterdir() if path.is_file()}, opti_files)
+        self.assertFalse((profile.game_exe.parent / core.PROXY_NAME).exists())
+        settings = (folder / core.XESS_SETTINGS).read_text(encoding="utf-8").splitlines()
+        self.assertIn("mode=after", settings)
+        self.assertIn("pipe=" + core.layer_environment(profile)["NR_LAYER_SOCKET"], settings)
+        self.assertIn("env=" + str(installed / core.ENV_FILE), settings)
+        # Installed, Check goes by the record and says the same; installed again, XMX-SR's DLL is
+        # still the one set aside, once.
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        self.assertIn("OptiScaler's custom upscaler xmxsr", detail["detail"])
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((installed / core.GAME_BACKUP / name).read_bytes(), xmx)
+        self.assertEqual((folder / original).read_bytes(), xmx)
+        self.assertFalse((installed / ".undo").exists())
+        (folder / core.XESS_LOG).write_text("what NR's DLL said in the game\n")
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual({path.name: path.read_bytes() for path in folder.iterdir()}, before)
+        self.assertFalse(installed.exists())
+
+    def test_d3d12_takes_only_a_custom_upscaler_nrs_dll_can_stand_in_front_of(self):
+        profile, folder = self.custom_upscaler_game()
+        name = core.FFX_CUSTOM_NAME
+        ini = profile.game_exe.parent / core.OPTISCALER_INI
+        # One with a function NR's DLL does not export: OptiScaler's plug-in entry, which NR's
+        # carries once it hands it on.
+        write_pe_exporting(folder / name, (*FFX_EXPORTS, "OptiPluginInit"), suffix=b"XMX-SR")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("OptiScaler's custom upscaler xmxsr", detail["detail"])
+        self.assertIn("OptiPluginInit", detail["detail"])
+        write_pe_exporting(self.root / core.FFX_PROXY, (*FFX_EXPORTS, "OptiPluginInit"), suffix=b"NR's FSR proxy")
+        detail = self.checks(profile)["xess_library"]
+        self.assertTrue(detail["ok"], detail)
+        # One that is no FidelityFX API upscaler.
+        write_pe_exporting(folder / name, ("OptiPluginInit",))
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("ffxDispatch", detail["detail"])
+        # NR's own in its place, with no record of it.
+        shutil.copy2(self.root / core.FFX_PROXY, folder / name)
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("is NR's", detail["detail"])
+        self.assertIn("custom upscaler's own DLL", detail["detail"])
+        self.assertFalse(core.install(profile)["ok"])
+        # Without the standard name, the first .dll the folder lists, here its only one: NR's takes
+        # that name, and Remove NR knows it by the copy beside it.
+        for path in folder.iterdir():
+            path.unlink()
+        write_pe_exporting(folder / "XmxSr.dll", FFX_EXPORTS, suffix=b"XMX-SR by another name")
+        (folder / "xmxsr.ini").write_text("[XMX]\n", encoding="utf-8")
+        target, _ = core._d3d12_target(profile)
+        self.assertEqual((target["name"], target["original"]), ("XmxSr.dll", "XmxSr_nr_orig.dll"))
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((folder / "XmxSr.dll").read_bytes(), (self.root / core.FFX_PROXY).read_bytes())
+        self.assertTrue((folder / "XmxSr_nr_orig.dll").read_bytes().endswith(b"by another name"))
+        # A new copy of the upscaler over NR's: Check says so, and Remove NR leaves it.
+        write_pe_exporting(folder / "XmxSr.dll", FFX_EXPORTS, suffix=b"XMX-SR, updated")
+        detail = self.checks(profile)["game_files"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("A new copy of the custom upscaler has replaced NR's XmxSr.dll", detail["detail"])
+        removed = core.uninstall(profile)
+        self.assertTrue(removed["ok"], removed)
+        self.assertEqual(removed["updated_by_game"], ["XmxSr.dll"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["XmxSr.dll", "xmxsr.ini"])
+        self.assertTrue((folder / "XmxSr.dll").read_bytes().endswith(b"updated"))
+        self.assertFalse(core.installed_path(profile).exists())
+        # A name with no DLL where OptiScaler would look for it: Check names the folder.
+        custom = folder.parents[1]
+        ini.write_text("[Upscalers]\nDx12Upscaler=fsr4x\n", encoding="utf-8")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn(f"no DLL in {custom / 'fsr4x' / 'ffx'}", detail["detail"])
+        # One of OptiScaler's own upscalers comes before a custom one of its name.
+        write_pe_exporting(custom / "fsr31" / "ffx" / name, FFX_EXPORTS)
+        ini.write_text("[Upscalers]\nDx12Upscaler=fsr31\n", encoding="utf-8")
+        self.assertIsNone(core.optiscaler(profile.game_exe)["custom"])
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Dx12Upscaler=xess", detail["detail"])
+        self.assertIn(f"custom upscaler's folder in {custom}", detail["detail"])
+
+    def test_d3d12_says_when_optiscaler_no_longer_upscales_with_the_one_nr_is_in_front_of(self):
+        profile, folder = self.custom_upscaler_game()
+        ini = profile.game_exe.parent / core.OPTISCALER_INI
+        own = profile.game_exe.parent / core.OPTISCALER_FOLDER
+        xmx = (folder / core.FFX_CUSTOM_NAME).read_bytes()
+        self.assertTrue(core.install(profile)["ok"])
+        # OptiScaler set to its XeSS again, in its menu or its ini: NR would get no frame.
+        ini.write_text("[Upscalers]\nDx12Upscaler=xess\n", encoding="utf-8")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Dx12Upscaler=xmxsr", detail["detail"])
+        self.assertIn("Remove NR, then Install NR", detail["detail"])
+        # Remove NR puts XMX-SR's DLL back all the same, and Install NR then takes OptiScaler's XeSS.
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual((folder / core.FFX_CUSTOM_NAME).read_bytes(), xmx)
+        self.assertTrue(core.install(profile)["ok"])
+        self.assertEqual((own / core.XESS_NAME).read_bytes(), (self.root / core.XESS_PROXY).read_bytes())
+        self.assertEqual((folder / core.FFX_CUSTOM_NAME).read_bytes(), xmx)
+        # And set to the custom upscaler after that.
+        ini.write_text("[Upscalers]\nDx12Upscaler=XMXSR\n", encoding="utf-8")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Install NR again to run NR after xmxsr", detail["detail"])
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual(core._d3d12_target(profile)[0]["custom"], "xmxsr")
+        # Asked for by name: XeSS needs OptiScaler set to it, and FSR's kind takes the custom one.
+        detail = self.checks(replace(profile, upscaler="xess"))["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("Dx12Upscaler=xess", detail["detail"])
+        self.assertEqual(core._d3d12_target(replace(profile, upscaler="fsr"))[0]["folder"], folder)
+        # In the folder OptiDllPath names, with OptiScaler's menu on Insert, as NR's panel is.
+        elsewhere = profile.game_exe.parent / "Opti files"
+        shutil.copytree(own / "custom", elsewhere / "custom")
+        shutil.rmtree(own / "custom")
+        ini.write_text(f"[Upscalers]\nDx12Upscaler=xmxsr\n[Libraries]\nOptiDllPath={elsewhere}\n", encoding="utf-8")
+        target, detail = core._d3d12_target(profile)
+        self.assertEqual(target["folder"], elsewhere / "custom" / "xmxsr" / "FFX")
+        self.assertIn("ShortcutKey", detail)
+
+    def test_d3d12_in_front_of_the_games_fsr_says_when_optiscaler_takes_a_custom_upscaler(self):
+        # NR in front of the game's own FSR 3.1, then OptiScaler set beside it to a custom upscaler,
+        # which takes the game's FidelityFX calls: NR would get none.
+        profile, folder = self.fsr_game()
+        self.assertTrue(core.install(profile)["ok"])
+        (folder / core.OPTISCALER_INI).write_text("[Upscalers]\nDx12Upscaler=xmxsr\n", encoding="utf-8")
+        write_pe_exporting(folder / core.OPTISCALER_FOLDER / "custom" / "xmxsr" / "ffx" / core.FFX_CUSTOM_NAME,
+                           FFX_EXPORTS, suffix=b"XMX-SR")
+        detail = self.checks(profile)["xess_library"]
+        self.assertFalse(detail["ok"])
+        self.assertIn("NR is in front of the game's FSR 3.1", detail["detail"])
+        self.assertIn("Install NR again to run NR after it", detail["detail"])
+        self.assertTrue(core.uninstall(profile)["ok"])
+        self.assertEqual(core._d3d12_target(profile)[0]["custom"], "xmxsr")
+
     def test_pacing_in_the_profile_the_environment_and_an_installed_game(self):
         # Asynchronous mode and every Nth frame: kept in the profile, set for the layer either
         # way, and written into an installed game's ENV_FILE without its other lines moving. They

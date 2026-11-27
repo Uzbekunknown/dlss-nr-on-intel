@@ -35,12 +35,12 @@ packages globally, and neither is needed with the release's own Python.
 
 Choose **Vulkan** for a game with its own Vulkan renderer, **DirectX 8–11** for those, and
 **DirectX 12 (games with XeSS, FSR 3.1 or OptiScaler)** for a DirectX 12 game that offers
-Intel XeSS or AMD FSR 3.1, or one with OptiScaler set to XeSS (below). For Vulkan and
-DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for DirectX 8–11 DXVK
-3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's architecture. A game
-file of the same name is set aside. **Remove NR** deletes the game's `dlss-nr` folder and
-these files and puts the set-aside ones back; a file that changed since, for example in a
-game update, is left as it is and named.
+Intel XeSS or AMD FSR 3.1, or one with OptiScaler set to XeSS or to a custom upscaler (below).
+For Vulkan and DirectX 8–11 installation puts a `vulkan-1.dll` beside the game, and for
+DirectX 8–11 DXVK 3.1.1 as well (in `dxvk\`, with its zlib licence), for the game's
+architecture. A game file of the same name is set aside. **Remove NR** deletes the game's
+`dlss-nr` folder and these files and puts the set-aside ones back; a file that changed since,
+for example in a game update, is left as it is and named.
 
 **DirectX 12 works through the game's own XeSS.** Installation puts NR's `libxess.dll` in
 front of the game's, in whichever folder the game keeps it (an Unreal plug-in's too), and
@@ -71,11 +71,25 @@ generation at x4 too. **Check** refuses a FidelityFX DLL with functions NR's doe
 takes over a game's DLSS, FSR or XeSS and upscales with XeSS, from the `libxess.dll` that comes
 with it, so NR runs after OptiScaler's XeSS. Put OptiScaler's files beside the game's
 executable as its guide says, and in `OptiScaler.ini` keep its upscaler on XeSS
-(`Dx12Upscaler=auto` or `xess`) and move its menu off Insert, which opens NR's panel
-(`ShortcutKey=0x23` puts it on End). Then choose the game's executable and **DirectX 12** in
-setup: **Check** names OptiScaler's `libxess.dll` and says if its settings keep NR from the
-frames. Use **Remove NR** before you remove OptiScaler. Checked so far in Hogwarts Legacy with
-OptiScaler 0.9.4 taking the game's XeSS.
+(`Dx12Upscaler=auto` or `xess`), or on a custom upscaler (below), and move its menu off Insert,
+which opens NR's panel (`ShortcutKey=0x23` puts it on End). Then choose the game's executable and
+**DirectX 12** in setup: **Check** names OptiScaler's `libxess.dll` and says if its settings keep
+NR from the frames. Use **Remove NR** before you remove OptiScaler. Checked so far in Hogwarts
+Legacy with OptiScaler 0.9.4 taking the game's XeSS.
+
+**After an OptiScaler custom upscaler.** OptiScaler v10 can upscale with a FidelityFX upscaler
+of your own, XMX-SR for one: its DLL goes in `custom\<name>\ffx` in OptiScaler's folder (the
+`OptiScaler` folder beside the game's executable, or the one `OptiDllPath` names), and
+`Dx12Upscaler=<name>` in `OptiScaler.ini` chooses it. Setup then puts NR's DLL in that folder
+under the upscaler's own name, `amd_fidelityfx_upscaler_dx12.dll` as a rule, and the upscaler's
+stays beside it as `amd_fidelityfx_upscaler_dx12_nr_orig.dll`, which NR's calls; its other files
+(XMX-SR's `fsr-original.dll` and `nvngx_dlss.dll`) stay as they are. NR's DLL cannot call it from
+a folder of its own: OptiScaler takes over every DLL named as one of AMD's FidelityFX DLLs,
+wherever it is. **Check** names the custom upscaler and its folder, refuses one with functions
+NR's DLL does not carry, and says when OptiScaler is set to another upscaler than the one NR is
+in front of; NR gets frames only while OptiScaler upscales with it. **Remove NR** puts the
+upscaler's DLL back; to update the upscaler, use **Remove NR**, then **Install NR** again. Not
+yet run in a game.
 
 For a Vulkan game, choose the executable that draws with Vulkan: NR works only in the one
 chosen. Steam starts DOOM (2016)'s `DOOMx64.exe`, which starts `DOOMx64vk.exe` when the
