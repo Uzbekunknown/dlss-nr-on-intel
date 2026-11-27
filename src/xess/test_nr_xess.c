@@ -7,13 +7,16 @@
  * not, where the change is not trusted and is filled from around it â€” and one change fades into the
  * next over three executes. Every expected value comes from a CPU transcription of
  * nr_xess.hlsl below. Last, FSR 3.1's dispatch through nr_ffx.c, with a stand-in for AMD's DLL:
- * the cut after it as after XeSS, from the states the game names, and the calls it hands on whole.
+ * the cut after it as after XeSS, from the states the game names, and the calls it hands on whole;
+ * and the FidelityFX DLL this build made, loaded as OptiScaler v10 loads a custom upscaler, in front
+ * of test_ffx_original.dll, a stand-in for one, both from beside this test.
  *
  *   test_nr_xess              a stand-in daemon
  *   test_nr_xess <pipe>       the daemon listening at <pipe>, for the whole round trip
  */
 #define NR_XESS_TEST
 #include "nr_ffx.c"                     /* which includes nr_xess.c */
+#include "test_ffx_original.h"
 
 static xess_d3d12_execute_params_t seen;
 
@@ -1989,9 +1992,11 @@ static void ffx_read_output(ID3D12Resource *out, D3D12_RESOURCE_STATES held, ID3
 /* After FSR 3.1: as run_after, through ffxDispatch, with the output where FSR writes it, at (0, 0),
  * left by FSR in the state the game named, which the cut takes it from and gives it back in. Its
  * size from the dispatch, or from the context where the dispatch gives none. FSR is handed the
- * game's description as it was. The context made with `flags`: an 8-bit output is NR's with
- * non-linear colour and, display-encoded all the same, with linear. */
-static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int sized, uint32_t flags)
+ * game's description as it was. The context made with `flags`, the dispatch with `dispatch_flags`:
+ * an 8-bit output is NR's with non-linear colour, said at the context or as sRGB at the dispatch,
+ * and, display-encoded all the same, with linear. */
+static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int sized, uint32_t flags,
+		   uint32_t dispatch_flags)
 {
 	UINT texel;
 	int kind = kind_of(format, &texel), failures = 0;
@@ -2015,6 +2020,7 @@ static int run_ffx(DXGI_FORMAT format, const char *name, uint32_t state, int siz
 			given_at(kind, x, y, given + ((size_t)y * IN_W + x) * 4);
 	brighten(given, NULL, stand.answer, IN_W, IN_H);
 	struct ffx_dispatch_upscale d = ffx_upscale(tex, NULL, out, state, sized);
+	d.flags = dispatch_flags;
 	for (int tries = 0; tries == 0 || (tries < 250 && cut.hello != 2); tries++) {
 		ffxDispatch(&context, &d.header);
 		if (submit()) return 1;
@@ -2150,8 +2156,10 @@ static int run_ffx_motion(ID3D12Resource *motion)
 }
 
 /* What goes to FSR whole, with nothing recorded: a dispatch of another kind (frame generation's),
- * an upscale of a context this proxy did not see made, one made with non-linear colour, and one
- * whose output is in a state the proxy does not know. FSR is called once each. */
+ * an upscale of a context this proxy did not see made, one made with non-linear colour, one whose
+ * output is in a state the proxy does not know, and two whose dispatch says the colour is not
+ * linear, PQ, or sRGB above 8 bits a channel (OptiScaler's FsrNonLinearPQ and FsrNonLinearSRGB).
+ * FSR is called once each. */
 static int run_ffx_whole(void)
 {
 	UINT texel;
@@ -2169,12 +2177,16 @@ static int run_ffx_whole(void)
 		{ "a context not seen made", "did not see made" },
 		{ "non-linear colour", "non-linear" },
 		{ "an output state not known", "state 0x400" },
+		{ "PQ colour", "PQ-encoded" },
+		{ "sRGB colour above 8 bits", "(FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB)" },
 	};
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 6; i++) {
 		ffxContext context = i == 1 ? (ffxContext)(uintptr_t)0x7777
 			: ffx_make(i == 2 ? FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE : 0);
 		struct ffx_dispatch_upscale d = ffx_upscale(tex, NULL, out, i == 3 ? 1u << 10 : 1u << 1, 1);
 		if (i == 0) d.header.type = 0x00020001u;   /* FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION */
+		if (i == 4) d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_PQ;
+		if (i == 5) d.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
 		uint64_t calls = cut.calls;
 		int dispatches = ffx_dispatches;
 		cut_now = 0;                             /* the last dispatch's, which a whole one leaves */
@@ -2192,7 +2204,236 @@ static int run_ffx_whole(void)
 	ID3D12Resource_Release(out);
 	ID3D12Resource_Release(tex);
 	printf("%s FSR 3.1, handed on whole: another kind of dispatch, a context not seen made, non-linear "
-	       "colour, an output state not known\n", failures ? "FAIL" : "ok  ");
+	       "colour, an output state not known, PQ colour, sRGB colour above 8 bits\n", failures ? "FAIL" : "ok  ");
+	return failures != 0;
+}
+
+/* ---- OptiScaler v10's custom upscalers (nr_ffx.c) ---- */
+
+/* `text` holds `part`; else a line naming what was looked for, and 1. */
+static int lacks(const char *text, const char *part, const char *where)
+{
+	if (strstr(text, part)) return 0;
+	printf("FAIL OptiScaler's custom upscaler: %s does not say \"%s\"\n", where, part);
+	return 1;
+}
+
+/* `bytes` into a new file at `path`; 0 when it cannot be written. */
+static int write_file(const wchar_t *path, const char *bytes)
+{
+	FILE *file = _wfopen(path, L"wb");
+	if (!file) return 0;
+	size_t length = strlen(bytes), wrote = fwrite(bytes, 1, length, file);
+	return !fclose(file) && wrote == length;
+}
+
+/* The file at `path` into `text`, `size` bytes with its NUL at most; 0 when there is none. */
+static int read_text(const wchar_t *path, char *text, size_t size)
+{
+	FILE *file = _wfopen(path, L"rb");
+	if (!file) return 0;
+	size_t length = fread(text, 1, size - 1, file);
+	text[length] = '\0';
+	fclose(file);
+	return 1;
+}
+
+/* The FidelityFX DLL this build made, as OptiScaler v10 loads a custom upscaler: amd_fidelityfx_dx12.dll
+ * and the stand-in test_ffx_original.dll from beside this test, put in a custom upscaler's folder,
+ * optiscaler-custom\OptiScaler\custom\xmxsr\ffx beside it, NR's as amd_fidelityfx_upscaler_dx12.dll
+ * and the stand-in beside it as amd_fidelityfx_upscaler_dx12_nr_orig.dll with a file of its own. NR's
+ * is loaded by its full path with no flags, as OptiScaler's LdrLoadDll loads one, with enabled=0, so
+ * that its dispatch goes on whole (the cut after it is the cases above). Then OptiScaler's calls in
+ * its order: the versions, a context from its chain (the upscaler's description first, the DX12
+ * backend's, the version picked), a configure, a dispatch, its plugin API, the context destroyed.
+ * Each reaches the stand-in with what OptiScaler handed it, the versions come back as it listed them,
+ * it finds its own file, and the log names the custom upscaler. Last, NR's alone in a folder of its
+ * own: it refuses to load, and its log says what goes beside it. Before all that, which folders are
+ * a custom upscaler's. */
+static int run_ffx_custom(void)
+{
+	int failures = 0;
+	static const struct { const wchar_t *path; const char *name; } folders[] = {
+		{ L"C:\\Games\\Game\\OptiScaler\\custom\\xmxsr\\ffx\\amd_fidelityfx_upscaler_dx12.dll", "xmxsr" },
+		{ L"D:\\G\\OptiScaler\\CUSTOM\\My Upscaler\\FFX\\any.dll", "My Upscaler" },
+		{ L"C:\\custom\\x\\ffx\\a.dll", "x" },
+		{ L"C:\\Games\\Game\\amd_fidelityfx_dx12.dll", NULL },
+		{ L"C:\\Games\\Game\\OptiScaler\\custom\\xmxsr\\ffx_vk\\a.dll", NULL },
+		{ L"C:\\Games\\customs\\xmxsr\\ffx\\a.dll", NULL },
+		{ L"C:\\custom\\ffx\\a.dll", NULL },
+	};
+	for (size_t i = 0; i < sizeof folders / sizeof folders[0]; i++) {
+		custom_name[0] = '\0';
+		int found = custom_folder(folders[i].path);
+		if (found != (folders[i].name != NULL) || (found && strcmp(custom_name, folders[i].name))) {
+			printf("FAIL OptiScaler's custom upscaler: %ls read as %s\n", folders[i].path,
+			       found ? custom_name : "no custom upscaler's");
+			failures++;
+		}
+	}
+	wchar_t exe[MAX_PATH], custom[MAX_PATH], folder[MAX_PATH + 16], built[MAX_PATH + 32], stand_in[MAX_PATH + 32];
+	DWORD length = GetModuleFileNameW(NULL, exe, MAX_PATH);
+	wchar_t *slash = length && length < MAX_PATH - 64 ? wcsrchr(exe, L'\\') : NULL;
+	if (!slash) {
+		printf("FAIL OptiScaler's custom upscaler: this test's own path\n");
+		return 1;
+	}
+	*slash = L'\0';
+	_snwprintf(built, MAX_PATH + 32, L"%ls\\amd_fidelityfx_dx12.dll", exe);
+	_snwprintf(stand_in, MAX_PATH + 32, L"%ls\\test_ffx_original.dll", exe);
+	/* <here>\optiscaler-custom\OptiScaler\custom, OptiScaler v10's custom root beside its files */
+	static const wchar_t *const levels[] = { L"optiscaler-custom", L"OptiScaler", L"custom" };
+	_snwprintf(custom, MAX_PATH, L"%ls", exe);
+	for (int i = 0; i < 3; i++) {
+		size_t at = wcslen(custom);
+		_snwprintf(custom + at, MAX_PATH - at, L"\\%ls", levels[i]);
+		CreateDirectoryW(custom, NULL);
+	}
+	_snwprintf(folder, MAX_PATH + 16, L"%ls\\xmxsr", custom);
+	CreateDirectoryW(folder, NULL);
+	_snwprintf(folder, MAX_PATH + 16, L"%ls\\xmxsr\\ffx", custom);
+	CreateDirectoryW(folder, NULL);
+	wchar_t path[MAX_PATH + 64], log_file[MAX_PATH + 32];
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_upscaler_dx12.dll", folder);
+	int placed = CopyFileW(built, path, FALSE);
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_upscaler_dx12_nr_orig.dll", folder);
+	placed = placed && CopyFileW(stand_in, path, FALSE);
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\test_ffx_own.txt", folder);
+	placed = placed && write_file(path, "a file of the custom upscaler's own\n");
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\nr-xess.txt", folder);
+	placed = placed && write_file(path, "enabled=0\n");
+	_snwprintf(log_file, MAX_PATH + 32, L"%ls\\nr-xess.log", folder);
+	DeleteFileW(log_file);
+	if (!placed) {
+		printf("FAIL OptiScaler's custom upscaler: cannot place amd_fidelityfx_dx12.dll and test_ffx_original.dll "
+		       "from beside this test in %ls (error %lu)\n", folder, GetLastError());
+		return 1;
+	}
+	SetEnvironmentVariableW(L"NR_MENU", L"0");   /* no panel in a test */
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_upscaler_dx12.dll", folder);
+	HMODULE nr_dll = LoadLibraryExW(path, NULL, 0);
+	HMODULE original = GetModuleHandleW(L"amd_fidelityfx_upscaler_dx12_nr_orig.dll");
+	test_ffx_seen_fn seen_by = original
+		? (test_ffx_seen_fn)(void *)GetProcAddress(original, "test_ffx_original_seen") : NULL;
+	ffx_create_fn create = NULL;
+	ffx_destroy_fn destroy = NULL;
+	ffx_configure_fn configure = NULL;
+	ffx_query_fn query = NULL;
+	ffx_dispatch_fn dispatch = NULL;
+	opti_plugin_init_fn plugin_init = NULL;
+	if (nr_dll) {
+		create = (ffx_create_fn)(void *)GetProcAddress(nr_dll, "ffxCreateContext");
+		destroy = (ffx_destroy_fn)(void *)GetProcAddress(nr_dll, "ffxDestroyContext");
+		configure = (ffx_configure_fn)(void *)GetProcAddress(nr_dll, "ffxConfigure");
+		query = (ffx_query_fn)(void *)GetProcAddress(nr_dll, "ffxQuery");
+		dispatch = (ffx_dispatch_fn)(void *)GetProcAddress(nr_dll, "ffxDispatch");
+		plugin_init = (opti_plugin_init_fn)(void *)GetProcAddress(nr_dll, "OptiPluginInit");
+	}
+	if (!nr_dll || !seen_by || !create || !destroy || !configure || !query || !dispatch || !plugin_init) {
+		printf("FAIL OptiScaler's custom upscaler: NR's DLL %s, the stand-in %s, exports %d %d %d %d %d %d\n",
+		       nr_dll ? "loaded" : "not loaded", seen_by ? "behind it" : "not behind it", !!create, !!destroy,
+		       !!configure, !!query, !!dispatch, !!plugin_init);
+		return 1;
+	}
+	/* every export is NR's own, not one forwarded to the stand-in's */
+	void *exports[] = { (void *)create, (void *)destroy, (void *)configure, (void *)query, (void *)dispatch,
+			    (void *)plugin_init };
+	for (int i = 0; i < 6; i++) {
+		HMODULE owner = NULL;
+		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				   (LPCWSTR)exports[i], &owner);
+		if (owner != nr_dll && failures++ < 3)
+			printf("FAIL OptiScaler's custom upscaler: export %d is not in NR's DLL\n", i);
+	}
+	const struct test_ffx_seen *saw = seen_by();
+	/* the versions, as OptiScaler asks: the count first, then the ids and names */
+	struct {
+		ffxApiHeader header;
+		uint64_t create_type;
+		void *device;
+		uint64_t *count, *ids;
+		const char **names;
+	} versions = { { 4u, NULL }, FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, NULL, NULL, NULL, NULL };
+	uint64_t count = 0, id = 0;
+	const char *version = NULL;
+	versions.count = &count;
+	ffxReturnCode_t asked = query(NULL, &versions.header);
+	versions.ids = &id;
+	versions.names = &version;
+	asked |= count == 1 ? query(NULL, &versions.header) : 1u;
+	if (asked != FFX_API_RETURN_OK || count != 1 || id != TEST_FFX_VERSION_ID || !version
+	    || strcmp(version, TEST_FFX_VERSION_NAME) || saw->query != 2 || saw->query_desc != &versions.header) {
+		printf("FAIL OptiScaler's custom upscaler: the versions came back as %llu, %llx, %s (the stand-in asked %d "
+		       "times)\n", (unsigned long long)count, (unsigned long long)id, version ? version : "none", saw->query);
+		failures++;
+	}
+	/* the context, from OptiScaler's chain */
+	struct { ffxApiHeader header; uint64_t version; } override = { { 5u, NULL }, TEST_FFX_VERSION_ID };
+	struct { ffxApiHeader header; void *device; } backend = { { 0x2u, &override.header }, gpu.device };
+	struct ffx_create_upscale upscale = { { FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, &backend.header },
+					      FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE, { IN_W, IN_H }, { IN_W, IN_H }, NULL };
+	ffxContext context = NULL;
+	ffxReturnCode_t made = create(&context, &upscale.header, NULL);
+	ffxApiHeader configured = { 0x00010002u, NULL };
+	ffxReturnCode_t set = configure(&context, &configured);
+	struct ffx_dispatch_upscale d = { .header = { FFX_API_DISPATCH_DESC_TYPE_UPSCALE, NULL },
+		.render_size = { IN_W, IN_H }, .upscale_size = { IN_W, IN_H }, .motion_scale = { 1, 1 },
+		.pre_exposure = 1 };
+	ffxReturnCode_t dispatched = dispatch(&context, &d.header);
+	int api = 0, plugin = 0;
+	bool taken = plugin_init(&api, &plugin);
+	ffxContext was = context;
+	ffxReturnCode_t gone = destroy(&context, NULL);
+	if (made || set || dispatched || gone || was != TEST_FFX_CONTEXT || context || !taken
+	    || saw->create != 1 || saw->create_desc != &upscale.header || saw->configure != 1
+	    || saw->configure_desc != &configured || saw->dispatch != 1 || saw->dispatch_desc != &d.header
+	    || saw->dispatch_context != TEST_FFX_CONTEXT || saw->plugin != 1 || saw->api != &api
+	    || saw->plugin_handle != &plugin || saw->destroy != 1 || saw->destroy_context != TEST_FFX_CONTEXT) {
+		printf("FAIL OptiScaler's custom upscaler: the stand-in saw create %d (%s), configure %d, dispatch %d (%s), "
+		       "plugin %d (%s), destroy %d; returned %u %u %u %u\n", saw->create,
+		       saw->create_desc == &upscale.header ? "the chain" : "another", saw->configure, saw->dispatch,
+		       saw->dispatch_desc == &d.header ? "the description" : "another", saw->plugin,
+		       taken ? "taken" : "declined", saw->destroy, made, set, dispatched, gone);
+		failures++;
+	}
+	if (!saw->own_file || !saw->beside_standard_name) {
+		printf("FAIL OptiScaler's custom upscaler: the stand-in at %ls found %s, and %s the standard name\n",
+		       saw->self, saw->own_file ? "its own file" : "no file of its own",
+		       saw->beside_standard_name ? "is beside" : "is not beside");
+		failures++;
+	}
+	static char said[16384];
+	if (!read_text(log_file, said, sizeof said)) {
+		printf("FAIL OptiScaler's custom upscaler: no %ls\n", log_file);
+		failures++;
+	} else {
+		failures += lacks(said, "NR in front of xmxsr, OptiScaler's custom upscaler "
+				  "(amd_fidelityfx_upscaler_dx12_nr_orig.dll)", "its log");
+		failures += lacks(said, "xmxsr upscale context", "its log");
+		failures += lacks(said, "handed to xmxsr's own OptiPluginInit, which took it", "its log");
+	}
+	/* NR's alone in a custom upscaler's folder: no load, and a log that says what goes beside it */
+	_snwprintf(folder, MAX_PATH + 16, L"%ls\\lone", custom);
+	CreateDirectoryW(folder, NULL);
+	_snwprintf(folder, MAX_PATH + 16, L"%ls\\lone\\ffx", custom);
+	CreateDirectoryW(folder, NULL);
+	_snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_upscaler_dx12.dll", folder);
+	_snwprintf(log_file, MAX_PATH + 32, L"%ls\\nr-xess.log", folder);
+	DeleteFileW(log_file);
+	HMODULE lone = CopyFileW(built, path, FALSE) ? LoadLibraryExW(path, NULL, 0) : NULL;
+	DWORD refused = lone ? 0 : GetLastError();
+	if (lone || refused != ERROR_DLL_INIT_FAILED || !read_text(log_file, said, sizeof said)) {
+		printf("FAIL OptiScaler's custom upscaler: NR's DLL alone %s (error %lu)\n",
+		       lone ? "loaded" : "did not load", refused);
+		failures++;
+	} else {
+		failures += lacks(said, "cannot load amd_fidelityfx_upscaler_dx12_nr_orig.dll beside this one", "the lone log");
+		failures += lacks(said, "lone is unavailable: in a custom upscaler's folder NR's DLL takes the upscaler's "
+				  "name", "the lone log");
+	}
+	printf("%s OptiScaler's custom upscaler: NR's DLL loaded as OptiScaler loads custom\\xmxsr\\ffx, every call "
+	       "handed on, the versions and the plugin API too, the upscaler's own file found beside it; alone, "
+	       "refused with its reason\n", failures ? "FAIL" : "ok  ");
 	return failures != 0;
 }
 
@@ -2325,16 +2566,19 @@ int main(int argc, char **argv)
 	upscaler = "FSR 3.1";
 	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, R16G16B16A16_FLOAT, output in "
 			  "PIXEL_COMPUTE_READ, its size the context's", (1u << 3) | (1u << 2), 0,
-			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE, 0);
 	failed += run_ffx(DXGI_FORMAT_R11G11B10_FLOAT, "after FSR 3.1, R11G11B10_FLOAT, output in UNORDERED_ACCESS",
-			  1u << 1, 1, FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+			  1u << 1, 1, FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE, 0);
 	failed += run_ffx(DXGI_FORMAT_R16G16B16A16_FLOAT, "after FSR 3.1, output in COPY_DEST", 1u << 5, 1,
-			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE);
+			  FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE, 0);
 	failed += run_ffx(DXGI_FORMAT_R8G8B8A8_UNORM, "after FSR 3.1, R8G8B8A8_UNORM, non-linear colour", 1u << 1, 1,
-			  FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE);
-	failed += run_ffx(DXGI_FORMAT_B8G8R8A8_UNORM, "after FSR 3.1, B8G8R8A8_UNORM, LDR told linear", 1u << 1, 1, 0);
+			  FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE, 0);
+	failed += run_ffx(DXGI_FORMAT_B8G8R8A8_UNORM, "after FSR 3.1, B8G8R8A8_UNORM, LDR told linear", 1u << 1, 1, 0, 0);
+	failed += run_ffx(DXGI_FORMAT_R8G8B8A8_UNORM, "after FSR 3.1, R8G8B8A8_UNORM, sRGB at the dispatch", 1u << 1, 1, 0,
+			  FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB);
 	failed += run_ffx_motion(moving);
 	failed += run_ffx_whole();
+	failed += run_ffx_custom();
 	printf(failed ? "FAILED\n" : "all passed\n");
 	return failed != 0;
 }

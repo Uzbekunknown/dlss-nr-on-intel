@@ -55,12 +55,17 @@ for %%O in (nr_xess_panel nr_menu_ui_d3d12 nr_menu_ui imgui imgui_draw imgui_tab
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_xess.obj" /Fe:"%OUT%\libxess.dll" /LD "%HERE%nr_xess.c" /link /DEF:"%HERE%nr_xess.def" "%OUT%\nr_xess_thunks.obj" "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: libxess.dll failed & exit /b 1 )
 rem FSR 3.1's FidelityFX API in front of AMD's (nr_ffx.c, which builds nr_xess.c into it): the same
-rem cut, passes and panel in a DLL of FidelityFX's five exports; a release carries it as nr_ffx.dll.
+rem cut, passes and panel in a DLL of FidelityFX's five exports, and OptiScaler's OptiPluginInit for
+rem its custom upscalers; a release carries it as nr_ffx.dll.
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\nr_ffx.obj" /Fe:"%OUT%\amd_fidelityfx_dx12.dll" /LD "%HERE%nr_ffx.c" /link /DEF:"%HERE%nr_ffx.def" "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: amd_fidelityfx_dx12.dll failed & exit /b 1 )
 rem The probe that finds DXGI's Present in a process of its own; a release carries it beside nr_xess.dll.
 cl /nologo /O2 /W4 /std:c11 /TC /Fo:"%OUT%\nr_present_probe.obj" /Fe:"%OUT%\nr_present_probe.exe" "%HERE%nr_present_probe.c" /link d3d12.lib dxgi.lib dxguid.lib user32.lib
 if errorlevel 1 ( echo ERROR: nr_present_probe.exe failed & exit /b 1 )
+rem A stand-in for a custom upscaler of OptiScaler v10's, which test_nr_xess puts behind the
+rem amd_fidelityfx_dx12.dll above in a custom upscaler's folder, as OptiScaler would find them.
+cl /nologo /O2 /W4 /std:c11 /TC /Fo:"%OUT%\test_ffx_original.obj" /Fe:"%OUT%\test_ffx_original.dll" /LD "%HERE%test_ffx_original.c"
+if errorlevel 1 ( echo ERROR: test_ffx_original.dll failed & exit /b 1 )
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\test_nr_xess.obj" /Fe:"%OUT%\test_nr_xess.exe" "%HERE%test_nr_xess.c" /link "%OUT%\nr_xess_split.obj" d3d12.lib dxguid.lib
 if errorlevel 1 ( echo ERROR: test_nr_xess.exe failed & exit /b 1 )
 cl /nologo /O2 /W4 /std:c11 /TC /I"%OUT%" /Fo:"%OUT%\replay_nr_xess.obj" /Fe:"%OUT%\replay_nr_xess.exe" "%HERE%replay_nr_xess.c" /link "%OUT%\nr_xess_split.obj" d3d12.lib dxguid.lib
@@ -68,7 +73,7 @@ if errorlevel 1 ( echo ERROR: replay_nr_xess.exe failed & exit /b 1 )
 rem The panel over a swap chain of the test's own, through the probe and the hook, read back.
 cl /nologo /O2 /W4 /std:c11 /TC /Fo:"%OUT%\test_xess_panel.obj" /Fe:"%OUT%\test_xess_panel.exe" "%HERE%test_xess_panel.c" /link "%OUT%\nr_xess_split.obj" %PANEL% d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib
 if errorlevel 1 ( echo ERROR: test_xess_panel.exe failed & exit /b 1 )
-echo built %OUT%\libxess.dll, amd_fidelityfx_dx12.dll, nr_present_probe.exe, test_nr_xess.exe, replay_nr_xess.exe and test_xess_panel.exe
+echo built %OUT%\libxess.dll, amd_fidelityfx_dx12.dll, nr_present_probe.exe, test_ffx_original.dll, test_nr_xess.exe, replay_nr_xess.exe and test_xess_panel.exe
 exit /b 0
 
 rem One pass: nr_xess.hlsl with the pass's name defined, upper-cased, to nr_xess_<pass>.h.

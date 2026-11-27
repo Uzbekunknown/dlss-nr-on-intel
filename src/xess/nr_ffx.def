@@ -1,5 +1,6 @@
 ; NR's amd_fidelityfx_dx12.dll (nr_ffx.c): the FidelityFX API's five exports, the names AMD's
-; amd_fidelityfx_dx12.dll and amd_fidelityfx_loader_dx12.dll export.
+; amd_fidelityfx_dx12.dll and amd_fidelityfx_loader_dx12.dll export, and OptiPluginInit, which
+; OptiScaler v10 calls on a custom upscaler's DLL and this one hands on to the upscaler's own.
 LIBRARY amd_fidelityfx_dx12
 EXPORTS
     ffxConfigure
@@ -7,3 +8,4 @@ EXPORTS
     ffxDestroyContext
     ffxDispatch
     ffxQuery
+    OptiPluginInit
