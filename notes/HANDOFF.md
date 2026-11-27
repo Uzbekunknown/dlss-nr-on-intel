@@ -73,15 +73,16 @@ is deleted here, and its entry keeps the story.
   `libxess.dll` as `nr_xess.dll`, NR's `amd_fidelityfx_dx12.dll` as `nr_ffx.dll`, and its own
   Python. What each brought is on its release page. Linux has run `make test` green at the code of
   every release, and builds from source there (`docs/DEVS.md`).
-- **Branches.** `master` (the default) and `alchemist` hold 0.0.7 and the notes to 11-21
-  (`b315822`). `newnr` is ahead of them, and work lands there first:
+- **Branches.** `master` (the default) and `alchemist` hold 0.0.7 and the notes to 11-27
+  (`f87f199`). `newnr` is ahead of them, and work lands there first:
   - NVIDIA's own DLL as a reference: parity, the activations between its passes, its knobs and
     history, render scale against its full picture (`phase74`, `phase75`, `phase76`);
   - the intensity's texts (NVIDIA stops at 1), and E4M3 rounding by a magic constant on both
     drivers (`publish.glsl` constant 5, 1-7 % of a network);
   - the GPU image path on by default on Linux, exact on Mesa;
   - the daemon's per-frame cuts, and the layer presenting NR's answer on a semaphore;
-  - the GPU path's frame in two submissions, run from C (`xmx_frame_run`).
+  - the GPU path's frame in two submissions, run from C (`xmx_frame_run`);
+  - NR in front of OptiScaler v10's custom upscalers, with setup's place for it (#53).
 
   `media` holds the README's pictures; `improve-int8` keeps the INT8 experiments.
 - **Two networks.** A is NVIDIA's 310.8 model. B (310.9.16's `hnet-crazy-cuckoo-small-fp8`) is A's
@@ -166,8 +167,10 @@ under that date. A closed item is deleted; its entry keeps the story.
 - OptiScaler (#38): NR runs in Hogwarts with OptiScaler 0.9.4, from the game's XeSS and from its
   FSR 3, and setup takes OptiScaler's XeSS (`d936d63`, in 0.0.5). Untested: DLSS input through its
   spoofing, its DirectX 11 path, a game with no XeSS of its own, the cut beside its own D3D12 hooks,
-  #38's Stellar Blade. OptiScaler v10's custom upscaler folders (`custom/<name>/ffx`, #53): whether
-  `nr_ffx` there runs NR after another FidelityFX upscaler (XMX-SR, FSR 4) is being tried.
+  #38's Stellar Blade. OptiScaler v10's custom upscaler folders (`custom/<name>/ffx`, #53): NR's DLL
+  for them and setup's place for it (below, 11-27 and 11-28) ran in Hogwarts
+  behind AMD's FSR upscaler standing in. Untested: XMX-SR itself, FSR 4 there, and what
+  OptiScaler's FSR 4 preset and model hooks miss now that they scan NR's DLL.
 - FSR 3.1 without OptiScaler: a game with FSR 3.1 and no XeSS, FidelityFX SDK 2.0's loader, FSR's
   own frame generation, and whether setup should offer the choice of upscaler where a game has
   both (archive, 11-12).
@@ -232,6 +235,161 @@ under that date. A closed item is deleted; its entry keeps the story.
   ms, reported): the staged kernel is bound elsewhere.
 
 ---
+
+## NR in front of an OptiScaler v10 custom upscaler in a game: Hogwarts Legacy (2026-11-28, branch `newnr`)
+
+The DLL (`d80bb9b`, 11-27 below) and setup's place for it (`881e63b`, 11-28 below) in one release
+built from them, run in Hogwarts Legacy on the Arc 140V (Intel 101.9150). XMX-SR is not
+among our files, so AMD's own upscaler stands in for it: the `amd_fidelityfx_upscaler_dx12.dll`
+4.1.2.4555 that OptiScaler's build bundles, copied in as a custom upscaler named `standin`.
+
+- **Set up as a player would:** OptiScaler master (`91d2de3`, built locally, 10.0.0.1) as
+  `dxgi.dll` with its folder, `Dx12Upscaler=standin`, GPU spoofing off; the stand-in in
+  `OptiScaler\custom\standin\ffx`. Then setup's Check and Install NR through the release's bridge
+  (API d3d12, upscaler auto). Check said "OptiScaler's custom upscaler standin in <folder>: NR runs
+  after it"; Install put `nr_ffx.dll` there under the stand-in's name, the stand-in beside it as
+  `amd_fidelityfx_upscaler_dx12_nr_orig.dll`, and `nr-xess.txt`. The game upscales with its own
+  FSR 3 Quality (1281x721 -> 1920x1080), whose calls OptiScaler takes.
+- **In the game:** OptiScaler loaded NR's DLL from the custom folder when FSR 3 came on ("Loaded
+  custom standin"). NR's log: "NR in front of standin, OptiScaler's custom upscaler", the upscale
+  context (render up to 1920x1080, flags HDR and vectors at the render's resolution), the dispatch,
+  its daemon started, the cut hooked. `OptiPluginInit` was handed on; the stand-in has none, and
+  OptiScaler logged the plugin API as declined. Then **996 frames in 45 s, each answered on its own
+  frame, 0 declined, 0 errors**: about 22 frames a second, 44 ms from the copy to the answer, on the
+  GPU path (`gpu-shared-d3d12`, preset B, network 768x448 at scale 0.4). The picture looked like the
+  game's, with no artefact seen (a screenshot; not compared with NR off).
+- **OptiScaler's one error:** "Couldn't find FSR 4 preset selection in
+  amd_fidelityfx_upscaler_dx12.dll". Its FSR 4 preset hook now scans NR's DLL (the known limit,
+  11-27), so with FSR 4 or XMX-SR behind NR, OptiScaler's FSR 4 preset and model choices would not
+  reach it.
+- **Remove NR** gave the stand-in its name back. The OptiScaler tree was then as before Install NR,
+  paths and SHA-256; with OptiScaler taken out, the game's root, executable, XeSS and DLSS folders
+  were as before the test.
+- **The game's upscaler:** Hogwarts' default upscale type is AMD FSR 1.0 (`UpscaleMode=AMD_FSR_Quality`
+  with `bIsUpscaleModeModified=False`), which calls neither FSR 3.1 nor XeSS: a proxy sees no frame
+  there. FSR 3 written into `GameUserSettings.ini` before the start did not hold, because the game
+  wrote its default back as it started. Chosen in its display options, FSR 3 Quality held.
+- **Not run:** XMX-SR, FSR 4 behind NR, OptiScaler's DLSS or XeSS inputs into the custom upscaler,
+  another game, the setup window itself (the bridge ran its steps).
+
+**Next:** the #53 follow-up with this run, then a release.
+
+## Setup puts NR in front of an OptiScaler v10 custom upscaler (2026-11-28, branch `newnr`)
+
+The setup half of #53's XMX-SR; NR's DLL for it is the 11-27 entry below. Until now setup refused
+any `Dx12Upscaler` but `auto` and `xess`. Committed as `881e63b`. Read in OptiScaler `91d2de3`
+(GPL-3.0, nothing copied):
+`CustomProviders.h`, `Config.cpp`, `dllmain.cpp`.
+
+- **Where.** OptiScaler's own folder as `optiscaler()` had it for XeSS (OptiScaler's
+  `MainDllPath`: `OptiDllPath`, else `<exe>\OptiScaler`, else the executable's), then
+  `custom\<name>\ffx` when `Dx12Upscaler=<name>` is none of OptiScaler's own upscaler codes
+  (`OPTISCALER_UPSCALERS`; its ini reader takes those first). Folder names in any case, found by
+  listing, as OptiScaler and Windows find them and as the suite needs on Linux. The DLL is the one
+  OptiScaler takes: `amd_fidelityfx_upscaler_dx12.dll`, else the first `.dll` the folder lists.
+- **What.** `_d3d12_target` gives an FSR-kind target there, with `"custom": <name>`:
+  - NR's `nr_ffx.dll` under the DLL's name, and the upscaler's DLL beside it under
+    `ffx_original`'s, which `nr_ffx.c` loads;
+  - `nr-xess.txt` with `env=` beside them;
+  - the upscaler's other files left as they are.
+
+  "auto" takes it before OptiScaler's XeSS, "fsr" takes it, and "xess" still asks for
+  `Dx12Upscaler=xess`. The FidelityFX checks apply, worded for it: every export of the upscaler's
+  DLL in NR's, `ffxDispatch` present, NR's own with no record refused. 0.0.7's `nr_ffx.dll` has no
+  `OptiPluginInit`, so Check refuses a custom DLL that exports it; the DLL of 11-27 carries it.
+- **Remove NR** knows the custom DLL by its `_nr_orig` copy in the record (`_upscaler_names`; its
+  name may be any). It puts the DLL back and takes `nr-xess.log`, and it leaves a new copy of the
+  upscaler written over NR's, as for a game update.
+- **Check** says "OptiScaler's custom upscaler <name> in <folder>: NR runs after it", with the
+  DLL's two names. The window says the same after Check and Install, in four languages
+  (`Warn.optiscaler_custom`).
+- **Check refuses:**
+  - a custom name with no DLL where OptiScaler looks, naming that folder;
+  - OptiScaler set to another upscaler after Install NR (custom -> XeSS, XeSS -> custom, or the
+    game's own FSR 3.1 -> custom), where NR would get no frame: set it back, or Remove NR, then
+    Install NR;
+  - a built-in non-XeSS upscaler, as before; its message names the custom folder too.
+- `docs/RELEASE-QUICKSTART.md`: a paragraph on custom upscalers.
+- **Checked** (Windows 11, native Python 3.12):
+  - `test_windows_wizard` 112, 4 of them new, 1 skipped as before. Against `newnr`'s core, given
+    only the new constant, the four fail on behaviour.
+  - `test_windows_setup` 14, `test_windows_wizard_bridge` 7, `test_release` 22 (5 skipped),
+    `test_windows_controls` 14, `test_windows_launch` 43, `test_setup_proxy` 11.
+  - The window's self-test: 105 controls, 218 keys. With the Chinese string taken out it fails.
+- **Not run** then: a game, OptiScaler, a release built with this (since run: the entry above);
+  XMX-SR (never downloaded); the suite on Linux.
+- **Known limit:** on a FAT or exFAT drive a folder lists its files in no fixed order. There a
+  custom DLL with a name other than the standard one could be listed after its `_nr_orig` copy,
+  and OptiScaler would take the copy, past NR.
+
+**Next on Linux:** `make test` runs the new cases (`test_windows_wizard`).
+
+## NR in front of an OptiScaler v10 custom FidelityFX upscaler, for #53's XMX-SR (2026-11-27, branch `newnr`)
+
+Our #53 reply of 11-27 (issuecomment-7210289838) promised to try NR behind XMX-SR. XMX-SR installs
+as an OptiScaler v10 custom upscaler (reported): `OptiScaler\custom\xmxsr\ffx\amd_fidelityfx_upscaler_dx12.dll`,
+with its own `fsr-original.dll` and `nvngx_dlss.dll` beside it, and `Dx12Upscaler = xmxsr`.
+
+- **What OptiScaler v10 does with `custom\<name>\ffx`** (master `a1e0e19` read on GitHub, GPL-3.0,
+  nothing copied; a local build of `91d2de3` has the same loader, hooks and FidelityFX feature):
+  - the root is `custom` beside OptiScaler's own files (`<exe>\OptiScaler` in v10), scanned once;
+    any DLL name, and with several DLLs in the folder `amd_fidelityfx_upscaler_dx12.dll` wins, else
+    the first listed;
+  - loaded when that upscaler is first used, after OptiScaler's own FidelityFX DLLs, by `LdrLoadDll`
+    on its full path with no flags, past OptiScaler's own hooks;
+  - `ffxCreateContext` and `ffxQuery` are required, the other three taken. `OptiPluginInit`
+    (`plugin_sdk`, MIT, API version 3) is called once on the DLL it loaded, its settings in
+    `[Plugin.<folder>]`;
+  - no SDK version check of the DLL: `ffxQuery(NULL, GET_VERSIONS)` has to list one. The context
+    is made from the chain UPSCALE, BACKEND_DX12, OVERRIDE_VERSION (the version that
+    FfxUpscalerIndex picks for the name). The dispatch gets the game's command list, inputs in
+    COMPUTE_READ, the output in UNORDERED_ACCESS, the upscale size set, and NON_LINEAR_COLOR_SRGB
+    or PQ in its flags when FsrNonLinearSRGB or FsrNonLinearPQ is set;
+  - after the load, its FSR 4 preset and model hooks scan that DLL for AMD's FSR 4 provider
+    classes.
+- **The trap: OptiScaler's LoadLibrary and LdrLoadDll hooks take any DLL whose file name ends in a
+  FidelityFX SDK name**, the upscaler's among them, from any folder. They hand back OptiScaler's own
+  copy, or load the file and detour its five exports as the game's. So a DLL in a folder of its own
+  cannot chain to `custom\xmxsr\ffx\amd_fidelityfx_upscaler_dx12.dll` by that name: it would get
+  AMD's upscaler, or XMX-SR hooked with its calls coming back into OptiScaler. XMX-SR itself, as
+  DDXDB describes it, takes AMD's DLL as `fsr-original.dll` (reported, its source not public).
+  `dlssg-to-xefg-xmx` (GPL), a custom FG DLL, loads `libxess_fg.dll` plainly but calls only XeFG's
+  unexported functions.
+- **So NR takes the standard name in the custom upscaler's folder**, and the upscaler moves aside in
+  that folder: `custom\xmxsr\ffx\amd_fidelityfx_upscaler_dx12.dll` is `nr_ffx.dll`, XMX-SR's is
+  `amd_fidelityfx_upscaler_dx12_nr_orig.dll`, and its own files stay where they were. `nr_ffx.c`
+  already loads `<self>_nr_orig.dll` by its full path, a name the hooks pass by. No setting for a
+  DLL in another folder.
+- **Built** (`d80bb9b`):
+  - `OptiPluginInit` exported and handed on to the upscaler's own, so its tab and `[Plugin.xmxsr]`
+    stay;
+  - the dispatch's sRGB flag counts as the context's non-linear flag (an 8-bit output is still a
+    display picture, anything wider is refused), and PQ is refused;
+  - the log names the custom upscaler ("NR in front of xmxsr, OptiScaler's custom upscaler (...)"),
+    and, when the upscaler's own DLL is missing, says what goes beside NR's.
+- **Checked:**
+  - `build_xess.bat` with no warning;
+  - `test_nr_xess` all passed, with new cases:
+    - an 8-bit output with sRGB at the dispatch;
+    - PQ, and sRGB above 8 bits, handed on whole;
+    - `custom_folder` on seven paths;
+    - the built DLL loaded as OptiScaler loads one, in front of the new stand-in
+      `test_ffx_original.dll`. Each call reaches the stand-in with OptiScaler's own descriptions,
+      the versions come back, `OptiPluginInit` is handed on, and the stand-in finds its own file
+      beside it. Alone in a folder, NR's DLL refuses to load (1114) and logs why.
+  - Against the old code:
+    - `newnr`'s DLL fails the load case, having no `OptiPluginInit`;
+    - with the flags' checks taken out, PQ and sRGB above 8 bits get a cut.
+  - `test_xess_panel` passes.
+- **Known limits:**
+  - NR in two custom folders in one process: the second stays passive;
+  - NR's own `libxess.dll` in OptiScaler's folder: if OptiScaler loads it first, the custom
+    upscaler's NR stays passive;
+  - OptiScaler's FSR 4 preset and model hooks now scan NR's DLL, so if XMX-SR carries AMD's FSR 4
+    provider classes, those choices no longer reach it. Unknown without its source.
+- Setup's place for it is the 11-28 entry above; the game run, the entry above that.
+
+**Next on Linux:** nothing: `src/xess` builds only on Windows.
 
 ## The GPU's idle inside NR's frame; the frame in two submissions, then in C (2026-11-26, night, branch `newnr`)
 
