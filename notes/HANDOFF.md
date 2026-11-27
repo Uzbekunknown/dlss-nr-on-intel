@@ -393,6 +393,96 @@ closed by 11-11 are in `archive/HANDOFF-2026-11-01-to-2026-11-04.md`.
 
 ---
 
+## The GPU's idle inside NR's frame; the frame in two submissions, then in C (2026-11-26, night, branch `one-submit`)
+
+The owner, 11-26, after a walk through one frame: why the acquire, the release and the D3D12 wait
+for V exist; and get Python out of the frame, in C or Rust (C: everything native here is C, and
+Rust would not be faster at orchestration). Then "measure first", "try", and: Python per frame is a
+black box that behaves differently on different hardware, so the frame goes to C anyway. Arc 140V,
+Intel 101.9150, network B. Committed on 11-27 at the owner's word, not pushed: `one-submit` sits
+on `daemon-cuts`' four commits.
+
+- **Where the GPU stood idle.** Measured with a GPU timestamp at the start and the end of every
+  libxmx submission, and the host's clock at each submit and wake-up (measurement only,
+  `work/gpuidle-1126`).
+  - Light client, 896x512 field: 1.33-1.37 ms of NR's frame sat between its six submissions.
+    0.50-0.53 of that was the daemon's Python; 0.82-0.84 was the wake-up after each fence and the
+    next submission's start, ~165 us a round trip.
+  - Mortal Kombat 11, 1280x720 at 0.4: a 20.7 ms frame = the game's GPU work ~5.9 + NR's 13.0
+    (network 12.0, decode 0.12, prep 0.34, compose 0.49) + idle 1.9. 1.36 of the idle was inside
+    NR's frame (Python 0.55, latency 0.75). The render engine was 90.9 % busy.
+  - So in a GPU-bound frame what can go is the round trips. The CPU's time before the acquire
+    already hides behind the game's GPU work (daemon-cuts, below).
+- **Two submissions a frame.** New in libxmx: `xmx_batch_cut`/`_graph`/`_submit`,
+  `xmx_rec_external`, `xmx_rec_timestamp`. Also `GPUImagePipeline.process_device(own=)` and
+  `nr_gpu_transport._Ownership`, for Vulkan and D3D12. `NR_ONE_SUBMIT=0` keeps six.
+  - The first submission, behind the client's semaphore: the acquire, the letterbox check, the
+    decode and the cut test.
+  - The second, which signals the client: the history, prep, the network's captured graph, the
+    composition and the release.
+  - Idle inside NR's frame drops to 0.32-0.56 ms, all in the one gap left: Python 160-185 us plus
+    the latency.
+- **The frame in C**: `xmx_frame_run`, `xmx_frame_second`. `NR_FRAME_C=0` keeps the Python-joined
+  frame. The log line ends `joined`, or `joined c`.
+  - The image passes are captured as graphs, by parity and by history kept or dropped
+    (`_FrameGraphs`). libxmx runs the frame from the acquire to the release: both submissions,
+    the bars' check, the cut test's decision and the head's check.
+  - Python captures the graphs when the settings change and keeps the history's state.
+  - It gets the frame back when the bars moved (status 1), or when only the cut's float64 sum can
+    decide (status 3).
+  - Idle inside NR's frame: 0.16-0.17 ms. The one gap is 5 us of host work and ~160 us of the
+    OS's and driver's wake-up and submission. Only one submission a frame could take that, with
+    the cut's decision made on the GPU.
+- **The same bytes**:
+  - `gpu_frame_stages.py`'s five paths (CPU, host, six, two, C) are exact at 1280x720@0.4 and
+    1762x992@0.5, also with the change metric on and `cinematic`'s grade.
+  - Six, two and C give the same bytes frame by frame (`work/c_edge.py`, not in the tree) with:
+    - the temporal off;
+    - a cut limit that drops the history on every frame;
+    - one that drops it every fourth frame, where C decided as Python did on each.
+    - black bars that change height (`work/c_bars.py`). C handed each such frame back to Python
+      (status 1), which ran it as before; the crop's change drops the history in all three.
+  - The change and cut values C reads are Python's to the last bit.
+  - Frames through the layer under sync validation: 0 errors on the game's side
+    (`--sync-validation`, the semaphore and fence protocols) and on the daemon's
+    (`NR_TEST_DAEMON_VALIDATION=1` in the untracked helper `test_gpu_present_ab.py`).
+  - The daemon's validation found one bug in the C frame, now fixed. A session's shared buffers,
+    re-imported after a resize, took the freed buffers' slot ids, so graphs keyed by ids ran
+    against a destroyed VkBuffer. They are keyed by the buffer objects themselves now
+    (`_FrameGraphs.holds`).
+- **Timed** (light client: quiet before and after; MK11: alternating runs):
+
+  | | six | two, Python | C |
+  | --- | --- | --- | --- |
+  | bench 1280x720@0.4, device ms, 3 processes | 14.32-14.52 | 13.65-13.92 | 13.43-13.92 |
+  | bench 1762x992@0.5 | 32.61-32.72 | 32.21-32.27 | 31.85-32.09 |
+  | light client, request, 3 rounds | 32.52 | 32.01 | 31.82 |
+  | MK11 fps | 49.13, 49.72 / 49.62, 49.93, 47.98, 48.49, 49.96 | 50.73, 50.24 | 51.23, 50.35, 51.43, 49.87, 51.68 |
+
+  - MK11 with two: 2 of 2 pairs above six (+2.1 %).
+  - With C: 5 of 5 pairs above six, three of them run C first; the median 51.23 against 49.62,
+    +3.2 %. C's own 0.2 ms over two is near a game's noise from run to run.
+  - Each C run sent ~90 frames in a row back to Python's own path, prep ~4 ms there: the bars
+    likely moving through a round's intro. Those frames ran six submissions; a fallback that kept
+    them joined is not built.
+- **Checked:** MSVC `build_win.bat` with no warning; MinGW CMake with no warning in `libxmx.c`
+  and CTest 72/72; `run_tests.py --only cpu,gpu` 67/71 (the four Linux-only failing);
+  `test_gpu_transport` 58, 7 of them new for the hand-over; `test_gpu_d3d12.py --network`, whose
+  frames run in C. Again on 11-27 on the commit's tree: a fresh MinGW build (its 198 warnings as at
+  0.0.7, none in `libxmx.c`) and CTest 72/72, which is also the CTest `daemon-cuts` owed (below);
+  `work/c_edge.py`'s five cases the same bytes, 15 of 16 frames in C with the temporal off.
+- **Not run:** Hogwarts, whose own settings now have no upscaler (neither proxy got a call; setting
+  one is the owner's call); a B580; Linux.
+- `work/tools-win/gpu_clock.py` (not in git) read its busy share from the ALL engine group, which
+  this driver averages over seven engines: a seventh of the real share. It takes RENDER_ALL first
+  since 11-26.
+
+**Next on Windows:** the owner's word on pushing `daemon-cuts` and `one-submit`, and a game run
+in Hogwarts once it has an upscaler again (the owner's call). **Next on Linux:** `make test` in
+both memory modes and CTest. Changed: `libxmx.c`, `xmxres.py`, `gpu_image_pipeline.py`,
+`nr_frame_resident.py`, `nr_gpu_transport.py`, `nr_daemon.py`, `gpu_frame_stages.py`. The
+transport is Windows-only, but `gpu_frame_stages.py` runs the joined and C paths on Linux too.
+
 ## What a desktop card's frame holds besides the network; 0.9 ms of CPU and waits off it, which a GPU-bound game does not see (2026-11-26, branch `daemon-cuts`)
 
 The owner, 11-25, on #51 (a B580 in the Bloodborne PC recompile, native Vulkan: network B at
