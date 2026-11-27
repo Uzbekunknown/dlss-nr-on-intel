@@ -1675,7 +1675,12 @@ def print_gpu_frame(width, height, vk_format, live, metrics, transport):
           # A DirectX 12 game's own word that its history started over here (protocol 3), and a
           # history its word kept that the cut test alone would have dropped (cut past the limit).
           f"{' game-reset' if metrics.get('game_reset') else ''}"
-          f"{' cut-over' if metrics.get('cut_over') else ''}",
+          f"{' cut-over' if metrics.get('cut_over') else ''}"
+          # The frame in two submissions (gpu_image_pipeline.JOIN_SUBMITS): prep, network and
+          # compose are then the GPU's own times, and prep also the CPU's until the second went out.
+          f"{' joined' if metrics.get('joined') else ''}"
+          # ... and run from the acquire to the release in libxmx (gpu_image_pipeline.FRAME_IN_C).
+          f"{' c' if metrics.get('in_c') else ''}",
           flush=True)
 
 

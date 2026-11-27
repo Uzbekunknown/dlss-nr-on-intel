@@ -42,9 +42,20 @@ import nr_frame
 import nr_image
 import xmx
 import xmxres as X
-from gpu_image_pipeline import GPUImagePipeline
+from gpu_image_pipeline import GPUImagePipeline, LocalSubmits
 
-MODES=("cpu-daemon","gpu-image-host-daemon","gpu-device")
+# gpu-device-joined: the device path with the frame in two submissions (JOIN_SUBMITS, 2026-11-26),
+# its own pipeline and history beside gpu-device's six, the same fixture frames, the same bytes.
+# gpu-device-c: the same two submissions run from libxmx (FRAME_IN_C), the passes captured.
+MODES=("cpu-daemon","gpu-image-host-daemon","gpu-device","gpu-device-joined","gpu-device-c")
+DEVICE_MODES=("gpu-device","gpu-device-joined","gpu-device-c")
+JOINED_MODES=("gpu-device-joined","gpu-device-c")
+
+
+def device_pipeline(backend,mode):
+    pipe=GPUImagePipeline(backend)
+    pipe.frame_in_c=mode=="gpu-device-c"
+    return pipe
 
 
 class QuietLog(io.TextIOBase):
@@ -210,10 +221,10 @@ def run_daemon_mode(mode,backend,args,frames,width,height,fmt,warm,samples,keepi
                                                else args.history.frames))
 
 
-def device_step(pipe,raw,payload,width,height,fmt,live):
+def device_step(pipe,raw,payload,width,height,fmt,live,joined=False):
     raw.upload(np.frombuffer(payload,np.uint8))
     started=time.perf_counter()
-    answer=pipe.process_device(raw,width,height,fmt,live)
+    answer=pipe.process_device(raw,width,height,fmt,live,own=LocalSubmits() if joined else None)
     finished=time.perf_counter()
     row=dict(device_total_ms=1000*(finished-started))
     for name in ("preprocess_ms","network_ms","compose_ms","metadata_history_ms"):
@@ -221,21 +232,32 @@ def device_step(pipe,raw,payload,width,height,fmt,live):
     return row,hashlib.sha256(answer.download(np.uint8)).hexdigest()
 
 
-def run_device_mode(backend,args,frames,width,height,fmt,warm,samples,keeping):
-    pipe=GPUImagePipeline(backend)
+def joined_frames(pipes,mode,counts):
+    """Count the frames a joined mode really ran in two submissions (the first one cannot), and
+    in C where it should be."""
+    last=pipes[mode].last
+    if mode in JOINED_MODES and last.get("joined") and bool(last.get("in_c"))==(mode=="gpu-device-c"):
+        counts[mode]=counts.get(mode,0)+1
+
+
+def run_device_mode(backend,args,frames,width,height,fmt,warm,samples,keeping,joined=False,mode="gpu-device"):
+    pipe=device_pipeline(backend,mode)
     raw=backend.runtime.buffer(width*height*4,np.uint8,kind=X.DEVICE)
-    rows,hashes=[],[]
+    rows,hashes,merged=[],[],0
     try:
         for turn in range(warm+samples):
-            row,digest=device_step(pipe,raw,frames[turn%len(frames)],width,height,fmt,args.live)
+            row,digest=device_step(pipe,raw,frames[turn%len(frames)],width,height,fmt,args.live,joined)
             if turn>=warm:
                 rows.append(row)
                 hashes.append(digest)
+                merged+=bool(pipe.last.get("joined"))
             if keeping: keeping.frame_done()
         if not pipe.last["history"]:
             raise RuntimeError("temporal history was not engaged during the device benchmark")
+        if joined and merged!=samples:
+            raise RuntimeError(f"only {merged} of {samples} measured frames ran in two submissions")
         return dict(samples=quantiles(rows),raw_samples_ms=rows,output_sha256=hashes,
-                    history_frames=pipe.history_frames,last_metrics=pipe.last)
+                    history_frames=pipe.history_frames,last_metrics=pipe.last,joined_frames=merged)
     finally:
         raw.free();pipe.close()
 
@@ -261,16 +283,18 @@ def run_interleaved(case,frames,cli,keeping,report):
     width,height,scale=case["width"],case["height"],case["render_scale"]
     backend=TracedBackend(max_cached_frames=2)
     args={mode:live_args(width,height,scale,cli.minimum,cli.profile) for mode in MODES}
-    pipe=GPUImagePipeline(backend)
+    pipes={mode:device_pipeline(backend,mode) for mode in DEVICE_MODES}
     raw=backend.runtime.buffer(width*height*4,np.uint8,kind=X.DEVICE)
     rows={mode:[] for mode in MODES};hashes={mode:[] for mode in MODES}
     logs={mode:QuietLog() for mode in MODES}
+    merged={}
     report["metadata"].setdefault("device",xmx.device_name())
     report["metadata"].setdefault("graph_key",backend.runtime.graph_key())
     report["metadata"].setdefault("allocation_notes",allocation_notes(backend.runtime))
     def step(mode,payload):
-        if mode=="gpu-device":
-            return device_step(pipe,raw,payload,width,height,cli.format,args[mode].live)
+        if mode in DEVICE_MODES:
+            return device_step(pipes[mode],raw,payload,width,height,cli.format,args[mode].live,
+                               joined=mode in JOINED_MODES)
         with patch.dict(os.environ,{"NR_GPU_IMAGE":"1" if mode!="cpu-daemon" else "0",
                                     "NR_GPU_TRANSPORT":"0"}),contextlib.redirect_stdout(logs[mode]):
             return daemon_step(mode,backend,args[mode],payload,width,height,cli.format)
@@ -280,21 +304,29 @@ def run_interleaved(case,frames,cli,keeping,report):
             first=turn%len(MODES)
             for mode in MODES[first:]+MODES[:first]:
                 row,digest=step(mode,payload)
-                if turn>=cli.warm: rows[mode].append(row);hashes[mode].append(digest)
+                if turn>=cli.warm:
+                    rows[mode].append(row);hashes[mode].append(digest)
+                    if mode in pipes: joined_frames(pipes,mode,merged)
                 if keeping: keeping.frame_done()
         for mode in MODES:
-            if mode=="gpu-device": count=pipe.history_frames
+            if mode in pipes: count=pipes[mode].history_frames
             elif mode=="cpu-daemon": count=args[mode].history.frames
             else: count=args[mode].gpu_images.history_frames
             if count!=cli.warm+cli.samples:
                 raise RuntimeError(f"{mode} history rebuilt unexpectedly during interleaving: {count}")
             case["modes"][mode]=dict(samples=quantiles(rows[mode]),raw_samples_ms=rows[mode],
                 output_sha256=hashes[mode],history_frames=count,last_log=logs[mode].last)
+        for mode in JOINED_MODES:
+            if merged.get(mode,0)!=cli.samples:
+                raise RuntimeError(f"{mode}: only {merged.get(mode,0)} of {cli.samples} measured frames ran "
+                                   "in two submissions" + (" in C" if mode=="gpu-device-c" else ""))
+            case["modes"][mode]["joined_frames"]=merged[mode]
         case["scheduler"]="retained contexts; per-frame order rotates CPU/host/device, host/device/CPU, device/CPU/host"
         if cli.profile_network:
             case["network_timestamp_probe"]=timestamp_probe(step,backend,frames,cli,keeping)
     finally:
-        raw.free();pipe.close()
+        raw.free()
+        for pipe in pipes.values(): pipe.close()
         for state in args.values(): D.close_gpu_images(state)
         backend.close()
 
@@ -374,7 +406,7 @@ def print_summary(case):
     print("mode                         total median/p95   prep   network   compose   metadata/history (ms)")
     for mode,result in case["modes"].items():
         stats=result["samples"]
-        total=stats["device_total_ms" if mode=="gpu-device" else "daemon_total_ms"]
+        total=stats["device_total_ms" if mode in DEVICE_MODES else "daemon_total_ms"]
         med=lambda name:stats[name]["median"]
         print(f"{mode:28s} {total['median']:7.2f}/{total['p95']:7.2f} "
               f"{med('preprocess_ms'):7.2f} {med('network_ms'):8.2f} "
@@ -444,8 +476,9 @@ def main():
                 report["metadata"].setdefault("memory",xmx.memory_note())
                 report["metadata"].setdefault("graph_key",backend.runtime.graph_key())
                 try:
-                    if mode=="gpu-device":
-                        result=run_device_mode(backend,args,frames,width,height,cli.format,cli.warm,cli.samples,keeping)
+                    if mode in DEVICE_MODES:
+                        result=run_device_mode(backend,args,frames,width,height,cli.format,cli.warm,cli.samples,
+                                               keeping,joined=mode in JOINED_MODES,mode=mode)
                     else:
                         result=run_daemon_mode(mode,backend,args,frames,width,height,cli.format,cli.warm,cli.samples,keeping)
                     case["modes"][mode]=result

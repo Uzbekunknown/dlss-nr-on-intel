@@ -239,6 +239,18 @@ class ResidentFrame:
         return self.buffer("head4" if self.rt.compact_head else "head",
                            self.height * self.width * (4 if self.rt.compact_head else 16))
 
+    def captured_graph(self):
+        """The network's captured commands for the settings in force, or None: what a frame joined
+        into one submission replays (`GPUImagePipeline`, `Runtime.batch_graph`) where `run_device`
+        would submit them alone. None before the first frame has captured them, outside replay,
+        and once the scratch's plan has changed and dropped them."""
+        if self._closed or not self.device_image_io:
+            return None
+        if os.environ.get("NR_FRAME_MODE", "replay") != "replay":
+            return None
+        self._prepare_scratch(None)
+        return self._graphs.get(self.rt.graph_key())
+
     def read_head(self):
         channels = 4 if self.rt.compact_head else 16
         view = xmxres.host_view(self.head_buffer(),

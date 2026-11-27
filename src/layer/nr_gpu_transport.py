@@ -24,7 +24,7 @@ import struct
 import time
 
 import xmxres as X
-from gpu_image_pipeline import GPUImagePipeline
+from gpu_image_pipeline import GPUImagePipeline, JOIN_SUBMITS
 
 MAGIC = 0x3147524E
 PACKET = struct.Struct("<8I8Q16s16s")
@@ -193,6 +193,45 @@ def _copy_unless_direct(runtime, result, context, p):
     runtime.begin()
     runtime.copy(result, context.output, p["bytes"])
     runtime.submit()
+
+
+class _Ownership:
+    """The shared buffers' hand-over inside the frame's own submissions (2026-11-26): the acquire
+    recorded first in the frame's first submission, which waits on the client's semaphore, and the
+    release last in its last, which signals the one the client's copy back waits on, where each was
+    a submission of its own with a CPU wait (`xmx_external_acquire`, `_release`). A D3D12 client's
+    fence goes from `wait_value` to `signal_value`, with its stamp. A frame the pipeline cannot
+    join takes the buffers at once (`acquire_now`), and the transport releases them after it."""
+
+    def __init__(self, lib, context, *, wait, signal, wait_value=0, signal_value=0, stamp=None,
+                 stamp_offset=0):
+        self.lib, self.a, self.b = lib, context.input.id, context.output.id
+        self.wait, self.wait_value, self.signal, self.signal_value = wait, wait_value, signal, signal_value
+        self.stamp, self.stamp_offset = stamp, stamp_offset
+        self.acquired = self.released = False
+
+    def acquire_now(self):
+        if self.wait_value:
+            failed = self.lib.xmx_external_acquire_at(self.a, self.b, self.wait, self.wait_value)
+        else:
+            failed = self.lib.xmx_external_acquire(self.a, self.b, self.wait)
+        if failed:
+            raise X.failure(self.lib, "GPU input ownership acquire")
+        self.acquired = True
+
+    def record_acquire(self, rt):
+        rt.rec_external(self.a, self.b, False)
+
+    def submit_first(self, rt):
+        rt.batch_submit(self.wait, self.wait_value)
+        self.acquired = True
+
+    def record_release(self, rt):
+        rt.rec_external(self.a, self.b, True, self.stamp, self.stamp_offset)
+
+    def submit_last(self, rt):
+        rt.batch_submit(signal=self.signal, signal_value=self.signal_value)
+        self.released = True
 
 
 class _Context:
@@ -416,15 +455,25 @@ class GPUSharedTransport:
         if p["version"] == D3D12:
             return self._frame_d3d12(connection, context, p, width, height, fmt, live, started)
         acquired = False
+        direct = _direct(context, p, width, height)
+        # The acquire into the frame's first submission and the release into its last, where the
+        # pipeline can join them; only with the answer composed in place, since the copy into the
+        # shared output would come after the release.
+        own = (_Ownership(self.lib, context, wait=context.ready, signal=context.done)
+               if JOIN_SUBMITS and direct is not None else None)
         try:
-            if self.lib.xmx_external_acquire(context.input.id, context.output.id, context.ready):
-                raise X.failure(self.lib, "GPU input ownership acquire")
-            acquired = True
+            if own is None:
+                if self.lib.xmx_external_acquire(context.input.id, context.output.id, context.ready):
+                    raise X.failure(self.lib, "GPU input ownership acquire")
+                acquired = True
             result = self.images.process_device(context.input, width, height, fmt, live,
-                                                output=_direct(context, p, width, height))
-            _copy_unless_direct(self.backend.runtime, result, context, p)
-            if self.lib.xmx_external_release(context.input.id, context.output.id, context.done):
-                raise X.failure(self.lib, "GPU output ownership release")
+                                                output=direct, own=own)
+            if own is not None:
+                acquired = own.acquired and not own.released
+            if own is None or not own.released:
+                _copy_unless_direct(self.backend.runtime, result, context, p)
+                if self.lib.xmx_external_release(context.input.id, context.output.id, context.done):
+                    raise X.failure(self.lib, "GPU output ownership release")
             acquired = False
             # v2's caller waits its private capture fence before FRAME and does
             # not start its output copy until this release fence and ACK finish.
@@ -436,6 +485,8 @@ class GPUSharedTransport:
         except Exception:
             context.usable = False
             self.reset_history()
+            if own is not None:
+                acquired = own.acquired and not own.released
             try:
                 if acquired and not self.lib.xmx_device_lost():
                     if self.lib.xmx_external_release(context.input.id, context.output.id, context.done):
@@ -471,13 +522,22 @@ class GPUSharedTransport:
             raise
 
     def _frame_d3d12(self, connection, context, p, width, height, fmt, live, started):
-        value, reached, acquired = p["done_sem"], False, False
+        value, reached, acquired, own = p["done_sem"], False, False, None
         try:
             self._reached(context, value)
             reached = True
-            if self.lib.xmx_external_acquire_at(context.input.id, context.output.id, context.ready, value):
-                raise X.failure(self.lib, "GPU input ownership acquire")
-            acquired = True
+            direct = _direct(context, p, width, height)
+            stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
+            if JOIN_SUBMITS and direct is not None:
+                # As the Vulkan path's: the fence's V waited for in the frame's first submission,
+                # V + 1 and the stamp in its last.
+                own = _Ownership(self.lib, context, wait=context.ready, wait_value=value,
+                                 signal=context.ready, signal_value=value + 1, stamp=stamp,
+                                 stamp_offset=p["bytes"])
+            else:
+                if self.lib.xmx_external_acquire_at(context.input.id, context.output.id, context.ready, value):
+                    raise X.failure(self.lib, "GPU input ownership acquire")
+                acquired = True
             # The offsets are followed only back to the frame the history holds.
             before = motion_from(p)
             motion = (context.input.address + p["bytes"]
@@ -485,13 +545,15 @@ class GPUSharedTransport:
             # The game's own word on its resets, where its client gives it (GAME_RESETS).
             word = reset_at(p) if GAME_RESETS and tells_resets(p) else None
             result = self.images.process_device(context.input, width, height, fmt, live, motion=motion,
-                                                output=_direct(context, p, width, height), game_reset=word,
-                                                motion_session=bool(context.motion))
-            _copy_unless_direct(self.backend.runtime, result, context, p)
-            stamp = STAMP.pack(STAMP_MAGIC, value & 0xffffffff, value >> 32, 0)
-            if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,
-                                                value + 1, p["bytes"], stamp, STAMP.size):
-                raise X.failure(self.lib, "GPU output ownership release")
+                                                output=direct, game_reset=word,
+                                                motion_session=bool(context.motion), own=own)
+            if own is not None:
+                acquired = own.acquired and not own.released
+            if own is None or not own.released:
+                _copy_unless_direct(self.backend.runtime, result, context, p)
+                if self.lib.xmx_external_release_at(context.input.id, context.output.id, context.ready,
+                                                    value + 1, p["bytes"], stamp, STAMP.size):
+                    raise X.failure(self.lib, "GPU output ownership release")
             acquired = False
             context.value = value + 1
             context.answered = value
@@ -503,6 +565,10 @@ class GPUSharedTransport:
             context.usable = False
             context.answered = 0
             self.reset_history()
+            if own is not None:
+                acquired = own.acquired and not own.released
+                if own.released:
+                    context.value = max(context.value, value + 1)   # the last submission signalled it
             try:
                 # The client's queue waits for V + 1 whatever happened here.
                 if reached and not self.lib.xmx_device_lost() and context.value <= value:

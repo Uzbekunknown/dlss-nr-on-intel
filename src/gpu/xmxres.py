@@ -169,7 +169,18 @@ def _load():
             ("xmx_weights_by_column", []),
             ("xmx_fused_by_column", []),
             ("xmx_e4m3_magic", []),
-            ("xmx_image_divide_f64", [])):
+            ("xmx_image_divide_f64", []),
+            # A frame's commands in one submission (Runtime.batch_*), 2026-11-26.
+            ("xmx_batch_cut", []),
+            ("xmx_batch_graph", [ctypes.c_int]),
+            ("xmx_batch_submit", [ctypes.c_int, ctypes.c_ulonglong, ctypes.c_int, ctypes.c_ulonglong]),
+            ("xmx_rec_external", [ctypes.c_int] * 3 + [ctypes.c_ulonglong, ctypes.c_char_p, ctypes.c_uint]),
+            ("xmx_rec_timestamp", [ctypes.c_int]),
+            ("xmx_timestamps", [ctypes.POINTER(ctypes.c_double), ctypes.c_int]),
+            # The GPU path's frame in C (FrameArgs, FrameResult).
+            ("xmx_frame_run", [ctypes.c_void_p, ctypes.c_void_p]),
+            ("xmx_frame_second", [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]),
+            ("xmx_frame_sizes", [])):
         getattr(lib, name).argtypes = args
         getattr(lib, name).restype = ctypes.c_int
     lib.xmx_buf_ptr.argtypes = [ctypes.c_int]
@@ -722,11 +733,45 @@ PROFILE_FAMILIES = ("gemm", "gemm tiled", "gemm staged", "unary", "row", "histor
                     "start")
 
 
+_PROFILING = False
+
+
 def profile(on=True):
     """Turn GPU timestamping on. Off by default and free when off."""
+    global _PROFILING
     lib = _load()
     if lib.xmx_profile(1 if on else 0):
         raise RuntimeError("xmx_profile: " + lib.xmx_error().decode())
+    _PROFILING = bool(on)
+
+
+def profiling():
+    """Whether `profile` turned the per-pass timestamps on: a profiled frame is not joined into one
+    submission (`Runtime.batch_cut` refuses), since its timestamps are read per recording."""
+    return _PROFILING
+
+
+class FrameArgs(ctypes.Structure):
+    """libxmx's `struct xmx_frame_args`: a frame of the GPU path run in C (`Runtime.frame_run`)."""
+    _fields_ = [("first", ctypes.c_int), ("pre", ctypes.c_int * 2), ("post", ctypes.c_int * 2),
+                ("net", ctypes.c_int), ("a", ctypes.c_int), ("b", ctypes.c_int),
+                ("wait", ctypes.c_int), ("signal", ctypes.c_int),
+                ("wait_value", ctypes.c_ulonglong), ("signal_value", ctypes.c_ulonglong),
+                ("stamp_offset", ctypes.c_ulonglong), ("stamp_bytes", ctypes.c_uint),
+                ("stamp", ctypes.c_ubyte * 64),
+                ("region", ctypes.c_int), ("cut", ctypes.c_int), ("nonfinite", ctypes.c_int),
+                ("change", ctypes.c_int), ("cut_count", ctypes.c_uint), ("change_count", ctypes.c_uint),
+                ("cut_elements", ctypes.c_ulonglong), ("change_elements", ctypes.c_ulonglong),
+                ("cut_limit", ctypes.c_double), ("temporal", ctypes.c_int),
+                ("history_frames", ctypes.c_int), ("game_reset", ctypes.c_int)]
+
+
+class FrameResult(ctypes.Structure):
+    """libxmx's `struct xmx_frame_result`."""
+    _fields_ = [("status", ctypes.c_int), ("history", ctypes.c_int), ("change_exact", ctypes.c_int),
+                ("stage", ctypes.c_int), ("cut", ctypes.c_double), ("change", ctypes.c_double),
+                ("stamps", ctypes.c_double * 4), ("first_ms", ctypes.c_double),
+                ("second_ms", ctypes.c_double)]
 
 
 def profile_reset():
@@ -1093,6 +1138,76 @@ class Runtime:
         """Discard unfinished recording after an error; completed graphs survive."""
         if self.lib.xmx_abort() != 0:
             raise RuntimeError("xmx_abort: " + self.lib.xmx_error().decode())
+
+    # -- one submission for a frame (2026-11-26) -----------------------
+    # Each `submit` waits for its commands on the CPU, and between a frame's six the GPU stood
+    # idle 1.3 ms a frame. These put the frame's recordings and the network's captured graph into
+    # one vkQueueSubmit, behind a client's semaphore and ahead of the one it waits on.
+
+    def batch_cut(self):
+        """End the recording in hand as the next part of one submission; `begin` starts another."""
+        if self.lib.xmx_batch_cut() != 0:
+            raise RuntimeError("xmx_batch_cut: " + self.lib.xmx_error().decode())
+
+    def batch_graph(self, graph):
+        """A captured graph (`capture`) as the next part, between two cut recordings."""
+        if self.lib.xmx_batch_graph(graph.id) != 0:
+            raise RuntimeError("xmx_batch_graph: " + self.lib.xmx_error().decode())
+
+    def batch_submit(self, wait=-1, wait_value=0, signal=-1, signal_value=0):
+        """The parts cut so far and the recording in hand, in one submission behind external
+        semaphore `wait` and signalling `signal` (-1: none; a D3D12 fence at its value), waited
+        for once. Returns the passes."""
+        passes = self.lib.xmx_batch_submit(int(wait), int(wait_value), int(signal), int(signal_value))
+        if passes < 0:
+            raise failure(self.lib, "xmx_batch_submit")
+        return passes
+
+    def rec_external(self, a, b, release, stamp=None, stamp_offset=0):
+        """The shared buffers' hand-over recorded into the recording in hand, as
+        `xmx_external_acquire`/`_release` submit it alone; a release can write `stamp` at
+        `stamp_offset` in `b` first."""
+        if self.lib.xmx_rec_external(int(a), int(b), 1 if release else 0, int(stamp_offset) if stamp else 0,
+                                     stamp, len(stamp) if stamp else 0) != 0:
+            raise failure(self.lib, "xmx_rec_external")
+
+    def rec_timestamp(self, slot):
+        """A GPU timestamp into slot 0-7 once everything recorded before it has finished; slot 0
+        resets the eight, so it comes first."""
+        if self.lib.xmx_rec_timestamp(int(slot)) != 0:
+            raise RuntimeError("xmx_rec_timestamp: " + self.lib.xmx_error().decode())
+
+    def timestamps(self, count):
+        """The first `count` timestamps of the last submission that wrote them, in nanoseconds."""
+        out = (ctypes.c_double * count)()
+        if self.lib.xmx_timestamps(out, count) != 0:
+            raise RuntimeError("xmx_timestamps: " + self.lib.xmx_error().decode())
+        return list(out)
+
+    def frame_layout_ok(self):
+        """Whether this libxmx's frame structures are the ones FrameArgs and FrameResult describe."""
+        ok = getattr(self, "_frame_layout", None)
+        if ok is None:
+            try:
+                sizes = self.lib.xmx_frame_sizes()
+            except AttributeError:
+                sizes = -1
+            ok = self._frame_layout = sizes == ctypes.sizeof(FrameArgs) * 1000 + ctypes.sizeof(FrameResult)
+        return ok
+
+    def frame_run(self, args, result):
+        """A whole frame of captured graphs in C (`xmx_frame_run`); `result.stage` says how far it got
+        even when this raises."""
+        if self.lib.xmx_frame_run(ctypes.addressof(args), ctypes.addressof(result)) != 0:
+            raise failure(self.lib, "xmx_frame_run")
+        return result
+
+    def frame_second(self, args, history, result):
+        """The frame's second submission, its history decided by the caller (status 3)."""
+        if self.lib.xmx_frame_second(ctypes.addressof(args), 1 if history else 0,
+                                     ctypes.addressof(result)) != 0:
+            raise failure(self.lib, "xmx_frame_second")
+        return result
 
     def copy(self, source, target, nbytes, source_offset=0, target_offset=0):
         if min(nbytes, source_offset, target_offset) < 0:

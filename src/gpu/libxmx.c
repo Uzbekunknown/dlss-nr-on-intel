@@ -1817,8 +1817,12 @@ int xmx_begin(void)
 	return 0;
 }
 
+static void batch_clear(void);
+
 int xmx_abort(void)
 {
+	/* Parts cut for one submission (`xmx_batch_cut`) and never submitted go with the recording. */
+	batch_clear();
 	if (!g.recording) return 0;
 	VkResult r = vkResetCommandBuffer(g.rcb, 0);
 	if (r) FAIL("abort resident recording", r);
@@ -3096,6 +3100,377 @@ int xmx_sem_pass(int fence, unsigned long long wait, unsigned long long signal)
 #else
 	(void)fence;(void)wait;(void)signal;FAIL("D3D12 fences are unavailable",0);
 #endif
+}
+
+/* A frame's commands in one submission (2026-11-26). The GPU path ran a frame as six submissions,
+ * each waited for on the CPU, and the GPU stood idle 1.3 ms a frame between them, in a game too:
+ * the CPU waking after each fence, the next submission starting, and the daemon's Python between
+ * (work/gpuidle-1126). Here the recordings cut off with `xmx_batch_cut`, a captured graph added
+ * with `xmx_batch_graph` and the recording in hand go to the queue in that order in one
+ * vkQueueSubmit, behind a client's semaphore and ahead of the one it waits on, with one fence wait
+ * for them all. `xmx_rec_external` records the shared buffers' hand-over into them, which
+ * `external_ownership` submits alone, and `xmx_rec_timestamp` the times of their parts. */
+#define MAX_BATCH 8
+#define BATCH_STAMPS 8
+static struct {
+	VkCommandBuffer cb[MAX_BATCH]; unsigned char owned[MAX_BATCH]; int n, passes;
+	VkCommandBuffer spare[MAX_BATCH]; int spares;
+	VkQueryPool stamps; float period;
+} batch;
+
+/* Parts that were cut and are not pending go back to the spares. */
+static void batch_clear(void)
+{
+	for (int i = 0; i < batch.n; i++) {
+		if (!batch.owned[i]) continue;
+		if (batch.spares < MAX_BATCH) batch.spare[batch.spares++] = batch.cb[i];
+		else vkFreeCommandBuffers(g.dev, g.cpool, 1, &batch.cb[i]);
+	}
+	batch.n = batch.passes = 0;
+}
+
+/* End the recording in hand as the next part of one submission. Recording goes on, from
+ * `xmx_begin`, in another command buffer. */
+int xmx_batch_cut(void)
+{
+	if (!g.recording) FAIL("no recording to cut", 0);
+	if (g.prof) FAIL("a profiled recording is submitted alone", 0);
+	if (batch.n >= MAX_BATCH) FAIL("too many parts for one submission", 0);
+	VkCommandBuffer next;
+	VkResult r;
+	if (batch.spares) next = batch.spare[--batch.spares];
+	else {
+		VkCommandBufferAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = g.cpool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
+		if ((r = vkAllocateCommandBuffers(g.dev, &ai, &next))) FAIL("command buffer for one submission", r);
+	}
+	if ((r = vkEndCommandBuffer(g.rcb))) {
+		batch.spare[batch.spares++] = next;
+		FAIL("end a part of one submission", r);
+	}
+	batch.cb[batch.n] = g.rcb;
+	batch.owned[batch.n++] = 1;
+	batch.passes += g.recorded;
+	g.rcb = next;
+	g.recording = 0;
+	return 0;
+}
+
+/* A captured graph as the next part, between two cut recordings. */
+int xmx_batch_graph(int id)
+{
+	if (g.recording) FAIL("cut the recording before a graph joins it", 0);
+	if (id < 0 || id >= MAX_GRAPHS || !graphs[id].commands) FAIL("graph is not live", 0);
+	if (batch.n >= MAX_BATCH) FAIL("too many parts for one submission", 0);
+	batch.cb[batch.n] = graphs[id].commands;
+	batch.owned[batch.n++] = 0;
+	batch.passes += graphs[id].passes;
+	return 0;
+}
+
+/* The parts and the recording in hand, in one submission: behind external semaphore `wait`, and
+ * signalling `signal` (-1 for none; a D3D12 fence at its value). Waited for once; returns the
+ * passes. */
+int xmx_batch_submit(int wait, unsigned long long wait_value, int signal, unsigned long long signal_value)
+{
+	if (g.lost) { xmx_abort(); FAIL("resident device unavailable", VK_ERROR_DEVICE_LOST); }
+	if (g.recording && xmx_batch_cut()) return -1;
+	if (!batch.n) FAIL("nothing to submit", 0);
+	VkSemaphore semaphores[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+	int timeline[2] = { 0, 0 };
+	uint64_t values[2] = { wait_value, signal_value };
+#ifdef _WIN32
+	int ids[2] = { wait, signal };
+	for (int i = 0; i < 2; i++) {
+		if (ids[i] < -1 || ids[i] >= MAX_EXTERNAL_SEMAPHORES || (ids[i] >= 0 && !external_semaphores[ids[i]])) {
+			batch_clear();
+			FAIL("invalid semaphore for one submission", 0);
+		}
+		if (ids[i] >= 0) { semaphores[i] = external_semaphores[ids[i]]; timeline[i] = external_timeline[ids[i]]; }
+	}
+#else
+	if (wait >= 0 || signal >= 0) { batch_clear(); FAIL("external semaphores are unavailable", 0); }
+#endif
+	for (int i = 0; i < 2; i++)
+		if (semaphores[i] ? (timeline[i] ? !values[i] : values[i] != 0) : values[i] != 0) {
+			batch_clear();
+			FAIL("a D3D12 fence takes a value, and nothing else does", 0);
+		}
+	VkTimelineSemaphoreSubmitInfo tv = { .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.waitSemaphoreValueCount = semaphores[0] ? 1 : 0, .pWaitSemaphoreValues = &values[0],
+		.signalSemaphoreValueCount = semaphores[1] ? 1 : 0, .pSignalSemaphoreValues = &values[1] };
+	VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = timeline[0] || timeline[1] ? &tv : NULL,
+		.waitSemaphoreCount = semaphores[0] ? 1 : 0, .pWaitSemaphores = semaphores[0] ? &semaphores[0] : NULL,
+		.pWaitDstStageMask = semaphores[0] ? &stage : NULL,
+		.commandBufferCount = (uint32_t)batch.n, .pCommandBuffers = batch.cb,
+		.signalSemaphoreCount = semaphores[1] ? 1 : 0, .pSignalSemaphores = semaphores[1] ? &semaphores[1] : NULL };
+	VkResult r = vkResetFences(g.dev, 1, &g.rfence);
+	if (r) { batch_clear(); FAIL("reset the fence of one submission", r); }
+	if ((r = vkQueueSubmit(g.q, 1, &si, g.rfence))) { batch_clear(); FAIL("one submission", r); }
+	g.resident_pending = 1;
+	/* Behind a client's semaphore it waits as an external acquire did, 10 s; the rest as a graph's
+	 * replay did. After a timeout the parts may still be pending, so none goes back to the spares. */
+	r = vkWaitForFences(g.dev, 1, &g.rfence, VK_TRUE, semaphores[0] ? 10000000000ull : 60ull * 1000000000ull);
+	if (r) { g.lost = 1; batch.n = batch.passes = 0; FAIL("wait for one submission failed; resources pinned", r); }
+	g.resident_pending = 0;
+	int passes = batch.passes;
+	batch_clear();
+	return passes;
+}
+
+/* `external_ownership`'s barriers, and a release's stamp ahead of them, recorded into `cb`. */
+static int record_external(VkCommandBuffer cb, int a, int b, int release, unsigned long long stamp_offset,
+			   const void *stamp, unsigned stamp_bytes)
+{
+#ifdef _WIN32
+	if (g.lost || !g.external || !addr_of(a) || !addr_of(b) || a == b)
+		FAIL("invalid recorded external ownership", 0);
+	if (stamp && (!release || !stamp_bytes || stamp_bytes > 64 || stamp_bytes % 4 || stamp_offset % 4 ||
+	    stamp_offset + stamp_bytes > rbufs[b].size))
+		FAIL("invalid external ownership stamp", 0);
+	if (stamp) vkCmdUpdateBuffer(cb, rbufs[b].b, stamp_offset, stamp_bytes, stamp);
+	VkBufferMemoryBarrier barriers[2];
+	int ids[] = { a, b };
+	for (int i = 0; i < 2; i++) barriers[i] = (VkBufferMemoryBarrier){ .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = release ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+			VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT) : 0,
+		.dstAccessMask = release ? 0 : (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+			VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT),
+		.srcQueueFamilyIndex = release ? g.qi : VK_QUEUE_FAMILY_EXTERNAL,
+		.dstQueueFamilyIndex = release ? VK_QUEUE_FAMILY_EXTERNAL : g.qi,
+		.buffer = rbufs[ids[i]].b, .offset = 0, .size = VK_WHOLE_SIZE };
+	vkCmdPipelineBarrier(cb, release ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		release ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		0, 0, NULL, 2, barriers, 0, NULL);
+	return 0;
+#else
+	(void)cb; (void)a; (void)b; (void)release; (void)stamp_offset; (void)stamp; (void)stamp_bytes;
+	FAIL("Win32 external ownership unavailable", 0);
+#endif
+}
+
+/* The same into the recording in hand: an acquire first in a frame's first submission, a release
+ * last in its last. */
+int xmx_rec_external(int a, int b, int release, unsigned long long stamp_offset, const void *stamp,
+		     unsigned stamp_bytes)
+{
+	if (!g.recording) FAIL("invalid recorded external ownership", 0);
+	return record_external(g.rcb, a, b, release, stamp_offset, stamp, stamp_bytes);
+}
+
+/* A timestamp, once everything recorded before it has finished, into one of eight queries for the
+ * parts of one submission. Slot 0 resets all eight first, so it is the first one written. */
+int xmx_rec_timestamp(int slot)
+{
+	if (!g.recording) FAIL("timestamp outside a recording", 0);
+	if (slot < 0 || slot >= BATCH_STAMPS) FAIL("timestamp slot out of range", 0);
+	if (!batch.stamps) {
+		VkPhysicalDeviceProperties props;
+		vkGetPhysicalDeviceProperties(g.pd, &props);
+		if (props.limits.timestampPeriod == 0.0f) FAIL("this device does not support timestamps", 0);
+		VkQueryPoolCreateInfo qi = { .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+			.queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = BATCH_STAMPS };
+		VkResult r = vkCreateQueryPool(g.dev, &qi, NULL, &batch.stamps);
+		if (r) FAIL("timestamp pool", r);
+		batch.period = props.limits.timestampPeriod;
+	}
+	if (slot == 0) vkCmdResetQueryPool(g.rcb, batch.stamps, 0, BATCH_STAMPS);
+	vkCmdWriteTimestamp(g.rcb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, batch.stamps, (uint32_t)slot);
+	return 0;
+}
+
+/* The first `count` timestamps of the last submission that wrote them, in nanoseconds. */
+int xmx_timestamps(double *out, int count)
+{
+	if (!batch.stamps || !out || count < 1 || count > BATCH_STAMPS) FAIL("no timestamps to read", 0);
+	uint64_t ticks[BATCH_STAMPS];
+	VkResult r = vkGetQueryPoolResults(g.dev, batch.stamps, 0, (uint32_t)count, sizeof ticks[0] * (size_t)count,
+					   ticks, sizeof ticks[0], VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+	if (r) FAIL("timestamp read", r);
+	for (int i = 0; i < count; i++) out[i] = (double)ticks[i] * batch.period;
+	return 0;
+}
+
+/* ---- The GPU path's frame in C (2026-11-26) ------------------------------------------------
+ *
+ * A frame whose image passes the daemon captured beforehand as graphs (gpu_image_pipeline,
+ * `_FrameGraphs`): the letterbox's check, the decode and the cut test in the first; the history,
+ * prep and the timestamps around the network in `pre`, the head's check, the composition, the
+ * frame's bytes kept and the change metric in `post`, each for a history kept and one dropped.
+ * Here the frame runs from the acquire to the release without the daemon's Python: the first
+ * submission behind the client's semaphore, the bars' check and the cut test's decision read
+ * from their words, then pre, the network and post in one submission ahead of the client's
+ * signal, and the head's check. The same commands as the joined frame's, so the same bytes. What
+ * is rare goes back to the caller: bars that moved (status 1), and a cut test whose compensated
+ * sum cannot decide (status 3), which only its float64 sum can, as `GPUImageStats` does it. */
+#include <math.h>
+#include <float.h>
+#ifndef _WIN32
+#include <time.h>
+#endif
+
+struct xmx_frame_args {
+	int first, pre[2], post[2], net;         /* captured graphs; pre and post by history kept */
+	int a, b, wait, signal;                  /* the shared buffers and the client's semaphores, -1: none */
+	unsigned long long wait_value, signal_value, stamp_offset;
+	unsigned stamp_bytes;
+	unsigned char stamp[64];                 /* a D3D12 client's, written ahead of the release */
+	int region, cut, nonfinite, change;      /* the words: the bars' 8, the cut's 3, the head's 1, the change's 3 */
+	unsigned cut_count, change_count;        /* the reductions' partial sums */
+	unsigned long long cut_elements, change_elements;
+	double cut_limit;
+	int temporal, history_frames, game_reset;   /* game_reset: -1 none, 0, 1 */
+};
+
+struct xmx_frame_result {
+	int status;             /* 0 answered, 1 the bars moved, 2 the head not finite, 3 the cut needs its float64 sum */
+	int history, change_exact;
+	int stage;              /* even on a failure: 1 once the first submission took the buffers, 2 once the second gave them back */
+	double cut, change;
+	double stamps[4];       /* ns: before pre, after it, after the network, after post */
+	double first_ms, second_ms;   /* host, each submission from its call to its wake-up */
+};
+
+/* What the daemon's ctypes structures must match. */
+int xmx_frame_sizes(void) { return (int)(sizeof(struct xmx_frame_args) * 1000 + sizeof(struct xmx_frame_result)); }
+
+static VkCommandBuffer frame_cb[2];   /* the hand-over's own: the acquire, and the stamp and release */
+
+static double frame_ms(void)
+{
+#ifdef _WIN32
+	static LARGE_INTEGER f; LARGE_INTEGER t;
+	if (!f.QuadPart) QueryPerformanceFrequency(&f);
+	QueryPerformanceCounter(&t);
+	return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+#else
+	struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec * 1000.0 + (double)t.tv_nsec / 1e6;
+#endif
+}
+
+static int batch_add(VkCommandBuffer cb, int passes)
+{
+	if (batch.n >= MAX_BATCH) { batch_clear(); FAIL("too many parts for one submission", 0); }
+	batch.cb[batch.n] = cb;
+	batch.owned[batch.n++] = 0;
+	batch.passes += passes;
+	return 0;
+}
+
+static int batch_add_graph(int id)
+{
+	if (id < 0 || id >= MAX_GRAPHS || !graphs[id].commands) { batch_clear(); FAIL("a frame's graph is not live", 0); }
+	return batch_add(graphs[id].commands, graphs[id].passes);
+}
+
+static int frame_handover(int release, const struct xmx_frame_args *f)
+{
+	VkResult r;
+	if (!frame_cb[0]) {
+		VkCommandBufferAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = g.cpool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2 };
+		if ((r = vkAllocateCommandBuffers(g.dev, &ai, frame_cb))) {
+			frame_cb[0] = frame_cb[1] = VK_NULL_HANDLE;
+			FAIL("the frame's hand-over commands", r);
+		}
+	}
+	VkCommandBuffer cb = frame_cb[release ? 1 : 0];
+	if ((r = vkResetCommandBuffer(cb, 0))) FAIL("reset the frame's hand-over", r);
+	VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+	if ((r = vkBeginCommandBuffer(cb, &bi))) FAIL("begin the frame's hand-over", r);
+	int bad = record_external(cb, f->a, f->b, release, release ? f->stamp_offset : 0,
+				  release && f->stamp_bytes ? f->stamp : NULL, release ? f->stamp_bytes : 0);
+	r = vkEndCommandBuffer(cb);
+	if (bad) return -1;
+	if (r) FAIL("end the frame's hand-over", r);
+	return 0;
+}
+
+static int read_words(int id, uint32_t *out, unsigned n)
+{
+	if (id < 0 || id >= MAX_RBUF || !rbufs[id].live || !rbufs[id].mapped || rbufs[id].size < 4ull * n)
+		FAIL("a frame's metadata is not readable by the host", 0);
+	memcpy(out, rbufs[id].p, 4u * n);
+	return 0;
+}
+
+/* `GPUImageStats._delta_value`: the mean from a reduction's three words. -1 where only the float64
+ * sum of its partials can say it, as there: its status says so, or the compensated sum's error
+ * bound straddles `threshold`. */
+static int delta_value(const uint32_t w[3], unsigned long long elements, unsigned count, int decide,
+		       double threshold, double *value)
+{
+	if (w[2] == 1) { *value = NAN; return 0; }
+	if (w[2] == 2) { *value = INFINITY; return 0; }
+	float hi, lo;
+	memcpy(&hi, &w[0], 4);
+	memcpy(&lo, &w[1], 4);
+	double v = ((double)hi + (double)lo) / (double)elements;
+	double u32 = FLT_EPSILON / 2, u64 = DBL_EPSILON / 2;
+	double relative = 16.0 * count * u32 * u32 + 4.0 * count * u64;
+	double tiny = 16.0 * count * (double)FLT_MIN / (double)elements;
+	double bound = relative < 1 ? relative / (1 - relative) * fabs(v) + tiny : INFINITY;
+	*value = v;
+	return w[2] == 3 || (decide && fabs(v - threshold) <= bound) ? -1 : 0;
+}
+
+/* The second submission, its history decided: pre, the network and post, then the release. */
+int xmx_frame_second(const struct xmx_frame_args *f, int history, struct xmx_frame_result *out)
+{
+	if (!f || !out) FAIL("no frame", 0);
+	if (g.recording || batch.n) FAIL("a frame cannot run inside a recording or a submission", 0);
+	out->status = out->change_exact = 0;      /* after a status 3, the caller decided the history */
+	out->change = NAN;
+	int h = out->history = history ? 1 : 0;
+	if (batch_add_graph(f->pre[h]) || batch_add_graph(f->net) || batch_add_graph(f->post[h])) return -1;
+	if (f->a >= 0 && (frame_handover(1, f) || batch_add(frame_cb[1], 0))) { batch_clear(); return -1; }
+	double t0 = frame_ms();
+	if (xmx_batch_submit(-1, 0, f->signal, f->signal_value) < 0) return -1;
+	out->stage = 2;
+	out->second_ms = frame_ms() - t0;
+	uint32_t w[3];
+	if (read_words(f->nonfinite, w, 1)) return -1;
+	if (w[0]) out->status = 2;
+	if (f->change >= 0) {
+		if (read_words(f->change, w, 3)) return -1;
+		if (delta_value(w, f->change_elements, f->change_count, 0, 0.0, &out->change) < 0) out->change_exact = 1;
+	}
+	return xmx_timestamps(out->stamps, 4);
+}
+
+/* A whole frame: the first submission, the bars' check, the cut test's decision, the second. */
+int xmx_frame_run(const struct xmx_frame_args *f, struct xmx_frame_result *out)
+{
+	if (!f || !out) FAIL("no frame", 0);
+	memset(out, 0, sizeof *out);
+	out->change = NAN;
+	if (g.recording || batch.n) FAIL("a frame cannot run inside a recording or a submission", 0);
+	if (g.prof) FAIL("a profiled frame is submitted alone", 0);
+	if (f->a >= 0 && (frame_handover(0, f) || batch_add(frame_cb[0], 0))) { batch_clear(); return -1; }
+	if (batch_add_graph(f->first)) return -1;
+	double t0 = frame_ms();
+	if (xmx_batch_submit(f->wait, f->wait_value, -1, 0) < 0) return -1;
+	out->stage = 1;
+	out->first_ms = frame_ms() - t0;
+	uint32_t w[8];
+	if (f->region >= 0) {
+		if (read_words(f->region, w, 8)) return -1;
+		for (int i = 0; i < 8; i++)
+			if (w[i] != 0xffffffffu && (w[i] <= 2) != (i < 4)) { out->status = 1; return 0; }
+	}
+	if (f->cut >= 0) {
+		if (read_words(f->cut, w, 3)) return -1;
+		if (delta_value(w, f->cut_elements, f->cut_count, 1, f->cut_limit, &out->cut) < 0) {
+			out->status = 3;
+			return 0;
+		}
+	}
+	int history = f->temporal && f->history_frames > 0 && out->cut <= f->cut_limit && f->game_reset != 1;
+	return xmx_frame_second(f, history, out);
 }
 
 int xmx_graph_destroy(int id)

@@ -149,6 +149,13 @@ class Runtime:
     def submit(self):
         self.events.append(("submit",))
 
+    def rec_external(self, a, b, release, stamp=None, stamp_offset=0):
+        self.events.append(("rec_external", a, b, release, stamp, stamp_offset))
+
+    def batch_submit(self, wait=-1, wait_value=0, signal=-1, signal_value=0):
+        self.events.append(("batch_submit", wait, wait_value, signal, signal_value))
+        return 0
+
 
 class Backend:
     def __init__(self, lib, events):
@@ -165,7 +172,24 @@ class Images:
     def supported(self, *_args, **_kwargs):
         return self.reason
 
-    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None, motion_session=False):
+    def process_device(self, raw, *_args, motion=None, output=None, game_reset=None, motion_session=False,
+                       own=None):
+        self.owns = getattr(self, "owns", []) + [own]
+        if own is not None and getattr(self, "joins", False):
+            # As the real pipeline joins a frame: the acquire recorded into its first submission,
+            # the release into its last, the answer composed into the shared output.
+            self.events.append(("process", raw.id))
+            own.record_acquire(self.runtime)
+            own.submit_first(self.runtime)
+            if getattr(self, "join_error", None) == "first":
+                raise ValueError("controlled pipeline failure")
+            own.record_release(self.runtime)
+            own.submit_last(self.runtime)
+            if getattr(self, "join_error", None) == "last":
+                raise ValueError("controlled pipeline failure")
+            return output
+        if own is not None:
+            own.acquire_now()  # a frame the pipeline cannot join: the hand-over as before
         self.events.append(("process", raw.id))
         self.motions.append(motion)
         self.outputs = getattr(self, "outputs", []) + [output]
@@ -221,6 +245,7 @@ class TransportCase(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         self.transport = T.GPUSharedTransport(Backend(self.lib, self.events), enabled=True)
+        self.images.runtime = self.transport.backend.runtime
 
     def process(self, pid):
         value = Process(pid, self.events)
@@ -383,6 +408,54 @@ class ProtocolTests(TransportCase):
             self.request(packet(T.FRAME))
         self.assertEqual(self.events[-2][0], "release")
         self.assertEqual(self.events[-1], ("reply", 2))
+
+    def session(self):
+        return self.transport.contexts[(42, packet()["session"])]
+
+    def test_a_joined_frame_hands_the_buffers_over_inside_its_own_submissions(self):
+        self.request(packet())
+        context = self.session()
+        self.events.clear()
+        self.images.joins = True
+        connection, _result = self.request(packet(T.FRAME))
+        a, b = context.input.id, context.output.id
+        self.assertEqual(self.events, [
+            ("reset_history",), ("process", a),
+            ("rec_external", a, b, False, None, 0), ("batch_submit", context.ready, 0, -1, 0),
+            ("rec_external", a, b, True, None, 0), ("batch_submit", -1, 0, context.done, 0),
+            ("reply", 0)])
+        self.assertEqual(connection.replies[-1][0], 0)
+
+    def test_a_joined_frame_failing_after_its_release_is_not_released_again(self):
+        self.request(packet())
+        context = self.session()
+        self.images.joins, self.images.join_error = True, "last"
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "controlled pipeline"):
+            self.request(packet(T.FRAME))
+        self.assertEqual(self.events[-3:], [("batch_submit", -1, 0, context.done, 0), ("reset_history",),
+                                            ("reply", 2)])
+        self.assertNotIn("release", [e[0] for e in self.events])
+
+    def test_a_joined_frame_failing_before_its_release_is_released(self):
+        self.request(packet())
+        context = self.session()
+        self.images.joins, self.images.join_error = True, "first"
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "controlled pipeline"):
+            self.request(packet(T.FRAME))
+        self.assertEqual(self.events[-2], ("release", context.input.id, context.output.id, context.done))
+        self.assertEqual(self.events[-1], ("reply", 2))
+
+    def test_no_hand_over_object_without_joining_or_a_direct_output(self):
+        self.request(packet())
+        self.images.joins = True
+        with patch.object(T, "JOIN_SUBMITS", False):
+            self.request(packet(T.FRAME))
+        self.assertIsNone(self.images.owns[-1])
+        self.assertIn("acquire", [e[0] for e in self.events])
+        self.request(packet(T.FRAME))
+        self.assertIsInstance(self.images.owns[-1], T._Ownership)
 
     def test_frame_metadata_must_match_imported_session(self):
         self.request(packet())
@@ -781,6 +854,44 @@ class D3D12ProtocolTests(TransportCase):
         self.assertEqual(self.events[-1], ("reply", 2))
         self.assertNotIn("pass", [e[0] for e in self.events])
         context = self.transport.contexts[(42, packet()["session"])]
+        self.assertEqual((context.value, context.usable), (4, False))
+
+    def test_a_joined_frame_waits_and_signals_its_values_in_its_own_submissions(self):
+        self.request(d3d12_packet())
+        context = self.transport.contexts[(42, packet()["session"])]
+        a, b = context.input.id, context.output.id
+        self.images.joins = True
+        self.events.clear()
+        connection, result = self.frame(5)
+        self.assertEqual(self.events, [
+            ("reset_history",), ("wait", context.ready, 5), ("process", a),
+            ("rec_external", a, b, False, None, 0), ("batch_submit", context.ready, 5, -1, 0),
+            ("rec_external", a, b, True, T.STAMP.pack(T.STAMP_MAGIC, 5, 0, 0), self.BYTES),
+            ("batch_submit", -1, 0, context.ready, 6), ("reply", 0)])
+        self.assertEqual(result["sync"], "d3d12")
+        self.assertEqual((context.value, context.usable, context.answered), (6, True, 5))
+
+    def test_a_joined_frame_failing_after_its_signal_neither_releases_nor_passes(self):
+        self.request(d3d12_packet())
+        context = self.transport.contexts[(42, packet()["session"])]
+        self.images.joins, self.images.join_error = True, "last"
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "controlled pipeline"):
+            self.frame(3)
+        self.assertEqual(self.events[-3:], [("batch_submit", -1, 0, context.ready, 4), ("reset_history",),
+                                            ("reply", 2)])
+        self.assertFalse({"release_at", "pass"} & {e[0] for e in self.events})
+        self.assertEqual((context.value, context.usable), (4, False))
+
+    def test_a_joined_frame_failing_before_its_signal_releases_without_a_stamp(self):
+        self.request(d3d12_packet())
+        context = self.transport.contexts[(42, packet()["session"])]
+        self.images.joins, self.images.join_error = True, "first"
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "controlled pipeline"):
+            self.frame(3)
+        self.assertEqual(self.events[-2], ("release_at", context.input.id, context.output.id,
+                                           context.ready, 4, 0, None, 0))
         self.assertEqual((context.value, context.usable), (4, False))
 
     def test_a_value_never_reached_signals_nothing(self):
