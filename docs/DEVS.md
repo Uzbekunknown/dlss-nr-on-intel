@@ -323,8 +323,9 @@ and is not possible. It is written for someone who wants to run this somewhere e
 it is the file to read before any of the notes.
 
 `notes/INDEX.md` maps every phase note to the question each one settles, and
-several of the answers are counter-intuitive. `notes/HANDOFF.md` is the current state and the
-traps.
+several of the answers are counter-intuitive. `notes/HANDOFF.md` is the current state, the
+rules for every change and the traps; it is the maintainers' file. With a pull request, keep your
+own notes in `notes/contrib/<your-github-login>.md` instead (`notes/contrib/README.md`).
 
 ## Performance work
 
